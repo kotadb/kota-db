@@ -239,7 +239,7 @@ pub mod graph {
         let mut visited = HashSet::new();
         let mut current_level = vec![start];
         
-        for depth in 0..max_depth {
+        for _depth in 0..max_depth {
             if current_level.is_empty() {
                 break;
             }

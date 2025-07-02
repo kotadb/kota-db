@@ -70,6 +70,33 @@ pub enum Operation {
     Recovery { wal_entries: usize },
 }
 
+impl Operation {
+    /// Validate the operation parameters
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Operation::StorageRead { size_bytes, .. } |
+            Operation::StorageWrite { size_bytes, .. } => {
+                if *size_bytes == 0 {
+                    anyhow::bail!("Storage operation with zero size");
+                }
+            },
+            Operation::IndexSearch { result_count, .. } |
+            Operation::QueryExecute { result_count } => {
+                // result_count can be 0 for no matches
+            },
+            Operation::QueryPlan { plan_steps } => {
+                if *plan_steps == 0 {
+                    anyhow::bail!("Query plan must have at least one step");
+                }
+            },
+            _ => {
+                // Other operations don't need validation
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Metric types for performance monitoring
 #[derive(Debug, Clone)]
 pub enum MetricType {

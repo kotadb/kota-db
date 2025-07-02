@@ -7,6 +7,7 @@ use anyhow::{ensure, Result};
 use std::path::Path;
 use uuid::Uuid;
 use async_trait::async_trait;
+use tracing::debug;
 use crate::observability::*;
 
 /// Core trait for storage operations with clear contracts
@@ -294,6 +295,7 @@ impl PageId {
 }
 
 /// Transaction contracts
+#[derive(Clone)]
 pub struct Transaction {
     pub id: u64,
     pub operations: Vec<Operation>,
@@ -370,7 +372,7 @@ pub mod validation {
         V: std::fmt::Debug,
     {
         // Generic validation - specific indices will add more
-        log::debug!("Validating index operation: {:?} -> {:?}", key, value);
+        debug!("Validating index operation: {:?} -> {:?}", key, value);
         Ok(())
     }
 }
@@ -424,7 +426,7 @@ impl<T> ContractEnforcer<T> {
                 doc_id: Uuid::new_v4(), 
                 size_bytes: 0 
             },
-            &result.as_ref().map(|_| ()),
+            &result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{}", e)),
         );
         
         result

@@ -6,6 +6,7 @@ use anyhow::{bail, ensure, Context, Result};
 use std::path::Path;
 use std::collections::HashMap;
 use uuid::Uuid;
+use tracing::error;
 use crate::observability::*;
 use crate::contracts::*;
 
@@ -26,6 +27,7 @@ pub enum ValidationError {
 }
 
 /// Validation context for better error messages
+#[derive(Clone)]
 pub struct ValidationContext {
     operation: String,
     attributes: HashMap<String, String>,
@@ -44,7 +46,7 @@ impl ValidationContext {
         self
     }
     
-    pub fn validate<T>(self, condition: bool, message: &str) -> Result<()> {
+    pub fn validate(self, condition: bool, message: &str) -> Result<()> {
         if !condition {
             let context = format!(
                 "Operation: {}, Attributes: {:?}",
@@ -309,8 +311,9 @@ pub mod transaction {
     use super::*;
     
     /// Active transactions tracking
-    static ACTIVE_TRANSACTIONS: std::sync::Mutex<std::collections::HashSet<u64>> = 
-        std::sync::Mutex::new(std::collections::HashSet::new());
+    use std::sync::LazyLock;
+    static ACTIVE_TRANSACTIONS: LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> = 
+        LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
     
     /// Validate transaction begin
     pub fn validate_begin(tx_id: u64) -> Result<()> {

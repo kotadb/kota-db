@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 use async_trait::async_trait;
+use tracing::{info, warn, error, debug};
 
 use crate::contracts::{Storage, Index, Document, Query, StorageMetrics};
 use crate::observability::*;
@@ -61,9 +62,9 @@ impl<S: Storage> Storage for TracedStorage<S> {
         let duration = start.elapsed();
         info!("[{}] Storage opened in {:?}", trace_id, duration);
         record_metric(MetricType::Histogram {
-            name: "storage.open.duration".to_string(),
+            name: "storage.open.duration",
             value: duration.as_millis() as f64,
-            tags: vec![("path".to_string(), path.to_string())],
+            unit: "ms",
         });
         
         Ok(Self {
@@ -83,15 +84,17 @@ impl<S: Storage> Storage for TracedStorage<S> {
             let result = self.inner.insert(doc.clone()).await;
             
             let duration = start.elapsed();
+            let mut ctx = OperationContext::new("storage.insert");
+            ctx.add_attribute("doc_id", &doc.id.to_string());
+            ctx.add_attribute("size", &doc.size.to_string());
+            
             log_operation(
-                &OperationContext::new("storage.insert")
-                    .with_attribute("doc_id", &doc.id.to_string())
-                    .with_attribute("size", &doc.size.to_string()),
+                &ctx,
                 &Operation::StorageWrite { 
                     doc_id: doc.id, 
-                    size_bytes: doc.size 
+                    size_bytes: doc.size as usize
                 },
-                &result.as_ref().map(|_| ()),
+                &result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{}", e)),
             );
             
             result
@@ -109,20 +112,22 @@ impl<S: Storage> Storage for TracedStorage<S> {
             let size = result.as_ref()
                 .ok()
                 .and_then(|opt| opt.as_ref())
-                .map(|doc| doc.size)
+                .map(|doc| doc.size as usize)
                 .unwrap_or(0);
             
+            let mut ctx = OperationContext::new("storage.get");
+            ctx.add_attribute("doc_id", &id.to_string());
+            ctx.add_attribute("found", &result.as_ref()
+                .map(|opt| opt.is_some().to_string())
+                .unwrap_or_else(|_| "error".to_string()));
+            
             log_operation(
-                &OperationContext::new("storage.get")
-                    .with_attribute("doc_id", &id.to_string())
-                    .with_attribute("found", &result.as_ref()
-                        .map(|opt| opt.is_some().to_string())
-                        .unwrap_or_else(|_| "error".to_string())),
+                &ctx,
                 &Operation::StorageRead { 
                     doc_id: *id, 
-                    size_bytes: size 
+                    size_bytes: size
                 },
-                &result.as_ref().map(|_| ()),
+                &result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{}", e)),
             );
             
             result
@@ -156,9 +161,9 @@ impl<S: Storage> Storage for TracedStorage<S> {
             
             let duration = start.elapsed();
             record_metric(MetricType::Histogram {
-                name: "storage.sync.duration".to_string(),
+                name: "storage.sync.duration",
                 value: duration.as_millis() as f64,
-                tags: vec![],
+                unit: "ms",
             });
             
             result
@@ -283,32 +288,36 @@ impl<S: Storage> RetryableStorage<S> {
         self
     }
     
-    /// Execute an operation with exponential backoff retry
-    async fn retry<F, Fut, T>(&self, operation: &str, mut f: F) -> Result<T>
-    where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
+}
+
+#[async_trait]
+impl<S: Storage> Storage for RetryableStorage<S> {
+    async fn open(path: &str) -> Result<Self> where Self: Sized {
+        let inner = S::open(path).await?;
+        Ok(Self::new(inner))
+    }
+    
+    async fn insert(&mut self, doc: Document) -> Result<()> {
         let mut attempt = 0;
         let mut delay = self.base_delay;
         
         loop {
             attempt += 1;
             
-            match f().await {
-                Ok(value) => {
+            match self.inner.insert(doc.clone()).await {
+                Ok(()) => {
                     if attempt > 1 {
-                        info!("Operation {} succeeded after {} attempts", operation, attempt);
+                        info!("Operation insert succeeded after {} attempts", attempt);
                     }
-                    return Ok(value);
+                    return Ok(());
                 }
                 Err(e) if attempt >= self.max_retries => {
-                    error!("Operation {} failed after {} attempts: {}", operation, attempt, e);
+                    error!("Operation insert failed after {} attempts: {}", attempt, e);
                     return Err(e);
                 }
                 Err(e) => {
-                    warn!("Operation {} failed (attempt {}/{}): {}", 
-                          operation, attempt, self.max_retries, e);
+                    warn!("Operation insert failed (attempt {}/{}): {}", 
+                          attempt, self.max_retries, e);
                     
                     tokio::time::sleep(delay).await;
                     
@@ -320,47 +329,137 @@ impl<S: Storage> RetryableStorage<S> {
             }
         }
     }
-}
-
-#[async_trait]
-impl<S: Storage> Storage for RetryableStorage<S> {
-    async fn open(path: &str) -> Result<Self> where Self: Sized {
-        let inner = S::open(path).await?;
-        Ok(Self::new(inner))
-    }
-    
-    async fn insert(&mut self, doc: Document) -> Result<()> {
-        let doc_clone = doc.clone();
-        self.retry("insert", || async {
-            self.inner.insert(doc_clone.clone()).await
-        }).await
-    }
     
     async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
-        let id = *id;
-        self.retry("get", || async move {
-            self.inner.get(&id).await
-        }).await
+        let mut attempt = 0;
+        let mut delay = self.base_delay;
+        
+        loop {
+            attempt += 1;
+            
+            match self.inner.get(id).await {
+                Ok(result) => {
+                    if attempt > 1 {
+                        info!("Operation get succeeded after {} attempts", attempt);
+                    }
+                    return Ok(result);
+                }
+                Err(e) if attempt >= self.max_retries => {
+                    error!("Operation get failed after {} attempts: {}", attempt, e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    warn!("Operation get failed (attempt {}/{}): {}", 
+                          attempt, self.max_retries, e);
+                    
+                    tokio::time::sleep(delay).await;
+                    
+                    // Exponential backoff with jitter
+                    delay = std::cmp::min(delay * 2, self.max_delay);
+                    let jitter = Duration::from_millis(rand::random::<u64>() % 100);
+                    delay += jitter;
+                }
+            }
+        }
     }
     
     async fn update(&mut self, doc: Document) -> Result<()> {
-        let doc_clone = doc.clone();
-        self.retry("update", || async {
-            self.inner.update(doc_clone.clone()).await
-        }).await
+        let mut attempt = 0;
+        let mut delay = self.base_delay;
+        
+        loop {
+            attempt += 1;
+            
+            match self.inner.update(doc.clone()).await {
+                Ok(()) => {
+                    if attempt > 1 {
+                        info!("Operation update succeeded after {} attempts", attempt);
+                    }
+                    return Ok(());
+                }
+                Err(e) if attempt >= self.max_retries => {
+                    error!("Operation update failed after {} attempts: {}", attempt, e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    warn!("Operation update failed (attempt {}/{}): {}", 
+                          attempt, self.max_retries, e);
+                    
+                    tokio::time::sleep(delay).await;
+                    
+                    // Exponential backoff with jitter
+                    delay = std::cmp::min(delay * 2, self.max_delay);
+                    let jitter = Duration::from_millis(rand::random::<u64>() % 100);
+                    delay += jitter;
+                }
+            }
+        }
     }
     
     async fn delete(&mut self, id: &Uuid) -> Result<()> {
-        let id = *id;
-        self.retry("delete", || async move {
-            self.inner.delete(&id).await
-        }).await
+        let mut attempt = 0;
+        let mut delay = self.base_delay;
+        
+        loop {
+            attempt += 1;
+            
+            match self.inner.delete(id).await {
+                Ok(()) => {
+                    if attempt > 1 {
+                        info!("Operation delete succeeded after {} attempts", attempt);
+                    }
+                    return Ok(());
+                }
+                Err(e) if attempt >= self.max_retries => {
+                    error!("Operation delete failed after {} attempts: {}", attempt, e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    warn!("Operation delete failed (attempt {}/{}): {}", 
+                          attempt, self.max_retries, e);
+                    
+                    tokio::time::sleep(delay).await;
+                    
+                    // Exponential backoff with jitter
+                    delay = std::cmp::min(delay * 2, self.max_delay);
+                    let jitter = Duration::from_millis(rand::random::<u64>() % 100);
+                    delay += jitter;
+                }
+            }
+        }
     }
     
     async fn sync(&mut self) -> Result<()> {
-        self.retry("sync", || async {
-            self.inner.sync().await
-        }).await
+        let mut attempt = 0;
+        let mut delay = self.base_delay;
+        
+        loop {
+            attempt += 1;
+            
+            match self.inner.sync().await {
+                Ok(()) => {
+                    if attempt > 1 {
+                        info!("Operation sync succeeded after {} attempts", attempt);
+                    }
+                    return Ok(());
+                }
+                Err(e) if attempt >= self.max_retries => {
+                    error!("Operation sync failed after {} attempts: {}", attempt, e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    warn!("Operation sync failed (attempt {}/{}): {}", 
+                          attempt, self.max_retries, e);
+                    
+                    tokio::time::sleep(delay).await;
+                    
+                    // Exponential backoff with jitter
+                    delay = std::cmp::min(delay * 2, self.max_delay);
+                    let jitter = Duration::from_millis(rand::random::<u64>() % 100);
+                    delay += jitter;
+                }
+            }
+        }
     }
     
     async fn close(self) -> Result<()> {
@@ -545,9 +644,9 @@ impl<I: Index> MeteredIndex<I> {
         
         // Emit metric
         record_metric(MetricType::Histogram {
-            name: format!("index.{}.duration", operation),
+            name: "index.operation.duration",
             value: duration.as_millis() as f64,
-            tags: vec![("index".to_string(), self.name.clone())],
+            unit: "ms",
         });
     }
     
@@ -627,7 +726,7 @@ impl SafeTransaction {
     
     /// Commit the transaction
     pub async fn commit(mut self) -> Result<()> {
-        self.inner.commit().await?;
+        self.inner.clone().commit().await?;
         self.committed = true;
         Ok(())
     }
