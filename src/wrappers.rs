@@ -2,6 +2,8 @@
 // This module provides high-level wrappers that automatically apply best practices
 // like tracing, validation, retries, and caching.
 
+pub mod optimization;
+
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

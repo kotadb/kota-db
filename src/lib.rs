@@ -66,6 +66,15 @@ pub use wrappers::{
     create_wrapped_storage,
 };
 
+// Re-export optimization wrappers
+pub use wrappers::optimization::{
+    OptimizedIndex,
+    OptimizationConfig,
+    OptimizationReport,
+    create_optimized_index,
+    create_optimized_index_with_defaults,
+};
+
 // Re-export storage implementations
 pub use file_storage::{FileStorage, create_file_storage};
 
@@ -75,9 +84,21 @@ pub use primary_index::{PrimaryIndex, create_primary_index, create_primary_index
 // Re-export pure functions
 pub use pure::btree;
 pub use pure::performance;
+// Re-export bulk operations
+pub use pure::{
+    bulk_insert_into_tree,
+    bulk_delete_from_tree,
+    count_entries,
+    analyze_tree_structure,
+};
 
 // Re-export contracts
 pub use contracts::performance as performance_contracts;
+pub use contracts::optimization as optimization_contracts;
+
+// Re-export metrics
+pub use metrics::performance as performance_metrics;
+pub use metrics::optimization as optimization_metrics;
 
 // Test modules
 #[cfg(test)]
