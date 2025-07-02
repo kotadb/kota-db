@@ -1,5 +1,53 @@
 # KotaDB Quick Reference
 
+## FileStorage Quick Start
+
+### Basic Setup
+```rust
+use kotadb::{create_file_storage, DocumentBuilder, Storage};
+
+// Create production-ready storage with all Stage 6 wrappers
+let mut storage = create_file_storage("/path/to/db", Some(1000)).await?;
+```
+
+### Document Operations
+
+#### Create Document
+```rust
+let doc = DocumentBuilder::new()
+    .path("/notes/example.md")?
+    .title("Example Document")?
+    .content(b"# Example\n\nDocument content here...")?
+    .build()?;
+```
+
+#### Store Document
+```rust
+storage.insert(doc.clone()).await?;
+```
+
+#### Retrieve Document
+```rust
+let retrieved = storage.get(&doc.id).await?;
+match retrieved {
+    Some(doc) => println!("Found: {}", doc.title),
+    None => println!("Document not found"),
+}
+```
+
+#### Update Document
+```rust
+let mut updated_doc = doc;
+updated_doc.title = "Updated Title".to_string();
+updated_doc.updated = chrono::Utc::now().timestamp();
+storage.update(updated_doc).await?;
+```
+
+#### Delete Document
+```rust
+storage.delete(&doc.id).await?;
+```
+
 ## Validated Types (Import: `use kotadb::types::*;`)
 
 ```rust

@@ -87,6 +87,7 @@ pretty_assertions = "1.4"
 fake = "2.10"
 rand = "0.8"
 tokio-test = "0.4"
+tempfile = "3.0"
 
 [features]
 default = []
@@ -113,20 +114,20 @@ path = "src/main.rs"
 name = "standalone_usage"
 path = "examples/standalone_usage.rs"
 
-# Benchmarks (will be enabled when storage and indices are implemented)
-# [[bench]]
-# name = "storage"
-# harness = false
-# required-features = ["bench"]
+# Benchmarks
+[[bench]]
+name = "storage"
+harness = false
+required-features = ["bench"]
 
-# [[bench]]
-# name = "indices" 
-# harness = false
-# required-features = ["bench"]
+[[bench]]
+name = "indices" 
+harness = false
+required-features = ["bench"]
 
-# [[bench]]
-# name = "queries"
-# harness = false
-# required-features = ["bench"]
+[[bench]]
+name = "queries"
+harness = false
+required-features = ["bench"]
 
 # Workspace will be configured when we create the sub-crates

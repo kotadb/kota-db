@@ -8,6 +8,9 @@ pub mod pure;
 pub mod types;
 pub mod builders;
 pub mod wrappers;
+pub mod file_storage;
+pub mod primary_index;
+pub mod metrics;
 
 // Re-export key types
 pub use observability::{
@@ -62,3 +65,20 @@ pub use wrappers::{
     SafeTransaction,
     create_wrapped_storage,
 };
+
+// Re-export storage implementations
+pub use file_storage::{FileStorage, create_file_storage};
+
+// Re-export index implementations
+pub use primary_index::{PrimaryIndex, create_primary_index, create_primary_index_for_tests};
+
+// Re-export pure functions
+pub use pure::btree;
+pub use pure::performance;
+
+// Re-export contracts
+pub use contracts::performance as performance_contracts;
+
+// Test modules
+#[cfg(test)]
+mod btree_test;

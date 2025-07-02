@@ -55,7 +55,7 @@ impl fmt::Display for ValidatedPath {
 }
 
 /// A document ID that is guaranteed to be valid
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValidatedDocumentId {
     inner: Uuid,
 }
