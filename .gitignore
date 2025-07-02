@@ -1,0 +1,58 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Database files
+*.db
+*.idx
+*.log
+*.wal
+
+# Test data
+test_data/
+test_db/
+
+# Benchmarks
+benches/results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project specific
+/data/
+/indices/
+/logs/
+.kota-db/
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+*.prof
+
+# Coverage
+tarpaulin-report.html
+cobertura.xml
+coverage/
+
+# Documentation
+/doc/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Environment
+.env
+.env.local
