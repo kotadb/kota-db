@@ -75,6 +75,7 @@ async-trait = "0.1"
 
 # Random for testing
 rand = "0.8"
+fastrand = "2.3"
 
 # Optional dependencies for advanced features
 tantivy = { version = "0.22", optional = true }  # Full-text search
