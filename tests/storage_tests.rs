@@ -19,20 +19,20 @@ fn temp_db() -> (TempDir, String) {
 async fn test_storage_initialization() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
-    
+
     // Storage should initialize successfully
     let storage = Storage::open(&path).await?;
-    
+
     // Should create necessary directories
     assert!(Path::new(&path).join("meta.db").exists());
     assert!(Path::new(&path).join("indices").exists());
     assert!(Path::new(&path).join("wal").exists());
-    
+
     // Should be able to close and reopen
     storage.close().await?;
     let storage2 = Storage::open(&path).await?;
     storage2.close().await?;
-    
+
     Ok(())
 }
 
@@ -41,7 +41,7 @@ async fn test_document_insert_and_retrieve() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     // Create test document
     let doc_id = Uuid::new_v4();
     let doc = Document {
@@ -54,19 +54,19 @@ async fn test_document_insert_and_retrieve() -> Result<()> {
         title: "Test Document".to_string(),
         word_count: 100,
     };
-    
+
     // Insert should succeed
     storage.insert(doc.clone()).await?;
-    
+
     // Retrieve should return the same document
     let retrieved = storage.get(&doc_id).await?;
     assert_eq!(retrieved.unwrap().id, doc_id);
     assert_eq!(retrieved.unwrap().title, "Test Document");
-    
+
     // Non-existent document should return None
     let missing = storage.get(&Uuid::new_v4()).await?;
     assert!(missing.is_none());
-    
+
     Ok(())
 }
 
@@ -75,7 +75,7 @@ async fn test_document_update() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     let doc_id = Uuid::new_v4();
     let mut doc = Document {
         id: doc_id,
@@ -87,20 +87,20 @@ async fn test_document_update() -> Result<()> {
         title: "Original Title".to_string(),
         word_count: 100,
     };
-    
+
     // Insert original
     storage.insert(doc.clone()).await?;
-    
+
     // Update document
     doc.title = "Updated Title".to_string();
     doc.updated = 1234567899;
     storage.update(doc.clone()).await?;
-    
+
     // Retrieve should return updated version
     let retrieved = storage.get(&doc_id).await?.unwrap();
     assert_eq!(retrieved.title, "Updated Title");
     assert_eq!(retrieved.updated, 1234567899);
-    
+
     Ok(())
 }
 
@@ -109,7 +109,7 @@ async fn test_document_delete() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     let doc_id = Uuid::new_v4();
     let doc = Document {
         id: doc_id,
@@ -121,17 +121,17 @@ async fn test_document_delete() -> Result<()> {
         title: "To Delete".to_string(),
         word_count: 100,
     };
-    
+
     // Insert then delete
     storage.insert(doc).await?;
     assert!(storage.get(&doc_id).await?.is_some());
-    
+
     storage.delete(&doc_id).await?;
     assert!(storage.get(&doc_id).await?.is_none());
-    
+
     // Delete non-existent should not error
     storage.delete(&Uuid::new_v4()).await?;
-    
+
     Ok(())
 }
 
@@ -139,7 +139,7 @@ async fn test_document_delete() -> Result<()> {
 async fn test_persistence_across_restarts() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
-    
+
     let doc_id = Uuid::new_v4();
     let doc = Document {
         id: doc_id,
@@ -151,7 +151,7 @@ async fn test_persistence_across_restarts() -> Result<()> {
         title: "Persistent Document".to_string(),
         word_count: 200,
     };
-    
+
     // Insert and close
     {
         let mut storage = Storage::open(&path).await?;
@@ -159,7 +159,7 @@ async fn test_persistence_across_restarts() -> Result<()> {
         storage.sync().await?; // Force flush to disk
         storage.close().await?;
     }
-    
+
     // Reopen and verify
     {
         let storage = Storage::open(&path).await?;
@@ -167,7 +167,7 @@ async fn test_persistence_across_restarts() -> Result<()> {
         assert_eq!(retrieved.title, "Persistent Document");
         assert_eq!(retrieved.size, 5678);
     }
-    
+
     Ok(())
 }
 
@@ -176,10 +176,10 @@ async fn test_concurrent_read_write_safety() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let storage = Arc::new(Mutex::new(Storage::open(&path).await?));
-    
+
     // Spawn multiple concurrent operations
     let mut handles = vec![];
-    
+
     // Writers
     for i in 0..5 {
         let storage = storage.clone();
@@ -194,13 +194,13 @@ async fn test_concurrent_read_write_safety() -> Result<()> {
                 title: format!("Concurrent Doc {}", i),
                 word_count: i as u32 * 10,
             };
-            
+
             let mut storage = storage.lock().await;
             storage.insert(doc).await
         });
         handles.push(handle);
     }
-    
+
     // Readers
     for _ in 0..5 {
         let storage = storage.clone();
@@ -210,12 +210,12 @@ async fn test_concurrent_read_write_safety() -> Result<()> {
         });
         handles.push(handle);
     }
-    
+
     // All operations should complete without error
     for handle in handles {
         handle.await?.unwrap();
     }
-    
+
     Ok(())
 }
 
@@ -223,7 +223,7 @@ async fn test_concurrent_read_write_safety() -> Result<()> {
 async fn test_wal_crash_recovery() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
-    
+
     let doc_id = Uuid::new_v4();
     let doc = Document {
         id: doc_id,
@@ -235,7 +235,7 @@ async fn test_wal_crash_recovery() -> Result<()> {
         title: "WAL Test Document".to_string(),
         word_count: 500,
     };
-    
+
     // Simulate crash during write
     {
         let mut storage = Storage::open(&path).await?;
@@ -245,7 +245,7 @@ async fn test_wal_crash_recovery() -> Result<()> {
         // storage.commit_transaction().await?;
         drop(storage); // Force drop without proper close
     }
-    
+
     // Reopen - should recover from WAL
     {
         let storage = Storage::open(&path).await?;
@@ -259,7 +259,7 @@ async fn test_wal_crash_recovery() -> Result<()> {
         }
         // If absent, that's also valid (transaction not committed)
     }
-    
+
     Ok(())
 }
 
@@ -268,12 +268,12 @@ async fn test_storage_metrics() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     // Get initial metrics
     let metrics1 = storage.get_metrics().await?;
     assert_eq!(metrics1.document_count, 0);
     assert_eq!(metrics1.total_size_bytes, 0);
-    
+
     // Insert some documents
     for i in 0..3 {
         let doc = Document {
@@ -288,13 +288,13 @@ async fn test_storage_metrics() -> Result<()> {
         };
         storage.insert(doc).await?;
     }
-    
+
     // Check updated metrics
     let metrics2 = storage.get_metrics().await?;
     assert_eq!(metrics2.document_count, 3);
     assert_eq!(metrics2.total_size_bytes, 6000); // 1000 + 2000 + 3000
     assert!(metrics2.index_sizes.contains_key("primary"));
-    
+
     Ok(())
 }
 
@@ -303,24 +303,24 @@ async fn test_page_allocation() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     // Test internal page allocation
     let page1 = storage.allocate_page().await?;
     let page2 = storage.allocate_page().await?;
     let page3 = storage.allocate_page().await?;
-    
+
     // Pages should be unique
     assert_ne!(page1, page2);
     assert_ne!(page2, page3);
     assert_ne!(page1, page3);
-    
+
     // Free a page
     storage.free_page(page2).await?;
-    
+
     // Next allocation might reuse freed page
     let page4 = storage.allocate_page().await?;
     // page4 could be page2 (reused) or a new page
-    
+
     Ok(())
 }
 
@@ -329,7 +329,7 @@ async fn test_memory_mapped_performance() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
     let mut storage = Storage::open(&path).await?;
-    
+
     // Insert a "hot" document that should be memory-mapped
     let doc_id = Uuid::new_v4();
     let doc = Document {
@@ -342,20 +342,24 @@ async fn test_memory_mapped_performance() -> Result<()> {
         title: "Hot Document".to_string(),
         word_count: 1000,
     };
-    
+
     storage.insert(doc).await?;
     storage.mark_hot(&doc_id).await?;
-    
+
     // Multiple rapid reads should be fast
     let start = std::time::Instant::now();
     for _ in 0..1000 {
         let _ = storage.get(&doc_id).await?;
     }
     let elapsed = start.elapsed();
-    
+
     // Should complete in under 100ms (0.1ms per read)
-    assert!(elapsed.as_millis() < 100, "Memory-mapped reads too slow: {:?}", elapsed);
-    
+    assert!(
+        elapsed.as_millis() < 100,
+        "Memory-mapped reads too slow: {:?}",
+        elapsed
+    );
+
     Ok(())
 }
 
@@ -382,51 +386,51 @@ impl Storage {
     async fn open(_path: &str) -> Result<Self> {
         todo!("Implement after contracts are defined")
     }
-    
+
     async fn close(self) -> Result<()> {
         todo!()
     }
-    
+
     async fn insert(&mut self, _doc: Document) -> Result<()> {
         todo!()
     }
-    
+
     async fn get(&self, _id: &Uuid) -> Result<Option<Document>> {
         todo!()
     }
-    
+
     async fn update(&mut self, _doc: Document) -> Result<()> {
         todo!()
     }
-    
+
     async fn delete(&mut self, _id: &Uuid) -> Result<()> {
         todo!()
     }
-    
+
     async fn sync(&mut self) -> Result<()> {
         todo!()
     }
-    
+
     async fn list_all(&self) -> Result<Vec<Document>> {
         todo!()
     }
-    
+
     async fn begin_transaction(&mut self) -> Result<()> {
         todo!()
     }
-    
+
     async fn get_metrics(&self) -> Result<StorageMetrics> {
         todo!()
     }
-    
+
     async fn allocate_page(&mut self) -> Result<PageId> {
         todo!()
     }
-    
+
     async fn free_page(&mut self, _page: PageId) -> Result<()> {
         todo!()
     }
-    
+
     async fn mark_hot(&mut self, _id: &Uuid) -> Result<()> {
         todo!()
     }

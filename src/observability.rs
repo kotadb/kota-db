@@ -2,13 +2,13 @@
 // This module provides structured logging, metrics, and tracing capabilities
 // Following Stage 4 of the 6-stage risk reduction methodology
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn, debug, trace, instrument, Level};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tracing::{debug, error, info, instrument, trace, warn, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
@@ -25,22 +25,22 @@ pub fn init_logging() -> Result<()> {
     // 1. Environment-based filtering (RUST_LOG)
     // 2. Pretty formatted output for development
     // 3. JSON output option for production
-    
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("kotadb=debug,info"));
-    
+
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("kotadb=debug,info"));
+
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(true)
         .with_line_number(true)
         .with_file(true)
         .with_ansi(true);
-    
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt_layer)
         .init();
-    
+
     info!("KotaDB observability initialized");
     Ok(())
 }
@@ -49,46 +49,78 @@ pub fn init_logging() -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
     // Storage operations
-    StorageRead { doc_id: Uuid, size_bytes: usize },
-    StorageWrite { doc_id: Uuid, size_bytes: usize },
-    StorageDelete { doc_id: Uuid },
-    
+    StorageRead {
+        doc_id: Uuid,
+        size_bytes: usize,
+    },
+    StorageWrite {
+        doc_id: Uuid,
+        size_bytes: usize,
+    },
+    StorageDelete {
+        doc_id: Uuid,
+    },
+
     // Index operations
-    IndexInsert { index_type: String, doc_id: Uuid },
-    IndexRemove { index_type: String, doc_id: Uuid },
-    IndexSearch { index_type: String, query: String, result_count: usize },
-    
+    IndexInsert {
+        index_type: String,
+        doc_id: Uuid,
+    },
+    IndexRemove {
+        index_type: String,
+        doc_id: Uuid,
+    },
+    IndexSearch {
+        index_type: String,
+        query: String,
+        result_count: usize,
+    },
+
     // Query operations
-    QueryParse { query: String },
-    QueryPlan { plan_steps: usize },
-    QueryExecute { result_count: usize },
-    
+    QueryParse {
+        query: String,
+    },
+    QueryPlan {
+        plan_steps: usize,
+    },
+    QueryExecute {
+        result_count: usize,
+    },
+
     // System operations
-    Startup { version: String },
-    Shutdown { reason: String },
-    Checkpoint { documents_processed: usize },
-    Recovery { wal_entries: usize },
+    Startup {
+        version: String,
+    },
+    Shutdown {
+        reason: String,
+    },
+    Checkpoint {
+        documents_processed: usize,
+    },
+    Recovery {
+        wal_entries: usize,
+    },
 }
 
 impl Operation {
     /// Validate the operation parameters
     pub fn validate(&self) -> Result<()> {
         match self {
-            Operation::StorageRead { size_bytes, .. } |
-            Operation::StorageWrite { size_bytes, .. } => {
+            Operation::StorageRead { size_bytes, .. }
+            | Operation::StorageWrite { size_bytes, .. } => {
                 if *size_bytes == 0 {
                     anyhow::bail!("Storage operation with zero size");
                 }
-            },
-            Operation::IndexSearch { result_count, .. } |
-            Operation::QueryExecute { result_count } => {
+            }
+            Operation::IndexSearch { result_count, .. }
+            | Operation::QueryExecute { result_count } => {
                 // result_count can be 0 for no matches
-            },
+            }
             Operation::QueryPlan { plan_steps } => {
                 if *plan_steps == 0 {
                     anyhow::bail!("Query plan must have at least one step");
                 }
-            },
+            }
             _ => {
                 // Other operations don't need validation
             }
@@ -100,10 +132,23 @@ impl Operation {
 /// Metric types for performance monitoring
 #[derive(Debug, Clone)]
 pub enum MetricType {
-    Counter { name: &'static str, value: u64 },
-    Gauge { name: &'static str, value: f64 },
-    Histogram { name: &'static str, value: f64, unit: &'static str },
-    Timer { name: &'static str, duration: Duration },
+    Counter {
+        name: &'static str,
+        value: u64,
+    },
+    Gauge {
+        name: &'static str,
+        value: f64,
+    },
+    Histogram {
+        name: &'static str,
+        value: f64,
+        unit: &'static str,
+    },
+    Timer {
+        name: &'static str,
+        duration: Duration,
+    },
 }
 
 /// Operation context for tracing through the system
@@ -128,7 +173,7 @@ impl OperationContext {
             attributes: Vec::new(),
         }
     }
-    
+
     pub fn child(&self, operation: impl Into<String>) -> Self {
         Self {
             trace_id: self.trace_id,
@@ -139,11 +184,11 @@ impl OperationContext {
             attributes: Vec::new(),
         }
     }
-    
+
     pub fn add_attribute(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.attributes.push((key.into(), value.into()));
     }
-    
+
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
@@ -153,11 +198,13 @@ impl OperationContext {
 #[instrument(skip(ctx))]
 pub fn log_operation(ctx: &OperationContext, op: &Operation, result: &Result<()>) {
     let elapsed = ctx.elapsed();
-    let attrs = ctx.attributes.iter()
+    let attrs = ctx
+        .attributes
+        .iter()
         .map(|(k, v)| format!("{}={}", k, v))
         .collect::<Vec<_>>()
         .join(", ");
-    
+
     match result {
         Ok(()) => {
             info!(
@@ -185,7 +232,7 @@ pub fn log_operation(ctx: &OperationContext, op: &Operation, result: &Result<()>
             ERROR_COUNTER.fetch_add(1, Ordering::Relaxed);
         }
     }
-    
+
     // Update specific counters
     match op {
         Operation::QueryExecute { .. } => {
@@ -224,17 +271,17 @@ where
     let ctx = OperationContext::new(operation);
     let trace_id = ctx.trace_id;
     let span_id = ctx.span_id;
-    
+
     info!(
         trace_id = %trace_id,
         span_id = %span_id,
         "Starting operation: {}", operation
     );
-    
+
     let start = Instant::now();
     let result = f.await;
     let elapsed = start.elapsed();
-    
+
     match &result {
         Ok(_) => {
             info!(
@@ -243,9 +290,9 @@ where
                 elapsed_ms = elapsed.as_millis(),
                 "Operation completed successfully: {}", operation
             );
-            record_metric(MetricType::Timer { 
-                name: "operation.duration", 
-                duration: elapsed 
+            record_metric(MetricType::Timer {
+                name: "operation.duration",
+                duration: elapsed,
             });
         }
         Err(e) => {
@@ -256,13 +303,13 @@ where
                 error = %e,
                 "Operation failed: {}", operation
             );
-            record_metric(MetricType::Counter { 
-                name: "operation.errors", 
-                value: 1 
+            record_metric(MetricType::Counter {
+                name: "operation.errors",
+                value: 1,
             });
         }
     }
-    
+
     result
 }
 
@@ -282,11 +329,12 @@ pub fn get_metrics() -> serde_json::Value {
 /// Structured error logging with context
 #[instrument]
 pub fn log_error_with_context(error: &anyhow::Error, ctx: &OperationContext) {
-    let error_chain = error.chain()
+    let error_chain = error
+        .chain()
         .map(|e| e.to_string())
         .collect::<Vec<_>>()
         .join(" -> ");
-    
+
     error!(
         trace_id = %ctx.trace_id,
         span_id = %ctx.span_id,
@@ -339,42 +387,49 @@ impl Drop for PerfTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_operation_context_creation() {
         let ctx = OperationContext::new("test_operation");
         assert_eq!(ctx.operation, "test_operation");
         assert!(ctx.parent_span_id.is_none());
-        
+
         let child = ctx.child("child_operation");
         assert_eq!(child.trace_id, ctx.trace_id);
         assert_eq!(child.parent_span_id, Some(ctx.span_id));
     }
-    
+
     #[test]
     fn test_metrics_recording() {
-        record_metric(MetricType::Counter { name: "test.counter", value: 42 });
-        record_metric(MetricType::Gauge { name: "test.gauge", value: 3.14 });
-        record_metric(MetricType::Timer { 
-            name: "test.timer", 
-            duration: Duration::from_millis(123) 
+        record_metric(MetricType::Counter {
+            name: "test.counter",
+            value: 42,
         });
-        
+        record_metric(MetricType::Gauge {
+            name: "test.gauge",
+            value: 3.14,
+        });
+        record_metric(MetricType::Timer {
+            name: "test.timer",
+            duration: Duration::from_millis(123),
+        });
+
         let metrics = get_metrics();
         assert!(metrics["timestamp"].is_string());
         assert!(metrics["operations"].is_object());
     }
-    
+
     #[tokio::test]
     async fn test_with_trace_id() {
         let result = with_trace_id("test_async_op", async {
             tokio::time::sleep(Duration::from_millis(10)).await;
             Ok::<_, anyhow::Error>(42)
-        }).await;
-        
+        })
+        .await;
+
         assert_eq!(result.unwrap(), 42);
     }
-    
+
     #[test]
     fn test_perf_timer() {
         {

@@ -2,27 +2,27 @@
 // This module provides runtime validation of all contracts
 // ensuring that preconditions and postconditions are met
 
-use anyhow::{bail, ensure, Context, Result};
-use std::path::Path;
-use std::collections::HashMap;
-use uuid::Uuid;
-use tracing::error;
-use crate::observability::*;
 use crate::contracts::*;
 use crate::contracts::{Document, Query};
+use crate::observability::*;
+use anyhow::{bail, ensure, Context, Result};
+use std::collections::HashMap;
+use std::path::Path;
+use tracing::error;
+use uuid::Uuid;
 
 /// Validation errors with detailed context
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
     #[error("Precondition failed: {condition}")]
     PreconditionFailed { condition: String, context: String },
-    
+
     #[error("Postcondition failed: {condition}")]
     PostconditionFailed { condition: String, context: String },
-    
+
     #[error("Invariant violated: {invariant}")]
     InvariantViolated { invariant: String, state: String },
-    
+
     #[error("Invalid input: {field} - {reason}")]
     InvalidInput { field: String, reason: String },
 }
@@ -41,12 +41,12 @@ impl ValidationContext {
             attributes: HashMap::new(),
         }
     }
-    
+
     pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.attributes.insert(key.into(), value.into());
         self
     }
-    
+
     pub fn validate(self, condition: bool, message: &str) -> Result<()> {
         if !condition {
             let context = format!(
@@ -66,39 +66,36 @@ impl ValidationContext {
 pub mod path {
     use super::*;
     use std::ffi::OsStr;
-    
+
     /// Maximum path length across platforms
     const MAX_PATH_LENGTH: usize = 4096;
-    
+
     /// Reserved filenames on Windows
     const RESERVED_NAMES: &[&str] = &[
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
-        "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3",
-        "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    
+
     /// Validate a file path for storage
     pub fn validate_file_path(path: &str) -> Result<()> {
-        let ctx = ValidationContext::new("validate_file_path")
-            .with_attribute("path", path);
-        
+        let ctx = ValidationContext::new("validate_file_path").with_attribute("path", path);
+
         // Check empty
-        ctx.clone().validate(!path.is_empty(), "Path cannot be empty")?;
-        
+        ctx.clone()
+            .validate(!path.is_empty(), "Path cannot be empty")?;
+
         // Check length
         ctx.clone().validate(
             path.len() < MAX_PATH_LENGTH,
-            &format!("Path exceeds maximum length of {}", MAX_PATH_LENGTH)
+            &format!("Path exceeds maximum length of {}", MAX_PATH_LENGTH),
         )?;
-        
+
         // Check for null bytes
-        ctx.clone().validate(
-            !path.contains('\0'),
-            "Path contains null bytes"
-        )?;
-        
+        ctx.clone()
+            .validate(!path.contains('\0'), "Path contains null bytes")?;
+
         let path_obj = Path::new(path);
-        
+
         // Check for directory traversal attempts
         for component in path_obj.components() {
             if let std::path::Component::ParentDir = component {
@@ -108,7 +105,7 @@ pub mod path {
                 });
             }
         }
-        
+
         // Check for reserved names (Windows compatibility)
         if let Some(stem) = path_obj.file_stem().and_then(OsStr::to_str) {
             let upper = stem.to_uppercase();
@@ -119,7 +116,7 @@ pub mod path {
                 });
             }
         }
-        
+
         // Check for valid UTF-8
         if path_obj.to_str().is_none() {
             bail!(ValidationError::InvalidInput {
@@ -127,17 +124,17 @@ pub mod path {
                 reason: "Path is not valid UTF-8".to_string(),
             });
         }
-        
+
         Ok(())
     }
-    
+
     /// Validate a directory path
     pub fn validate_directory_path(path: &str) -> Result<()> {
         validate_file_path(path)?;
-        
+
         // Additional directory-specific checks
         let path_obj = Path::new(path);
-        
+
         // Ensure it's not a file with extension
         if path_obj.extension().is_some() {
             bail!(ValidationError::InvalidInput {
@@ -145,7 +142,7 @@ pub mod path {
                 reason: "Directory path should not have file extension".to_string(),
             });
         }
-        
+
         Ok(())
     }
 }
@@ -153,87 +150,83 @@ pub mod path {
 /// Document validation
 pub mod document {
     use super::*;
-    
+
     /// Validate document for insertion
-    pub fn validate_for_insert(doc: &Document, existing_ids: &std::collections::HashSet<Uuid>) -> Result<()> {
+    pub fn validate_for_insert(
+        doc: &Document,
+        existing_ids: &std::collections::HashSet<Uuid>,
+    ) -> Result<()> {
         let ctx = ValidationContext::new("document_insert")
             .with_attribute("doc_id", &doc.id.to_string())
             .with_attribute("path", &doc.path);
-        
+
         // Check ID uniqueness
         ctx.clone().validate(
             !existing_ids.contains(&doc.id),
-            "Document ID already exists"
+            "Document ID already exists",
         )?;
-        
+
         // Validate path
         path::validate_file_path(&doc.path)?;
-        
+
         // Check size
-        ctx.clone().validate(
-            doc.size > 0,
-            "Document size must be positive"
-        )?;
-        
+        ctx.clone()
+            .validate(doc.size > 0, "Document size must be positive")?;
+
         ctx.clone().validate(
             doc.size < 100 * 1024 * 1024, // 100MB limit
-            "Document size exceeds maximum (100MB)"
+            "Document size exceeds maximum (100MB)",
         )?;
-        
+
         // Check timestamps
-        ctx.clone().validate(
-            doc.created > 0,
-            "Created timestamp must be positive"
-        )?;
-        
+        ctx.clone()
+            .validate(doc.created > 0, "Created timestamp must be positive")?;
+
         ctx.clone().validate(
             doc.updated >= doc.created,
-            "Updated timestamp must be >= created"
+            "Updated timestamp must be >= created",
         )?;
-        
+
         // Check title
         ctx.clone().validate(
             !doc.title.trim().is_empty(),
-            "Document title cannot be empty"
+            "Document title cannot be empty",
         )?;
-        
+
         ctx.validate(
             doc.title.len() < 1024,
-            "Document title too long (max 1024 chars)"
+            "Document title too long (max 1024 chars)",
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Validate document for update
-    pub fn validate_for_update(
-        new_doc: &Document,
-        old_doc: &Document,
-    ) -> Result<()> {
+    pub fn validate_for_update(new_doc: &Document, old_doc: &Document) -> Result<()> {
         let ctx = ValidationContext::new("document_update")
             .with_attribute("doc_id", &new_doc.id.to_string());
-        
+
         // IDs must match
         ctx.clone().validate(
             new_doc.id == old_doc.id,
-            "Document ID cannot change during update"
+            "Document ID cannot change during update",
         )?;
-        
+
         // Updated timestamp must increase
         ctx.clone().validate(
             new_doc.updated > old_doc.updated,
-            "Updated timestamp must increase"
+            "Updated timestamp must increase",
         )?;
-        
+
         // Created timestamp must not change
         ctx.validate(
             new_doc.created == old_doc.created,
-            "Created timestamp cannot change"
+            "Created timestamp cannot change",
         )?;
-        
+
         // Validate other fields
         path::validate_file_path(&new_doc.path)?;
-        
+
         Ok(())
     }
 }
@@ -241,68 +234,54 @@ pub mod document {
 /// Index validation
 pub mod index {
     use super::*;
-    
+
     /// Validate trigram extraction
     pub fn validate_trigram(text: &str) -> Result<()> {
         let ctx = ValidationContext::new("trigram_extraction")
             .with_attribute("text_length", &text.len().to_string());
-        
+
         ctx.clone().validate(
             text.len() >= 3,
-            "Text too short for trigram extraction (min 3 chars)"
+            "Text too short for trigram extraction (min 3 chars)",
         )?;
-        
+
         ctx.validate(
             text.len() < 1024 * 1024, // 1MB limit
-            "Text too long for trigram extraction (max 1MB)"
+            "Text too long for trigram extraction (max 1MB)",
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Validate search query
     pub fn validate_search_query(query: &str) -> Result<()> {
-        let ctx = ValidationContext::new("search_query")
-            .with_attribute("query", query);
-        
-        ctx.clone().validate(
-            !query.trim().is_empty(),
-            "Search query cannot be empty"
-        )?;
-        
-        ctx.validate(
-            query.len() < 1024,
-            "Search query too long (max 1024 chars)"
-        )?;
-        
+        let ctx = ValidationContext::new("search_query").with_attribute("query", query);
+
+        ctx.clone()
+            .validate(!query.trim().is_empty(), "Search query cannot be empty")?;
+
+        ctx.validate(query.len() < 1024, "Search query too long (max 1024 chars)")?;
+
         Ok(())
     }
-    
+
     /// Validate tag
     pub fn validate_tag(tag: &str) -> Result<()> {
-        let ctx = ValidationContext::new("tag_validation")
-            .with_attribute("tag", tag);
-        
-        ctx.clone().validate(
-            !tag.trim().is_empty(),
-            "Tag cannot be empty"
-        )?;
-        
-        ctx.clone().validate(
-            tag.len() < 128,
-            "Tag too long (max 128 chars)"
-        )?;
-        
+        let ctx = ValidationContext::new("tag_validation").with_attribute("tag", tag);
+
+        ctx.clone()
+            .validate(!tag.trim().is_empty(), "Tag cannot be empty")?;
+
+        ctx.clone()
+            .validate(tag.len() < 128, "Tag too long (max 128 chars)")?;
+
         // Check for valid characters (alphanumeric, dash, underscore)
-        let valid_chars = tag.chars().all(|c| 
-            c.is_alphanumeric() || c == '-' || c == '_' || c == ' '
-        );
-        
-        ctx.validate(
-            valid_chars,
-            "Tag contains invalid characters"
-        )?;
-        
+        let valid_chars = tag
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ');
+
+        ctx.validate(valid_chars, "Tag contains invalid characters")?;
+
         Ok(())
     }
 }
@@ -310,43 +289,35 @@ pub mod index {
 /// Transaction validation
 pub mod transaction {
     use super::*;
-    
+
     /// Active transactions tracking
     use std::sync::LazyLock;
-    static ACTIVE_TRANSACTIONS: LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> = 
+    static ACTIVE_TRANSACTIONS: LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
         LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-    
+
     /// Validate transaction begin
     pub fn validate_begin(tx_id: u64) -> Result<()> {
-        let ctx = ValidationContext::new("transaction_begin")
-            .with_attribute("tx_id", &tx_id.to_string());
-        
-        ctx.clone().validate(
-            tx_id > 0,
-            "Transaction ID must be positive"
-        )?;
-        
+        let ctx =
+            ValidationContext::new("transaction_begin").with_attribute("tx_id", &tx_id.to_string());
+
+        ctx.clone()
+            .validate(tx_id > 0, "Transaction ID must be positive")?;
+
         let mut active = ACTIVE_TRANSACTIONS.lock().unwrap();
-        ctx.validate(
-            !active.contains(&tx_id),
-            "Transaction ID already active"
-        )?;
-        
+        ctx.validate(!active.contains(&tx_id), "Transaction ID already active")?;
+
         active.insert(tx_id);
         Ok(())
     }
-    
+
     /// Validate transaction commit
     pub fn validate_commit(tx_id: u64) -> Result<()> {
         let ctx = ValidationContext::new("transaction_commit")
             .with_attribute("tx_id", &tx_id.to_string());
-        
+
         let mut active = ACTIVE_TRANSACTIONS.lock().unwrap();
-        ctx.validate(
-            active.contains(&tx_id),
-            "Transaction not active"
-        )?;
-        
+        ctx.validate(active.contains(&tx_id), "Transaction not active")?;
+
         active.remove(&tx_id);
         Ok(())
     }
@@ -355,52 +326,46 @@ pub mod transaction {
 /// Storage state validation
 pub mod storage {
     use super::*;
-    
+
     /// Validate storage metrics consistency
     pub fn validate_metrics(metrics: &StorageMetrics) -> Result<()> {
         let ctx = ValidationContext::new("storage_metrics")
             .with_attribute("doc_count", &metrics.document_count.to_string())
             .with_attribute("total_size", &metrics.total_size_bytes.to_string());
-        
+
         // Basic sanity checks
         ctx.clone().validate(
             metrics.total_size_bytes >= metrics.document_count as u64,
-            "Total size less than document count"
+            "Total size less than document count",
         )?;
-        
+
         // If no documents, size should be near zero
         if metrics.document_count == 0 {
             ctx.clone().validate(
                 metrics.total_size_bytes < 1024, // Allow some metadata
-                "Non-zero size with zero documents"
+                "Non-zero size with zero documents",
             )?;
         }
-        
+
         // Index sizes should be reasonable
         let total_index_size: usize = metrics.index_sizes.values().sum();
         ctx.validate(
             total_index_size <= (metrics.total_size_bytes as usize * 2),
-            "Index size exceeds reasonable bounds"
+            "Index size exceeds reasonable bounds",
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Validate page allocation
     pub fn validate_page_id(id: u64) -> Result<()> {
-        let ctx = ValidationContext::new("page_allocation")
-            .with_attribute("page_id", &id.to_string());
-        
-        ctx.clone().validate(
-            id > 0,
-            "Page ID must be positive"
-        )?;
-        
-        ctx.validate(
-            id < u64::MAX / 4096,
-            "Page ID too large"
-        )?;
-        
+        let ctx =
+            ValidationContext::new("page_allocation").with_attribute("page_id", &id.to_string());
+
+        ctx.clone().validate(id > 0, "Page ID must be positive")?;
+
+        ctx.validate(id < u64::MAX / 4096, "Page ID too large")?;
+
         Ok(())
     }
 }
@@ -415,15 +380,15 @@ impl<T> ValidationLayer<T> {
     pub fn new(inner: T, strict_mode: bool) -> Self {
         Self { inner, strict_mode }
     }
-    
+
     /// Log validation error and optionally panic
     fn handle_validation_error(&self, error: ValidationError) -> Result<()> {
         error!("Validation failed: {}", error);
-        
+
         if self.strict_mode {
             panic!("Validation failed in strict mode: {}", error);
         }
-        
+
         Err(error.into())
     }
 }
@@ -431,29 +396,29 @@ impl<T> ValidationLayer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_path_validation() {
         // Valid paths
         assert!(path::validate_file_path("/test/file.md").is_ok());
         assert!(path::validate_file_path("relative/path.txt").is_ok());
-        
+
         // Invalid paths
         assert!(path::validate_file_path("").is_err());
         assert!(path::validate_file_path("../../../etc/passwd").is_err());
         assert!(path::validate_file_path("file\0with\0nulls").is_err());
         assert!(path::validate_file_path("CON.txt").is_err()); // Windows reserved
-        
+
         // Path too long
         let long_path = "x".repeat(5000);
         assert!(path::validate_file_path(&long_path).is_err());
     }
-    
+
     #[test]
     fn test_document_validation() {
         let mut existing_ids = std::collections::HashSet::new();
         let doc_id = Uuid::new_v4();
-        
+
         let valid_doc = Document {
             id: doc_id,
             path: "/test/doc.md".to_string(),
@@ -464,26 +429,30 @@ mod tests {
             title: "Test Doc".to_string(),
             word_count: 100,
         };
-        
+
         // Should validate successfully
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_ok());
-        
+
         // Add ID to existing set
         existing_ids.insert(doc_id);
-        
+
         // Should fail with duplicate ID
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_err());
-        
+
         // Invalid documents
         let mut invalid = valid_doc.clone();
         invalid.size = 0;
-        assert!(document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err());
-        
+        assert!(
+            document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
+        );
+
         invalid = valid_doc.clone();
         invalid.updated = 500; // Before created
-        assert!(document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err());
+        assert!(
+            document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
+        );
     }
-    
+
     #[test]
     fn test_tag_validation() {
         // Valid tags
@@ -491,7 +460,7 @@ mod tests {
         assert!(index::validate_tag("rust-lang").is_ok());
         assert!(index::validate_tag("rust_programming").is_ok());
         assert!(index::validate_tag("Rust 2024").is_ok());
-        
+
         // Invalid tags
         assert!(index::validate_tag("").is_err());
         assert!(index::validate_tag("   ").is_err());

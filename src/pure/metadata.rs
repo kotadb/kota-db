@@ -1,19 +1,19 @@
 // Metadata Processing - Pure Functions
 // This module contains functions for parsing and extracting metadata from documents
 
-use std::collections::HashMap;
 use serde_yaml;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// Parse YAML frontmatter from markdown content
 pub fn parse_frontmatter(content: &str) -> Option<HashMap<String, serde_yaml::Value>> {
     if !content.starts_with("---\n") {
         return None;
     }
-    
+
     let end_marker = content[4..].find("\n---\n")?;
     let yaml_content = &content[4..end_marker + 4];
-    
+
     serde_yaml::from_str(yaml_content).ok()
 }
 
@@ -33,7 +33,8 @@ pub fn extract_tags(frontmatter: &HashMap<String, serde_yaml::Value>) -> Vec<Str
 /// Extract related documents from frontmatter
 pub fn extract_related(frontmatter: &HashMap<String, serde_yaml::Value>) -> Vec<String> {
     if let Some(serde_yaml::Value::Sequence(related)) = frontmatter.get("related") {
-        related.iter()
+        related
+            .iter()
             .filter_map(|v| v.as_str().map(String::from))
             .collect()
     } else {

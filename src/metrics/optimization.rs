@@ -1,15 +1,15 @@
 // Optimization Metrics - Stage 4: Observability for Phase 2 Infrastructure
 // Enhanced metrics for bulk operations and concurrent access patterns
 
+use crate::contracts::optimization::{
+    BulkOperationResult, BulkOperationType, ContentionMetrics, OptimizationRecommendation,
+    SLAComplianceReport, TreeStructureMetrics,
+};
+use crate::metrics::performance::{PerformanceCollector, PerformanceDashboard};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
-use serde::{Serialize, Deserialize};
-use crate::contracts::optimization::{
-    BulkOperationResult, ContentionMetrics, TreeStructureMetrics,
-    BulkOperationType, SLAComplianceReport, OptimizationRecommendation
-};
-use crate::metrics::performance::{PerformanceCollector, PerformanceDashboard};
 
 /// Optimization metrics collector extending performance metrics
 #[derive(Debug)]
@@ -28,7 +28,7 @@ pub struct OptimizationMetricsConfig {
     pub track_contention: bool,
     pub tree_analysis_interval: Duration,
     pub max_bulk_history: usize,
-    pub contention_sample_rate: f64,  // 0.0 to 1.0
+    pub contention_sample_rate: f64, // 0.0 to 1.0
     pub enable_realtime_recommendations: bool,
 }
 
@@ -158,7 +158,7 @@ pub struct SLAComplianceStatus {
 impl OptimizationMetricsCollector {
     pub fn new(config: OptimizationMetricsConfig) -> Self {
         let performance_config = crate::metrics::performance::PerformanceConfig::default();
-        
+
         Self {
             performance_collector: PerformanceCollector::new(performance_config),
             bulk_operation_history: Arc::new(RwLock::new(Vec::new())),
@@ -167,7 +167,7 @@ impl OptimizationMetricsCollector {
             configuration: config,
         }
     }
-    
+
     /// Record a bulk operation for analysis
     pub fn record_bulk_operation(
         &self,
@@ -179,7 +179,7 @@ impl OptimizationMetricsCollector {
         if !self.configuration.track_bulk_operations {
             return;
         }
-        
+
         // Calculate efficiency metrics
         let efficiency_score = self.calculate_efficiency_score(&result);
         let speedup_factor = if let Some(baseline) = baseline_duration {
@@ -187,14 +187,14 @@ impl OptimizationMetricsCollector {
         } else {
             1.0
         };
-        
+
         let memory_efficiency = if result.memory_delta_bytes > 0 {
             // Estimate based on input size and memory delta
             (input_size * 32) as f64 / result.memory_delta_bytes as f64
         } else {
             1.0
         };
-        
+
         let metric = BulkOperationMetric {
             operation_type,
             timestamp: SystemTime::now(),
@@ -204,17 +204,17 @@ impl OptimizationMetricsCollector {
             speedup_factor,
             memory_efficiency,
         };
-        
+
         // Store metric
         let mut history = self.bulk_operation_history.write().unwrap();
         history.push(metric);
-        
+
         // Maintain history size
         if history.len() > self.configuration.max_bulk_history {
             history.remove(0);
         }
     }
-    
+
     /// Record lock contention event
     pub fn record_lock_contention(
         &self,
@@ -225,14 +225,14 @@ impl OptimizationMetricsCollector {
         if !self.configuration.track_contention {
             return;
         }
-        
+
         // Sample based on configuration
         if fastrand::f64() > self.configuration.contention_sample_rate {
             return;
         }
-        
+
         let mut tracker = self.contention_tracker.lock().unwrap();
-        
+
         match lock_type {
             LockType::Read => {
                 if was_contested {
@@ -247,33 +247,33 @@ impl OptimizationMetricsCollector {
                 tracker.write_locks = tracker.write_locks.saturating_add(1);
             }
         }
-        
+
         tracker.total_lock_acquisitions += 1;
         if was_contested {
             tracker.contested_acquisitions += 1;
         }
-        
+
         tracker.lock_wait_times.push(wait_time);
-        
+
         // Keep only recent wait times (last 1000)
         if tracker.lock_wait_times.len() > 1000 {
             tracker.lock_wait_times.remove(0);
         }
     }
-    
+
     /// Record pending lock request
     pub fn record_lock_pending(&self, lock_type: LockType) {
         if !self.configuration.track_contention {
             return;
         }
-        
+
         let mut tracker = self.contention_tracker.lock().unwrap();
         match lock_type {
             LockType::Read => tracker.pending_reads += 1,
             LockType::Write => tracker.pending_writes += 1,
         }
     }
-    
+
     /// Update tree analysis cache
     pub fn update_tree_analysis(&self, metrics: TreeStructureMetrics) {
         let mut cache = self.tree_analysis_cache.write().unwrap();
@@ -283,18 +283,19 @@ impl OptimizationMetricsCollector {
             ttl: self.configuration.tree_analysis_interval,
         });
     }
-    
+
     /// Generate comprehensive optimization dashboard
     pub fn generate_optimization_dashboard(&self) -> OptimizationDashboard {
         let performance_dashboard = self.performance_collector.generate_dashboard();
         let bulk_operations = self.generate_bulk_operation_summary();
         let contention_metrics = self.generate_contention_metrics();
-        let tree_analysis = self.get_cached_tree_analysis()
+        let tree_analysis = self
+            .get_cached_tree_analysis()
             .unwrap_or_else(|| self.generate_default_tree_metrics());
         let efficiency_trends = self.generate_efficiency_trends();
         let recommendations = self.generate_recommendations(&tree_analysis, &contention_metrics);
         let compliance_status = self.assess_sla_compliance(&bulk_operations, &contention_metrics);
-        
+
         OptimizationDashboard {
             timestamp: SystemTime::now(),
             performance_dashboard,
@@ -306,30 +307,30 @@ impl OptimizationMetricsCollector {
             compliance_status,
         }
     }
-    
+
     /// Calculate efficiency score for a bulk operation
     fn calculate_efficiency_score(&self, result: &BulkOperationResult) -> f64 {
         let mut score = 1.0;
-        
+
         // Penalize errors
         if !result.errors.is_empty() {
             score *= 0.5;
         }
-        
+
         // Reward high throughput
         if result.throughput_ops_per_sec > 10000.0 {
             score *= 1.2;
         } else if result.throughput_ops_per_sec < 1000.0 {
             score *= 0.8;
         }
-        
+
         // Reward good tree balance
         if result.tree_balance_factor > 0.9 {
             score *= 1.1;
         } else if result.tree_balance_factor < 0.7 {
             score *= 0.9;
         }
-        
+
         // Reward efficient complexity
         score *= match result.complexity_class {
             crate::contracts::performance::ComplexityClass::Constant => 1.3,
@@ -339,14 +340,14 @@ impl OptimizationMetricsCollector {
             crate::contracts::performance::ComplexityClass::Quadratic => 0.5,
             crate::contracts::performance::ComplexityClass::Unknown => 0.7,
         };
-        
+
         score.clamp(0.0, 1.0)
     }
-    
+
     /// Generate bulk operation summary
     fn generate_bulk_operation_summary(&self) -> BulkOperationSummary {
         let history = self.bulk_operation_history.read().unwrap();
-        
+
         if history.is_empty() {
             return BulkOperationSummary {
                 total_operations: 0,
@@ -356,31 +357,30 @@ impl OptimizationMetricsCollector {
                 recent_operations: Vec::new(),
             };
         }
-        
+
         let total_operations = history.len() as u64;
-        let avg_efficiency_score = history.iter()
-            .map(|m| m.efficiency_score)
-            .sum::<f64>() / history.len() as f64;
-        let avg_speedup_factor = history.iter()
-            .map(|m| m.speedup_factor)
-            .sum::<f64>() / history.len() as f64;
-        
+        let avg_efficiency_score =
+            history.iter().map(|m| m.efficiency_score).sum::<f64>() / history.len() as f64;
+        let avg_speedup_factor =
+            history.iter().map(|m| m.speedup_factor).sum::<f64>() / history.len() as f64;
+
         // Group by operation type
         let mut operations_by_type: HashMap<String, BulkOperationTypeStats> = HashMap::new();
-        
+
         for metric in history.iter() {
             let type_name = format!("{:?}", metric.operation_type);
-            let stats = operations_by_type.entry(type_name).or_insert_with(|| {
-                BulkOperationTypeStats {
-                    count: 0,
-                    avg_efficiency: 0.0,
-                    avg_speedup: 0.0,
-                    avg_input_size: 0,
-                    success_rate: 0.0,
-                    last_operation: None,
-                }
-            });
-            
+            let stats =
+                operations_by_type
+                    .entry(type_name)
+                    .or_insert_with(|| BulkOperationTypeStats {
+                        count: 0,
+                        avg_efficiency: 0.0,
+                        avg_speedup: 0.0,
+                        avg_input_size: 0,
+                        success_rate: 0.0,
+                        last_operation: None,
+                    });
+
             stats.count += 1;
             stats.avg_efficiency += metric.efficiency_score;
             stats.avg_speedup += metric.speedup_factor;
@@ -390,7 +390,7 @@ impl OptimizationMetricsCollector {
             }
             stats.last_operation = Some(metric.timestamp);
         }
-        
+
         // Finalize averages
         for stats in operations_by_type.values_mut() {
             if stats.count > 0 {
@@ -400,14 +400,10 @@ impl OptimizationMetricsCollector {
                 stats.success_rate /= stats.count as f64;
             }
         }
-        
+
         // Get recent operations (last 10)
-        let recent_operations = history.iter()
-            .rev()
-            .take(10)
-            .cloned()
-            .collect();
-        
+        let recent_operations = history.iter().rev().take(10).cloned().collect();
+
         BulkOperationSummary {
             total_operations,
             avg_efficiency_score,
@@ -416,30 +412,30 @@ impl OptimizationMetricsCollector {
             recent_operations,
         }
     }
-    
+
     /// Generate contention metrics
     fn generate_contention_metrics(&self) -> ContentionMetrics {
         let tracker = self.contention_tracker.lock().unwrap();
-        
+
         let contention_ratio = if tracker.total_lock_acquisitions > 0 {
             tracker.contested_acquisitions as f64 / tracker.total_lock_acquisitions as f64
         } else {
             0.0
         };
-        
+
         let avg_wait_time = if !tracker.lock_wait_times.is_empty() {
             let total: Duration = tracker.lock_wait_times.iter().sum();
             total / tracker.lock_wait_times.len() as u32
         } else {
             Duration::ZERO
         };
-        
+
         let lock_acquisition_rate = if tracker.last_reset.elapsed() > Duration::ZERO {
             tracker.total_lock_acquisitions as f64 / tracker.last_reset.elapsed().as_secs_f64()
         } else {
             0.0
         };
-        
+
         ContentionMetrics {
             active_readers: tracker.read_locks,
             active_writers: tracker.write_locks,
@@ -451,7 +447,7 @@ impl OptimizationMetricsCollector {
             contention_ratio,
         }
     }
-    
+
     /// Get cached tree analysis or None if expired
     fn get_cached_tree_analysis(&self) -> Option<TreeStructureMetrics> {
         let cache = self.tree_analysis_cache.read().unwrap();
@@ -462,7 +458,7 @@ impl OptimizationMetricsCollector {
         }
         None
     }
-    
+
     /// Generate default tree metrics when none are cached
     fn generate_default_tree_metrics(&self) -> TreeStructureMetrics {
         // Return placeholder metrics - in practice, this would trigger a tree analysis
@@ -484,12 +480,13 @@ impl OptimizationMetricsCollector {
             recommended_actions: Vec::new(),
         }
     }
-    
+
     /// Generate efficiency trends
     fn generate_efficiency_trends(&self) -> EfficiencyTrends {
         let history = self.bulk_operation_history.read().unwrap();
-        
-        let bulk_efficiency_trend: Vec<_> = history.iter()
+
+        let bulk_efficiency_trend: Vec<_> = history
+            .iter()
             .take(50) // Last 50 operations
             .map(|m| EfficiencyDataPoint {
                 timestamp: m.timestamp,
@@ -497,8 +494,9 @@ impl OptimizationMetricsCollector {
                 context: format!("{:?}", m.operation_type),
             })
             .collect();
-        
-        let memory_efficiency_trend: Vec<_> = history.iter()
+
+        let memory_efficiency_trend: Vec<_> = history
+            .iter()
             .take(50)
             .map(|m| EfficiencyDataPoint {
                 timestamp: m.timestamp,
@@ -506,7 +504,7 @@ impl OptimizationMetricsCollector {
                 context: format!("size_{}", m.input_size),
             })
             .collect();
-        
+
         // Simplified trends - in practice, would track more comprehensive data
         EfficiencyTrends {
             bulk_efficiency_trend,
@@ -515,7 +513,7 @@ impl OptimizationMetricsCollector {
             tree_balance_trend: Vec::new(),
         }
     }
-    
+
     /// Generate optimization recommendations
     fn generate_recommendations(
         &self,
@@ -523,7 +521,7 @@ impl OptimizationMetricsCollector {
         contention_metrics: &ContentionMetrics,
     ) -> Vec<OptimizationRecommendation> {
         let mut recommendations = tree_metrics.recommended_actions.clone();
-        
+
         // Add contention-based recommendations
         if contention_metrics.contention_ratio > 0.3 {
             recommendations.push(OptimizationRecommendation::OptimizeBulkOperations {
@@ -532,17 +530,17 @@ impl OptimizationMetricsCollector {
                 target_efficiency: 0.9,
             });
         }
-        
+
         if contention_metrics.pending_writers > 5 {
             recommendations.push(OptimizationRecommendation::EnableCaching {
                 hot_paths: vec!["write_operations".to_string()],
                 estimated_speedup: 2.0,
             });
         }
-        
+
         recommendations
     }
-    
+
     /// Assess SLA compliance across all metrics
     fn assess_sla_compliance(
         &self,
@@ -552,34 +550,34 @@ impl OptimizationMetricsCollector {
         let mut violations = Vec::new();
         let mut compliant_components = 0;
         let total_components = 3;
-        
+
         // Check bulk operations compliance
-        let bulk_compliant = bulk_summary.avg_efficiency_score >= 0.8 
-            && bulk_summary.avg_speedup_factor >= 5.0;
+        let bulk_compliant =
+            bulk_summary.avg_efficiency_score >= 0.8 && bulk_summary.avg_speedup_factor >= 5.0;
         if bulk_compliant {
             compliant_components += 1;
         } else {
             violations.push("Bulk operations below efficiency thresholds".to_string());
         }
-        
+
         // Check contention compliance
-        let contention_compliant = contention_metrics.contention_ratio < 0.3 
-            && contention_metrics.pending_writers < 10;
+        let contention_compliant =
+            contention_metrics.contention_ratio < 0.3 && contention_metrics.pending_writers < 10;
         if contention_compliant {
             compliant_components += 1;
         } else {
             violations.push("Lock contention exceeds acceptable limits".to_string());
         }
-        
+
         // Check tree health (simplified)
         let tree_compliant = true; // Would check tree metrics
         if tree_compliant {
             compliant_components += 1;
         }
-        
+
         let compliance_score = compliant_components as f64 / total_components as f64;
         let overall_compliant = compliance_score >= 0.8;
-        
+
         SLAComplianceStatus {
             overall_compliant,
             bulk_operations_compliant: bulk_compliant,
@@ -589,45 +587,62 @@ impl OptimizationMetricsCollector {
             compliance_score,
         }
     }
-    
+
     /// Export optimization metrics to JSON
     pub fn export_optimization_json(&self) -> String {
         let dashboard = self.generate_optimization_dashboard();
-        serde_json::to_string_pretty(&dashboard)
-            .unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string_pretty(&dashboard).unwrap_or_else(|_| "{}".to_string())
     }
-    
+
     /// Export optimization metrics to Prometheus format
     pub fn export_optimization_prometheus(&self) -> String {
         let dashboard = self.generate_optimization_dashboard();
         let mut prometheus = String::new();
-        
+
         // Bulk operation metrics
-        prometheus.push_str(&format!("kotadb_bulk_operations_total {}\n", 
-                                    dashboard.bulk_operations.total_operations));
-        prometheus.push_str(&format!("kotadb_bulk_efficiency_avg {:.3}\n", 
-                                    dashboard.bulk_operations.avg_efficiency_score));
-        prometheus.push_str(&format!("kotadb_bulk_speedup_avg {:.1}\n", 
-                                    dashboard.bulk_operations.avg_speedup_factor));
-        
+        prometheus.push_str(&format!(
+            "kotadb_bulk_operations_total {}\n",
+            dashboard.bulk_operations.total_operations
+        ));
+        prometheus.push_str(&format!(
+            "kotadb_bulk_efficiency_avg {:.3}\n",
+            dashboard.bulk_operations.avg_efficiency_score
+        ));
+        prometheus.push_str(&format!(
+            "kotadb_bulk_speedup_avg {:.1}\n",
+            dashboard.bulk_operations.avg_speedup_factor
+        ));
+
         // Contention metrics
-        prometheus.push_str(&format!("kotadb_lock_contention_ratio {:.3}\n", 
-                                    dashboard.contention_metrics.contention_ratio));
-        prometheus.push_str(&format!("kotadb_active_readers {}\n", 
-                                    dashboard.contention_metrics.active_readers));
-        prometheus.push_str(&format!("kotadb_active_writers {}\n", 
-                                    dashboard.contention_metrics.active_writers));
-        
+        prometheus.push_str(&format!(
+            "kotadb_lock_contention_ratio {:.3}\n",
+            dashboard.contention_metrics.contention_ratio
+        ));
+        prometheus.push_str(&format!(
+            "kotadb_active_readers {}\n",
+            dashboard.contention_metrics.active_readers
+        ));
+        prometheus.push_str(&format!(
+            "kotadb_active_writers {}\n",
+            dashboard.contention_metrics.active_writers
+        ));
+
         // Tree health metrics
-        prometheus.push_str(&format!("kotadb_tree_balance_factor {:.3}\n", 
-                                    dashboard.tree_analysis.balance_factor));
-        prometheus.push_str(&format!("kotadb_tree_utilization {:.3}\n", 
-                                    dashboard.tree_analysis.utilization_factor));
-        
+        prometheus.push_str(&format!(
+            "kotadb_tree_balance_factor {:.3}\n",
+            dashboard.tree_analysis.balance_factor
+        ));
+        prometheus.push_str(&format!(
+            "kotadb_tree_utilization {:.3}\n",
+            dashboard.tree_analysis.utilization_factor
+        ));
+
         // Compliance metrics
-        prometheus.push_str(&format!("kotadb_sla_compliance_score {:.3}\n", 
-                                    dashboard.compliance_status.compliance_score));
-        
+        prometheus.push_str(&format!(
+            "kotadb_sla_compliance_score {:.3}\n",
+            dashboard.compliance_status.compliance_score
+        ));
+
         prometheus
     }
 }
@@ -643,12 +658,12 @@ pub enum LockType {
 mod tests {
     use super::*;
     use std::time::Duration;
-    
+
     #[test]
     fn test_optimization_metrics_collector() {
         let config = OptimizationMetricsConfig::default();
         let collector = OptimizationMetricsCollector::new(config);
-        
+
         // Record a bulk operation
         let result = BulkOperationResult::success(1000, Duration::from_millis(100), 1024, 0.95);
         collector.record_bulk_operation(
@@ -657,27 +672,23 @@ mod tests {
             result,
             Some(Duration::from_secs(1)), // Baseline for speedup calculation
         );
-        
+
         // Record contention
-        collector.record_lock_contention(
-            LockType::Write,
-            Duration::from_millis(50),
-            true,
-        );
-        
+        collector.record_lock_contention(LockType::Write, Duration::from_millis(50), true);
+
         // Generate dashboard
         let dashboard = collector.generate_optimization_dashboard();
-        
+
         assert!(dashboard.bulk_operations.total_operations > 0);
         assert!(dashboard.bulk_operations.avg_efficiency_score > 0.0);
         assert!(dashboard.contention_metrics.contested_acquisitions > 0);
     }
-    
+
     #[test]
     fn test_efficiency_score_calculation() {
         let config = OptimizationMetricsConfig::default();
         let collector = OptimizationMetricsCollector::new(config);
-        
+
         // Test high-efficiency operation
         let good_result = BulkOperationResult {
             operations_completed: 1000,
@@ -688,10 +699,10 @@ mod tests {
             complexity_class: crate::contracts::performance::ComplexityClass::Logarithmic,
             errors: Vec::new(),
         };
-        
+
         let score = collector.calculate_efficiency_score(&good_result);
         assert!(score > 0.8, "Expected high efficiency score, got {}", score);
-        
+
         // Test low-efficiency operation
         let bad_result = BulkOperationResult {
             operations_completed: 100,
@@ -702,7 +713,7 @@ mod tests {
             complexity_class: crate::contracts::performance::ComplexityClass::Quadratic,
             errors: vec!["Test error".to_string()],
         };
-        
+
         let score = collector.calculate_efficiency_score(&bad_result);
         assert!(score < 0.5, "Expected low efficiency score, got {}", score);
     }

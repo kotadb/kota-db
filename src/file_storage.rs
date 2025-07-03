@@ -11,11 +11,15 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::contracts::{Document, Storage};
+use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTag, ValidatedTitle};
 use crate::validation;
-use crate::wrappers::{TracedStorage, ValidatedStorage, RetryableStorage, CachedStorage, create_wrapped_storage};
+use crate::wrappers::{
+    create_wrapped_storage, CachedStorage, RetryableStorage, TracedStorage, ValidatedStorage,
+};
+use chrono::{DateTime, Utc};
 
 /// Simple file-based storage implementation
-/// 
+///
 /// This is the basic storage engine that implements the Storage trait.
 /// It should always be used with the Stage 6 component library wrappers:
 /// TracedStorage, ValidatedStorage, RetryableStorage, CachedStorage
@@ -50,7 +54,8 @@ impl FileStorage {
         ];
 
         for path in &paths {
-            fs::create_dir_all(path).await
+            fs::create_dir_all(path)
+                .await
                 .with_context(|| format!("Failed to create directory: {}", path.display()))?;
         }
 
@@ -74,19 +79,20 @@ impl FileStorage {
     /// Load existing documents from disk into memory
     async fn load_existing_documents(&self) -> Result<()> {
         let docs_dir = self.db_path.join("documents");
-        
+
         if !docs_dir.exists() {
             return Ok(());
         }
 
-        let mut entries = fs::read_dir(&docs_dir).await
-            .with_context(|| format!("Failed to read documents directory: {}", docs_dir.display()))?;
+        let mut entries = fs::read_dir(&docs_dir).await.with_context(|| {
+            format!("Failed to read documents directory: {}", docs_dir.display())
+        })?;
 
         let mut documents = self.documents.write().await;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            
+
             // Only process .json metadata files
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
@@ -117,21 +123,27 @@ impl FileStorage {
         let metadata_path = self.metadata_file_path(&metadata.id);
         let content = serde_json::to_string_pretty(metadata)
             .context("Failed to serialize document metadata")?;
-        
-        fs::write(&metadata_path, content).await
-            .with_context(|| format!("Failed to write metadata file: {}", metadata_path.display()))?;
-        
+
+        fs::write(&metadata_path, content).await.with_context(|| {
+            format!("Failed to write metadata file: {}", metadata_path.display())
+        })?;
+
         Ok(())
     }
 
     /// Create a Document from stored metadata and content
     async fn metadata_to_document(&self, metadata: &DocumentMetadata) -> Result<Document> {
         let content_path = self.document_file_path(&metadata.id);
-        let content = fs::read_to_string(&content_path).await
-            .with_context(|| format!("Failed to read document content: {}", content_path.display()))?;
+        let content = fs::read(&content_path).await.with_context(|| {
+            format!(
+                "Failed to read document content: {}",
+                content_path.display()
+            )
+        })?;
 
         // Extract title from content (first line without # prefix)
-        let title = content
+        let content_str = String::from_utf8_lossy(&content);
+        let title = content_str
             .lines()
             .next()
             .unwrap_or("")
@@ -139,27 +151,38 @@ impl FileStorage {
             .trim()
             .to_string();
 
-        // Count words in content
-        let word_count = content
-            .split_whitespace()
-            .count() as u32;
+        // Parse frontmatter for tags
+        let tags = if let Some(frontmatter) = crate::pure::metadata::parse_frontmatter(&content_str)
+        {
+            crate::pure::metadata::extract_tags(&frontmatter)
+                .into_iter()
+                .filter_map(|tag| ValidatedTag::new(&tag).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         Ok(Document {
-            id: metadata.id,
-            path: format!("/documents/{}.md", metadata.id), // Virtual path
-            hash: metadata.hash,
-            size: metadata.size,
-            created: metadata.created,
-            updated: metadata.updated,
-            title,
-            word_count,
+            id: ValidatedDocumentId::from_uuid(metadata.id)?,
+            path: ValidatedPath::new(&format!("/documents/{}.md", metadata.id))?,
+            title: ValidatedTitle::new(&title)?,
+            content,
+            tags,
+            created_at: DateTime::<Utc>::from_timestamp(metadata.created, 0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid created timestamp"))?,
+            updated_at: DateTime::<Utc>::from_timestamp(metadata.updated, 0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid updated timestamp"))?,
+            size: metadata.size as usize,
         })
     }
 }
 
 #[async_trait]
 impl Storage for FileStorage {
-    async fn open(path: &str) -> Result<Self> where Self: Sized {
+    async fn open(path: &str) -> Result<Self>
+    where
+        Self: Sized,
+    {
         // Validate path using existing Stage 2 validation
         validation::path::validate_directory_path(path)?;
 
@@ -184,29 +207,31 @@ impl Storage for FileStorage {
 
     async fn insert(&mut self, doc: Document) -> Result<()> {
         // Check if document already exists
+        let doc_uuid = doc.id.as_uuid();
         {
             let documents = self.documents.read().await;
-            if documents.contains_key(&doc.id) {
-                anyhow::bail!("Document with ID {} already exists", doc.id);
+            if documents.contains_key(&doc_uuid) {
+                anyhow::bail!("Document with ID {} already exists", doc_uuid);
             }
         }
 
-        // Create document content (simple markdown format)
-        let content = format!("# {}\n\n(Document content would go here)\n", doc.title);
-        
         // Write document content to file
-        let doc_path = self.document_file_path(&doc.id);
-        fs::write(&doc_path, &content).await
+        let doc_path = self.document_file_path(&doc_uuid);
+        fs::write(&doc_path, &doc.content)
+            .await
             .with_context(|| format!("Failed to write document: {}", doc_path.display()))?;
+
+        // Calculate hash
+        let hash = crate::pure::metadata::calculate_hash(&doc.content);
 
         // Create metadata
         let metadata = DocumentMetadata {
-            id: doc.id,
+            id: doc_uuid,
             file_path: doc_path,
-            size: content.len() as u64,
-            created: doc.created,
-            updated: doc.updated,
-            hash: doc.hash,
+            size: doc.content.len() as u64,
+            created: doc.created_at.timestamp(),
+            updated: doc.updated_at.timestamp(),
+            hash,
         };
 
         // Save metadata to disk
@@ -215,16 +240,16 @@ impl Storage for FileStorage {
         // Update in-memory index
         {
             let mut documents = self.documents.write().await;
-            documents.insert(doc.id, metadata);
+            documents.insert(doc_uuid, metadata);
         }
 
         Ok(())
     }
 
-    async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
+    async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
         let documents = self.documents.read().await;
-        
-        if let Some(metadata) = documents.get(id) {
+
+        if let Some(metadata) = documents.get(&id.as_uuid()) {
             let document = self.metadata_to_document(metadata).await?;
             Ok(Some(document))
         } else {
@@ -234,24 +259,28 @@ impl Storage for FileStorage {
 
     async fn update(&mut self, doc: Document) -> Result<()> {
         // Check if document exists
+        let doc_uuid = doc.id.as_uuid();
         let metadata = {
             let documents = self.documents.read().await;
-            documents.get(&doc.id).cloned()
+            documents.get(&doc_uuid).cloned()
         };
 
-        let mut metadata = metadata
-            .ok_or_else(|| anyhow::anyhow!("Document with ID {} not found", doc.id))?;
+        let mut metadata =
+            metadata.ok_or_else(|| anyhow::anyhow!("Document with ID {} not found", doc_uuid))?;
 
         // Update content
-        let content = format!("# {}\n\n(Updated document content)\n", doc.title);
-        let doc_path = self.document_file_path(&doc.id);
-        fs::write(&doc_path, &content).await
+        let doc_path = self.document_file_path(&doc_uuid);
+        fs::write(&doc_path, &doc.content)
+            .await
             .with_context(|| format!("Failed to update document: {}", doc_path.display()))?;
 
+        // Calculate new hash
+        let hash = crate::pure::metadata::calculate_hash(&doc.content);
+
         // Update metadata
-        metadata.size = content.len() as u64;
-        metadata.updated = doc.updated;
-        metadata.hash = doc.hash;
+        metadata.size = doc.content.len() as u64;
+        metadata.updated = doc.updated_at.timestamp();
+        metadata.hash = hash;
 
         // Save metadata
         self.save_metadata(&metadata).await?;
@@ -259,48 +288,81 @@ impl Storage for FileStorage {
         // Update in-memory index
         {
             let mut documents = self.documents.write().await;
-            documents.insert(doc.id, metadata);
+            documents.insert(doc_uuid, metadata);
         }
 
         Ok(())
     }
 
-    async fn delete(&mut self, id: &Uuid) -> Result<()> {
+    async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
         // Remove from in-memory index
         let metadata = {
             let mut documents = self.documents.write().await;
-            documents.remove(id)
+            documents.remove(&id.as_uuid())
         };
 
         if let Some(metadata) = metadata {
             // Remove files
-            let doc_path = self.document_file_path(id);
-            let meta_path = self.metadata_file_path(id);
+            let doc_path = self.document_file_path(&id.as_uuid());
+            let meta_path = self.metadata_file_path(&id.as_uuid());
 
             // Remove document file if it exists
             if doc_path.exists() {
-                fs::remove_file(&doc_path).await
-                    .with_context(|| format!("Failed to remove document file: {}", doc_path.display()))?;
+                fs::remove_file(&doc_path).await.with_context(|| {
+                    format!("Failed to remove document file: {}", doc_path.display())
+                })?;
             }
 
             // Remove metadata file if it exists
             if meta_path.exists() {
-                fs::remove_file(&meta_path).await
-                    .with_context(|| format!("Failed to remove metadata file: {}", meta_path.display()))?;
+                fs::remove_file(&meta_path).await.with_context(|| {
+                    format!("Failed to remove metadata file: {}", meta_path.display())
+                })?;
             }
-        }
 
-        // Note: We don't error if the document doesn't exist, as per contract
-        Ok(())
+            Ok(true) // Document was deleted
+        } else {
+            Ok(false) // Document didn't exist
+        }
     }
 
     async fn sync(&mut self) -> Result<()> {
         // For this simple implementation, we sync by ensuring all files are written
         // In a more sophisticated implementation, this would flush WAL buffers
-        
+
         if let Some(wal_file) = self.wal_writer.write().await.as_mut() {
-            wal_file.sync_all().await
+            wal_file
+                .sync_all()
+                .await
                 .context("Failed to sync WAL file")?;
+        }
+
+        Ok(())
+    }
+
+    async fn list_all(&self) -> Result<Vec<Document>> {
+        let documents = self.documents.read().await;
+        let mut result = Vec::with_capacity(documents.len());
+
+        // Convert each metadata entry to a full document
+        for metadata in documents.values() {
+            if let Ok(doc) = self.metadata_to_document(metadata).await {
+                result.push(doc);
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        // For file-based storage, flush is similar to sync
+        // Ensure all buffered writes are persisted to disk
+        self.sync().await?;
+
+        // Additionally, we could force metadata updates
+        let documents = self.documents.read().await;
+        for metadata in documents.values() {
+            self.save_metadata(metadata).await?;
         }
 
         Ok(())
@@ -310,10 +372,10 @@ impl Storage for FileStorage {
         // Sync before closing
         // Note: We need to work around the fact that close() consumes self
         // but sync() requires &mut self
-        
+
         // For this simple implementation, we just drop the WAL writer
         // In a real implementation, we'd properly close all resources
-        
+
         drop(self.wal_writer);
         Ok(())
     }
@@ -365,7 +427,7 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
 }
 
 /// Create a fully wrapped FileStorage with all Stage 6 components
-/// 
+///
 /// This is the recommended way to create a production-ready storage instance.
 /// It automatically applies all Stage 6 wrapper components for maximum safety and reliability.
 pub async fn create_file_storage(
@@ -374,9 +436,9 @@ pub async fn create_file_storage(
 ) -> Result<TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<FileStorage>>>>> {
     // Create base FileStorage
     let base_storage = FileStorage::open(path).await?;
-    
+
     // Apply Stage 6 wrapper composition
     let wrapped = create_wrapped_storage(base_storage, cache_capacity.unwrap_or(1000)).await;
-    
+
     Ok(wrapped)
 }

@@ -1,57 +1,95 @@
 // Contracts Module - Stage 2: Contract-First Design
 // Defines all contracts and interfaces for KotaDB components
 
-pub mod performance;
 pub mod optimization;
+pub mod performance;
 
 // Re-export key types for convenience
 pub use performance::{
-    PerformanceGuarantee,
-    ComplexityContract, 
-    MemoryContract,
+    ComplexityClass, ComplexityContract, MemoryContract, PerformanceGuarantee,
     PerformanceMeasurement,
-    ComplexityClass,
 };
 
 pub use optimization::{
-    BulkOperations,
-    ConcurrentAccess,
-    TreeAnalysis,
-    MemoryOptimization,
-    OptimizationSLA,
-    BulkOperationResult,
-    ContentionMetrics,
-    TreeStructureMetrics,
-    BalanceInfo,
-    MemoryUsage,
-    BulkOperationType,
-    SLAComplianceReport,
+    BalanceInfo, BulkOperationResult, BulkOperationType, BulkOperations, ConcurrentAccess,
+    ContentionMetrics, MemoryOptimization, MemoryUsage, OptimizationSLA, SLAComplianceReport,
+    TreeAnalysis, TreeStructureMetrics,
 };
 
 // Core domain contracts (re-exported from original contracts.rs)
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use chrono::{DateTime, Utc};
 
-use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTitle, ValidatedTag, ValidatedSearchQuery, ValidatedPageId, ValidatedLimit};
+use crate::types::{
+    ValidatedDocumentId, ValidatedLimit, ValidatedPageId, ValidatedPath, ValidatedSearchQuery,
+    ValidatedTag, ValidatedTitle,
+};
 
 /// Core storage contract
-pub trait Storage {
+#[async_trait::async_trait]
+pub trait Storage: Send + Sync {
+    /// Open a storage instance at the given path
+    async fn open(path: &str) -> Result<Self>
+    where
+        Self: Sized;
+
+    /// Insert a new document
     async fn insert(&mut self, document: Document) -> Result<()>;
+
+    /// Get a document by ID
     async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>>;
+
+    /// Update an existing document
+    async fn update(&mut self, document: Document) -> Result<()>;
+
+    /// Delete a document by ID
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool>;
+
+    /// List all documents
     async fn list_all(&self) -> Result<Vec<Document>>;
+
+    /// Sync changes to persistent storage
+    async fn sync(&mut self) -> Result<()>;
+
+    /// Flush any pending changes
     async fn flush(&mut self) -> Result<()>;
+
+    /// Close the storage instance
+    async fn close(self) -> Result<()>;
 }
 
 /// Core index contract
-pub trait Index {
+#[async_trait::async_trait]
+pub trait Index: Send + Sync {
+    /// Open an index instance at the given path
+    async fn open(path: &str) -> Result<Self>
+    where
+        Self: Sized;
+
+    /// Insert a key-value pair into the index
     async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
+
+    /// Update an existing entry in the index
+    async fn update(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
+
+    /// Delete an entry from the index
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool>;
+
+    /// Search the index with a query
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>>;
+
+    /// Sync changes to persistent storage
+    async fn sync(&mut self) -> Result<()>;
+
+    /// Flush any pending changes
     async fn flush(&mut self) -> Result<()>;
+
+    /// Close the index instance
+    async fn close(self) -> Result<()>;
 }
 
 /// Document representation
@@ -67,6 +105,31 @@ pub struct Document {
     pub size: usize,
 }
 
+impl Document {
+    /// Create a new document
+    pub fn new(
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        title: ValidatedTitle,
+        content: Vec<u8>,
+        tags: Vec<ValidatedTag>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        let size = content.len();
+        Self {
+            id,
+            path,
+            title,
+            content,
+            tags,
+            created_at,
+            updated_at,
+            size,
+        }
+    }
+}
+
 /// Query representation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Query {
@@ -78,20 +141,44 @@ pub struct Query {
 }
 
 impl Query {
-    pub fn new() -> Self {
+    /// Create a query with specific parameters (for backward compatibility)
+    pub fn new(
+        text: Option<String>,
+        _tags: Option<Vec<String>>,
+        _path_pattern: Option<String>,
+        limit: usize,
+    ) -> anyhow::Result<Self> {
+        let mut search_terms = Vec::new();
+        if let Some(text) = text {
+            if !text.is_empty() && text != "*" {
+                search_terms.push(ValidatedSearchQuery::new(&text)?);
+            }
+        }
+
+        Ok(Self {
+            search_terms,
+            tags: Vec::new(),
+            path_pattern: None,
+            limit: ValidatedLimit::new(limit, 1000)?,
+            offset: ValidatedPageId::new(1)?,
+        })
+    }
+
+    /// Create an empty query with defaults
+    pub fn empty() -> Self {
         Self {
             search_terms: Vec::new(),
             tags: Vec::new(),
             path_pattern: None,
-            limit: ValidatedLimit::new(10).unwrap(), // Safe default
-            offset: ValidatedPageId::new(0).unwrap(), // Safe default
+            limit: ValidatedLimit::new(10, 1000).unwrap(), // Safe default
+            offset: ValidatedPageId::new(1).unwrap(),      // Safe default
         }
     }
 }
 
 impl Default for Query {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 

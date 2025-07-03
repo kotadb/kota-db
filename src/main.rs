@@ -19,31 +19,31 @@ enum Commands {
         /// Path to the directory to index
         #[arg(default_value = ".")]
         path: String,
-        
+
         /// Force rebuild even if indices exist
         #[arg(short, long)]
         force: bool,
     },
-    
+
     /// Search the database
     Search {
         /// Search query
         query: String,
-        
+
         /// Maximum number of results
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
-    
+
     /// Show database statistics
     Stats,
-    
+
     /// Verify database integrity
     Verify {
         /// Check indices
         #[arg(long)]
         check_indices: bool,
-        
+
         /// Check storage
         #[arg(long)]
         check_storage: bool,
@@ -54,32 +54,30 @@ enum Commands {
 async fn main() -> Result<()> {
     // Initialize logging first
     init_logging()?;
-    
+
     let cli = Cli::parse();
-    
+
     match cli.command {
         Commands::Index { path, force } => {
-            with_trace_id("cli.index", async {
-                index_command(path, force).await
-            }).await?;
+            with_trace_id("cli.index", async { index_command(path, force).await }).await?;
         }
         Commands::Search { query, limit } => {
-            with_trace_id("cli.search", async {
-                search_command(query, limit).await
-            }).await?;
+            with_trace_id("cli.search", async { search_command(query, limit).await }).await?;
         }
         Commands::Stats => {
-            with_trace_id("cli.stats", async {
-                stats_command().await
-            }).await?;
+            with_trace_id("cli.stats", async { stats_command().await }).await?;
         }
-        Commands::Verify { check_indices, check_storage } => {
+        Commands::Verify {
+            check_indices,
+            check_storage,
+        } => {
             with_trace_id("cli.verify", async {
                 verify_command(check_indices, check_storage).await
-            }).await?;
+            })
+            .await?;
         }
     }
-    
+
     Ok(())
 }
 

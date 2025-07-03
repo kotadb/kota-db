@@ -132,3 +132,4 @@ harness = false
 required-features = ["bench"]
 
 # Workspace will be configured when we create the sub-crates
+[workspace]

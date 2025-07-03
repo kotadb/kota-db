@@ -1,60 +1,64 @@
 // Optimization Contracts - Stage 2: Contract-First Design for Phase 2 Infrastructure
 // Defines contracts for bulk operations and concurrent access patterns
 
-use anyhow::Result;
-use std::time::Duration;
-use serde::{Serialize, Deserialize};
-use crate::types::{ValidatedDocumentId, ValidatedPath};
 use crate::contracts::performance::{ComplexityClass, PerformanceMeasurement};
+use crate::types::{ValidatedDocumentId, ValidatedPath};
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Contract for bulk operations with performance guarantees
 pub trait BulkOperations {
     /// Bulk insert multiple key-value pairs in a single operation
-    /// 
+    ///
     /// # Preconditions
     /// - pairs must not be empty
     /// - all keys must be valid UUIDs
     /// - all paths must be valid and non-empty
-    /// 
+    ///
     /// # Postconditions  
     /// - all keys are searchable in the resulting tree
     /// - operation completes in O(n log n) time where n is pairs.len()
     /// - memory overhead is <2x the raw data size
     /// - tree balance is maintained (all leaves at same level)
-    /// 
+    ///
     /// # Performance Guarantee
     /// - Must achieve 5-10x speedup vs individual insertions
     /// - Memory allocation should be optimized for bulk size
-    fn bulk_insert(&mut self, pairs: Vec<(ValidatedDocumentId, ValidatedPath)>) -> Result<BulkOperationResult>;
-    
+    fn bulk_insert(
+        &mut self,
+        pairs: Vec<(ValidatedDocumentId, ValidatedPath)>,
+    ) -> Result<BulkOperationResult>;
+
     /// Bulk delete multiple keys in a single operation
-    /// 
+    ///
     /// # Preconditions
     /// - keys must not be empty
     /// - all keys must be valid UUIDs
-    /// 
+    ///
     /// # Postconditions
     /// - none of the keys are searchable in the resulting tree
     /// - operation completes in O(k log n) time where k is keys.len(), n is tree size
     /// - memory is properly reclaimed (>90% of deleted entries)
     /// - tree balance is maintained after deletions
-    /// 
+    ///
     /// # Performance Guarantee  
     /// - Must achieve 5-10x speedup vs individual deletions
     /// - Memory cleanup should be optimized
     fn bulk_delete(&mut self, keys: Vec<ValidatedDocumentId>) -> Result<BulkOperationResult>;
-    
+
     /// Bulk search for multiple keys in a single operation
-    /// 
+    ///
     /// # Preconditions
     /// - keys must not be empty
     /// - all keys must be valid UUIDs
-    /// 
+    ///
     /// # Postconditions
     /// - returns results for all keys (Some for found, None for not found)
     /// - operation completes in O(k log n) time where k is keys.len()
     /// - no side effects on tree structure
-    /// 
+    ///
     /// # Performance Guarantee
     /// - Must achieve 2-5x speedup vs individual searches
     /// - Should leverage cache locality
@@ -62,42 +66,47 @@ pub trait BulkOperations {
 }
 
 /// Contract for concurrent access patterns
+#[async_trait::async_trait]
 pub trait ConcurrentAccess {
     /// Perform read operation with optimized concurrent access
-    /// 
+    ///
     /// # Preconditions
     /// - key must be valid UUID
-    /// 
+    ///
     /// # Postconditions
     /// - returns current value if key exists
     /// - operation does not block other concurrent reads
     /// - operation completes in O(log n) time
-    /// 
+    ///
     /// # Concurrency Guarantee
     /// - Multiple concurrent reads are allowed
     /// - Read operations scale linearly with CPU cores
     /// - No read starvation under write load
     fn concurrent_read(&self, key: &ValidatedDocumentId) -> Result<Option<ValidatedPath>>;
-    
+
     /// Perform write operation with proper isolation
-    /// 
+    ///
     /// # Preconditions
     /// - key must be valid UUID
     /// - path must be valid and non-empty
-    /// 
+    ///
     /// # Postconditions
     /// - key is searchable after operation completes
     /// - operation maintains ACID properties
     /// - tree structure integrity is preserved
-    /// 
+    ///
     /// # Concurrency Guarantee
     /// - Write operations are properly isolated
     /// - No lost updates under concurrent access
     /// - Deadlock prevention mechanisms active
-    fn concurrent_write(&mut self, key: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
-    
+    async fn concurrent_write(
+        &mut self,
+        key: ValidatedDocumentId,
+        path: ValidatedPath,
+    ) -> Result<()>;
+
     /// Get current lock contention metrics
-    /// 
+    ///
     /// # Postconditions
     /// - returns real-time lock statistics
     /// - metrics reflect actual system state
@@ -110,7 +119,7 @@ pub struct BulkOperationResult {
     pub operations_completed: usize,
     pub duration: Duration,
     pub throughput_ops_per_sec: f64,
-    pub memory_delta_bytes: i64,  // Can be negative for deletions
+    pub memory_delta_bytes: i64, // Can be negative for deletions
     pub tree_balance_factor: f64,
     pub complexity_class: ComplexityClass,
     pub errors: Vec<String>,
@@ -125,29 +134,29 @@ pub struct ContentionMetrics {
     pub pending_writers: u32,
     pub read_lock_wait_time: Duration,
     pub write_lock_wait_time: Duration,
-    pub lock_acquisition_rate: f64,  // locks per second
-    pub contention_ratio: f64,       // contested locks / total locks
+    pub lock_acquisition_rate: f64, // locks per second
+    pub contention_ratio: f64,      // contested locks / total locks
 }
 
 /// Contract for tree structure analysis
 pub trait TreeAnalysis {
     /// Analyze tree structure for optimization opportunities
-    /// 
+    ///
     /// # Postconditions
     /// - returns comprehensive tree metrics
     /// - identifies potential optimization points
     /// - recommends rebalancing if needed
     fn analyze_structure(&self) -> TreeStructureMetrics;
-    
+
     /// Count total entries in the tree
-    /// 
+    ///
     /// # Postconditions
     /// - returns exact count of key-value pairs
     /// - operation completes in O(1) time (cached)
     fn count_entries(&self) -> usize;
-    
+
     /// Get tree depth and balance information
-    /// 
+    ///
     /// # Postconditions
     /// - returns current tree depth and balance factor
     /// - identifies any balance issues
@@ -192,54 +201,54 @@ pub struct BalanceInfo {
 /// Optimization recommendations based on analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OptimizationRecommendation {
-    RebalanceTree { 
-        reason: String, 
-        estimated_improvement: f64 
+    RebalanceTree {
+        reason: String,
+        estimated_improvement: f64,
     },
-    CompactNodes { 
-        fragmented_nodes: usize, 
-        estimated_memory_savings: usize 
+    CompactNodes {
+        fragmented_nodes: usize,
+        estimated_memory_savings: usize,
     },
-    SplitOversizedNodes { 
-        oversized_nodes: usize, 
-        recommended_split_threshold: usize 
+    SplitOversizedNodes {
+        oversized_nodes: usize,
+        recommended_split_threshold: usize,
     },
-    EnableCaching { 
-        hot_paths: Vec<String>, 
-        estimated_speedup: f64 
+    EnableCaching {
+        hot_paths: Vec<String>,
+        estimated_speedup: f64,
     },
-    OptimizeBulkOperations { 
-        operation_type: String, 
-        current_efficiency: f64, 
-        target_efficiency: f64 
+    OptimizeBulkOperations {
+        operation_type: String,
+        current_efficiency: f64,
+        target_efficiency: f64,
     },
 }
 
 /// Contract for memory optimization
 pub trait MemoryOptimization {
     /// Get current memory usage breakdown
-    /// 
+    ///
     /// # Postconditions
     /// - returns detailed memory statistics
     /// - identifies memory optimization opportunities
     fn get_memory_usage(&self) -> MemoryUsage;
-    
+
     /// Perform memory compaction to reduce fragmentation
-    /// 
+    ///
     /// # Preconditions
     /// - tree must be in consistent state
-    /// 
+    ///
     /// # Postconditions
     /// - memory fragmentation is reduced
     /// - tree functionality is preserved
     /// - operation completes in O(n) time
     fn compact_memory(&mut self) -> Result<MemoryCompactionResult>;
-    
+
     /// Set memory usage limits and policies
-    /// 
+    ///
     /// # Preconditions
     /// - limits must be reasonable (> current usage)
-    /// 
+    ///
     /// # Postconditions
     /// - memory usage is monitored against limits
     /// - automatic cleanup triggers are set
@@ -253,8 +262,8 @@ pub struct MemoryUsage {
     pub tree_data: usize,
     pub metadata: usize,
     pub fragmentation: usize,
-    pub efficiency_ratio: f64,  // data / total
-    pub overhead_ratio: f64,    // overhead / data
+    pub efficiency_ratio: f64, // data / total
+    pub overhead_ratio: f64,   // overhead / data
     pub peak_usage: usize,
     pub allocations_per_second: f64,
 }
@@ -263,9 +272,9 @@ pub struct MemoryUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryCompactionResult {
     pub bytes_freed: usize,
-    pub fragmentation_reduced: f64,  // percentage
+    pub fragmentation_reduced: f64, // percentage
     pub compaction_duration: Duration,
-    pub performance_impact: f64,     // slowdown factor during compaction
+    pub performance_impact: f64, // slowdown factor during compaction
 }
 
 /// Memory usage limits and policies
@@ -275,31 +284,28 @@ pub struct MemoryLimits {
     pub max_fragmentation_ratio: f64,
     pub auto_compact_threshold: f64,
     pub emergency_cleanup_threshold: f64,
-    pub growth_rate_limit: f64,  // bytes per second
+    pub growth_rate_limit: f64, // bytes per second
 }
 
 /// Performance SLA for optimization operations
 pub trait OptimizationSLA {
     /// Verify bulk operation meets performance contract
-    /// 
+    ///
     /// # Postconditions
     /// - validates operation against defined SLA
     /// - returns compliance report
     fn verify_bulk_operation_sla(
-        &self, 
+        &self,
         operation_type: BulkOperationType,
-        result: &BulkOperationResult
+        result: &BulkOperationResult,
     ) -> SLAComplianceReport;
-    
+
     /// Verify concurrent access meets performance contract
-    /// 
+    ///
     /// # Postconditions
     /// - validates concurrency against defined SLA
     /// - returns compliance report
-    fn verify_concurrent_access_sla(
-        &self,
-        metrics: &ContentionMetrics
-    ) -> SLAComplianceReport;
+    fn verify_concurrent_access_sla(&self, metrics: &ContentionMetrics) -> SLAComplianceReport;
 }
 
 /// Types of bulk operations
@@ -344,10 +350,10 @@ pub struct SLAViolation {
 /// Severity of SLA violations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViolationSeverity {
-    Minor,      // < 20% deviation
-    Moderate,   // 20-50% deviation  
-    Severe,     // > 50% deviation
-    Critical,   // Complete failure
+    Minor,    // < 20% deviation
+    Moderate, // 20-50% deviation
+    Severe,   // > 50% deviation
+    Critical, // Complete failure
 }
 
 // Default implementations for common scenarios
@@ -358,10 +364,10 @@ impl BulkOperationResult {
         operations: usize,
         duration: Duration,
         memory_delta: i64,
-        balance_factor: f64
+        balance_factor: f64,
     ) -> Self {
         let throughput = operations as f64 / duration.as_secs_f64();
-        
+
         Self {
             operations_completed: operations,
             duration,
@@ -372,7 +378,7 @@ impl BulkOperationResult {
             errors: Vec::new(),
         }
     }
-    
+
     /// Create failed bulk operation result
     pub fn failure(error: String) -> Self {
         Self {
@@ -385,16 +391,17 @@ impl BulkOperationResult {
             errors: vec![error],
         }
     }
-    
+
     /// Check if operation meets performance requirements
     pub fn meets_performance_requirements(&self, min_speedup: f64) -> bool {
-        self.errors.is_empty() 
+        self.errors.is_empty()
             && self.throughput_ops_per_sec > 0.0
             && self.tree_balance_factor > 0.8
-            && matches!(self.complexity_class, 
-                ComplexityClass::Constant | 
-                ComplexityClass::Logarithmic | 
-                ComplexityClass::Linearithmic
+            && matches!(
+                self.complexity_class,
+                ComplexityClass::Constant
+                    | ComplexityClass::Logarithmic
+                    | ComplexityClass::Linearithmic
             )
     }
 }
@@ -413,7 +420,7 @@ impl ContentionMetrics {
             contention_ratio: 0.0,
         }
     }
-    
+
     /// Check if contention is within acceptable limits
     pub fn is_healthy(&self) -> bool {
         self.contention_ratio < 0.3  // Less than 30% contested locks
@@ -425,28 +432,23 @@ impl ContentionMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_bulk_operation_result_success() {
-        let result = BulkOperationResult::success(
-            1000,
-            Duration::from_millis(100),
-            1024,
-            0.95
-        );
-        
+        let result = BulkOperationResult::success(1000, Duration::from_millis(100), 1024, 0.95);
+
         assert!(result.meets_performance_requirements(5.0));
         assert_eq!(result.operations_completed, 1000);
         assert_eq!(result.throughput_ops_per_sec, 10000.0);
     }
-    
+
     #[test]
     fn test_contention_metrics_health() {
         let healthy_metrics = ContentionMetrics::empty();
         assert!(healthy_metrics.is_healthy());
-        
+
         let unhealthy_metrics = ContentionMetrics {
-            contention_ratio: 0.5,  // 50% contested
+            contention_ratio: 0.5, // 50% contested
             write_lock_wait_time: Duration::from_millis(200),
             ..ContentionMetrics::empty()
         };
