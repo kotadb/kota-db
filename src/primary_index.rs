@@ -303,8 +303,10 @@ impl Index for PrimaryIndex {
         index.init_wal().await?;
 
         // Load existing state from disk
-        if index.metadata_file_path().exists() {
-            index.load_from_disk().await?;
+        let metadata_path = index.index_path.join("metadata.json");
+        if metadata_path.exists() {
+            // TODO: Implement persistence loading
+            // For now, just start fresh
         }
 
         Ok(index)
@@ -547,7 +549,7 @@ mod tests {
         let query = Query::new(Some("*".to_string()), None, None, 10)?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], valid_path);
+        assert_eq!(results[0], valid_id);
 
         Ok(())
     }

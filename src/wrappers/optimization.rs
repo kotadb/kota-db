@@ -10,8 +10,9 @@ use crate::metrics::optimization::{LockType, OptimizationMetricsCollector};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use crate::{analyze_tree_structure, bulk_delete_from_tree, bulk_insert_into_tree, count_entries};
 use anyhow::Result;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 /// High-performance index wrapper with automatic optimization
 ///
@@ -146,26 +147,19 @@ impl<T: Index + Send + Sync> OptimizedIndex<T> {
 
     /// Optimized delete that may batch operations
     pub async fn optimized_delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
-        if self.optimization_config.enable_bulk_operations {
-            // For now, delegate to regular delete
-            // In a full implementation, this would collect deletions and batch them
-            let mut inner = self.acquire_write_lock().await?;
-            inner.delete(id).await
-        } else {
-            let mut inner = self.acquire_write_lock().await?;
-            inner.delete(id).await
-        }
+        let mut inner = self.acquire_write_lock().await?;
+        inner.delete(id).await
     }
 
     /// Acquire read lock with contention tracking
-    async fn acquire_read_lock(&self) -> Result<std::sync::RwLockReadGuard<T>> {
+    async fn acquire_read_lock(&self) -> Result<tokio::sync::RwLockReadGuard<'_, T>> {
         let start = Instant::now();
 
         // Track pending lock request
         self.metrics_collector.record_lock_pending(LockType::Read);
 
-        // Acquire lock (simplified - in practice would use async locks)
-        let guard = self.inner.read().unwrap();
+        // Acquire lock using tokio's async RwLock
+        let guard = self.inner.read().await;
 
         let wait_time = start.elapsed();
         let was_contested = wait_time > Duration::from_micros(100);
@@ -178,14 +172,14 @@ impl<T: Index + Send + Sync> OptimizedIndex<T> {
     }
 
     /// Acquire write lock with contention tracking
-    async fn acquire_write_lock(&self) -> Result<std::sync::RwLockWriteGuard<T>> {
+    async fn acquire_write_lock(&self) -> Result<tokio::sync::RwLockWriteGuard<'_, T>> {
         let start = Instant::now();
 
         // Track pending lock request
         self.metrics_collector.record_lock_pending(LockType::Write);
 
-        // Acquire lock (simplified - in practice would use async locks)
-        let guard = self.inner.write().unwrap();
+        // Acquire lock using tokio's async RwLock
+        let guard = self.inner.write().await;
 
         let wait_time = start.elapsed();
         let was_contested = wait_time > Duration::from_millis(1);
@@ -281,7 +275,7 @@ impl<T: Index + Send + Sync> OptimizedIndex<T> {
 
     /// Update cached tree state
     async fn update_tree_cache(&self, metrics: TreeStructureMetrics) {
-        let mut cache = self.tree_cache.write().unwrap();
+        let mut cache = self.tree_cache.write().await;
         *cache = Some(CachedTreeState {
             metrics: metrics.clone(),
             last_updated: Instant::now(),
@@ -473,18 +467,20 @@ impl<T: Index + Send + Sync> ConcurrentAccess for OptimizedIndex<T> {
     }
 
     fn get_contention_metrics(&self) -> ContentionMetrics {
-        self.get_contention_metrics()
+        self.metrics_collector
+            .generate_optimization_dashboard()
+            .contention_metrics
     }
 }
 
 impl<T: Index + Send + Sync> TreeAnalysis for OptimizedIndex<T> {
     fn analyze_structure(&self) -> TreeStructureMetrics {
         // Return cached metrics if available, otherwise default
-        if let Ok(cache) = self.tree_cache.read() {
-            if let Some(ref cached) = *cache {
-                if cached.last_updated.elapsed() < Duration::from_secs(300) {
-                    return cached.metrics.clone();
-                }
+        // Since this is a sync function, we'll use blocking_read
+        let cache_guard = self.tree_cache.blocking_read();
+        if let Some(ref cached) = *cache_guard {
+            if cached.last_updated.elapsed() < Duration::from_secs(300) {
+                return cached.metrics.clone();
             }
         }
 

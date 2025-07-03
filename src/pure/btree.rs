@@ -307,8 +307,9 @@ fn insert_recursive(
             // Check if split needed
             if node.needs_split() {
                 let (left, median, right) = split_leaf_node(*node)?;
+                let left_clone = left.clone();
                 Ok((
-                    Box::new(left),
+                    Box::new(left_clone),
                     Some((Box::new(left), median, Box::new(right))),
                 ))
             } else {
@@ -335,8 +336,9 @@ fn insert_recursive(
                 // Check if this node needs splitting
                 if keys.len() > MAX_KEYS {
                     let (left, median, right) = split_internal_node(*node)?;
+                    let left_clone = left.clone();
                     Ok((
-                        Box::new(left),
+                        Box::new(left_clone),
                         Some((Box::new(left), median, Box::new(right))),
                     ))
                 } else {
@@ -484,10 +486,11 @@ fn borrow_from_left_sibling(
     let separator_index = child_index - 1;
     let separator_key = parent_keys[separator_index].clone();
 
-    match (
-        children[child_index - 1].as_mut(),
-        children[child_index].as_mut(),
-    ) {
+    let (left_children, right_children) = children.split_at_mut(child_index);
+    let left_child = left_children.last_mut().unwrap();
+    let right_child = right_children.first_mut().unwrap();
+    
+    match (left_child.as_mut(), right_child.as_mut()) {
         (
             BTreeNode::Leaf {
                 keys: left_keys,
@@ -546,10 +549,11 @@ fn borrow_from_right_sibling(
     let separator_index = child_index;
     let separator_key = parent_keys[separator_index].clone();
 
-    match (
-        children[child_index].as_mut(),
-        children[child_index + 1].as_mut(),
-    ) {
+    let (left_children, right_children) = children.split_at_mut(child_index + 1);
+    let left_child = left_children.last_mut().unwrap();
+    let right_child = right_children.first_mut().unwrap();
+    
+    match (left_child.as_mut(), right_child.as_mut()) {
         (
             BTreeNode::Leaf {
                 keys: left_keys,

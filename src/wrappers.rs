@@ -256,7 +256,7 @@ impl<S: Storage> Storage for TracedStorage<S> {
 /// Storage wrapper that validates all inputs and outputs
 pub struct ValidatedStorage<S: Storage> {
     inner: S,
-    existing_ids: Arc<RwLock<std::collections::HashSet<Uuid>>>,
+    existing_ids: Arc<RwLock<std::collections::HashSet<ValidatedDocumentId>>>,
 }
 
 impl<S: Storage> ValidatedStorage<S> {
@@ -292,7 +292,7 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
         self.inner.insert(doc.clone()).await?;
 
         // Update tracking
-        self.existing_ids.write().await.insert(doc.id.as_uuid());
+        self.existing_ids.write().await.insert(doc.id.clone());
 
         Ok(())
     }
@@ -326,7 +326,7 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
         let deleted = self.inner.delete(id).await?;
         if deleted {
-            self.existing_ids.write().await.remove(&id.as_uuid());
+            self.existing_ids.write().await.remove(id);
         }
         Ok(deleted)
     }
@@ -1035,7 +1035,15 @@ mod tests {
             Ok(())
         }
 
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            Ok(self.docs.lock().await.values().cloned().collect())
+        }
+
         async fn sync(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<()> {
             Ok(())
         }
 

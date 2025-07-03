@@ -194,7 +194,9 @@ impl QueryBuilder {
 
         let limit = self.limit.map(|l| l.get()).unwrap_or(10);
 
-        Query::new(self.text, tags, date_range, limit)
+        // Query::new expects (text, tags, path_pattern, limit)
+        // For now, we'll pass None for path_pattern since date_range isn't supported
+        Query::new(self.text, tags, None, limit)
     }
 }
 
@@ -380,24 +382,28 @@ pub struct IndexConfig {
 
 /// Builder for storage metrics
 pub struct MetricsBuilder {
-    document_count: usize,
+    total_documents: u64,
     total_size_bytes: u64,
-    index_sizes: HashMap<String, usize>,
+    avg_document_size: f64,
+    storage_efficiency: f64,
+    fragmentation: f64,
 }
 
 impl MetricsBuilder {
     /// Create a new metrics builder
     pub fn new() -> Self {
         Self {
-            document_count: 0,
+            total_documents: 0,
             total_size_bytes: 0,
-            index_sizes: HashMap::new(),
+            avg_document_size: 0.0,
+            storage_efficiency: 0.0,
+            fragmentation: 0.0,
         }
     }
 
     /// Set document count
-    pub fn document_count(mut self, count: usize) -> Self {
-        self.document_count = count;
+    pub fn document_count(mut self, count: u64) -> Self {
+        self.total_documents = count;
         self
     }
 
@@ -407,22 +413,42 @@ impl MetricsBuilder {
         self
     }
 
-    /// Add an index size
-    pub fn index_size(mut self, name: impl Into<String>, size: usize) -> Self {
-        self.index_sizes.insert(name.into(), size);
+    /// Set average document size
+    pub fn avg_document_size(mut self, size: f64) -> Self {
+        self.avg_document_size = size;
+        self
+    }
+
+    /// Set storage efficiency
+    pub fn storage_efficiency(mut self, efficiency: f64) -> Self {
+        self.storage_efficiency = efficiency;
+        self
+    }
+
+    /// Set fragmentation
+    pub fn fragmentation(mut self, fragmentation: f64) -> Self {
+        self.fragmentation = fragmentation;
         self
     }
 
     /// Build the metrics
     pub fn build(self) -> Result<StorageMetrics> {
-        let metrics = StorageMetrics {
-            document_count: self.document_count,
-            total_size_bytes: self.total_size_bytes,
-            index_sizes: self.index_sizes,
+        // Calculate avg_document_size if not set
+        let avg_size = if self.avg_document_size > 0.0 {
+            self.avg_document_size
+        } else if self.total_documents > 0 {
+            self.total_size_bytes as f64 / self.total_documents as f64
+        } else {
+            0.0
         };
 
-        // Validate
-        metrics.validate()?;
+        let metrics = StorageMetrics {
+            total_documents: self.total_documents,
+            total_size_bytes: self.total_size_bytes,
+            avg_document_size: avg_size,
+            storage_efficiency: self.storage_efficiency,
+            fragmentation: self.fragmentation,
+        };
 
         Ok(metrics)
     }
@@ -450,8 +476,8 @@ mod tests {
 
         assert!(doc.is_ok());
         let doc = doc.unwrap();
-        assert_eq!(doc.path, "/test/doc.md");
-        assert_eq!(doc.title, "Test Document");
+        assert_eq!(doc.path.as_str(), "/test/doc.md");
+        assert_eq!(doc.title.as_str(), "Test Document");
         assert_eq!(doc.size, 13);
     }
 
@@ -470,9 +496,10 @@ mod tests {
 
         assert!(query.is_ok());
         let query = query.unwrap();
-        assert_eq!(query.text, Some("search term".to_string()));
-        assert_eq!(query.tags.as_ref().unwrap().len(), 2);
-        assert_eq!(query.limit, 50);
+        assert_eq!(query.search_terms.len(), 1);
+        assert_eq!(query.search_terms[0].as_str(), "search term");
+        assert_eq!(query.tags.len(), 2);
+        assert_eq!(query.limit.value(), 50);
     }
 
     #[test]

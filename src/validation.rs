@@ -5,6 +5,7 @@
 use crate::contracts::*;
 use crate::contracts::{Document, Query};
 use crate::observability::*;
+use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTitle};
 use anyhow::{bail, ensure, Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -154,11 +155,11 @@ pub mod document {
     /// Validate document for insertion
     pub fn validate_for_insert(
         doc: &Document,
-        existing_ids: &std::collections::HashSet<Uuid>,
+        existing_ids: &std::collections::HashSet<ValidatedDocumentId>,
     ) -> Result<()> {
         let ctx = ValidationContext::new("document_insert")
             .with_attribute("doc_id", &doc.id.to_string())
-            .with_attribute("path", &doc.path);
+            .with_attribute("path", doc.path.as_str());
 
         // Check ID uniqueness
         ctx.clone().validate(
@@ -167,7 +168,7 @@ pub mod document {
         )?;
 
         // Validate path
-        path::validate_file_path(&doc.path)?;
+        path::validate_file_path(doc.path.as_str())?;
 
         // Check size
         ctx.clone()
@@ -180,21 +181,21 @@ pub mod document {
 
         // Check timestamps
         ctx.clone()
-            .validate(doc.created > 0, "Created timestamp must be positive")?;
+            .validate(doc.created_at.timestamp() > 0, "Created timestamp must be positive")?;
 
         ctx.clone().validate(
-            doc.updated >= doc.created,
+            doc.updated_at >= doc.created_at,
             "Updated timestamp must be >= created",
         )?;
 
-        // Check title
+        // Check title (ValidatedTitle is already validated, just check it's reasonable)
         ctx.clone().validate(
-            !doc.title.trim().is_empty(),
+            !doc.title.as_str().is_empty(),
             "Document title cannot be empty",
         )?;
 
         ctx.validate(
-            doc.title.len() < 1024,
+            doc.title.as_str().len() < 1024,
             "Document title too long (max 1024 chars)",
         )?;
 
@@ -214,18 +215,18 @@ pub mod document {
 
         // Updated timestamp must increase
         ctx.clone().validate(
-            new_doc.updated > old_doc.updated,
+            new_doc.updated_at > old_doc.updated_at,
             "Updated timestamp must increase",
         )?;
 
         // Created timestamp must not change
         ctx.validate(
-            new_doc.created == old_doc.created,
+            new_doc.created_at == old_doc.created_at,
             "Created timestamp cannot change",
         )?;
 
         // Validate other fields
-        path::validate_file_path(&new_doc.path)?;
+        path::validate_file_path(new_doc.path.as_str())?;
 
         Ok(())
     }
@@ -330,29 +331,30 @@ pub mod storage {
     /// Validate storage metrics consistency
     pub fn validate_metrics(metrics: &StorageMetrics) -> Result<()> {
         let ctx = ValidationContext::new("storage_metrics")
-            .with_attribute("doc_count", &metrics.document_count.to_string())
+            .with_attribute("doc_count", &metrics.total_documents.to_string())
             .with_attribute("total_size", &metrics.total_size_bytes.to_string());
 
         // Basic sanity checks
         ctx.clone().validate(
-            metrics.total_size_bytes >= metrics.document_count as u64,
+            metrics.total_size_bytes >= metrics.total_documents,
             "Total size less than document count",
         )?;
 
         // If no documents, size should be near zero
-        if metrics.document_count == 0 {
+        if metrics.total_documents == 0 {
             ctx.clone().validate(
                 metrics.total_size_bytes < 1024, // Allow some metadata
                 "Non-zero size with zero documents",
             )?;
         }
 
-        // Index sizes should be reasonable
-        let total_index_size: usize = metrics.index_sizes.values().sum();
-        ctx.validate(
-            total_index_size <= (metrics.total_size_bytes as usize * 2),
-            "Index size exceeds reasonable bounds",
-        )?;
+        // Check average document size is reasonable
+        if metrics.total_documents > 0 {
+            ctx.validate(
+                metrics.avg_document_size > 0.0 && metrics.avg_document_size < 100_000_000.0, // 100MB max
+                "Average document size out of reasonable bounds",
+            )?;
+        }
 
         Ok(())
     }
@@ -417,24 +419,24 @@ mod tests {
     #[test]
     fn test_document_validation() {
         let mut existing_ids = std::collections::HashSet::new();
-        let doc_id = Uuid::new_v4();
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
 
         let valid_doc = Document {
-            id: doc_id,
-            path: "/test/doc.md".to_string(),
-            hash: [0u8; 32],
+            id: doc_id.clone(),
+            path: ValidatedPath::new("/test/doc.md").unwrap(),
+            title: ValidatedTitle::new("Test Doc").unwrap(),
+            content: vec![0u8; 1024],
+            tags: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
             size: 1024,
-            created: 1000,
-            updated: 2000,
-            title: "Test Doc".to_string(),
-            word_count: 100,
         };
 
         // Should validate successfully
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_ok());
 
         // Add ID to existing set
-        existing_ids.insert(doc_id);
+        existing_ids.insert(doc_id.clone());
 
         // Should fail with duplicate ID
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_err());

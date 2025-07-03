@@ -310,7 +310,7 @@ impl OptimizationMetricsCollector {
 
     /// Calculate efficiency score for a bulk operation
     fn calculate_efficiency_score(&self, result: &BulkOperationResult) -> f64 {
-        let mut score = 1.0;
+        let mut score: f64 = 1.0;
 
         // Penalize errors
         if !result.errors.is_empty() {
@@ -681,7 +681,7 @@ mod tests {
 
         assert!(dashboard.bulk_operations.total_operations > 0);
         assert!(dashboard.bulk_operations.avg_efficiency_score > 0.0);
-        assert!(dashboard.contention_metrics.contested_acquisitions > 0);
+        assert!(dashboard.contention_metrics.contention_ratio > 0.0);
     }
 
     #[test]

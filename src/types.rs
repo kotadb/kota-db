@@ -76,6 +76,12 @@ impl ValidatedDocumentId {
         Ok(Self { inner: id })
     }
 
+    /// Parse from string
+    pub fn parse(s: &str) -> Result<Self> {
+        let uuid = Uuid::parse_str(s)?;
+        Self::from_uuid(uuid)
+    }
+
     /// Get the inner UUID
     pub fn as_uuid(&self) -> Uuid {
         self.inner

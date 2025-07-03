@@ -317,20 +317,20 @@ impl PerformanceCollector {
             }
 
             // Check for performance thresholds
-            if metrics.current_stats.p95 > Duration::from_millis(100) {
+            if metrics.current_stats.percentile_95 > Duration::from_millis(100) {
                 alerts.push(PerformanceAlert {
                     alert_type: AlertType::Threshold,
                     operation: op_name.clone(),
                     message: format!(
                         "Operation {} 95th percentile exceeds 100ms: {:?}",
-                        op_name, metrics.current_stats.p95
+                        op_name, metrics.current_stats.percentile_95
                     ),
                     severity: AlertSeverity::Critical,
                     timestamp: SystemTime::now(),
                     details: HashMap::from([
                         (
                             "p95_time".to_string(),
-                            format!("{:?}", metrics.current_stats.p95),
+                            format!("{:?}", metrics.current_stats.percentile_95),
                         ),
                         ("threshold".to_string(), "100ms".to_string()),
                     ]),

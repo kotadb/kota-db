@@ -151,7 +151,7 @@ impl Query {
         let mut search_terms = Vec::new();
         if let Some(text) = text {
             if !text.is_empty() && text != "*" {
-                search_terms.push(ValidatedSearchQuery::new(&text)?);
+                search_terms.push(ValidatedSearchQuery::new(&text, 1)?); // min_length = 1
             }
         }
 
