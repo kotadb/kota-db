@@ -8,6 +8,7 @@ pub mod metrics;
 pub mod observability;
 pub mod primary_index;
 pub mod pure;
+pub mod trigram_index;
 pub mod types;
 pub mod validation;
 pub mod wrappers;
@@ -47,6 +48,7 @@ pub use file_storage::{create_file_storage, FileStorage};
 
 // Re-export index implementations
 pub use primary_index::{create_primary_index, create_primary_index_for_tests, PrimaryIndex};
+pub use trigram_index::{create_trigram_index, create_trigram_index_for_tests, TrigramIndex};
 
 // Re-export pure functions
 pub use pure::btree;

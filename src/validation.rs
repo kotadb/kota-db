@@ -3,10 +3,8 @@
 // ensuring that preconditions and postconditions are met
 
 use crate::contracts::*;
-use crate::contracts::{Document, Query};
-use crate::observability::*;
 use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTitle};
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::error;
@@ -180,8 +178,10 @@ pub mod document {
         )?;
 
         // Check timestamps
-        ctx.clone()
-            .validate(doc.created_at.timestamp() > 0, "Created timestamp must be positive")?;
+        ctx.clone().validate(
+            doc.created_at.timestamp() > 0,
+            "Created timestamp must be positive",
+        )?;
 
         ctx.clone().validate(
             doc.updated_at >= doc.created_at,
@@ -449,7 +449,7 @@ mod tests {
         );
 
         invalid = valid_doc.clone();
-        invalid.updated = 500; // Before created
+        invalid.updated_at = chrono::DateTime::from_timestamp(500, 0).unwrap(); // Before created
         assert!(
             document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
         );

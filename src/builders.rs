@@ -6,7 +6,6 @@ use crate::contracts::{Document, Query, StorageMetrics};
 use crate::types::*;
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 use std::time::Duration;
 
 /// Fluent builder for creating Documents
@@ -499,7 +498,7 @@ mod tests {
         assert_eq!(query.search_terms.len(), 1);
         assert_eq!(query.search_terms[0].as_str(), "search term");
         assert_eq!(query.tags.len(), 2);
-        assert_eq!(query.limit.value(), 50);
+        assert_eq!(query.limit.get(), 50);
     }
 
     #[test]

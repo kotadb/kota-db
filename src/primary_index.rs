@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -303,7 +303,9 @@ impl Index for PrimaryIndex {
         index.init_wal().await?;
 
         // Load existing state from disk
-        index.load_existing_index().await
+        index
+            .load_existing_index()
+            .await
             .context("Failed to load existing index from disk")?;
 
         Ok(index)
@@ -394,9 +396,19 @@ impl Index for PrimaryIndex {
     /// - Preconditions: Query must be valid for index type
     /// - Postconditions: Results sorted by relevance, all matches returned
     /// - Invariants: Does not modify index state
+    ///
+    /// # Note
+    /// Primary index only supports wildcard searches (no text search terms).
+    /// For text search, use a dedicated text search index.
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
+
+        // Primary index only supports wildcard ("*") searches
+        // If there are specific search terms, return empty (no text search capability)
+        if !query.search_terms.is_empty() {
+            return Ok(Vec::new());
+        }
 
         let btree_root = self.btree_root.read().await;
 
@@ -477,7 +489,7 @@ impl Index for PrimaryIndex {
 /// It automatically applies Stage 6 MeteredIndex wrapper for metrics and observability.
 pub async fn create_primary_index(
     path: &str,
-    cache_capacity: Option<usize>,
+    _cache_capacity: Option<usize>,
 ) -> Result<MeteredIndex<PrimaryIndex>> {
     // Stage 2: Validate path using existing validation
     validation::path::validate_directory_path(path)?;

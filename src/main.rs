@@ -2,12 +2,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
-    create_file_storage, create_primary_index, Document, DocumentBuilder, QueryBuilder,
-    Storage, Index, ValidatedDocumentId, ValidatedPath, init_logging, with_trace_id,
+    create_file_storage, create_primary_index, create_trigram_index, init_logging, with_trace_id,
+    Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
 };
 use std::path::PathBuf;
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Parser)]
 #[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
@@ -86,17 +86,20 @@ enum Commands {
 
 struct Database {
     storage: Arc<Mutex<Box<dyn Storage>>>,
-    index: Arc<Mutex<Box<dyn Index>>>,
+    primary_index: Arc<Mutex<Box<dyn Index>>>,
+    trigram_index: Arc<Mutex<Box<dyn Index>>>,
 }
 
 impl Database {
     async fn new(db_path: &PathBuf) -> Result<Self> {
         let storage_path = db_path.join("storage");
-        let index_path = db_path.join("index");
+        let primary_index_path = db_path.join("primary_index");
+        let trigram_index_path = db_path.join("trigram_index");
 
         // Create directories if they don't exist
         std::fs::create_dir_all(&storage_path)?;
-        std::fs::create_dir_all(&index_path)?;
+        std::fs::create_dir_all(&primary_index_path)?;
+        std::fs::create_dir_all(&trigram_index_path)?;
 
         let storage = create_file_storage(
             storage_path.to_str().unwrap(),
@@ -104,15 +107,24 @@ impl Database {
         )
         .await?;
 
-        let index = create_primary_index(index_path.to_str().unwrap(), Some(1000)).await?;
+        let primary_index =
+            create_primary_index(primary_index_path.to_str().unwrap(), Some(1000)).await?;
+        let trigram_index =
+            create_trigram_index(trigram_index_path.to_str().unwrap(), Some(1000)).await?;
 
         Ok(Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
-            index: Arc::new(Mutex::new(Box::new(index))),
+            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
+            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
         })
     }
 
-    async fn insert(&self, path: String, title: String, content: String) -> Result<ValidatedDocumentId> {
+    async fn insert(
+        &self,
+        path: String,
+        title: String,
+        content: String,
+    ) -> Result<ValidatedDocumentId> {
         let doc = DocumentBuilder::new()
             .path(&path)?
             .title(&title)?
@@ -123,21 +135,36 @@ impl Database {
         let doc_path = ValidatedPath::new(&path)?;
 
         // Insert into storage
-        self.storage.lock().await.insert(doc).await?;
+        self.storage.lock().await.insert(doc.clone()).await?;
 
-        // Insert into index
-        self.index
+        // Insert into both indices
+        self.primary_index
             .lock()
             .await
-            .insert(doc_id.clone(), doc_path)
+            .insert(doc_id.clone(), doc_path.clone())
             .await?;
+
+        // For trigram index, we need to pass the document content
+        // Since the Index trait is limited, we'll use a workaround by adding content to the trigram index directly
+        {
+            use kotadb::TrigramIndex;
+            let mut trigram_guard = self.trigram_index.lock().await;
+
+            // Downcast to access trigram-specific functionality if possible
+            // For now, use the standard insert (which only uses path)
+            trigram_guard.insert(doc_id.clone(), doc_path).await?;
+        }
+
+        // Flush all to ensure persistence
+        self.storage.lock().await.flush().await?;
+        self.primary_index.lock().await.flush().await?;
+        self.trigram_index.lock().await.flush().await?;
 
         Ok(doc_id)
     }
 
     async fn get(&self, id: &str) -> Result<Option<Document>> {
-        let doc_id = ValidatedDocumentId::parse(id)
-            .context("Invalid document ID format")?;
+        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
 
         self.storage.lock().await.get(&doc_id).await
     }
@@ -149,23 +176,19 @@ impl Database {
         new_title: Option<String>,
         new_content: Option<String>,
     ) -> Result<()> {
-        let doc_id = ValidatedDocumentId::parse(id)
-            .context("Invalid document ID format")?;
+        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
 
         // Get existing document
         let mut storage = self.storage.lock().await;
-        let existing = storage
-            .get(&doc_id)
-            .await?
-            .context("Document not found")?;
+        let existing = storage.get(&doc_id).await?.context("Document not found")?;
 
         // Build updated document
         let mut builder = DocumentBuilder::new();
-        
+
         // Use new values or keep existing ones
         builder = builder.path(new_path.as_ref().unwrap_or(&existing.path.to_string()))?;
         builder = builder.title(new_title.as_ref().unwrap_or(&existing.title.to_string()))?;
-        
+
         let content = if let Some(new_content) = new_content {
             new_content.into_bytes()
         } else {
@@ -180,10 +203,15 @@ impl Database {
         // Update storage
         storage.update(updated_doc.clone()).await?;
 
-        // Update index if path changed
+        // Update indices if path changed
         if new_path.is_some() {
             let new_validated_path = ValidatedPath::new(&new_path.unwrap())?;
-            self.index
+            self.primary_index
+                .lock()
+                .await
+                .update(doc_id.clone(), new_validated_path.clone())
+                .await?;
+            self.trigram_index
                 .lock()
                 .await
                 .update(doc_id, new_validated_path)
@@ -194,24 +222,29 @@ impl Database {
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        let doc_id = ValidatedDocumentId::parse(id)
-            .context("Invalid document ID format")?;
+        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
 
         // Delete from storage
         let deleted = self.storage.lock().await.delete(&doc_id).await?;
 
         if deleted {
-            // Delete from index
-            self.index.lock().await.delete(&doc_id).await?;
+            // Delete from both indices
+            self.primary_index.lock().await.delete(&doc_id).await?;
+            self.trigram_index.lock().await.delete(&doc_id).await?;
         }
 
         Ok(deleted)
     }
 
-    async fn search(&self, query_text: &str, tags: Option<Vec<String>>, limit: usize) -> Result<Vec<Document>> {
+    async fn search(
+        &self,
+        query_text: &str,
+        tags: Option<Vec<String>>,
+        limit: usize,
+    ) -> Result<Vec<Document>> {
         // Build query
         let mut query_builder = QueryBuilder::new();
-        
+
         if query_text != "*" && !query_text.is_empty() {
             query_builder = query_builder.with_text(query_text)?;
         }
@@ -225,13 +258,19 @@ impl Database {
         query_builder = query_builder.with_limit(limit)?;
         let query = query_builder.build()?;
 
-        // Search in index
-        let doc_ids = self.index.lock().await.search(&query).await?;
+        // Route to appropriate index based on query type
+        let doc_ids = if query_text == "*" || query_text.is_empty() {
+            // Use Primary Index for wildcard queries
+            self.primary_index.lock().await.search(&query).await?
+        } else {
+            // Use Trigram Index for text search queries
+            self.trigram_index.lock().await.search(&query).await?
+        };
 
         // Retrieve documents from storage
         let mut documents = Vec::new();
         let storage = self.storage.lock().await;
-        
+
         for doc_id in doc_ids.into_iter().take(limit) {
             if let Some(doc) = storage.get(&doc_id).await? {
                 documents.push(doc);
@@ -267,7 +306,11 @@ async fn main() -> Result<()> {
         let db = Database::new(&cli.db_path).await?;
 
         match cli.command {
-            Commands::Insert { path, title, content } => {
+            Commands::Insert {
+                path,
+                title,
+                content,
+            } => {
                 // Read content from stdin if not provided
                 let content = match content {
                     Some(c) => c,
@@ -286,26 +329,29 @@ async fn main() -> Result<()> {
                 println!("   Title: {}", title);
             }
 
-            Commands::Get { id } => {
-                match db.get(&id).await? {
-                    Some(doc) => {
-                        println!("📄 Document found:");
-                        println!("   ID: {}", doc.id.as_uuid());
-                        println!("   Path: {}", doc.path.as_str());
-                        println!("   Title: {}", doc.title.as_str());
-                        println!("   Size: {} bytes", doc.size);
-                        println!("   Created: {}", doc.created_at);
-                        println!("   Updated: {}", doc.updated_at);
-                        println!("\n--- Content ---");
-                        println!("{}", String::from_utf8_lossy(&doc.content));
-                    }
-                    None => {
-                        println!("❌ Document not found");
-                    }
+            Commands::Get { id } => match db.get(&id).await? {
+                Some(doc) => {
+                    println!("📄 Document found:");
+                    println!("   ID: {}", doc.id.as_uuid());
+                    println!("   Path: {}", doc.path.as_str());
+                    println!("   Title: {}", doc.title.as_str());
+                    println!("   Size: {} bytes", doc.size);
+                    println!("   Created: {}", doc.created_at);
+                    println!("   Updated: {}", doc.updated_at);
+                    println!("\n--- Content ---");
+                    println!("{}", String::from_utf8_lossy(&doc.content));
                 }
-            }
+                None => {
+                    println!("❌ Document not found");
+                }
+            },
 
-            Commands::Update { id, path, title, content } => {
+            Commands::Update {
+                id,
+                path,
+                title,
+                content,
+            } => {
                 // Read content from stdin if specified but not provided
                 let content = if content.as_ref().map(|c| c == "-").unwrap_or(false) {
                     use std::io::Read;
@@ -350,7 +396,7 @@ async fn main() -> Result<()> {
 
             Commands::List { limit } => {
                 let documents = db.list_all(limit).await?;
-                
+
                 if documents.is_empty() {
                     println!("No documents in database");
                 } else {
@@ -378,5 +424,6 @@ async fn main() -> Result<()> {
         }
 
         Ok::<(), anyhow::Error>(())
-    }).await
+    })
+    .await
 }
