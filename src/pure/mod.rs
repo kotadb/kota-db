@@ -3,6 +3,7 @@
 
 pub mod performance;
 pub mod btree;
+pub mod metadata;
 
 // Re-export btree types and functions for convenience
 pub use btree::{
@@ -136,10 +137,10 @@ pub fn count_entries(tree: &BTreeRoot) -> usize {
 }
 
 fn count_entries_recursive(node: &BTreeNode) -> usize {
-    match &node.node_type {
+    match node {
         BTreeNode::Leaf { keys, .. } => keys.len(),
         BTreeNode::Internal { children, .. } => {
-            children.iter().map(|child| count_entries_recursive(child)).sum()
+            children.iter().map(|child| count_entries_recursive(child.as_ref())).sum()
         }
     }
 }
@@ -266,13 +267,13 @@ fn analyze_node_recursive(
 ) {
     *total_nodes += 1;
     
-    match &node.node_type {
-        BTreeNodeType::Leaf { keys, .. } => {
+    match node {
+        BTreeNode::Leaf { keys, .. } => {
             *leaf_nodes += 1;
             leaf_depths.push(depth);
             node_sizes.push(keys.len());
         }
-        BTreeNodeType::Internal { keys, children } => {
+        BTreeNode::Internal { keys, children } => {
             *internal_nodes += 1;
             node_sizes.push(keys.len());
             
@@ -302,13 +303,13 @@ fn extract_pairs_recursive(
     node: &BTreeNode, 
     pairs: &mut Vec<(ValidatedDocumentId, ValidatedPath)>
 ) {
-    match &node.node_type {
-        BTreeNodeType::Leaf { keys, values } => {
+    match node {
+        BTreeNode::Leaf { keys, values, .. } => {
             for (key, value) in keys.iter().zip(values.iter()) {
                 pairs.push((key.clone(), value.clone()));
             }
         }
-        BTreeNodeType::Internal { children, .. } => {
+        BTreeNode::Internal { children, .. } => {
             for child in children {
                 extract_pairs_recursive(child, pairs);
             }
@@ -339,8 +340,10 @@ fn build_balanced_tree_from_sorted(
         let keys: Vec<_> = chunk.iter().map(|(k, _)| k.clone()).collect();
         let values: Vec<_> = chunk.iter().map(|(_, v)| v.clone()).collect();
         
-        let leaf_node = Box::new(BTreeNode {
-            node_type: BTreeNodeType::Leaf { keys, values },
+        let leaf_node = Box::new(BTreeNode::Leaf { 
+            keys, 
+            values,
+            next_leaf: None 
         });
         
         current_level.push(leaf_node);
@@ -361,8 +364,9 @@ fn build_balanced_tree_from_sorted(
                 keys.push(separator_key);
             }
             
-            let internal_node = Box::new(BTreeNode {
-                node_type: BTreeNodeType::Internal { keys, children },
+            let internal_node = Box::new(BTreeNode::Internal { 
+                keys, 
+                children 
             });
             
             next_level.push(internal_node);
@@ -379,10 +383,26 @@ fn build_balanced_tree_from_sorted(
 
 /// Extract the first key from a node (for building internal node separators)
 fn extract_first_key(node: &BTreeNode) -> ValidatedDocumentId {
-    match &node.node_type {
-        BTreeNodeType::Leaf { keys, .. } => keys[0].clone(),
-        BTreeNodeType::Internal { children, .. } => extract_first_key(&children[0]),
+    match node {
+        BTreeNode::Leaf { keys, .. } => keys[0].clone(),
+        BTreeNode::Internal { children, .. } => extract_first_key(children[0].as_ref()),
     }
+}
+
+// Helper functions for bulk operations
+// (extract_all_pairs and related functions are defined above)
+
+/// Build a balanced tree from sorted key-value pairs
+/// This is a placeholder implementation - in production, this would build
+/// a properly balanced B+ tree from the bottom up
+fn build_balanced_tree_from_sorted(
+    pairs: Vec<(ValidatedDocumentId, ValidatedPath)>
+) -> Result<BTreeRoot> {
+    let mut tree = create_empty_tree();
+    for (key, path) in pairs {
+        tree = insert_into_tree(tree, key, path)?;
+    }
+    Ok(tree)
 }
 
 #[cfg(test)]
