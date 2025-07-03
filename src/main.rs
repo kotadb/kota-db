@@ -2,7 +2,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
-    create_file_storage, create_primary_index, Document, DocumentBuilder, Query, QueryBuilder,
+    create_file_storage, create_primary_index, Document, DocumentBuilder, QueryBuilder,
     Storage, Index, ValidatedDocumentId, ValidatedPath, init_logging, with_trace_id,
 };
 use std::path::PathBuf;
@@ -104,7 +104,7 @@ impl Database {
         )
         .await?;
 
-        let index = create_primary_index(index_path.to_str().unwrap()).await?;
+        let index = create_primary_index(index_path.to_str().unwrap(), Some(1000)).await?;
 
         Ok(Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
