@@ -9,6 +9,7 @@ use uuid::Uuid;
 use tracing::error;
 use crate::observability::*;
 use crate::contracts::*;
+use crate::contracts::{Document, Query};
 
 /// Validation errors with detailed context
 #[derive(Debug, thiserror::Error)]

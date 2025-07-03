@@ -2,11 +2,11 @@
 // All algorithms implemented as side-effect-free functions
 
 pub mod performance;
+pub mod btree;
 
-// Re-export btree functions from pure.rs until we refactor
-// (keeping backward compatibility)
-pub use crate::pure::{
-    BTreeRoot, BTreeNode, BTreeNodeType,
+// Re-export btree types and functions for convenience
+pub use btree::{
+    BTreeRoot, BTreeNode,
     create_empty_tree,
     insert_into_tree,
     search_in_tree,
@@ -137,8 +137,8 @@ pub fn count_entries(tree: &BTreeRoot) -> usize {
 
 fn count_entries_recursive(node: &BTreeNode) -> usize {
     match &node.node_type {
-        BTreeNodeType::Leaf { keys, .. } => keys.len(),
-        BTreeNodeType::Internal { children, .. } => {
+        BTreeNode::Leaf { keys, .. } => keys.len(),
+        BTreeNode::Internal { children, .. } => {
             children.iter().map(|child| count_entries_recursive(child)).sum()
         }
     }

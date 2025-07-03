@@ -256,31 +256,28 @@ impl PrimaryIndex {
 
 #[async_trait]
 impl Index for PrimaryIndex {
-    type Key = ValidatedDocumentId;
-    type Value = ValidatedPath;
-
     /// Insert a key-value pair into the primary index
     /// 
     /// # Contract
     /// - Preconditions: Key must be non-nil, Value must be valid path
     /// - Postconditions: Entry is searchable immediately, previous value overwritten
     /// - Invariants: Document count increases by 1 (if new key)
-    async fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()> {
+    async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()> {
         // Stage 2: Contract enforcement - validate preconditions
-        Self::validate_insert_preconditions(&key, &value)?;
+        Self::validate_insert_preconditions(&id, &path)?;
         
         let was_new_key;
         
         // Check if key exists before insertion (for metadata counting)
         {
             let btree_root = self.btree_root.read().await;
-            was_new_key = btree::search_in_tree(&btree_root, &key).is_none();
+            was_new_key = btree::search_in_tree(&btree_root, &id).is_none();
         }
         
         // Insert into B+ tree using pure functions (O(log n))
         {
             let mut btree_root = self.btree_root.write().await;
-            *btree_root = btree::insert_into_tree(btree_root.clone(), key.clone(), value.clone())
+            *btree_root = btree::insert_into_tree(btree_root.clone(), id.clone(), path.clone())
                 .context("Failed to insert into B+ tree")?;
         }
         
@@ -294,7 +291,7 @@ impl Index for PrimaryIndex {
         }
         
         // Stage 2: Contract enforcement - validate postconditions
-        self.validate_insert_postcondition(&key, &value).await
+        self.validate_insert_postcondition(&id, &path).await
             .context("Insert postcondition validation failed")?;
         
         Ok(())
@@ -306,23 +303,23 @@ impl Index for PrimaryIndex {
     /// - Preconditions: Key must be valid format
     /// - Postconditions: Key no longer appears in searches, space reclaimed
     /// - Invariants: Document count decreases by 1 (if key existed)
-    async fn delete(&mut self, key: &Self::Key) -> Result<()> {
+    async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
         // Stage 2: Contract enforcement - validate preconditions
-        Self::validate_delete_preconditions(key)?;
+        Self::validate_delete_preconditions(id)?;
         
         let existed;
         
         // Check if key exists before deletion
         {
             let btree_root = self.btree_root.read().await;
-            existed = btree::search_in_tree(&btree_root, key).is_some();
+            existed = btree::search_in_tree(&btree_root, id).is_some();
         }
         
         if existed {
             // Use O(log n) B+ tree deletion algorithm
             let mut btree_root = self.btree_root.write().await;
             
-            *btree_root = btree::delete_from_tree(btree_root.clone(), key)
+            *btree_root = btree::delete_from_tree(btree_root.clone(), id)
                 .context("Failed to delete from B+ tree")?;
             
             // Update metadata
@@ -330,10 +327,10 @@ impl Index for PrimaryIndex {
         }
         
         // Stage 2: Contract enforcement - validate postconditions
-        self.validate_delete_postcondition(key).await
+        self.validate_delete_postcondition(id).await
             .context("Delete postcondition validation failed")?;
         
-        Ok(())
+        Ok(existed)
     }
 
     /// Search the primary index
@@ -342,7 +339,7 @@ impl Index for PrimaryIndex {
     /// - Preconditions: Query must be valid for index type
     /// - Postconditions: Results sorted by relevance, all matches returned
     /// - Invariants: Does not modify index state
-    async fn search(&self, query: &Query) -> Result<Vec<Self::Value>> {
+    async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
         
