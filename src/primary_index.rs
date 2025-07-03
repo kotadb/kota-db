@@ -303,11 +303,8 @@ impl Index for PrimaryIndex {
         index.init_wal().await?;
 
         // Load existing state from disk
-        let metadata_path = index.index_path.join("metadata.json");
-        if metadata_path.exists() {
-            // TODO: Implement persistence loading
-            // For now, just start fresh
-        }
+        index.load_existing_index().await
+            .context("Failed to load existing index from disk")?;
 
         Ok(index)
     }
