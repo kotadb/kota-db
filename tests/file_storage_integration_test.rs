@@ -1,6 +1,6 @@
 // Integration test for FileStorage implementation
 use anyhow::Result;
-use kotadb::{create_file_storage, DocumentBuilder, Storage};
+use kotadb::{create_file_storage, DocumentBuilder, Storage, ValidatedTitle};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -16,7 +16,7 @@ async fn test_file_storage_basic_operations() -> Result<()> {
     let doc = DocumentBuilder::new()
         .path("/test/document.md")?
         .title("Test Document")?
-        .content(b"This is a test document with some content for testing.")?
+        .content(b"This is a test document with some content for testing.")
         .build()?;
 
     let doc_id = doc.id;
@@ -29,19 +29,22 @@ async fn test_file_storage_basic_operations() -> Result<()> {
     assert!(retrieved.is_some());
     let retrieved_doc = retrieved.unwrap();
     assert_eq!(retrieved_doc.id, doc_id);
-    assert_eq!(retrieved_doc.title, "Test Document");
+    assert_eq!(retrieved_doc.title.as_str(), "Test Document");
 
     // Test update
     let mut updated_doc = doc;
-    updated_doc.title = "Updated Test Document".to_string();
-    updated_doc.updated = chrono::Utc::now().timestamp();
+    updated_doc.title = ValidatedTitle::new("Updated Test Document").unwrap();
+    updated_doc.updated_at = chrono::Utc::now();
 
     storage.update(updated_doc.clone()).await?;
 
     // Verify update
     let updated_retrieved = storage.get(&doc_id).await?;
     assert!(updated_retrieved.is_some());
-    assert_eq!(updated_retrieved.unwrap().title, "Updated Test Document");
+    assert_eq!(
+        updated_retrieved.unwrap().title.as_str(),
+        "Updated Test Document"
+    );
 
     // Test delete
     storage.delete(&doc_id).await?;
@@ -64,13 +67,13 @@ async fn test_file_storage_multiple_documents() -> Result<()> {
     let doc1 = DocumentBuilder::new()
         .path("/test/doc1.md")?
         .title("Document 1")?
-        .content(b"Content for document 1")?
+        .content(b"Content for document 1")
         .build()?;
 
     let doc2 = DocumentBuilder::new()
         .path("/test/doc2.md")?
         .title("Document 2")?
-        .content(b"Content for document 2")?
+        .content(b"Content for document 2")
         .build()?;
 
     // Insert both documents
@@ -83,8 +86,8 @@ async fn test_file_storage_multiple_documents() -> Result<()> {
 
     assert!(retrieved1.is_some());
     assert!(retrieved2.is_some());
-    assert_eq!(retrieved1.unwrap().title, "Document 1");
-    assert_eq!(retrieved2.unwrap().title, "Document 2");
+    assert_eq!(retrieved1.unwrap().title.as_str(), "Document 1");
+    assert_eq!(retrieved2.unwrap().title.as_str(), "Document 2");
 
     Ok(())
 }
@@ -97,7 +100,7 @@ async fn test_file_storage_persistence() -> Result<()> {
     let doc = DocumentBuilder::new()
         .path("/test/persistent.md")?
         .title("Persistent Document")?
-        .content(b"This document should persist across storage instances")?
+        .content(b"This document should persist across storage instances")
         .build()?;
 
     let doc_id = doc.id;
@@ -115,7 +118,7 @@ async fn test_file_storage_persistence() -> Result<()> {
         let storage = create_file_storage(db_path, Some(10)).await?;
         let retrieved = storage.get(&doc_id).await?;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().title, "Persistent Document");
+        assert_eq!(retrieved.unwrap().title.as_str(), "Persistent Document");
     }
 
     Ok(())

@@ -2,7 +2,9 @@
 // These tests cover failure scenarios, edge cases, and adversarial conditions
 
 use anyhow::Result;
-use kotadb::{Index, Query, ValidatedDocumentId, ValidatedPath};
+use kotadb::{
+    contracts::Query, Index, QueryBuilder, ValidatedDocumentId, ValidatedLimit, ValidatedPath,
+};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -12,8 +14,7 @@ use uuid::Uuid;
 mod primary_index_edge_cases {
     use super::*;
 
-    async fn create_test_index(
-    ) -> Result<impl Index<Key = ValidatedDocumentId, Value = ValidatedPath>> {
+    pub async fn create_test_index() -> Result<impl Index> {
         let temp_dir = TempDir::new()?;
         let index_path = temp_dir.path().join("edge_case_index");
 
@@ -41,7 +42,7 @@ mod primary_index_edge_cases {
 
     #[tokio::test]
     async fn test_index_with_extremely_long_paths() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Create path near filesystem limits
         let long_component = "a".repeat(255); // Max filename length on most filesystems
@@ -68,7 +69,7 @@ mod primary_index_edge_cases {
 
     #[tokio::test]
     async fn test_index_with_unicode_paths() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Test various Unicode characters
         let unicode_paths = vec![
@@ -98,7 +99,7 @@ mod primary_index_edge_cases {
 
     #[tokio::test]
     async fn test_index_rapid_insert_delete_cycles() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc_path = ValidatedPath::new("/edge/cycle_test.md")?;
@@ -110,7 +111,7 @@ mod primary_index_edge_cases {
         }
 
         // Index should be empty and functional
-        let query = Query::new(Some("*".to_string()), None, None, 10)?;
+        let query = QueryBuilder::new().with_limit(10)?.build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 0);
 
@@ -124,7 +125,7 @@ mod primary_index_edge_cases {
 
     #[tokio::test]
     async fn test_index_many_small_operations() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Test many small operations to stress internal data structures
         for i in 0..10000 {
@@ -140,7 +141,7 @@ mod primary_index_edge_cases {
         }
 
         // Index should remain functional
-        let query = Query::new(Some("*".to_string()), None, None, 100)?;
+        let query = QueryBuilder::new().with_limit(100)?.build()?;
         let results = index.search(&query).await?;
 
         // Should have approximately 2/3 of documents remaining
@@ -161,7 +162,9 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_concurrent_readers_writers() -> Result<()> {
-        let index = Arc::new(Mutex::new(create_test_index().await?));
+        let index = Arc::new(Mutex::new(
+            primary_index_edge_cases::create_test_index().await?,
+        ));
         let mut handles = Vec::new();
 
         // Spawn writers
@@ -176,6 +179,7 @@ mod primary_index_adversarial_tests {
                     let mut index_guard = index_clone.lock().await;
                     index_guard.insert(doc_id, doc_path).await.unwrap();
                 }
+                Ok::<(), anyhow::Error>(())
             });
             handles.push(handle);
         }
@@ -186,24 +190,25 @@ mod primary_index_adversarial_tests {
             let handle = tokio::spawn(async move {
                 for _ in 0..50 {
                     let index_guard = index_clone.lock().await;
-                    let query = Query::new(Some("*".to_string()), None, None, 100).unwrap();
+                    let query = QueryBuilder::new().with_limit(100).unwrap().build().unwrap();
                     let _results = index_guard.search(&query).await.unwrap();
 
                     // Small delay to increase contention
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
+                Ok::<(), anyhow::Error>(())
             });
             handles.push(handle);
         }
 
         // Wait for all operations
         for handle in handles {
-            handle.await?;
+            handle.await??;
         }
 
         // Verify final state is consistent
         let index_guard = index.lock().await;
-        let query = Query::new(Some("*".to_string()), None, None, 1000)?;
+        let query = QueryBuilder::new().with_limit(1000)?.build()?;
         let results = index_guard.search(&query).await?;
         assert_eq!(results.len(), 500); // 5 writers * 100 operations each
 
@@ -212,7 +217,7 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_memory_pressure() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Insert many large documents to stress memory usage
         let mut doc_ids = Vec::new();
@@ -229,7 +234,7 @@ mod primary_index_adversarial_tests {
             if i % 100 == 0 {
                 // In real implementation, we'd check memory usage here
                 // For now, just verify index remains functional
-                let query = Query::new(Some("*".to_string()), None, None, 10)?;
+                let query = QueryBuilder::new().with_limit(10)?.build()?;
                 let _results = index.search(&query).await?;
             }
         }
@@ -242,7 +247,7 @@ mod primary_index_adversarial_tests {
         }
 
         // Verify final state
-        let query = Query::new(Some("*".to_string()), None, None, 1000)?;
+        let query = QueryBuilder::new().with_limit(1000)?.build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 500);
 
@@ -254,7 +259,7 @@ mod primary_index_adversarial_tests {
         // This test would simulate disk space exhaustion
         // Implementation depends on the actual file format and error handling
 
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // In a real test, we'd create a small filesystem or use disk quotas
         // For now, we'll test the error handling interface
@@ -281,7 +286,7 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_interrupted_operations() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Test that interrupted operations don't corrupt the index
         // This simulates power failure, process kill, etc.
@@ -299,7 +304,7 @@ mod primary_index_adversarial_tests {
         index.insert(doc_id.clone(), doc_path.clone()).await?;
 
         // Simulate recovery by creating new index instance
-        let recovered_index = create_test_index().await?;
+        let recovered_index = primary_index_edge_cases::create_test_index().await?;
 
         // Should be able to operate on recovered index
         let new_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
@@ -345,7 +350,7 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_pathological_key_distribution() -> Result<()> {
-        let mut index = create_test_index().await?;
+        let mut index = primary_index_edge_cases::create_test_index().await?;
 
         // Test with keys that might cause poor performance in tree structures
         // e.g., sequential UUIDs, all similar prefixes, etc.
@@ -368,7 +373,7 @@ mod primary_index_adversarial_tests {
 
         // Performance should still be reasonable
         let start = std::time::Instant::now();
-        let query = Query::new(Some("*".to_string()), None, None, 1000)?;
+        let query = QueryBuilder::new().with_limit(1000)?.build()?;
         let results = index.search(&query).await?;
         let duration = start.elapsed();
 

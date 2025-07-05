@@ -20,10 +20,11 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
 
     // Create shared system with higher capacity for stress testing
     let storage = Arc::new(tokio::sync::Mutex::new(
-        create_file_storage(&storage_path, Some(10000)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(10000)).await?,
     ));
     let index = Arc::new(tokio::sync::Mutex::new({
-        let primary_index = create_primary_index(&index_path, 10000)?;
+        let primary_index =
+            create_primary_index(&index_path.to_string_lossy(), Some(10000)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -70,6 +71,7 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
                 ];
 
                 let now = chrono::Utc::now();
+                let content_size = content.len();
                 let doc = Document {
                     id: doc_id,
                     path,
@@ -78,7 +80,7 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
                     tags,
                     created_at: now,
                     updated_at: now,
-                    size: content.len(),
+                    size: content_size,
                 };
 
                 // Write operation
@@ -193,8 +195,8 @@ async fn test_memory_pressure_handling() -> Result<()> {
     let storage_path = temp_dir.path().join("memory_test_storage");
     let index_path = temp_dir.path().join("memory_test_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(5000)).await?;
-    let primary_index = create_primary_index(&index_path, 5000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(5000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(5000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing memory pressure handling...");
@@ -229,6 +231,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
         ];
 
         let now = chrono::Utc::now();
+        let content_size = content.len();
         let doc = Document {
             id: doc_id,
             path,
@@ -237,7 +240,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
             tags,
             created_at: now,
             updated_at: now,
-            size: content.len(),
+            size: content_size,
         };
 
         storage.insert(doc.clone()).await?;
@@ -281,7 +284,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
     );
 
     // Phase 2: Test bulk operations under memory pressure
-    let query = QueryBuilder::new().limit(ValidatedLimit::new(500)?).build();
+    let query = QueryBuilder::new().with_limit(500)?.build()?;
 
     let search_start = Instant::now();
     let search_results = optimized_index.search(&query).await?;
@@ -345,8 +348,8 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
     let storage_path = temp_dir.path().join("disk_test_storage");
     let index_path = temp_dir.path().join("disk_test_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing disk space exhaustion handling...");
@@ -371,9 +374,10 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
         )
         .into_bytes();
 
+        let content_size = content.len();
         let tags = vec![
             ValidatedTag::new("disk-test")?,
-            ValidatedTag::new(&format!("size-{}", content.len() / 1000))?,
+            ValidatedTag::new(&format!("size-{}", content_size / 1000))?,
         ];
 
         let now = chrono::Utc::now();
@@ -385,7 +389,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
             tags,
             created_at: now,
             updated_at: now,
-            size: content.len(),
+            size: content_size,
         };
 
         // Attempt insertion with graceful failure handling
@@ -498,6 +502,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
 
     let recovery_tags = vec![ValidatedTag::new("recovery-test")?];
     let now = chrono::Utc::now();
+    let recovery_content_size = recovery_content.len();
 
     let recovery_doc = Document {
         id: recovery_doc_id,
@@ -507,7 +512,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
         tags: recovery_tags,
         created_at: now,
         updated_at: now,
-        size: recovery_content.len(),
+        size: recovery_content_size,
     };
 
     let recovery_result = storage.insert(recovery_doc.clone()).await;
@@ -527,8 +532,8 @@ async fn test_graceful_degradation() -> Result<()> {
     let index_path = temp_dir.path().join("degradation_index");
 
     // Start with limited capacity to force degradation
-    let mut storage = create_file_storage(&storage_path, Some(100)).await?;
-    let primary_index = create_primary_index(&index_path, 100)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(100)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(100)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing graceful degradation under resource constraints...");
@@ -711,6 +716,7 @@ fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
     ];
 
     let now = chrono::Utc::now();
+    let content_size = content.len();
 
     Ok(Document {
         id: doc_id,
@@ -720,6 +726,6 @@ fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
         tags,
         created_at: now,
         updated_at: now,
-        size: content.len(),
+        size: content_size,
     })
 }

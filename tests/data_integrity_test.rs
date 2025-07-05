@@ -18,8 +18,8 @@ async fn test_acid_atomicity() -> Result<()> {
     let storage_path = temp_dir.path().join("atomicity_storage");
     let index_path = temp_dir.path().join("atomicity_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing ACID Atomicity properties...");
@@ -158,8 +158,8 @@ async fn test_acid_consistency() -> Result<()> {
     let storage_path = temp_dir.path().join("consistency_storage");
     let index_path = temp_dir.path().join("consistency_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing ACID Consistency properties...");
@@ -346,10 +346,10 @@ async fn test_acid_isolation() -> Result<()> {
     let index_path = temp_dir.path().join("isolation_index");
 
     let storage = Arc::new(tokio::sync::Mutex::new(
-        create_file_storage(&storage_path, Some(2000)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(2000)).await?,
     ));
     let index = Arc::new(tokio::sync::Mutex::new({
-        let primary_index = create_primary_index(&index_path, 2000)?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(2000)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -477,8 +477,8 @@ async fn test_acid_durability() -> Result<()> {
     let mut committed_ids = HashSet::new();
 
     {
-        let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-        let primary_index = create_primary_index(&index_path, 1000)?;
+        let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
         let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
         println!("  - Inserting and committing {} documents...", docs.len());
@@ -510,8 +510,8 @@ async fn test_acid_durability() -> Result<()> {
     println!("  - Simulating system restart...");
 
     {
-        let storage = create_file_storage(&storage_path, Some(1000)).await?;
-        let primary_index = create_primary_index(&index_path, 1000)?;
+        let storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
         let optimized_index = create_optimized_index_with_defaults(primary_index);
 
         println!("  - Storage reopened after restart");
@@ -606,8 +606,8 @@ async fn test_data_corruption_detection() -> Result<()> {
     let storage_path = temp_dir.path().join("corruption_storage");
     let index_path = temp_dir.path().join("corruption_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing data corruption detection...");
@@ -847,6 +847,7 @@ This concludes the integrity test document.
 
         let now = chrono::Utc::now();
 
+        let content_size = content.len();
         let document = Document {
             id: doc_id,
             path,
@@ -855,7 +856,7 @@ This concludes the integrity test document.
             tags,
             created_at: now,
             updated_at: now,
-            size: content.len(),
+            size: content_size,
         };
 
         documents.push(document);

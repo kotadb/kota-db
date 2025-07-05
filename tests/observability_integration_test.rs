@@ -264,20 +264,21 @@ async fn test_distributed_tracing_integration() -> Result<()> {
     for i in 0..5 {
         let handle = task::spawn(async move {
             let operation_name = format!("concurrent_operation_{}", i);
+            let operation_name_clone = operation_name.clone();
 
             with_trace_id(&operation_name, async move {
                 tokio::time::sleep(Duration::from_millis(10 + i * 2)).await;
 
-                let ctx = OperationContext::new(&operation_name);
+                let ctx = OperationContext::new(&operation_name_clone);
                 let op = Operation::StorageRead {
                     doc_id: Uuid::new_v4(),
-                    size_bytes: 256 * (i + 1),
+                    size_bytes: 256 * (i as usize + 1),
                 };
 
                 let result: Result<()> = Ok(());
                 log_operation(&ctx, &op, &result);
 
-                Ok::<usize, anyhow::Error>(i)
+                Ok::<usize, anyhow::Error>(i as usize)
             })
             .await
         });
@@ -349,8 +350,8 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
     // Phase 1: Create instrumented database system
     println!("  - Creating instrumented database system...");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Phase 2: Test observable CRUD operations
@@ -370,24 +371,32 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
 
             // Storage operation with observability
             let storage_op = Operation::StorageWrite {
-                doc_id: doc.id.into(),
+                doc_id: doc.id.as_uuid(),
                 size_bytes: doc.size,
             };
 
             let storage_result = storage.insert(doc.clone()).await;
-            log_operation(&ctx, &storage_op, &storage_result.as_ref().map(|_| ()));
+            let storage_log_result = storage_result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{}", e));
+            log_operation(&ctx, &storage_op, &storage_log_result);
 
             if storage_result.is_ok() {
                 // Index operation with observability
                 let index_op = Operation::IndexInsert {
                     index_type: "optimized".to_string(),
-                    doc_id: doc.id.into(),
+                    doc_id: doc.id.as_uuid(),
                 };
 
                 let index_result = optimized_index
                     .insert(doc.id.clone(), doc.path.clone())
                     .await;
-                log_operation(&ctx, &index_op, &index_result.as_ref().map(|_| ()));
+                let index_log_result = index_result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| anyhow::anyhow!("{}", e));
+                log_operation(&ctx, &index_op, &index_log_result);
 
                 index_result?;
             }
@@ -426,14 +435,15 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
             let read_elapsed = read_start.elapsed();
 
             let read_op = Operation::StorageRead {
-                doc_id: (*doc_id).into(),
+                doc_id: (*doc_id).as_uuid(),
                 size_bytes: read_result
                     .as_ref()
                     .map(|opt| opt.as_ref().map(|doc| doc.size).unwrap_or(0))
                     .unwrap_or(0),
             };
 
-            log_operation(&ctx, &read_op, &read_result.as_ref().map(|_| ()));
+            let log_result = read_result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{}", e));
+            log_operation(&ctx, &read_op, &log_result);
 
             // Record read performance
             record_metric(MetricType::Timer {
@@ -468,7 +478,7 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
             ctx.add_attribute("query_type", "search");
             ctx.add_attribute("limit", "50");
 
-            let query = QueryBuilder::new().limit(ValidatedLimit::new(50)?).build();
+            let query = QueryBuilder::new().with_limit(50)?.build()?;
 
             let search_start = Instant::now();
             let search_result = optimized_index.search(&query).await;
@@ -483,7 +493,11 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
                     .unwrap_or(0),
             };
 
-            log_operation(&ctx, &search_op, &search_result.as_ref().map(|_| ()));
+            let search_log_result = search_result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{}", e));
+            log_operation(&ctx, &search_op, &search_log_result);
 
             // Record query performance
             record_metric(MetricType::Timer {
@@ -540,8 +554,8 @@ async fn test_observability_performance_overhead() -> Result<()> {
     let storage_path = temp_dir.path().join("perf_storage");
     let index_path = temp_dir.path().join("perf_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Phase 1: Baseline performance without observability
@@ -586,23 +600,31 @@ async fn test_observability_performance_overhead() -> Result<()> {
             ctx.add_attribute("iteration", &i.to_string());
 
             let storage_op = Operation::StorageWrite {
-                doc_id: doc.id.into(),
+                doc_id: doc.id.as_uuid(),
                 size_bytes: doc.size,
             };
 
             let storage_result = storage.insert(doc.clone()).await;
-            log_operation(&ctx, &storage_op, &storage_result.as_ref().map(|_| ()));
+            let storage_log_result = storage_result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{}", e));
+            log_operation(&ctx, &storage_op, &storage_log_result);
 
             if storage_result.is_ok() {
                 let index_op = Operation::IndexInsert {
                     index_type: "optimized".to_string(),
-                    doc_id: doc.id.into(),
+                    doc_id: doc.id.as_uuid(),
                 };
 
                 let index_result = optimized_index
                     .insert(doc.id.clone(), doc.path.clone())
                     .await;
-                log_operation(&ctx, &index_op, &index_result.as_ref().map(|_| ()));
+                let index_log_result = index_result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| anyhow::anyhow!("{}", e));
+                log_operation(&ctx, &index_op, &index_log_result);
 
                 // Record operation metrics
                 record_metric(MetricType::Counter {
@@ -689,10 +711,10 @@ async fn test_monitoring_and_alerting_integration() -> Result<()> {
     let index_path = temp_dir.path().join("monitoring_index");
 
     let storage = Arc::new(Mutex::new(
-        create_file_storage(&storage_path, Some(500)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(500)).await?,
     ));
     let index = Arc::new(Mutex::new({
-        let primary_index = create_primary_index(&index_path, 500)?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(500)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -734,13 +756,17 @@ async fn test_monitoring_and_alerting_integration() -> Result<()> {
                 let doc = create_monitoring_test_document(i)?;
 
                 let storage_op = Operation::StorageWrite {
-                    doc_id: doc.id.into(),
+                    doc_id: doc.id.as_uuid(),
                     size_bytes: doc.size,
                 };
 
                 let mut storage_guard = storage.lock().await;
                 let storage_result = storage_guard.insert(doc.clone()).await;
-                log_operation(&ctx, &storage_op, &storage_result.as_ref().map(|_| ()));
+                let storage_log_result = storage_result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| anyhow::anyhow!("{}", e));
+                log_operation(&ctx, &storage_op, &storage_log_result);
 
                 if storage_result.is_ok() {
                     drop(storage_guard);
@@ -749,9 +775,13 @@ async fn test_monitoring_and_alerting_integration() -> Result<()> {
 
                     let index_op = Operation::IndexInsert {
                         index_type: "optimized".to_string(),
-                        doc_id: doc.id.into(),
+                        doc_id: doc.id.as_uuid(),
                     };
-                    log_operation(&ctx, &index_op, &index_result.as_ref().map(|_| ()));
+                    let index_log_result = index_result
+                        .as_ref()
+                        .map(|_| ())
+                        .map_err(|e| anyhow::anyhow!("{}", e));
+                    log_operation(&ctx, &index_op, &index_log_result);
                 }
 
                 storage_result.map(|_| ())
@@ -961,16 +991,7 @@ This document helps validate logging, metrics, and tracing capabilities.
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id: doc_id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(doc_id, path, title, content, tags, now, now);
 
         documents.push(document);
     }
@@ -993,14 +1014,5 @@ fn create_monitoring_test_document(index: usize) -> Result<Document> {
 
     let now = chrono::Utc::now();
 
-    Ok(Document {
-        id: doc_id,
-        path,
-        title,
-        content,
-        tags,
-        created_at: now,
-        updated_at: now,
-        size: content.len(),
-    })
+    Ok(Document::new(doc_id, path, title, content, tags, now, now))
 }

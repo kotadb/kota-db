@@ -3,7 +3,7 @@
 // Written BEFORE implementation following 6-stage risk reduction
 
 use anyhow::Result;
-use kotadb::*;
+use kotadb::{*, contracts::Storage as StorageTrait};
 use std::path::Path;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -21,17 +21,15 @@ async fn test_storage_initialization() -> Result<()> {
     let (_dir, path) = temp_db();
 
     // Storage should initialize successfully
-    let storage = Storage::open(&path).await?;
+    let mut storage = create_file_storage(&path, Some(10)).await?;
 
     // Should create necessary directories
     assert!(Path::new(&path).join("meta.db").exists());
     assert!(Path::new(&path).join("indices").exists());
     assert!(Path::new(&path).join("wal").exists());
 
-    // Should be able to close and reopen
-    storage.close().await?;
-    let storage2 = Storage::open(&path).await?;
-    storage2.close().await?;
+    // Should be able to create a second storage instance (close is not available on wrapper)
+    let _storage2 = create_file_storage(&path, Some(10)).await?;
 
     Ok(())
 }
@@ -40,31 +38,29 @@ async fn test_storage_initialization() -> Result<()> {
 async fn test_document_insert_and_retrieve() -> Result<()> {
     init_logging()?;
     let (_dir, path) = temp_db();
-    let mut storage = Storage::open(&path).await?;
+    let mut storage = create_file_storage(&path, Some(10)).await?;
 
     // Create test document
-    let doc_id = Uuid::new_v4();
-    let doc = Document {
-        id: doc_id,
-        path: "/test/doc.md".to_string(),
-        hash: [0u8; 32], // SHA-256
-        size: 1234,
-        created: 1234567890,
-        updated: 1234567890,
-        title: "Test Document".to_string(),
-        word_count: 100,
-    };
+    let doc = DocumentBuilder::new()
+        .path("/test/doc.md")?
+        .title("Test Document")?
+        .content(b"Test content")
+        .build()?;
+
+    let doc_id = doc.id;
 
     // Insert should succeed
     storage.insert(doc.clone()).await?;
 
     // Retrieve should return the same document
     let retrieved = storage.get(&doc_id).await?;
-    assert_eq!(retrieved.unwrap().id, doc_id);
-    assert_eq!(retrieved.unwrap().title, "Test Document");
+    let retrieved_doc = retrieved.unwrap();
+    assert_eq!(retrieved_doc.id, doc_id);
+    assert_eq!(retrieved_doc.title.as_str(), "Test Document");
 
     // Non-existent document should return None
-    let missing = storage.get(&Uuid::new_v4()).await?;
+    let missing_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+    let missing = storage.get(&missing_id).await?;
     assert!(missing.is_none());
 
     Ok(())
@@ -206,7 +202,8 @@ async fn test_concurrent_read_write_safety() -> Result<()> {
         let storage = storage.clone();
         let handle = tokio::spawn(async move {
             let storage = storage.lock().await;
-            storage.list_all().await
+            let _result = storage.list_all().await?;
+            Ok::<(), anyhow::Error>(())
         });
         handles.push(handle);
     }
@@ -366,7 +363,8 @@ async fn test_memory_mapped_performance() -> Result<()> {
 // Helper types that will be implemented later
 // These are here to make the tests compile
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Document {

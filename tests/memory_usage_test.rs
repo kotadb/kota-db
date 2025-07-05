@@ -3,7 +3,6 @@
 
 use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use uuid::Uuid;
 
@@ -67,7 +66,7 @@ struct TreeStats {
 
 /// Analyze tree structure and balance
 fn analyze_tree_structure(root: &btree::BTreeRoot) -> TreeStats {
-    use btree::{BTreeNode, MAX_KEYS, MIN_KEYS};
+    use btree::{BTreeNode, MAX_KEYS};
 
     let mut stats = TreeStats {
         depth: 0,
@@ -121,7 +120,7 @@ fn analyze_tree_structure(root: &btree::BTreeRoot) -> TreeStats {
     }
 
     analyze_node(
-        &root.root.as_ref().unwrap(),
+        root.root.as_ref().unwrap(),
         0,
         &mut stats,
         &mut min_leaf_depth,
@@ -157,8 +156,8 @@ fn test_memory_usage_insertion() {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/mem/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/mem/doc_{}.md", i)).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         let final_memory = net_memory_used();
@@ -205,8 +204,8 @@ fn test_memory_cleanup_after_deletion() {
         .collect();
 
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/cleanup/doc_{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/cleanup/doc_{}.md", i)).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     let after_insert = net_memory_used();
@@ -248,8 +247,8 @@ fn test_tree_balance_properties() {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/balance/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/balance/doc_{}.md", i)).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         let stats = analyze_tree_structure(&tree);
@@ -301,8 +300,8 @@ fn test_tree_rebalancing_efficiency() {
         .collect();
 
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/rebalance/doc_{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/rebalance/doc_{}.md", i)).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     let initial_stats = analyze_tree_structure(&tree);
@@ -349,7 +348,7 @@ fn test_memory_overhead_analysis() {
         .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
         .collect();
     let paths: Vec<_> = (0..size)
-        .map(|i| ValidatedPath::new(&format!("/overhead/doc_{}.md", i)).unwrap())
+        .map(|i| ValidatedPath::new(format!("/overhead/doc_{}.md", i)).unwrap())
         .collect();
 
     let key_size = std::mem::size_of::<ValidatedDocumentId>();
@@ -362,7 +361,7 @@ fn test_memory_overhead_analysis() {
 
     let mut tree = btree::create_empty_tree();
     for i in 0..size {
-        tree = btree::insert_into_tree(tree, keys[i].clone(), paths[i].clone()).unwrap();
+        tree = btree::insert_into_tree(tree, keys[i], paths[i].clone()).unwrap();
     }
 
     let after = net_memory_used();
@@ -394,15 +393,15 @@ fn test_worst_case_memory_usage() {
 
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/worst/doc_{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/worst/doc_{}.md", i)).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     let after = net_memory_used();
     let sorted_memory = (after - before) as usize;
 
     // Compare with random insertion
-    let mut random_keys: Vec<_> = (0..size)
+    let random_keys: Vec<_> = (0..size)
         .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
         .collect();
 
@@ -411,8 +410,8 @@ fn test_worst_case_memory_usage() {
 
     let mut tree = btree::create_empty_tree();
     for (i, key) in random_keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/random/doc_{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/random/doc_{}.md", i)).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     let after = net_memory_used();

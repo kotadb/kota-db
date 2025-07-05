@@ -2,6 +2,7 @@
 // Tests that validate complete system performance meets production SLAs
 
 use anyhow::Result;
+use kotadb::contracts::BulkOperations;
 use kotadb::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,8 +18,8 @@ async fn test_end_to_end_performance_slas() -> Result<()> {
     let storage_path = temp_dir.path().join("perf_sla_storage");
     let index_path = temp_dir.path().join("perf_sla_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(5000)).await?;
-    let primary_index = create_primary_index(&index_path, 5000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(5000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(5000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing end-to-end performance SLAs...");
@@ -156,7 +157,7 @@ async fn test_end_to_end_performance_slas() -> Result<()> {
     // Phase 4: Search performance SLA
     println!("  - Testing search performance SLAs...");
 
-    let query = QueryBuilder::new().limit(ValidatedLimit::new(100)?).build();
+    let query = QueryBuilder::new().with_limit(100)?.build()?;
 
     let search_iterations = 50;
     let mut search_times = Vec::new();
@@ -207,10 +208,10 @@ async fn test_concurrent_performance_characteristics() -> Result<()> {
     let index_path = temp_dir.path().join("concurrent_perf_index");
 
     let storage = Arc::new(tokio::sync::Mutex::new(
-        create_file_storage(&storage_path, Some(5000)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(5000)).await?,
     ));
     let index = Arc::new(tokio::sync::Mutex::new({
-        let primary_index = create_primary_index(&index_path, 5000)?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(5000)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -272,9 +273,10 @@ async fn test_concurrent_performance_characteristics() -> Result<()> {
 
         for handle in handles {
             let user_metrics = handle.await??;
+            let total_ops = user_metrics.total_operations();
             all_write_times.extend(user_metrics.write_times);
             all_read_times.extend(user_metrics.read_times);
-            total_operations += user_metrics.total_operations();
+            total_operations += total_ops;
         }
 
         let total_duration = test_start.elapsed();
@@ -333,8 +335,8 @@ async fn test_memory_performance_characteristics() -> Result<()> {
     let storage_path = temp_dir.path().join("memory_perf_storage");
     let index_path = temp_dir.path().join("memory_perf_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(10000)).await?;
-    let primary_index = create_primary_index(&index_path, 10000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(10000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(10000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing memory vs performance characteristics...");
@@ -381,7 +383,7 @@ async fn test_memory_performance_characteristics() -> Result<()> {
             let avg_read_time = read_times.iter().sum::<Duration>() / read_times.len() as u32;
 
             // Test search performance
-            let query = QueryBuilder::new().limit(ValidatedLimit::new(50)?).build();
+            let query = QueryBuilder::new().with_limit(50)?.build()?;
 
             let search_start = Instant::now();
             let search_results = optimized_index.search(&query).await?;
@@ -456,10 +458,9 @@ async fn test_memory_performance_characteristics() -> Result<()> {
     let memory_pressure_duration = memory_pressure_start.elapsed();
 
     // Test that read performance hasn't degraded severely under memory pressure
-    let pressure_read_times = Vec::new();
     let read_test_count = 50;
 
-    let mut pressure_read_times = Vec::new();
+    let mut pressure_read_times: Vec<Duration> = Vec::new();
     for _ in 0..read_test_count {
         let random_idx = fastrand::usize(..large_docs.len());
         let random_doc = &large_docs[random_idx];
@@ -499,8 +500,8 @@ async fn test_bulk_operation_performance_guarantees() -> Result<()> {
     let storage_path = temp_dir.path().join("bulk_perf_storage");
     let index_path = temp_dir.path().join("bulk_perf_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(10000)).await?;
-    let primary_index = create_primary_index(&index_path, 10000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(10000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(10000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("Testing bulk operation performance guarantees...");
@@ -665,16 +666,7 @@ fn create_performance_test_documents(count: usize, test_type: &str) -> Result<Ve
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id: doc_id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(doc_id, path, title, content, tags, now, now);
 
         documents.push(document);
     }
@@ -706,16 +698,7 @@ fn create_user_performance_document(user_id: usize, doc_num: usize) -> Result<Do
 
     let now = chrono::Utc::now();
 
-    Ok(Document {
-        id: doc_id,
-        path,
-        title,
-        content,
-        tags,
-        created_at: now,
-        updated_at: now,
-        size: content.len(),
-    })
+    Ok(Document::new(doc_id, path, title, content, tags, now, now))
 }
 
 fn create_large_documents(count: usize, content_size: usize) -> Result<Vec<Document>> {
@@ -741,16 +724,7 @@ fn create_large_documents(count: usize, content_size: usize) -> Result<Vec<Docum
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id: doc_id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(doc_id, path, title, content, tags, now, now);
 
         documents.push(document);
     }

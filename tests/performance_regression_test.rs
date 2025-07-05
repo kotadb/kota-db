@@ -2,7 +2,6 @@
 // These tests ensure B+ tree operations maintain O(log n) performance
 
 use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -62,14 +61,14 @@ fn measure_insertion_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(&format!("/perf/doc_{}.md", i)).unwrap())
+            .map(|i| ValidatedPath::new(format!("/perf/doc_{}.md", i)).unwrap())
             .collect();
 
         // Measure insertion time
         let start = Instant::now();
         let mut tree = btree::create_empty_tree();
         for i in 0..size {
-            tree = btree::insert_into_tree(tree, keys[i].clone(), paths[i].clone())
+            tree = btree::insert_into_tree(tree, keys[i], paths[i].clone())
                 .expect("Insertion should succeed");
         }
         let duration = start.elapsed();
@@ -92,8 +91,8 @@ fn measure_search_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/perf/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/perf/doc_{}.md", i)).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         // Search for random keys
@@ -124,8 +123,8 @@ fn measure_deletion_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
 
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/perf/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/perf/doc_{}.md", i)).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         // Delete half the keys
@@ -274,8 +273,8 @@ fn test_mixed_operations_performance() {
     // Build initial tree
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().take(size / 2).enumerate() {
-        let path = ValidatedPath::new(&format!("/mixed/doc_{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/mixed/doc_{}.md", i)).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     // Mixed operations
@@ -288,8 +287,8 @@ fn test_mixed_operations_performance() {
                 // Insert
                 let idx = size / 2 + i / 3;
                 if idx < size {
-                    let path = ValidatedPath::new(&format!("/mixed/new_{}.md", i)).unwrap();
-                    tree = btree::insert_into_tree(tree, keys[idx].clone(), path).unwrap();
+                    let path = ValidatedPath::new(format!("/mixed/new_{}.md", i)).unwrap();
+                    tree = btree::insert_into_tree(tree, keys[idx], path).unwrap();
                 }
             }
             1 => {
@@ -346,8 +345,8 @@ fn test_performance_stability() {
         let start = Instant::now();
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/stable/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/stable/doc_{}.md", i)).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
         let insert_duration = start.elapsed();
         insertion_times.push(insert_duration);

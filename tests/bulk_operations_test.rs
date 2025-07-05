@@ -29,13 +29,13 @@ async fn test_bulk_insert_throughput_improvement() -> Result<()> {
 
     // Measure bulk insertion (will be implemented)
     let start = Instant::now();
-    let bulk_tree = btree::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
+    let bulk_tree = kotadb::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
     let bulk_duration = start.elapsed();
 
     // Verify both trees have same content
     assert_eq!(
-        btree::count_entries(&individual_tree),
-        btree::count_entries(&bulk_tree)
+        kotadb::count_entries(&individual_tree),
+        kotadb::count_entries(&bulk_tree)
     );
 
     // Verify all keys are searchable in both trees
@@ -101,12 +101,12 @@ async fn test_bulk_delete_throughput_improvement() -> Result<()> {
 
     // Measure bulk deletion (will be implemented)
     let start = Instant::now();
-    tree2 = btree::bulk_delete_from_tree(tree2, keys_to_delete.clone())?;
+    tree2 = kotadb::bulk_delete_from_tree(tree2, keys_to_delete.clone())?;
     let bulk_duration = start.elapsed();
 
     // Verify both trees have same final state
-    assert_eq!(btree::count_entries(&tree1), btree::count_entries(&tree2));
-    assert_eq!(btree::count_entries(&tree1), test_size - delete_count);
+    assert_eq!(kotadb::count_entries(&tree1), kotadb::count_entries(&tree2));
+    assert_eq!(kotadb::count_entries(&tree1), test_size - delete_count);
 
     // Verify deleted keys are not found in either tree
     for key in &keys_to_delete {
@@ -147,10 +147,10 @@ async fn test_bulk_operations_maintain_tree_balance() -> Result<()> {
     }
 
     // Create tree with bulk insertion
-    let tree = btree::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
+    let tree = kotadb::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
 
     // Verify tree structure integrity
-    let tree_metrics = btree::analyze_tree_structure(&tree)?;
+    let tree_metrics = kotadb::analyze_tree_structure(&tree)?;
 
     // Balance requirements
     assert!(
@@ -162,9 +162,9 @@ async fn test_bulk_operations_maintain_tree_balance() -> Result<()> {
     // Depth should be approximately log(n)
     let expected_depth = (test_size as f64).log2().ceil() as usize + 1;
     assert!(
-        tree_metrics.depth <= expected_depth * 2,
+        tree_metrics.tree_depth <= expected_depth * 2,
         "Tree depth {} exceeds expected maximum {}",
-        tree_metrics.depth,
+        tree_metrics.tree_depth,
         expected_depth * 2
     );
 
@@ -201,7 +201,7 @@ async fn test_bulk_operations_memory_efficiency() -> Result<()> {
     // Measure memory usage during bulk operations
     let initial_memory = get_process_memory_usage();
 
-    let tree = btree::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
+    let tree = kotadb::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs.clone())?;
 
     let post_insert_memory = get_process_memory_usage();
     let insert_memory_delta = post_insert_memory - initial_memory;
@@ -224,7 +224,7 @@ async fn test_bulk_operations_memory_efficiency() -> Result<()> {
         .map(|(id, _)| id.clone())
         .collect();
 
-    let tree_after_delete = btree::bulk_delete_from_tree(tree, delete_keys)?;
+    let tree_after_delete = kotadb::bulk_delete_from_tree(tree, delete_keys)?;
 
     // Force garbage collection and measure
     std::hint::black_box(&tree_after_delete);
@@ -256,7 +256,7 @@ async fn test_bulk_operations_error_handling() -> Result<()> {
         (duplicate_id, path2), // Duplicate key
     ];
 
-    let result = btree::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs);
+    let result = kotadb::bulk_insert_into_tree(btree::create_empty_tree(), test_pairs);
 
     // Should handle duplicates gracefully (either error or last-writer-wins)
     assert!(
@@ -271,7 +271,7 @@ async fn test_bulk_operations_error_handling() -> Result<()> {
         ValidatedDocumentId::from_uuid(Uuid::new_v4())?,
     ];
 
-    let result = btree::bulk_delete_from_tree(tree, non_existent_keys);
+    let result = kotadb::bulk_delete_from_tree(tree, non_existent_keys);
     assert!(
         result.is_ok(),
         "Bulk delete should handle non-existent keys gracefully"
@@ -298,10 +298,10 @@ async fn test_bulk_operations_concurrent_safety() -> Result<()> {
             batch_pairs.push((id, path));
         }
 
-        cumulative_tree = btree::bulk_insert_into_tree(cumulative_tree, batch_pairs)?;
+        cumulative_tree = kotadb::bulk_insert_into_tree(cumulative_tree, batch_pairs)?;
 
         // Verify tree consistency after each batch
-        let entry_count = btree::count_entries(&cumulative_tree);
+        let entry_count = kotadb::count_entries(&cumulative_tree);
         assert_eq!(
             entry_count,
             batch_size * (batch + 1),

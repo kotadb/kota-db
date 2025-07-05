@@ -46,12 +46,15 @@ async fn test_production_configuration_validation() -> Result<()> {
 
     // Test creating storage with valid config
     let storage = create_file_storage(
-        &base_path.join("prod_storage"),
+        &base_path.join("prod_storage").to_string_lossy(),
         Some(valid_config.max_documents),
     )
     .await?;
-    let primary_index =
-        create_primary_index(&base_path.join("prod_index"), valid_config.max_documents)?;
+    let primary_index = create_primary_index(
+        &base_path.join("prod_index").to_string_lossy(),
+        Some(valid_config.max_documents),
+    )
+    .await?;
     let optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("    - Storage and index created successfully with production config");
@@ -161,7 +164,7 @@ async fn test_environment_specific_configuration() -> Result<()> {
 
     // Test development-specific behavior
     let mut dev_storage = create_file_storage(
-        &base_path.join("dev_storage"),
+        &base_path.join("dev_storage").to_string_lossy(),
         Some(dev_config.max_documents),
     )
     .await?;
@@ -208,7 +211,7 @@ async fn test_environment_specific_configuration() -> Result<()> {
 
     // Test production-specific behavior
     let mut prod_storage = create_file_storage(
-        &base_path.join("prod_storage"),
+        &base_path.join("prod_storage").to_string_lossy(),
         Some(prod_config.max_documents),
     )
     .await?;
@@ -303,14 +306,15 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
 
     // Create storage with limited capacity
     let mut limited_storage = create_file_storage(
-        &base_path.join("limited_storage"),
+        &base_path.join("limited_storage").to_string_lossy(),
         Some(limited_config.max_documents),
     )
     .await?;
     let primary_index = create_primary_index(
-        &base_path.join("limited_index"),
-        limited_config.max_documents,
-    )?;
+        &base_path.join("limited_index").to_string_lossy(),
+        Some(limited_config.max_documents),
+    )
+    .await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Test approaching capacity limit
@@ -481,12 +485,15 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
     let init_start = Instant::now();
 
     let storage = create_file_storage(
-        &base_path.join("deploy_storage"),
+        &base_path.join("deploy_storage").to_string_lossy(),
         Some(deploy_config.max_documents),
     )
     .await?;
-    let primary_index =
-        create_primary_index(&base_path.join("deploy_index"), deploy_config.max_documents)?;
+    let primary_index = create_primary_index(
+        &base_path.join("deploy_index").to_string_lossy(),
+        Some(deploy_config.max_documents),
+    )
+    .await?;
     let optimized_index = create_optimized_index_with_defaults(primary_index);
 
     let init_duration = init_start.elapsed();
@@ -690,7 +697,7 @@ async fn test_configuration_hot_reload_simulation() -> Result<()> {
 
     // Create system with initial config
     let mut storage = create_file_storage(
-        &base_path.join("hotreload_storage"),
+        &base_path.join("hotreload_storage").to_string_lossy(),
         Some(loaded_config.max_documents),
     )
     .await?;
@@ -869,10 +876,7 @@ impl SystemHealthChecker {
         })
     }
 
-    async fn check_index_health<I: Index<Key = ValidatedDocumentId, Value = ValidatedPath>>(
-        &self,
-        _index: &I,
-    ) -> Result<IndexHealth> {
+    async fn check_index_health<I: Index>(&self, _index: &I) -> Result<IndexHealth> {
         // In a real implementation, this would check index statistics
         Ok(IndexHealth {
             is_healthy: true,
@@ -893,10 +897,7 @@ impl SystemHealthChecker {
         })
     }
 
-    async fn comprehensive_health_check<
-        S: Storage,
-        I: Index<Key = ValidatedDocumentId, Value = ValidatedPath>,
-    >(
+    async fn comprehensive_health_check<S: Storage, I: Index>(
         &self,
         storage: &S,
         index: &I,
@@ -999,16 +1000,7 @@ fn create_config_test_documents(count: usize, test_type: &str) -> Result<Vec<Doc
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id: doc_id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(doc_id, path, title, content, tags, now, now);
 
         documents.push(document);
     }
@@ -1035,16 +1027,7 @@ fn create_large_config_documents(count: usize, content_size: usize) -> Result<Ve
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id: doc_id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(doc_id, path, title, content, tags, now, now);
 
         documents.push(document);
     }

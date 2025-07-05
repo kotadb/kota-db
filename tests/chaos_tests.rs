@@ -6,17 +6,16 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::TempDir;
 use tokio::sync::{Mutex, Semaphore};
-use uuid::Uuid;
 
 /// Simulate sudden system shutdown during write
 #[tokio::test]
 async fn test_sudden_shutdown() -> Result<()> {
+    use chrono::Utc;
     use kotadb::*;
 
     struct ShutdownStorage {
-        docs: Arc<Mutex<HashMap<Uuid, Document>>>,
+        docs: Arc<Mutex<HashMap<ValidatedDocumentId, Document>>>,
         shutdown_signal: Arc<AtomicBool>,
         writes_before_shutdown: AtomicU64,
     }
@@ -50,7 +49,7 @@ async fn test_sudden_shutdown() -> Result<()> {
             Ok(())
         }
 
-        async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
+        async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
             if self.shutdown_signal.load(Ordering::Relaxed) {
                 anyhow::bail!("System is down");
             }
@@ -62,11 +61,23 @@ async fn test_sudden_shutdown() -> Result<()> {
             anyhow::bail!("System is down")
         }
 
-        async fn delete(&mut self, _id: &Uuid) -> Result<()> {
+        async fn delete(&mut self, _id: &ValidatedDocumentId) -> Result<bool> {
             anyhow::bail!("System is down")
         }
 
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            if self.shutdown_signal.load(Ordering::Relaxed) {
+                anyhow::bail!("System is down");
+            }
+            let docs = self.docs.lock().await;
+            Ok(docs.values().cloned().collect())
+        }
+
         async fn sync(&mut self) -> Result<()> {
+            anyhow::bail!("System is down")
+        }
+
+        async fn flush(&mut self) -> Result<()> {
             anyhow::bail!("System is down")
         }
 
@@ -81,15 +92,14 @@ async fn test_sudden_shutdown() -> Result<()> {
     // Try to write 20 documents, but system will shutdown after 10
     for i in 0..20 {
         let doc = Document::new(
-            Uuid::new_v4(),
-            format!("/test/{}.md", i),
-            [0u8; 32],
-            1024,
-            1000,
-            2000,
-            format!("Doc {}", i),
-            100,
-        )?;
+            ValidatedDocumentId::new(),
+            ValidatedPath::new(&format!("/test/{}.md", i))?,
+            ValidatedTitle::new(&format!("Doc {}", i))?,
+            vec![0u8; 1024], // content
+            vec![],          // tags
+            Utc::now(),
+            Utc::now(),
+        );
 
         match storage.insert(doc).await {
             Ok(_) => successful_writes += 1,
@@ -107,11 +117,12 @@ async fn test_sudden_shutdown() -> Result<()> {
 /// Simulate network partition in distributed scenario
 #[tokio::test]
 async fn test_network_partition() -> Result<()> {
+    use chrono::Utc;
     use kotadb::*;
 
     struct PartitionedNode {
         id: usize,
-        local_data: Arc<Mutex<HashMap<Uuid, Document>>>,
+        local_data: Arc<Mutex<HashMap<ValidatedDocumentId, Document>>>,
         peers: Arc<Mutex<Vec<Arc<PartitionedNode>>>>,
         partitioned: Arc<AtomicBool>,
     }
@@ -142,48 +153,58 @@ async fn test_network_partition() -> Result<()> {
         }
     }
 
+    struct PartitionedNodeStorage(Arc<PartitionedNode>);
+
     #[async_trait::async_trait]
-    impl Storage for Arc<PartitionedNode> {
+    impl Storage for PartitionedNodeStorage {
         async fn open(_path: &str) -> Result<Self>
         where
             Self: Sized,
         {
-            Ok(PartitionedNode::new(0))
+            Ok(PartitionedNodeStorage(PartitionedNode::new(0)))
         }
 
         async fn insert(&mut self, doc: Document) -> Result<()> {
-            let mut local = self.local_data.lock().await;
+            let mut local = self.0.local_data.lock().await;
             local.insert(doc.id, doc.clone());
             drop(local);
 
             // Try to replicate
-            if let Err(_) = self.replicate(&doc).await {
+            if let Err(_) = self.0.replicate(&doc).await {
                 // Continue even if replication fails (eventual consistency)
             }
             Ok(())
         }
 
-        async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
-            let local = self.local_data.lock().await;
+        async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
+            let local = self.0.local_data.lock().await;
             Ok(local.get(id).cloned())
         }
 
         async fn update(&mut self, doc: Document) -> Result<()> {
-            let mut local = self.local_data.lock().await;
+            let mut local = self.0.local_data.lock().await;
             local.insert(doc.id, doc.clone());
             drop(local);
 
-            let _ = self.replicate(&doc).await;
+            let _ = self.0.replicate(&doc).await;
             Ok(())
         }
 
-        async fn delete(&mut self, id: &Uuid) -> Result<()> {
-            let mut local = self.local_data.lock().await;
-            local.remove(id);
-            Ok(())
+        async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
+            let mut local = self.0.local_data.lock().await;
+            Ok(local.remove(id).is_some())
+        }
+
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            let local = self.0.local_data.lock().await;
+            Ok(local.values().cloned().collect())
         }
 
         async fn sync(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<()> {
             Ok(())
         }
 
@@ -214,43 +235,43 @@ async fn test_network_partition() -> Result<()> {
 
     // Insert document on node1
     let doc = Document::new(
-        Uuid::new_v4(),
-        "/test/partition.md".to_string(),
-        [0u8; 32],
-        1024,
-        1000,
-        2000,
-        "Partition Test".to_string(),
-        100,
-    )?;
+        ValidatedDocumentId::new(),
+        ValidatedPath::new("/test/partition.md")?,
+        ValidatedTitle::new("Partition Test")?,
+        vec![0u8; 1024], // content
+        vec![],          // tags
+        Utc::now(),
+        Utc::now(),
+    );
 
-    let mut storage1 = node1.clone();
+    let mut storage1 = PartitionedNodeStorage(node1.clone());
     storage1.insert(doc.clone()).await?;
 
     // Verify replication
-    assert!(node2.get(&doc.id).await?.is_some());
-    assert!(node3.get(&doc.id).await?.is_some());
+    let storage2 = PartitionedNodeStorage(node2.clone());
+    let storage3 = PartitionedNodeStorage(node3.clone());
+    assert!(storage2.get(&doc.id).await?.is_some());
+    assert!(storage3.get(&doc.id).await?.is_some());
 
     // Simulate partition (node3 isolated)
     node3.partitioned.store(true, Ordering::Relaxed);
 
     // Insert new document on node1
     let doc2 = Document::new(
-        Uuid::new_v4(),
-        "/test/partition2.md".to_string(),
-        [0u8; 32],
-        1024,
-        1000,
-        2000,
-        "Partition Test 2".to_string(),
-        100,
-    )?;
+        ValidatedDocumentId::new(),
+        ValidatedPath::new("/test/partition2.md")?,
+        ValidatedTitle::new("Partition Test 2")?,
+        vec![0u8; 1024], // content
+        vec![],          // tags
+        Utc::now(),
+        Utc::now(),
+    );
 
     storage1.insert(doc2.clone()).await?;
 
     // Node2 should have it, node3 should not
-    assert!(node2.get(&doc2.id).await?.is_some());
-    assert!(node3.get(&doc2.id).await?.is_none());
+    assert!(storage2.get(&doc2.id).await?.is_some());
+    assert!(storage3.get(&doc2.id).await?.is_none());
 
     Ok(())
 }
@@ -258,10 +279,11 @@ async fn test_network_partition() -> Result<()> {
 /// Simulate resource exhaustion
 #[tokio::test]
 async fn test_resource_exhaustion() -> Result<()> {
+    use chrono::Utc;
     use kotadb::*;
 
     struct ResourceLimitedStorage {
-        docs: Arc<Mutex<HashMap<Uuid, Document>>>,
+        docs: Arc<Mutex<HashMap<ValidatedDocumentId, Document>>>,
         file_handles: Arc<Semaphore>,
         memory_limit_bytes: Arc<AtomicU64>,
         memory_used_bytes: Arc<AtomicU64>,
@@ -292,7 +314,7 @@ async fn test_resource_exhaustion() -> Result<()> {
             let current_mem = self.memory_used_bytes.load(Ordering::Relaxed);
             let limit = self.memory_limit_bytes.load(Ordering::Relaxed);
 
-            if current_mem + doc.size > limit {
+            if current_mem + doc.size as u64 > limit {
                 anyhow::bail!("Out of memory");
             }
 
@@ -302,13 +324,13 @@ async fn test_resource_exhaustion() -> Result<()> {
             let mut docs = self.docs.lock().await;
             docs.insert(doc.id, doc.clone());
             self.memory_used_bytes
-                .fetch_add(doc.size, Ordering::Relaxed);
+                .fetch_add(doc.size as u64, Ordering::Relaxed);
 
             drop(permit); // Release file handle
             Ok(())
         }
 
-        async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
+        async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
             let _permit = self
                 .file_handles
                 .try_acquire()
@@ -326,7 +348,7 @@ async fn test_resource_exhaustion() -> Result<()> {
 
             let mut docs = self.docs.lock().await;
             if let Some(old) = docs.get(&doc.id) {
-                let size_diff = doc.size.saturating_sub(old.size);
+                let size_diff = (doc.size as u64).saturating_sub(old.size as u64);
 
                 let current_mem = self.memory_used_bytes.load(Ordering::Relaxed);
                 let limit = self.memory_limit_bytes.load(Ordering::Relaxed);
@@ -344,7 +366,7 @@ async fn test_resource_exhaustion() -> Result<()> {
             }
         }
 
-        async fn delete(&mut self, id: &Uuid) -> Result<()> {
+        async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
             let _permit = self
                 .file_handles
                 .try_acquire()
@@ -353,12 +375,23 @@ async fn test_resource_exhaustion() -> Result<()> {
             let mut docs = self.docs.lock().await;
             if let Some(doc) = docs.remove(id) {
                 self.memory_used_bytes
-                    .fetch_sub(doc.size, Ordering::Relaxed);
+                    .fetch_sub(doc.size as u64, Ordering::Relaxed);
+                Ok(true)
+            } else {
+                Ok(false)
             }
-            Ok(())
+        }
+
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            let docs = self.docs.lock().await;
+            Ok(docs.values().cloned().collect())
         }
 
         async fn sync(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<()> {
             Ok(())
         }
 
@@ -375,16 +408,14 @@ async fn test_resource_exhaustion() -> Result<()> {
         let storage_clone = Arc::clone(&storage);
         let handle = tokio::spawn(async move {
             let doc = Document::new(
-                Uuid::new_v4(),
-                format!("/test/{}.md", i),
-                [0u8; 32],
-                50_000, // 50KB each
-                1000,
-                2000,
-                format!("Doc {}", i),
-                100,
-            )
-            .unwrap();
+                ValidatedDocumentId::new(),
+                ValidatedPath::new(&format!("/test/{}.md", i)).unwrap(),
+                ValidatedTitle::new(&format!("Doc {}", i)).unwrap(),
+                vec![0u8; 50_000], // 50KB content
+                vec![],            // tags
+                Utc::now(),
+                Utc::now(),
+            );
 
             let mut s = storage_clone.lock().await;
             s.insert(doc).await
@@ -423,6 +454,7 @@ async fn test_resource_exhaustion() -> Result<()> {
 /// Simulate cascading failures
 #[tokio::test]
 async fn test_cascading_failure() -> Result<()> {
+    use chrono::Utc;
     use kotadb::*;
 
     struct CascadingSystem {
@@ -485,7 +517,7 @@ async fn test_cascading_failure() -> Result<()> {
             Ok(())
         }
 
-        async fn get(&self, _id: &Uuid) -> Result<Option<Document>> {
+        async fn get(&self, _id: &ValidatedDocumentId) -> Result<Option<Document>> {
             self.check_health()?;
             Ok(None)
         }
@@ -496,13 +528,23 @@ async fn test_cascading_failure() -> Result<()> {
             Ok(())
         }
 
-        async fn delete(&mut self, _id: &Uuid) -> Result<()> {
+        async fn delete(&mut self, _id: &ValidatedDocumentId) -> Result<bool> {
             self.inject_failure();
+            self.check_health()?;
+            Ok(true)
+        }
+
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            self.check_health()?;
+            Ok(vec![])
+        }
+
+        async fn sync(&mut self) -> Result<()> {
             self.check_health()?;
             Ok(())
         }
 
-        async fn sync(&mut self) -> Result<()> {
+        async fn flush(&mut self) -> Result<()> {
             self.check_health()?;
             Ok(())
         }
@@ -518,15 +560,14 @@ async fn test_cascading_failure() -> Result<()> {
     // Perform operations until cascade failure
     for i in 0..20 {
         let doc = Document::new(
-            Uuid::new_v4(),
-            format!("/test/{}.md", i),
-            [0u8; 32],
-            1024,
-            1000,
-            2000,
-            format!("Doc {}", i),
-            100,
-        )?;
+            ValidatedDocumentId::new(),
+            ValidatedPath::new(&format!("/test/{}.md", i))?,
+            ValidatedTitle::new(&format!("Doc {}", i))?,
+            vec![0u8; 1024], // content
+            vec![],          // tags
+            Utc::now(),
+            Utc::now(),
+        );
 
         match storage.insert(doc).await {
             Ok(_) => operations += 1,
@@ -550,11 +591,12 @@ async fn test_cascading_failure() -> Result<()> {
 /// Simulate Byzantine failures (inconsistent behavior)
 #[tokio::test]
 async fn test_byzantine_failures() -> Result<()> {
+    use chrono::Utc;
     use kotadb::*;
     use rand::Rng;
 
     struct ByzantineStorage {
-        docs: Arc<Mutex<HashMap<Uuid, Document>>>,
+        docs: Arc<Mutex<HashMap<ValidatedDocumentId, Document>>>,
         corruption_rate: f32,
     }
 
@@ -563,16 +605,23 @@ async fn test_byzantine_failures() -> Result<()> {
             let mut rng = rand::thread_rng();
 
             // Randomly corrupt different fields
-            match rng.gen_range(0..5) {
-                0 => doc.size = rng.gen::<u64>(),
-                1 => doc.word_count = rng.gen::<u32>(),
-                2 => doc.updated = doc.created - 1000, // Invalid timestamp
-                3 => doc.title = "".to_string(),       // Empty title
-                4 => {
-                    // Corrupt hash
-                    for i in 0..32 {
-                        doc.hash[i] = rng.gen::<u8>();
-                    }
+            match rng.gen_range(0..4) {
+                0 => {
+                    // Corrupt size by modifying content
+                    let new_size = rng.gen_range(0..100000);
+                    doc.content = vec![0u8; new_size];
+                }
+                1 => {
+                    // Corrupt timestamps (make updated < created)
+                    doc.updated_at = doc.created_at - chrono::Duration::days(1);
+                }
+                2 => {
+                    // Corrupt title to empty (invalid)
+                    doc.title = ValidatedTitle::new("Corrupted").unwrap();
+                }
+                3 => {
+                    // Corrupt path
+                    doc.path = ValidatedPath::new("/corrupted/path.md").unwrap();
                 }
                 _ => {}
             }
@@ -610,7 +659,7 @@ async fn test_byzantine_failures() -> Result<()> {
             Ok(())
         }
 
-        async fn get(&self, id: &Uuid) -> Result<Option<Document>> {
+        async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
             let docs = self.docs.lock().await;
 
             if let Some(doc) = docs.get(id) {
@@ -624,15 +673,14 @@ async fn test_byzantine_failures() -> Result<()> {
                 // Sometimes claim document exists when it doesn't
                 if rand::random::<f32>() < 0.1 {
                     Ok(Some(Document::new(
-                        *id,
-                        "/fake/doc.md".to_string(),
-                        [0u8; 32],
-                        1024,
-                        1000,
-                        2000,
-                        "Fake Doc".to_string(),
-                        100,
-                    )?))
+                        ValidatedDocumentId::new(),
+                        ValidatedPath::new("/fake/doc.md")?,
+                        ValidatedTitle::new("Fake Doc")?,
+                        vec![0u8; 32],
+                        vec![],
+                        Utc::now(),
+                        Utc::now(),
+                    )))
                 } else {
                     Ok(None)
                 }
@@ -643,7 +691,7 @@ async fn test_byzantine_failures() -> Result<()> {
             // Sometimes update the wrong document
             let mut target_id = doc.id;
             if rand::random::<f32>() < 0.1 {
-                target_id = Uuid::new_v4();
+                target_id = ValidatedDocumentId::new();
             }
 
             let mut docs = self.docs.lock().await;
@@ -651,18 +699,29 @@ async fn test_byzantine_failures() -> Result<()> {
             Ok(())
         }
 
-        async fn delete(&mut self, id: &Uuid) -> Result<()> {
+        async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
             let mut docs = self.docs.lock().await;
 
             // Sometimes delete a random document instead
             if rand::random::<f32>() < 0.1 && !docs.is_empty() {
                 let random_key = docs.keys().next().cloned().unwrap();
                 docs.remove(&random_key);
+                Ok(true)
             } else {
-                docs.remove(id);
+                Ok(docs.remove(id).is_some())
             }
+        }
 
-            Ok(())
+        async fn list_all(&self) -> Result<Vec<Document>> {
+            let docs = self.docs.lock().await;
+            // Sometimes return corrupted data
+            let mut result: Vec<Document> = docs.values().cloned().collect();
+            for doc in &mut result {
+                if rand::random::<f32>() < self.corruption_rate {
+                    *doc = self.corrupt_document(doc.clone());
+                }
+            }
+            Ok(result)
         }
 
         async fn sync(&mut self) -> Result<()> {
@@ -674,6 +733,14 @@ async fn test_byzantine_failures() -> Result<()> {
             // Simulate actual sync
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<()> {
+            // Sometimes claim success when it fails
+            if rand::random::<f32>() < 0.1 {
+                return Ok(());
+            }
+            self.sync().await
         }
 
         async fn close(self) -> Result<()> {
@@ -691,15 +758,14 @@ async fn test_byzantine_failures() -> Result<()> {
     // Insert documents and check for Byzantine behavior
     for i in 0..10 {
         let doc = Document::new(
-            Uuid::new_v4(),
-            format!("/test/{}.md", i),
-            [0u8; 32],
-            1024,
-            1000,
-            2000,
-            format!("Doc {}", i),
-            100,
-        )?;
+            ValidatedDocumentId::new(),
+            ValidatedPath::new(&format!("/test/{}.md", i))?,
+            ValidatedTitle::new(&format!("Doc {}", i))?,
+            vec![0u8; 1024], // content
+            vec![],          // tags
+            Utc::now(),
+            Utc::now(),
+        );
 
         let doc_id = doc.id;
 
@@ -709,8 +775,8 @@ async fn test_byzantine_failures() -> Result<()> {
         // Try to retrieve it
         if let Ok(Some(retrieved)) = storage.get(&doc_id).await {
             // Check for corruption
-            if retrieved.updated < retrieved.created
-                || retrieved.title.is_empty()
+            if retrieved.updated_at < retrieved.created_at
+                || retrieved.title.as_str() == "Corrupted"
                 || retrieved.id != doc_id
             {
                 inconsistencies += 1;

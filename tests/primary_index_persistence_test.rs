@@ -3,19 +3,18 @@
 
 use anyhow::Result;
 use kotadb::{
-    create_primary_index_for_tests, Index, QueryBuilder, ValidatedDocumentId,
-    ValidatedPath,
+    create_primary_index_for_tests, Index, QueryBuilder, ValidatedDocumentId, ValidatedPath,
 };
 use std::fs;
 use tempfile::TempDir;
 use uuid::Uuid;
 
 /// Helper to create a test index with a unique temporary directory
-async fn create_test_index() -> Result<(Box<dyn Index>, TempDir)> {
+async fn create_test_index() -> Result<(impl Index, TempDir)> {
     let temp_dir = TempDir::new()?;
     let index_path = temp_dir.path().join("test_index");
     let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-    Ok((Box::new(index), temp_dir))
+    Ok((index, temp_dir))
 }
 
 #[tokio::test]
@@ -30,15 +29,15 @@ async fn test_persistence_basic_save_and_load() -> Result<()> {
         // Insert multiple documents
         let doc1_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc1_path = ValidatedPath::new("/docs/first.md")?;
-        index.insert(doc1_id.clone(), doc1_path.clone()).await?;
+        index.insert(doc1_id, doc1_path.clone()).await?;
 
         let doc2_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc2_path = ValidatedPath::new("/docs/second.md")?;
-        index.insert(doc2_id.clone(), doc2_path.clone()).await?;
+        index.insert(doc2_id, doc2_path.clone()).await?;
 
         let doc3_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc3_path = ValidatedPath::new("/docs/third.md")?;
-        index.insert(doc3_id.clone(), doc3_path.clone()).await?;
+        index.insert(doc3_id, doc3_path.clone()).await?;
 
         // Explicitly flush to disk
         index.flush().await?;
@@ -53,7 +52,10 @@ async fn test_persistence_basic_save_and_load() -> Result<()> {
         let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
 
         // Verify all documents are present
-        let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+        let query = QueryBuilder::new()
+            .with_text("*")?
+            .with_limit(10)?
+            .build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 3, "Should have all 3 documents after reload");
     }
@@ -75,7 +77,10 @@ async fn test_persistence_empty_index() -> Result<()> {
     // Load empty index
     {
         let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-        let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+        let query = QueryBuilder::new()
+            .with_text("*")?
+            .with_limit(10)?
+            .build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 0, "Empty index should have no documents");
     }
@@ -103,7 +108,10 @@ async fn test_persistence_corrupted_metadata() -> Result<()> {
 
     // Try to load - should fail gracefully
     let result = create_primary_index_for_tests(index_path.to_str().unwrap()).await;
-    assert!(result.is_err(), "Should fail to load with corrupted metadata");
+    assert!(
+        result.is_err(),
+        "Should fail to load with corrupted metadata"
+    );
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Failed to deserialize index metadata"),
@@ -134,7 +142,10 @@ async fn test_persistence_corrupted_btree_data() -> Result<()> {
 
     // Try to load - should fail gracefully
     let result = create_primary_index_for_tests(index_path.to_str().unwrap()).await;
-    assert!(result.is_err(), "Should fail to load with corrupted B+ tree data");
+    assert!(
+        result.is_err(),
+        "Should fail to load with corrupted B+ tree data"
+    );
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Failed to deserialize B+ tree data"),
@@ -242,7 +253,10 @@ async fn test_persistence_missing_data_directory() -> Result<()> {
 
     // Should load successfully with empty data
     let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-    let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+    let query = QueryBuilder::new()
+        .with_text("*")?
+        .with_limit(10)?
+        .build()?;
     let results = index.search(&query).await?;
     assert_eq!(results.len(), 0, "Should have no documents");
 
@@ -263,7 +277,7 @@ async fn test_persistence_incremental_updates() -> Result<()> {
     // First session: add one document
     {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-        index.insert(doc1_id.clone(), doc1_path.clone()).await?;
+        index.insert(doc1_id, doc1_path.clone()).await?;
         index.flush().await?;
     }
 
@@ -271,18 +285,24 @@ async fn test_persistence_incremental_updates() -> Result<()> {
     {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
 
-        let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+        let query = QueryBuilder::new()
+            .with_text("*")?
+            .with_limit(10)?
+            .build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 1, "Should have first document");
 
-        index.insert(doc2_id.clone(), doc2_path.clone()).await?;
+        index.insert(doc2_id, doc2_path.clone()).await?;
         index.flush().await?;
     }
 
     // Third session: verify both documents exist
     {
         let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-        let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+        let query = QueryBuilder::new()
+            .with_text("*")?
+            .with_limit(10)?
+            .build()?;
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 2, "Should have both documents");
     }
@@ -304,8 +324,8 @@ async fn test_persistence_large_dataset() -> Result<()> {
 
         for i in 0..NUM_DOCS {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(&format!("/docs/doc_{:04}.md", i))?;
-            doc_ids.push(doc_id.clone());
+            let doc_path = ValidatedPath::new(format!("/docs/doc_{:04}.md", i))?;
+            doc_ids.push(doc_id);
             index.insert(doc_id, doc_path).await?;
         }
 
@@ -317,7 +337,7 @@ async fn test_persistence_large_dataset() -> Result<()> {
         let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let query = QueryBuilder::new()
             .with_text("*")?
-            .with_limit(1000)?  // Use max allowed limit
+            .with_limit(1000)? // Use max allowed limit
             .build()?;
         let results = index.search(&query).await?;
         assert_eq!(
@@ -349,7 +369,7 @@ async fn test_persistence_concurrent_modifications() -> Result<()> {
     for i in 0..5 {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new(&format!("/concurrent_{}.md", i))?;
+        let doc_path = ValidatedPath::new(format!("/concurrent_{}.md", i))?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
         // Index dropped here, simulating process exit
@@ -358,7 +378,10 @@ async fn test_persistence_concurrent_modifications() -> Result<()> {
     // Verify all documents are present
     {
         let index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
-        let query = QueryBuilder::new().with_text("*")?.with_limit(10)?.build()?;
+        let query = QueryBuilder::new()
+            .with_text("*")?
+            .with_limit(10)?
+            .build()?;
         let results = index.search(&query).await?;
         assert_eq!(
             results.len(),

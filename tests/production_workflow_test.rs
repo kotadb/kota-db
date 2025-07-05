@@ -2,7 +2,7 @@
 // Comprehensive end-to-end tests for complete document lifecycle in production scenarios
 
 use anyhow::Result;
-use kotadb::*;
+use kotadb::{contracts::BulkOperations, *};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ async fn test_full_document_lifecycle_integration() -> Result<()> {
     let index_path = temp_dir.path().join("index");
 
     // Create production-grade integrated system
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Test data - realistic documents
@@ -69,7 +69,7 @@ async fn test_full_document_lifecycle_integration() -> Result<()> {
         );
 
         // Verify index can find the document
-        let query = QueryBuilder::new().limit(ValidatedLimit::new(1)?).build();
+        let query = QueryBuilder::new().with_limit(1)?.build()?;
         let search_results = optimized_index.search(&query).await?;
 
         // For now, just verify search doesn't error (real search would be more specific)
@@ -169,10 +169,10 @@ async fn test_concurrent_multi_user_access() -> Result<()> {
 
     // Create shared system
     let storage = Arc::new(tokio::sync::Mutex::new(
-        create_file_storage(&storage_path, Some(2000)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(2000)).await?,
     ));
     let index = Arc::new(tokio::sync::Mutex::new({
-        let primary_index = create_primary_index(&index_path, 2000)?;
+        let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(2000)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -269,8 +269,8 @@ async fn test_large_dataset_operations() -> Result<()> {
     let storage_path = temp_dir.path().join("large_storage");
     let index_path = temp_dir.path().join("large_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(10000)).await?;
-    let primary_index = create_primary_index(&index_path, 10000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(10000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(10000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     let dataset_size = 10000;
@@ -387,8 +387,8 @@ async fn test_transaction_consistency() -> Result<()> {
     let storage_path = temp_dir.path().join("transaction_storage");
     let index_path = temp_dir.path().join("transaction_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Create test documents
@@ -451,7 +451,7 @@ async fn test_transaction_consistency() -> Result<()> {
     // Each document in storage should be findable via index
     let mut consistent_count = 0;
     for doc in &all_storage_docs {
-        let query = QueryBuilder::new().limit(ValidatedLimit::new(100)?).build();
+        let query = QueryBuilder::new().with_limit(100)?.build()?;
 
         // Note: This is a simplified consistency check
         // In a real implementation, we'd search specifically for this document
@@ -481,8 +481,8 @@ async fn test_error_recovery_scenarios() -> Result<()> {
     let storage_path = temp_dir.path().join("recovery_storage");
     let index_path = temp_dir.path().join("recovery_index");
 
-    let mut storage = create_file_storage(&storage_path, Some(1000)).await?;
-    let primary_index = create_primary_index(&index_path, 1000)?;
+    let mut storage = create_file_storage(&storage_path.to_string_lossy(), Some(1000)).await?;
+    let primary_index = create_primary_index(&index_path.to_string_lossy(), Some(1000)).await?;
     let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 
     // Stage 1: Test graceful handling of invalid operations
@@ -614,16 +614,7 @@ This concludes the test document content.
 
         let now = chrono::Utc::now();
 
-        let document = Document {
-            id,
-            path,
-            title,
-            content,
-            tags,
-            created_at: now,
-            updated_at: now,
-            size: content.len(),
-        };
+        let document = Document::new(id, path, title, content, tags, now, now);
 
         documents.push(document);
     }
@@ -648,14 +639,5 @@ fn create_user_document(user_id: usize, doc_num: usize) -> Result<Document> {
 
     let now = chrono::Utc::now();
 
-    Ok(Document {
-        id,
-        path,
-        title,
-        content,
-        tags,
-        created_at: now,
-        updated_at: now,
-        size: content.len(),
-    })
+    Ok(Document::new(id, path, title, content, tags, now, now))
 }

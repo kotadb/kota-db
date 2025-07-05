@@ -18,14 +18,14 @@ fn test_btree_insertion_performance() -> anyhow::Result<()> {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(&format!("/perf/doc_{}.md", i)).unwrap())
+            .map(|i| ValidatedPath::new(format!("/perf/doc_{}.md", i)).unwrap())
             .collect();
 
         // Time insertion
         let start = Instant::now();
         let mut tree = btree::create_empty_tree();
         for i in 0..size {
-            tree = btree::insert_into_tree(tree, keys[i].clone(), paths[i].clone())?;
+            tree = btree::insert_into_tree(tree, keys[i], paths[i].clone())?;
         }
         let duration = start.elapsed();
 
@@ -78,8 +78,8 @@ fn test_btree_search_performance() -> anyhow::Result<()> {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/perf/doc_{}.md", i))?;
-            tree = btree::insert_into_tree(tree, key.clone(), path)?;
+            let path = ValidatedPath::new(format!("/perf/doc_{}.md", i))?;
+            tree = btree::insert_into_tree(tree, *key, path)?;
         }
 
         // Search for middle 10% of keys
@@ -139,8 +139,8 @@ fn test_btree_vs_linear_performance() -> anyhow::Result<()> {
     // Build B+ tree
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/perf/doc_{}.md", i))?;
-        tree = btree::insert_into_tree(tree, key.clone(), path)?;
+        let path = ValidatedPath::new(format!("/perf/doc_{}.md", i))?;
+        tree = btree::insert_into_tree(tree, *key, path)?;
     }
 
     // Search for a key in the middle

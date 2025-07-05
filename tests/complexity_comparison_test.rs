@@ -3,7 +3,7 @@
 
 use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use uuid::Uuid;
 
 /// Linear search baseline implementation
@@ -76,14 +76,14 @@ fn compare_insertion_performance(sizes: &[usize]) {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(&format!("/cmp/doc_{}.md", i)).unwrap())
+            .map(|i| ValidatedPath::new(format!("/cmp/doc_{}.md", i)).unwrap())
             .collect();
 
         // Linear insertion
         let start = Instant::now();
         let mut linear = LinearIndex::new();
         for i in 0..size {
-            linear.insert(keys[i].clone(), paths[i].clone());
+            linear.insert(keys[i], paths[i].clone());
         }
         let linear_time = start.elapsed();
 
@@ -91,7 +91,7 @@ fn compare_insertion_performance(sizes: &[usize]) {
         let start = Instant::now();
         let mut hashmap = HashMapIndex::new();
         for i in 0..size {
-            hashmap.insert(keys[i].clone(), paths[i].clone());
+            hashmap.insert(keys[i], paths[i].clone());
         }
         let hashmap_time = start.elapsed();
 
@@ -99,8 +99,7 @@ fn compare_insertion_performance(sizes: &[usize]) {
         let start = Instant::now();
         let mut btree_idx = btree::create_empty_tree();
         for i in 0..size {
-            btree_idx =
-                btree::insert_into_tree(btree_idx, keys[i].clone(), paths[i].clone()).unwrap();
+            btree_idx = btree::insert_into_tree(btree_idx, keys[i], paths[i].clone()).unwrap();
         }
         let btree_time = start.elapsed();
 
@@ -137,10 +136,10 @@ fn compare_search_performance(sizes: &[usize]) {
         let mut btree_idx = btree::create_empty_tree();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/cmp/doc_{}.md", i)).unwrap();
-            linear.insert(key.clone(), path.clone());
-            hashmap.insert(key.clone(), path.clone());
-            btree_idx = btree::insert_into_tree(btree_idx, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/cmp/doc_{}.md", i)).unwrap();
+            linear.insert(*key, path.clone());
+            hashmap.insert(*key, path.clone());
+            btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
         }
 
         // Search for random keys
@@ -204,8 +203,8 @@ fn demonstrate_complexity_growth() {
         // Build linear index and measure worst-case search
         let mut linear = LinearIndex::new();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/growth/doc_{}.md", i)).unwrap();
-            linear.insert(key.clone(), path);
+            let path = ValidatedPath::new(format!("/growth/doc_{}.md", i)).unwrap();
+            linear.insert(*key, path);
         }
 
         // Search for last element (worst case for linear)
@@ -220,8 +219,8 @@ fn demonstrate_complexity_growth() {
         // Build B+ tree and measure search
         let mut btree_idx = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/growth/doc_{}.md", i)).unwrap();
-            btree_idx = btree::insert_into_tree(btree_idx, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/growth/doc_{}.md", i)).unwrap();
+            btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
         }
 
         let start = Instant::now();
@@ -296,9 +295,9 @@ fn test_worst_case_scenarios() {
     let mut btree_idx = btree::create_empty_tree();
 
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/worst/doc_{}.md", i)).unwrap();
-        linear.insert(key.clone(), path.clone());
-        btree_idx = btree::insert_into_tree(btree_idx, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/worst/doc_{}.md", i)).unwrap();
+        linear.insert(*key, path.clone());
+        btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
 
     // Test 1: Search for non-existent key (worst case for both)
@@ -366,8 +365,8 @@ fn test_performance_at_scale() {
 
     // Insert sample keys
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/scale/doc_{}.md", i)).unwrap();
-        btree_idx = btree::insert_into_tree(btree_idx, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/scale/doc_{}.md", i)).unwrap();
+        btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
 
     // Insert many more keys
@@ -376,7 +375,7 @@ fn test_performance_at_scale() {
             println!("  Inserted {} entries...", i);
         }
         let key = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-        let path = ValidatedPath::new(&format!("/scale/doc_{}.md", i)).unwrap();
+        let path = ValidatedPath::new(format!("/scale/doc_{}.md", i)).unwrap();
         btree_idx = btree::insert_into_tree(btree_idx, key, path).unwrap();
     }
 

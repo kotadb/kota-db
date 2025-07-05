@@ -2,6 +2,7 @@
 // Test-driven development for thread-safe concurrent operations with read-write optimization
 
 use anyhow::Result;
+use kotadb::pure::btree::count_total_keys;
 use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -124,7 +125,7 @@ async fn test_concurrent_writes_isolation() -> Result<()> {
 
     // Verify all writes succeeded and tree is consistent
     let final_tree = concurrent_tree.read().unwrap();
-    let tree_size = btree::count_entries(&*final_tree);
+    let tree_size = count_total_keys(&*final_tree);
 
     assert_eq!(
         tree_size,
@@ -189,13 +190,22 @@ async fn test_mixed_read_write_workload() -> Result<()> {
             let mut successful_reads = 0;
 
             for _ in 0..operations_per_thread {
-                let keys_guard = keys_ref.read().unwrap();
-                if !keys_guard.is_empty() {
-                    let random_key = &keys_guard[fastrand::usize(..keys_guard.len())];
+                let random_key = {
+                    let keys_guard = keys_ref.read().unwrap();
+                    if keys_guard.is_empty() {
+                        None
+                    } else {
+                        Some(keys_guard[fastrand::usize(..keys_guard.len())].clone())
+                    }
+                };
+
+                if let Some(key) = random_key {
                     let tree_guard = tree_ref.read().unwrap();
-                    if btree::search_in_tree(&*tree_guard, random_key).is_some() {
+                    if btree::search_in_tree(&*tree_guard, &key).is_some() {
                         successful_reads += 1;
                     }
+                    // Drop guard before await
+                    drop(tree_guard);
                 }
 
                 // Small delay to simulate realistic workload
@@ -270,7 +280,7 @@ async fn test_mixed_read_write_workload() -> Result<()> {
     // Verify final tree consistency
     let final_tree = concurrent_tree.read().unwrap();
     let final_keys = shared_keys.read().unwrap();
-    let tree_size = btree::count_entries(&*final_tree);
+    let tree_size = count_total_keys(&*final_tree);
 
     assert_eq!(
         tree_size,
@@ -355,8 +365,8 @@ async fn test_deadlock_prevention() -> Result<()> {
     }
 
     // Verify both trees have expected number of entries
-    let tree1_size = btree::count_entries(&*tree1.read().unwrap());
-    let tree2_size = btree::count_entries(&*tree2.read().unwrap());
+    let tree1_size = count_total_keys(&*tree1.read().unwrap());
+    let tree2_size = count_total_keys(&*tree2.read().unwrap());
 
     assert_eq!(tree1_size, thread_count * operations_per_thread);
     assert_eq!(tree2_size, thread_count * operations_per_thread);
@@ -510,7 +520,7 @@ async fn test_write_batching_optimization() -> Result<()> {
 
     // Verify all writes succeeded
     let final_tree = concurrent_tree.read().unwrap();
-    let final_size = btree::count_entries(&*final_tree);
+    let final_size = count_total_keys(&*final_tree);
     assert_eq!(
         final_size, total_writes,
         "Expected {} entries, found {}",

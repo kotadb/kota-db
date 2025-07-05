@@ -1,7 +1,6 @@
 // Tests for Validated Types - Stage 6
 // These tests ensure that our validated types enforce their invariants correctly
 
-use anyhow::Result;
 use kotadb::types::state::*;
 use kotadb::types::*;
 use uuid::Uuid;
