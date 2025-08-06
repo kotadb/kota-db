@@ -175,9 +175,9 @@ impl OptimizationMetricsCollector {
         input_size: usize,
         result: BulkOperationResult,
         baseline_duration: Option<Duration>, // For speedup calculation
-    ) {
+    ) -> anyhow::Result<()> {
         if !self.configuration.track_bulk_operations {
-            return;
+            return Ok(());
         }
 
         // Calculate efficiency metrics
@@ -206,13 +206,18 @@ impl OptimizationMetricsCollector {
         };
 
         // Store metric
-        let mut history = self.bulk_operation_history.write().unwrap();
+        let mut history = self
+            .bulk_operation_history
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
         history.push(metric);
 
         // Maintain history size
         if history.len() > self.configuration.max_bulk_history {
             history.remove(0);
         }
+
+        Ok(())
     }
 
     /// Record lock contention event
@@ -231,7 +236,10 @@ impl OptimizationMetricsCollector {
             return;
         }
 
-        let mut tracker = self.contention_tracker.lock().unwrap();
+        let mut tracker = match self.contention_tracker.lock() {
+            Ok(t) => t,
+            Err(_) => return, // Lock poisoned, skip recording
+        };
 
         match lock_type {
             LockType::Read => {
@@ -267,7 +275,10 @@ impl OptimizationMetricsCollector {
             return;
         }
 
-        let mut tracker = self.contention_tracker.lock().unwrap();
+        let mut tracker = match self.contention_tracker.lock() {
+            Ok(t) => t,
+            Err(_) => return, // Lock poisoned, skip recording
+        };
         match lock_type {
             LockType::Read => tracker.pending_reads += 1,
             LockType::Write => tracker.pending_writes += 1,
@@ -276,7 +287,10 @@ impl OptimizationMetricsCollector {
 
     /// Update tree analysis cache
     pub fn update_tree_analysis(&self, metrics: TreeStructureMetrics) {
-        let mut cache = self.tree_analysis_cache.write().unwrap();
+        let mut cache = match self.tree_analysis_cache.write() {
+            Ok(c) => c,
+            Err(_) => return, // Lock poisoned, skip update
+        };
         *cache = Some(CachedTreeAnalysis {
             metrics,
             timestamp: Instant::now(),
@@ -346,7 +360,19 @@ impl OptimizationMetricsCollector {
 
     /// Generate bulk operation summary
     fn generate_bulk_operation_summary(&self) -> BulkOperationSummary {
-        let history = self.bulk_operation_history.read().unwrap();
+        let history = match self.bulk_operation_history.read() {
+            Ok(h) => h,
+            Err(_) => {
+                // Lock poisoned, return empty summary
+                return BulkOperationSummary {
+                    total_operations: 0,
+                    avg_efficiency_score: 0.0,
+                    avg_speedup_factor: 0.0,
+                    operations_by_type: HashMap::new(),
+                    recent_operations: Vec::new(),
+                };
+            }
+        };
 
         if history.is_empty() {
             return BulkOperationSummary {
@@ -415,7 +441,22 @@ impl OptimizationMetricsCollector {
 
     /// Generate contention metrics
     fn generate_contention_metrics(&self) -> ContentionMetrics {
-        let tracker = self.contention_tracker.lock().unwrap();
+        let tracker = match self.contention_tracker.lock() {
+            Ok(t) => t,
+            Err(_) => {
+                // Lock poisoned, return empty metrics
+                return ContentionMetrics {
+                    active_readers: 0,
+                    active_writers: 0,
+                    pending_readers: 0,
+                    pending_writers: 0,
+                    read_lock_wait_time: Duration::ZERO,
+                    write_lock_wait_time: Duration::ZERO,
+                    lock_acquisition_rate: 0.0,
+                    contention_ratio: 0.0,
+                };
+            }
+        };
 
         let contention_ratio = if tracker.total_lock_acquisitions > 0 {
             tracker.contested_acquisitions as f64 / tracker.total_lock_acquisitions as f64
@@ -450,7 +491,10 @@ impl OptimizationMetricsCollector {
 
     /// Get cached tree analysis or None if expired
     fn get_cached_tree_analysis(&self) -> Option<TreeStructureMetrics> {
-        let cache = self.tree_analysis_cache.read().unwrap();
+        let cache = match self.tree_analysis_cache.read() {
+            Ok(c) => c,
+            Err(_) => return None, // Lock poisoned, no cached data
+        };
         if let Some(ref cached) = *cache {
             if cached.timestamp.elapsed() < cached.ttl {
                 return Some(cached.metrics.clone());
@@ -483,7 +527,18 @@ impl OptimizationMetricsCollector {
 
     /// Generate efficiency trends
     fn generate_efficiency_trends(&self) -> EfficiencyTrends {
-        let history = self.bulk_operation_history.read().unwrap();
+        let history = match self.bulk_operation_history.read() {
+            Ok(h) => h,
+            Err(_) => {
+                // Lock poisoned, return empty trends
+                return EfficiencyTrends {
+                    bulk_efficiency_trend: Vec::new(),
+                    memory_efficiency_trend: Vec::new(),
+                    contention_trend: Vec::new(),
+                    tree_balance_trend: Vec::new(),
+                };
+            }
+        };
 
         let bulk_efficiency_trend: Vec<_> = history
             .iter()
@@ -661,7 +716,8 @@ mod tests {
 
     #[test]
     fn test_optimization_metrics_collector() {
-        let config = OptimizationMetricsConfig::default();
+        let mut config = OptimizationMetricsConfig::default();
+        config.contention_sample_rate = 1.0; // 100% sampling for reliable tests
         let collector = OptimizationMetricsCollector::new(config);
 
         // Record a bulk operation

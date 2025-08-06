@@ -193,9 +193,18 @@ impl QueryBuilder {
 
         let limit = self.limit.map(|l| l.get()).unwrap_or(10);
 
-        // Query::new expects (text, tags, path_pattern, limit)
-        // For now, we'll pass None for path_pattern since date_range isn't supported
-        Query::new(self.text, tags, None, limit)
+        // Create query with proper tags support
+        let mut query = Query::new(self.text, tags.clone(), None, limit)?;
+
+        // Set tags properly since Query::new doesn't handle them correctly
+        if let Some(tag_strings) = tags {
+            query.tags = tag_strings
+                .into_iter()
+                .map(|t| ValidatedTag::new(t))
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+
+        Ok(query)
     }
 }
 
@@ -467,14 +476,14 @@ mod tests {
     fn test_document_builder() {
         let doc = DocumentBuilder::new()
             .path("/test/doc.md")
-            .unwrap()
+            .expect("Valid path should not fail")
             .title("Test Document")
-            .unwrap()
+            .expect("Valid title should not fail")
             .content(b"Hello, world!")
             .build();
 
         assert!(doc.is_ok());
-        let doc = doc.unwrap();
+        let doc = doc.expect("Document build should succeed");
         assert_eq!(doc.path.as_str(), "/test/doc.md");
         assert_eq!(doc.title.as_str(), "Test Document");
         assert_eq!(doc.size, 13);
@@ -484,17 +493,17 @@ mod tests {
     fn test_query_builder() {
         let query = QueryBuilder::new()
             .with_text("search term")
-            .unwrap()
+            .expect("Valid search term should not fail")
             .with_tag("rust")
-            .unwrap()
+            .expect("Valid tag should not fail")
             .with_tag("database")
-            .unwrap()
+            .expect("Valid tag should not fail")
             .with_limit(50)
-            .unwrap()
+            .expect("Valid limit should not fail")
             .build();
 
         assert!(query.is_ok());
-        let query = query.unwrap();
+        let query = query.expect("Query build should succeed");
         assert_eq!(query.search_terms.len(), 1);
         assert_eq!(query.search_terms[0].as_str(), "search term");
         assert_eq!(query.tags.len(), 2);
@@ -505,13 +514,13 @@ mod tests {
     fn test_storage_config_builder() {
         let config = StorageConfigBuilder::new()
             .path("/data/kotadb")
-            .unwrap()
+            .expect("Valid path should not fail")
             .cache_size(200 * 1024 * 1024)
             .compression(true)
             .build();
 
         assert!(config.is_ok());
-        let config = config.unwrap();
+        let config = config.expect("Config build should succeed");
         assert_eq!(config.path.as_str(), "/data/kotadb");
         assert_eq!(config.cache_size, Some(200 * 1024 * 1024));
         assert!(config.compression_enabled);

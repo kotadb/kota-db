@@ -109,8 +109,9 @@ impl PerformanceCollector {
     /// Start timing an operation
     pub fn start_operation(&self, operation_id: String) {
         if self.configuration.enable_detailed_timing {
-            let mut timers = self.operation_timers.lock().unwrap();
-            timers.insert(operation_id, Instant::now());
+            if let Ok(mut timers) = self.operation_timers.lock() {
+                timers.insert(operation_id, Instant::now());
+            }
         }
     }
 
@@ -127,11 +128,14 @@ impl PerformanceCollector {
         }
 
         let duration = {
-            let mut timers = self.operation_timers.lock().unwrap();
-            timers
-                .remove(&operation_id)
-                .map(|start| start.elapsed())
-                .unwrap_or(Duration::ZERO)
+            if let Ok(mut timers) = self.operation_timers.lock() {
+                timers
+                    .remove(&operation_id)
+                    .map(|start| start.elapsed())
+                    .unwrap_or(Duration::ZERO)
+            } else {
+                Duration::ZERO
+            }
         };
 
         if duration > Duration::ZERO {
@@ -151,7 +155,9 @@ impl PerformanceCollector {
 
     /// Record a performance measurement
     pub fn record_measurement(&self, measurement: PerformanceMeasurement) {
-        let mut measurements = self.measurements.write().unwrap();
+        let Ok(mut measurements) = self.measurements.write() else {
+            return; // Skip recording if lock is poisoned
+        };
 
         // Cleanup old measurements
         let cutoff = chrono::Utc::now()
@@ -179,7 +185,26 @@ impl PerformanceCollector {
 
     /// Generate current performance dashboard
     pub fn generate_dashboard(&self) -> PerformanceDashboard {
-        let measurements = self.measurements.read().unwrap();
+        let measurements = match self.measurements.read() {
+            Ok(m) => m,
+            Err(_) => {
+                // Return empty dashboard if lock is poisoned
+                return PerformanceDashboard {
+                    timestamp: chrono::Utc::now().into(),
+                    operations: HashMap::new(),
+                    system_metrics: SystemMetrics {
+                        total_operations: 0,
+                        operations_per_second: 0.0,
+                        avg_response_time: Duration::ZERO,
+                        p95_response_time: Duration::ZERO,
+                        p99_response_time: Duration::ZERO,
+                        memory_efficiency: 0.0,
+                        active_operations: 0,
+                    },
+                    alerts: Vec::new(),
+                };
+            }
+        };
 
         // Group measurements by operation
         let mut operation_groups: HashMap<String, Vec<&PerformanceMeasurement>> = HashMap::new();
@@ -267,7 +292,11 @@ impl PerformanceCollector {
             p95_response_time: system_stats.percentile_95,
             p99_response_time: system_stats.percentile_99,
             memory_efficiency: 0.75, // Placeholder - would calculate from real data
-            active_operations: self.operation_timers.lock().unwrap().len() as u32,
+            active_operations: self
+                .operation_timers
+                .lock()
+                .map(|t| t.len() as u32)
+                .unwrap_or(0),
         };
 
         // Generate alerts
@@ -368,7 +397,10 @@ impl PerformanceCollector {
 
     /// Get measurements for a specific operation
     pub fn get_operation_measurements(&self, operation: &str) -> Vec<PerformanceMeasurement> {
-        let measurements = self.measurements.read().unwrap();
+        let measurements = match self.measurements.read() {
+            Ok(m) => m,
+            Err(_) => return Vec::new(), // Return empty if lock is poisoned
+        };
         measurements
             .iter()
             .filter(|m| m.operation == operation)

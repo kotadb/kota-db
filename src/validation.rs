@@ -304,7 +304,9 @@ pub mod transaction {
         ctx.clone()
             .validate(tx_id > 0, "Transaction ID must be positive")?;
 
-        let mut active = ACTIVE_TRANSACTIONS.lock().unwrap();
+        let mut active = ACTIVE_TRANSACTIONS
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Transaction lock poisoned: {}", e))?;
         ctx.validate(!active.contains(&tx_id), "Transaction ID already active")?;
 
         active.insert(tx_id);
@@ -316,7 +318,9 @@ pub mod transaction {
         let ctx = ValidationContext::new("transaction_commit")
             .with_attribute("tx_id", &tx_id.to_string());
 
-        let mut active = ACTIVE_TRANSACTIONS.lock().unwrap();
+        let mut active = ACTIVE_TRANSACTIONS
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Transaction lock poisoned: {}", e))?;
         ctx.validate(active.contains(&tx_id), "Transaction not active")?;
 
         active.remove(&tx_id);

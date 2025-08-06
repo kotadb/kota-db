@@ -263,7 +263,11 @@ pub fn insert_into_tree(
     let exists = search_in_tree(&root, &key).is_some();
 
     // Insert into tree
-    let (new_root, needs_new_root) = insert_recursive(root.root.take().unwrap(), key, value)?;
+    let root_node = root
+        .root
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("Root node is missing"))?;
+    let (new_root, needs_new_root) = insert_recursive(root_node, key, value)?;
 
     if let Some((left_child, median_key, right_child)) = needs_new_root {
         // Root split, create new root
@@ -360,7 +364,11 @@ pub fn delete_from_tree(mut root: BTreeRoot, key: &ValidatedDocumentId) -> Resul
     }
 
     // Delete from tree
-    let new_root = delete_recursive(root.root.take().unwrap(), key)?;
+    let root_node = root
+        .root
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("Root node is missing during deletion"))?;
+    let new_root = delete_recursive(root_node, key)?;
 
     // Handle empty root
     if let Some(new_root_node) = new_root {
@@ -487,9 +495,13 @@ fn borrow_from_left_sibling(
     let separator_key = parent_keys[separator_index].clone();
 
     let (left_children, right_children) = children.split_at_mut(child_index);
-    let left_child = left_children.last_mut().unwrap();
-    let right_child = right_children.first_mut().unwrap();
-    
+    let left_child = left_children
+        .last_mut()
+        .ok_or_else(|| anyhow::anyhow!("No left sibling available for borrowing"))?;
+    let right_child = right_children
+        .first_mut()
+        .ok_or_else(|| anyhow::anyhow!("No right child available for borrowing"))?;
+
     match (left_child.as_mut(), right_child.as_mut()) {
         (
             BTreeNode::Leaf {
@@ -504,8 +516,12 @@ fn borrow_from_left_sibling(
             },
         ) => {
             // Move last key-value from left sibling to beginning of right sibling
-            let borrowed_key = left_keys.pop().unwrap();
-            let borrowed_value = left_values.pop().unwrap();
+            let borrowed_key = left_keys
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("Left sibling has no keys to borrow"))?;
+            let borrowed_value = left_values
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("Left sibling has no values to borrow"))?;
 
             right_keys.insert(0, borrowed_key.clone());
             right_values.insert(0, borrowed_value);
@@ -527,11 +543,15 @@ fn borrow_from_left_sibling(
             right_keys.insert(0, separator_key);
 
             // Move last key from left sibling up to parent
-            let new_separator = left_keys.pop().unwrap();
+            let new_separator = left_keys
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("Left sibling has no keys to promote"))?;
             parent_keys[separator_index] = new_separator;
 
             // Move last child from left sibling to right sibling
-            let borrowed_child = left_children.pop().unwrap();
+            let borrowed_child = left_children
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("Left sibling has no children to borrow"))?;
             right_children.insert(0, borrowed_child);
         }
         _ => bail!("Sibling nodes must be of same type"),
@@ -550,9 +570,13 @@ fn borrow_from_right_sibling(
     let separator_key = parent_keys[separator_index].clone();
 
     let (left_children, right_children) = children.split_at_mut(child_index + 1);
-    let left_child = left_children.last_mut().unwrap();
-    let right_child = right_children.first_mut().unwrap();
-    
+    let left_child = left_children
+        .last_mut()
+        .ok_or_else(|| anyhow::anyhow!("No left child available for right borrowing"))?;
+    let right_child = right_children
+        .first_mut()
+        .ok_or_else(|| anyhow::anyhow!("No right sibling available for borrowing"))?;
+
     match (left_child.as_mut(), right_child.as_mut()) {
         (
             BTreeNode::Leaf {
