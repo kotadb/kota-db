@@ -200,13 +200,25 @@ kota-db/
 └── run_standalone.sh     # Alternative to justfile
 ```
 
-## 🧪 Testing Requirements
+## 🧪 Testing Standards & Requirements
+
+### ⚠️ **CRITICAL: Anti-Mock Testing Philosophy**
+
+**❌ NEVER USE MOCKS OR STUBS**
+This project follows a **strict anti-mock policy**. LLMs love to mock things, but we use **real implementations with failure injection** instead.
+
+**✅ USE THESE PATTERNS INSTEAD:**
+- **Failure Injection**: `FlakyStorage`, `DiskFullStorage`, `SlowStorage`
+- **Temporary Directories**: `TempDir::new()` for isolated test environments
+- **Real Components**: Always use actual storage/index implementations
+- **Builder Patterns**: `create_test_storage()`, `create_test_document()`
 
 ### Test Coverage Requirements
-- **Unit tests**: >90% coverage
+- **Unit tests**: >90% coverage (243 tests currently passing)
 - **Integration tests**: All major workflows
-- **Property tests**: All core algorithms
+- **Property tests**: All core algorithms using `proptest`
 - **Performance tests**: Sub-10ms latency validated
+- **Adversarial tests**: Chaos engineering with real failure scenarios
 
 ### Before Every Commit
 ```bash
@@ -226,7 +238,7 @@ just ci
 // ✅ Use the test helpers from the component library
 #[tokio::test]
 async fn test_storage_operations() -> Result<()> {
-    let storage = create_test_storage().await?;  // Helper with all wrappers
+    let storage = create_test_storage().await?;  // Real storage in temp dir
     
     let doc = create_test_document()?;           // Builder pattern
     storage.insert(doc.clone()).await?;
@@ -245,6 +257,26 @@ proptest! {
         prop_assert_eq!(trigrams1, trigrams2);
     }
 }
+
+// ✅ Use failure injection instead of mocks
+#[tokio::test]
+async fn test_storage_failure_handling() -> Result<()> {
+    let storage = FlakyStorage::new(0.5).await?; // 50% failure rate
+    // Test with real storage that randomly fails
+    let result = storage.insert(doc).await;
+    // Verify error handling works correctly
+    Ok(())
+}
+```
+
+### Test Organization (22 Test Suites)
+```
+tests/
+├── adversarial_tests.rs      # Chaos engineering with failure injection
+├── bulk_operations_test.rs   # Performance and throughput testing
+├── chaos_tests.rs           # System resilience testing
+├── property_tests/          # Property-based algorithm testing
+└── ...                      # 18 more comprehensive test suites
 ```
 
 ## 🚀 CI/CD Pipeline
