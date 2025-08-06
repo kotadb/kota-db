@@ -331,16 +331,20 @@ async fn update_document(
         }
 
         let mut updated_doc = builder.build()?;
-        // Keep the same ID and timestamps
+        // Keep the same ID and adjust timestamps
         updated_doc.id = doc.id;
         updated_doc.created_at = doc.created_at;
+        // Ensure updated_at is later than the original
+        if updated_doc.updated_at <= doc.updated_at {
+            updated_doc.updated_at = doc.updated_at + chrono::Duration::milliseconds(1);
+        }
 
-        // Store updated document
+        // Update the document
         state
             .storage
             .lock()
             .await
-            .insert(updated_doc.clone())
+            .update(updated_doc.clone())
             .await?;
 
         Ok(DocumentResponse::from(updated_doc))

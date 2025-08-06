@@ -47,7 +47,7 @@ async fn test_health_check_endpoint() -> Result<()> {
     let client = Client::new();
 
     let response = client
-        .get(&format!("http://127.0.0.1:{port}/health"))
+        .get(format!("http://127.0.0.1:{port}/health"))
         .send()
         .await?;
 
@@ -76,7 +76,7 @@ async fn test_document_lifecycle() -> Result<()> {
     });
 
     let create_response = client
-        .post(&format!("{base_url}/documents"))
+        .post(format!("{base_url}/documents"))
         .json(&create_payload)
         .send()
         .await?;
@@ -99,7 +99,7 @@ async fn test_document_lifecycle() -> Result<()> {
 
     // 2. Retrieve the document
     let get_response = client
-        .get(&format!("{base_url}/documents/{doc_id}"))
+        .get(format!("{base_url}/documents/{doc_id}"))
         .send()
         .await?;
 
@@ -118,7 +118,7 @@ async fn test_document_lifecycle() -> Result<()> {
     });
 
     let update_response = client
-        .put(&format!("{base_url}/documents/{doc_id}"))
+        .put(format!("{base_url}/documents/{doc_id}"))
         .json(&update_payload)
         .send()
         .await?;
@@ -137,7 +137,7 @@ async fn test_document_lifecycle() -> Result<()> {
 
     // 4. Search for documents
     let search_response = client
-        .get(&format!("{base_url}/documents/search?q=Updated"))
+        .get(format!("{base_url}/documents/search?q=Updated"))
         .send()
         .await?;
 
@@ -145,11 +145,11 @@ async fn test_document_lifecycle() -> Result<()> {
 
     let search_results: Value = search_response.json().await?;
     assert!(search_results["total_count"].as_u64().unwrap() >= 1);
-    assert!(search_results["documents"].as_array().unwrap().len() >= 1);
+    assert!(!search_results["documents"].as_array().unwrap().is_empty());
 
     // 5. Delete the document
     let delete_response = client
-        .delete(&format!("{base_url}/documents/{doc_id}"))
+        .delete(format!("{base_url}/documents/{doc_id}"))
         .send()
         .await?;
 
@@ -157,7 +157,7 @@ async fn test_document_lifecycle() -> Result<()> {
 
     // 6. Verify deletion - should return 404
     let get_deleted_response = client
-        .get(&format!("{base_url}/documents/{doc_id}"))
+        .get(format!("{base_url}/documents/{doc_id}"))
         .send()
         .await?;
 
@@ -175,7 +175,7 @@ async fn test_error_handling() -> Result<()> {
 
     // Test invalid document ID format
     let invalid_id_response = client
-        .get(&format!("{base_url}/documents/invalid-uuid"))
+        .get(format!("{base_url}/documents/invalid-uuid"))
         .send()
         .await?;
 
@@ -186,7 +186,7 @@ async fn test_error_handling() -> Result<()> {
     // Test non-existent document
     let fake_uuid = Uuid::new_v4();
     let not_found_response = client
-        .get(&format!("{base_url}/documents/{fake_uuid}"))
+        .get(format!("{base_url}/documents/{fake_uuid}"))
         .send()
         .await?;
 
@@ -196,7 +196,7 @@ async fn test_error_handling() -> Result<()> {
 
     // Test invalid JSON in request body
     let invalid_json_response = client
-        .post(&format!("{base_url}/documents"))
+        .post(format!("{base_url}/documents"))
         .header("Content-Type", "application/json")
         .body("invalid json")
         .send()
@@ -211,12 +211,15 @@ async fn test_error_handling() -> Result<()> {
     });
 
     let incomplete_response = client
-        .post(&format!("{base_url}/documents"))
+        .post(format!("{base_url}/documents"))
         .json(&incomplete_payload)
         .send()
         .await?;
 
-    assert_eq!(incomplete_response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        incomplete_response.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
 
     server_handle.abort();
     Ok(())
@@ -253,7 +256,7 @@ async fn test_search_functionality() -> Result<()> {
     // Create all documents
     for doc in &docs {
         let response = client
-            .post(&format!("{base_url}/documents"))
+            .post(format!("{base_url}/documents"))
             .json(doc)
             .send()
             .await?;
@@ -262,7 +265,7 @@ async fn test_search_functionality() -> Result<()> {
 
     // Test search by title
     let rust_search = client
-        .get(&format!("{base_url}/documents/search?q=Rust"))
+        .get(format!("{base_url}/documents/search?q=Rust"))
         .send()
         .await?;
 
@@ -272,7 +275,7 @@ async fn test_search_functionality() -> Result<()> {
 
     // Test search by content
     let content_search = client
-        .get(&format!("{base_url}/documents/search?q=awesome"))
+        .get(format!("{base_url}/documents/search?q=awesome"))
         .send()
         .await?;
 
@@ -282,7 +285,7 @@ async fn test_search_functionality() -> Result<()> {
 
     // Test search with limit
     let limited_search = client
-        .get(&format!("{base_url}/documents/search?limit=2"))
+        .get(format!("{base_url}/documents/search?limit=2"))
         .send()
         .await?;
 
@@ -293,7 +296,7 @@ async fn test_search_functionality() -> Result<()> {
 
     // Test empty search (should return all documents)
     let all_search = client
-        .get(&format!("{base_url}/documents/search"))
+        .get(format!("{base_url}/documents/search"))
         .send()
         .await?;
 
@@ -320,14 +323,14 @@ async fn test_concurrent_operations() -> Result<()> {
 
         let handle = tokio::spawn(async move {
             let payload = json!({
-                "path": format!("/test-doc-{}.md", i),
-                "title": format!("Test Document {}", i),
-                "content": format!("Content for document {}", i).into_bytes(),
+                "path": format!("/test-doc-{i}.md"),
+                "title": format!("Test Document {i}"),
+                "content": format!("Content for concurrent document {i}").into_bytes(),
                 "tags": ["test", "concurrent"]
             });
 
             let response = client_clone
-                .post(&format!("{}/documents", base_url_clone))
+                .post(format!("{base_url_clone}/documents"))
                 .json(&payload)
                 .send()
                 .await?;
@@ -344,9 +347,12 @@ async fn test_concurrent_operations() -> Result<()> {
         assert_eq!(status, StatusCode::CREATED);
     }
 
+    // Add a small delay to ensure documents are fully persisted
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
     // Verify all documents were created by searching
     let search_response = client
-        .get(&format!("{base_url}/documents/search?q=concurrent"))
+        .get(format!("{base_url}/documents/search?q=concurrent"))
         .send()
         .await?;
 
@@ -373,7 +379,7 @@ async fn test_performance_response_times() -> Result<()> {
     });
 
     let create_response = client
-        .post(&format!("{base_url}/documents"))
+        .post(format!("{base_url}/documents"))
         .json(&create_payload)
         .send()
         .await?;

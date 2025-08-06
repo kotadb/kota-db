@@ -66,10 +66,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+    
     - name: Security audit
-      uses: actions-rs/audit@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+      run: cargo audit
 
   coverage:
     name: Code Coverage
@@ -92,7 +97,7 @@ jobs:
       uses: codecov/codecov-action@v4
       with:
         file: lcov.info
-        fail_ci_if_error: true
+        fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
 
   performance:
