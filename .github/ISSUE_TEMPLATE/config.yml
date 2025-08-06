@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/jayminwest/kota-db/discussions
+    about: Ask questions, share ideas, or discuss the project with the community
+  - name: 📚 Documentation
+    url: https://github.com/jayminwest/kota-db/tree/main/docs
+    about: Check the comprehensive documentation for guides and API references
+  - name: 🚀 MCP Integration Plan
+    url: https://github.com/jayminwest/kota-db/blob/main/MCP_INTEGRATION_PLAN.md
+    about: Learn about the Model Context Protocol integration roadmap
+  - name: 🐛 Outstanding Issues
+    url: https://github.com/jayminwest/kota-db/blob/main/OUTSTANDING_ISSUES.md
+    about: Check known issues and current development priorities

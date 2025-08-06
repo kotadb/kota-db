@@ -1,0 +1,123 @@
+name: MCP Integration Issue
+description: Issues related to Model Context Protocol (MCP) server integration
+title: "[MCP] "
+labels: ["mcp", "integration", "needs-triage"]
+assignees: ["jayminwest"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for issues specifically related to MCP (Model Context Protocol) integration.
+        For general bugs or feature requests, please use the appropriate templates.
+
+  - type: dropdown
+    id: mcp-component
+    attributes:
+      label: MCP Component
+      description: Which MCP component is this issue related to?
+      options:
+        - JSON-RPC Server
+        - Tool Implementations
+        - Resource Handlers
+        - Semantic Search Integration
+        - Document Operations
+        - Graph Operations
+        - Analytics Tools
+        - Protocol Compliance
+        - Performance
+        - Documentation
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: What type of issue is this?
+      options:
+        - Bug - Something isn't working correctly
+        - Feature - New MCP capability needed
+        - Performance - Slow response times
+        - Compatibility - Issues with LLM clients
+        - Documentation - Missing or unclear docs
+        - Testing - Test coverage or scenarios
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Detailed description of the issue
+      placeholder: Describe the MCP-related issue...
+    validations:
+      required: true
+
+  - type: textarea
+    id: llm-client
+    attributes:
+      label: LLM Client Information
+      description: Which LLM client(s) are you using?
+      value: |
+        - Client: [e.g. Claude, GPT-4, Local LLM]
+        - Version: [e.g. API version, client version]
+        - Connection method: [e.g. direct, through proxy]
+    validations:
+      required: true
+
+  - type: textarea
+    id: json-rpc
+    attributes:
+      label: JSON-RPC Details
+      description: If applicable, provide JSON-RPC request/response examples
+      render: json
+      placeholder: |
+        Request:
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "tools/call",
+          "params": {
+            "name": "kotadb://semantic_search",
+            "arguments": {...}
+          }
+        }
+
+        Response:
+        {...}
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected MCP Behavior
+      description: What should happen according to MCP specification?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happens?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How critical is this for MCP integration?
+      options:
+        - Low - Minor issue, workaround available
+        - Medium - Affects MCP functionality
+        - High - Blocks LLM integration
+        - Critical - MCP server unusable
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context about the MCP integration issue
