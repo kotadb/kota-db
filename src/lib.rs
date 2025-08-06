@@ -4,6 +4,7 @@
 pub mod builders;
 pub mod contracts;
 pub mod file_storage;
+pub mod http_server;
 pub mod metrics;
 pub mod observability;
 pub mod primary_index;
@@ -45,6 +46,9 @@ pub use wrappers::optimization::{
 
 // Re-export storage implementations
 pub use file_storage::{create_file_storage, FileStorage};
+
+// Re-export HTTP server
+pub use http_server::{create_server, start_server};
 
 // Re-export index implementations
 pub use primary_index::{create_primary_index, create_primary_index_for_tests, PrimaryIndex};
