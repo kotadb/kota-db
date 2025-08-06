@@ -10,15 +10,21 @@ WORKDIR /usr/src/kotadb
 # Copy dependency files first for better caching
 COPY Cargo.toml Cargo.lock ./
 
-# Create dummy src to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
-RUN cargo build --release && rm -rf src
+# Create dummy src and benches directories to build dependencies
+RUN mkdir src benches && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "" > src/lib.rs && \
+    echo "fn main() {}" > benches/storage.rs && \
+    echo "fn main() {}" > benches/indices.rs && \
+    echo "fn main() {}" > benches/queries.rs
+RUN cargo build --release && rm -rf src benches
 
 # Copy actual source code
 COPY src ./src
 COPY tests ./tests
 COPY docs ./docs
 COPY examples ./examples
+COPY benches ./benches
 
 # Build the actual application
 RUN touch src/main.rs src/lib.rs  # Force rebuild
