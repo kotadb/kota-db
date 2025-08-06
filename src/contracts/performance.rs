@@ -178,9 +178,9 @@ impl PerformanceGuarantee for BTreePerformanceSLA {
     }
 
     fn max_operation_time(&self, input_size: usize) -> Duration {
-        // O(log n) scaling: time = base * log(size/1000)
+        // O(log n) scaling: time = base * log(size/1000), but minimum of base time
         let size_factor = (input_size as f64 / 1000.0).max(1.0);
-        let log_factor = size_factor.log2();
+        let log_factor = size_factor.log2().max(1.0); // Ensure at least 1x scaling
         let time_us = self.max_operation_time_base_us * log_factor;
         Duration::from_micros(time_us as u64)
     }
@@ -188,7 +188,7 @@ impl PerformanceGuarantee for BTreePerformanceSLA {
     fn min_throughput(&self, input_size: usize) -> f64 {
         // Throughput decreases logarithmically with size
         let size_factor = (input_size as f64 / 1000.0).max(1.0);
-        let log_factor = size_factor.log2();
+        let log_factor = size_factor.log2().max(1.0); // Ensure at least 1x scaling
         self.min_throughput_base / log_factor
     }
 
@@ -337,7 +337,7 @@ impl PerformanceValidator {
             op_measurements.sort_by_key(|m| m.input_size);
 
             // Find matching SLA
-            if let Some(sla) = self.slas.iter().find(|s| {
+            if let Some(_sla) = self.slas.iter().find(|s| {
                 // Simple operation name matching - could be more sophisticated
                 operation.contains("insert") && s.complexity_class() == ComplexityClass::Logarithmic
             }) {

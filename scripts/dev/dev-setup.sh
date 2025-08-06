@@ -75,8 +75,8 @@ else
 fi
 
 # Install required Rust toolchain and components
-rustup toolchain install 1.70.0
-rustup default 1.70.0
+rustup toolchain install stable
+rustup default stable
 rustup component add rustfmt clippy rust-src
 
 # Install development tools

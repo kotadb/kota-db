@@ -4,7 +4,6 @@
 use crate::contracts::performance::{ComplexityClass, PerformanceMeasurement};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -393,7 +392,7 @@ impl BulkOperationResult {
     }
 
     /// Check if operation meets performance requirements
-    pub fn meets_performance_requirements(&self, min_speedup: f64) -> bool {
+    pub fn meets_performance_requirements(&self, _min_speedup: f64) -> bool {
         self.errors.is_empty()
             && self.throughput_ops_per_sec > 0.0
             && self.tree_balance_factor > 0.8

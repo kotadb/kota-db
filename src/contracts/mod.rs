@@ -18,7 +18,6 @@ pub use optimization::{
 
 // Core domain contracts (re-exported from original contracts.rs)
 use anyhow::Result;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

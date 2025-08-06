@@ -11,10 +11,10 @@ pub use btree::{
 };
 
 // Bulk operations - Stage 3 pure function implementations
-use crate::contracts::optimization::{BalanceInfo, BulkOperationResult, TreeStructureMetrics};
+use crate::contracts::optimization::TreeStructureMetrics;
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use anyhow::Result;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Bulk insert multiple key-value pairs using optimized tree construction
 ///
@@ -33,7 +33,7 @@ pub fn bulk_insert_into_tree(
         return Ok(tree);
     }
 
-    let start = Instant::now();
+    let _start = Instant::now();
 
     // Step 1: Sort pairs by key for optimal insertion order
     let mut sorted_pairs = pairs;
@@ -85,7 +85,7 @@ pub fn bulk_delete_from_tree(
         return Ok(tree);
     }
 
-    let start = Instant::now();
+    let _start = Instant::now();
 
     // Step 1: Sort keys for efficient deletion order
     let mut sorted_keys = keys;

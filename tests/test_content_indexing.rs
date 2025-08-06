@@ -1,8 +1,8 @@
 // Integration test for content indexing functionality
 use anyhow::Result;
 use kotadb::{
-    create_file_storage, create_trigram_index, ContentIndex, Document, DocumentBuilder, Index,
-    QueryBuilder, Storage,
+    create_file_storage, create_trigram_index, DocumentBuilder, Index, MeteredIndex, QueryBuilder,
+    Storage, TrigramIndex,
 };
 use tempfile::TempDir;
 
@@ -44,9 +44,9 @@ async fn test_trigram_content_indexing() -> Result<()> {
     storage.insert(doc3.clone()).await?;
 
     // Index documents with content
-    index.insert_document(&doc1).await?;
-    index.insert_document(&doc2).await?;
-    index.insert_document(&doc3).await?;
+    index.insert(doc1.id.clone(), doc1.path.clone()).await?;
+    index.insert(doc2.id.clone(), doc2.path.clone()).await?;
+    index.insert(doc3.id.clone(), doc3.path.clone()).await?;
 
     // Search for "rust" - should find doc1 and doc3
     let query = QueryBuilder::new()
@@ -102,7 +102,9 @@ async fn test_trigram_content_indexing() -> Result<()> {
     updated_doc2.size = updated_doc2.content.len(); // Update size too
 
     storage.update(updated_doc2.clone()).await?;
-    index.update_document(&updated_doc2).await?;
+    index
+        .update(updated_doc2.id.clone(), updated_doc2.path.clone())
+        .await?;
 
     // Now searching for "rust" should find all 3 documents
     let query = QueryBuilder::new()
@@ -128,7 +130,7 @@ async fn test_trigram_case_insensitive_search() -> Result<()> {
         .content(b"This is a TEST document with UPPERCASE and lowercase words.".to_vec())
         .build()?;
 
-    index.insert_document(&doc).await?;
+    index.insert(doc.id.clone(), doc.path.clone()).await?;
 
     // Search with different cases
     for search_term in &["test", "TEST", "Test", "TeSt"] {

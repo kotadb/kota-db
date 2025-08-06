@@ -3,12 +3,11 @@
 // ensuring that preconditions and postconditions are met
 
 use crate::contracts::*;
-use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTitle};
+use crate::types::ValidatedDocumentId;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::error;
-use uuid::Uuid;
 
 /// Validation errors with detailed context
 #[derive(Debug, thiserror::Error)]
@@ -378,7 +377,9 @@ pub mod storage {
 
 /// Validation middleware for automatic contract enforcement
 pub struct ValidationLayer<T> {
+    #[allow(dead_code)]
     inner: T,
+    #[allow(dead_code)]
     strict_mode: bool,
 }
 
@@ -388,6 +389,7 @@ impl<T> ValidationLayer<T> {
     }
 
     /// Log validation error and optionally panic
+    #[allow(dead_code)]
     fn handle_validation_error(&self, error: ValidationError) -> Result<()> {
         error!("Validation failed: {}", error);
 
@@ -402,6 +404,8 @@ impl<T> ValidationLayer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ValidatedPath, ValidatedTitle};
+    use uuid::Uuid;
 
     #[test]
     fn test_path_validation() {

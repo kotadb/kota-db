@@ -147,7 +147,6 @@ impl Database {
         // For trigram index, we need to pass the document content
         // Since the Index trait is limited, we'll use a workaround by adding content to the trigram index directly
         {
-            use kotadb::TrigramIndex;
             let mut trigram_guard = self.trigram_index.lock().await;
 
             // Downcast to access trigram-specific functionality if possible

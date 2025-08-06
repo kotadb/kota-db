@@ -4,7 +4,6 @@
 
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use anyhow::{bail, Result};
-use std::cmp::Ordering;
 
 /// B+ Tree node types
 #[derive(Debug, Clone, PartialEq)]
@@ -455,7 +454,7 @@ fn rebalance_after_deletion(
     children: &mut Vec<Box<BTreeNode>>,
     child_index: usize,
 ) -> Result<()> {
-    let child_keys = children[child_index].key_count();
+    let _child_keys = children[child_index].key_count();
 
     // Try to borrow from left sibling
     if child_index > 0 {
@@ -751,6 +750,40 @@ pub fn is_valid_btree(root: &BTreeRoot) -> bool {
         check_btree_invariants(root_node.as_ref(), true).is_ok()
     } else {
         true // Empty tree is valid
+    }
+}
+
+/// Check if all leaves are at the same level (B+ tree property)
+pub fn all_leaves_at_same_level(root: &BTreeRoot) -> bool {
+    if let Some(ref root_node) = root.root {
+        let expected_depth = calculate_depth_to_first_leaf(root_node.as_ref(), 0);
+        check_all_leaves_at_depth(root_node.as_ref(), expected_depth, 0)
+    } else {
+        true // Empty tree satisfies the property
+    }
+}
+
+/// Calculate depth to the first leaf found
+fn calculate_depth_to_first_leaf(node: &BTreeNode, current_depth: u32) -> u32 {
+    match node {
+        BTreeNode::Leaf { .. } => current_depth,
+        BTreeNode::Internal { children, .. } => {
+            if let Some(first_child) = children.first() {
+                calculate_depth_to_first_leaf(first_child.as_ref(), current_depth + 1)
+            } else {
+                current_depth // Should not happen in a valid tree
+            }
+        }
+    }
+}
+
+/// Check that all leaves are at the expected depth
+fn check_all_leaves_at_depth(node: &BTreeNode, expected_depth: u32, current_depth: u32) -> bool {
+    match node {
+        BTreeNode::Leaf { .. } => current_depth == expected_depth,
+        BTreeNode::Internal { children, .. } => children.iter().all(|child| {
+            check_all_leaves_at_depth(child.as_ref(), expected_depth, current_depth + 1)
+        }),
     }
 }
 

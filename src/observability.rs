@@ -6,9 +6,8 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, instrument, trace, warn, Level};
+use tracing::{debug, error, info, instrument, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
@@ -112,8 +111,10 @@ impl Operation {
                     anyhow::bail!("Storage operation with zero size");
                 }
             }
-            Operation::IndexSearch { result_count, .. }
-            | Operation::QueryExecute { result_count } => {
+            Operation::IndexSearch {
+                result_count: _, ..
+            }
+            | Operation::QueryExecute { result_count: _ } => {
                 // result_count can be 0 for no matches
             }
             Operation::QueryPlan { plan_steps } => {

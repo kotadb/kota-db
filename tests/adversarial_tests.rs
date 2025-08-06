@@ -574,8 +574,8 @@ async fn test_invalid_inputs() -> Result<()> {
     assert!(ValidatedTitle::new("").is_err());
     assert!(ValidatedTitle::new("   ").is_err()); // Only whitespace
 
-    // Invalid timestamps (negative)
-    let result = Utc.timestamp_opt(-1, 0);
+    // Invalid timestamps (out of range)
+    let result = Utc.timestamp_opt(i64::MAX, 2_000_000_000); // nanoseconds > 1 billion = invalid
     match result {
         chrono::LocalResult::None => {}
         _ => panic!("Expected None for invalid timestamp"),

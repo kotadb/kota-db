@@ -5,10 +5,9 @@ use crate::contracts::optimization::{
     BalanceInfo, BulkOperationResult, BulkOperationType, BulkOperations, ConcurrentAccess,
     ContentionMetrics, MemoryOptimization, MemoryUsage, TreeAnalysis, TreeStructureMetrics,
 };
-use crate::contracts::{Document, Index, Query};
+use crate::contracts::{Index, Query};
 use crate::metrics::optimization::{LockType, OptimizationMetricsCollector};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
-use crate::{analyze_tree_structure, bulk_delete_from_tree, bulk_insert_into_tree, count_entries};
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,11 +66,13 @@ impl Default for OptimizationConfig {
 struct CachedTreeState {
     metrics: TreeStructureMetrics,
     last_updated: Instant,
+    #[allow(dead_code)]
     operation_count_since_update: usize,
 }
 
 /// Batch of pending operations for bulk processing
 #[derive(Debug)]
+#[allow(dead_code)]
 struct OperationBatch {
     inserts: Vec<(ValidatedDocumentId, ValidatedPath)>,
     deletes: Vec<ValidatedDocumentId>,
@@ -79,6 +80,7 @@ struct OperationBatch {
     created_at: Instant,
 }
 
+#[allow(dead_code)]
 impl OperationBatch {
     fn new() -> Self {
         Self {
@@ -356,7 +358,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
         &mut self,
         pairs: Vec<(ValidatedDocumentId, ValidatedPath)>,
     ) -> Result<BulkOperationResult> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let input_size = pairs.len();
 
         // Record baseline for speedup calculation
@@ -377,7 +379,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
         );
 
         // Record metrics
-        self.metrics_collector.record_bulk_operation(
+        let _ = self.metrics_collector.record_bulk_operation(
             BulkOperationType::Insert,
             input_size,
             result.clone(),
@@ -388,7 +390,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
     }
 
     fn bulk_delete(&mut self, keys: Vec<ValidatedDocumentId>) -> Result<BulkOperationResult> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let input_size = keys.len();
 
         // Record baseline for speedup calculation
@@ -408,7 +410,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
         );
 
         // Record metrics
-        self.metrics_collector.record_bulk_operation(
+        let _ = self.metrics_collector.record_bulk_operation(
             BulkOperationType::Delete,
             input_size,
             result.clone(),
@@ -419,7 +421,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
     }
 
     fn bulk_search(&self, keys: Vec<ValidatedDocumentId>) -> Result<Vec<Option<ValidatedPath>>> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let input_size = keys.len();
 
         // Simulate bulk search - in practice would use optimized search algorithm
@@ -437,7 +439,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
         );
 
         // Record metrics
-        self.metrics_collector.record_bulk_operation(
+        let _ = self.metrics_collector.record_bulk_operation(
             BulkOperationType::Search,
             input_size,
             result,
@@ -450,7 +452,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
 
 #[async_trait::async_trait]
 impl<T: Index + Send + Sync> ConcurrentAccess for OptimizedIndex<T> {
-    fn concurrent_read(&self, key: &ValidatedDocumentId) -> Result<Option<ValidatedPath>> {
+    fn concurrent_read(&self, _key: &ValidatedDocumentId) -> Result<Option<ValidatedPath>> {
         // Simulate concurrent read with optimized locking
         Ok(Some(
             ValidatedPath::new("/concurrent/read/result.md").unwrap(),
@@ -557,7 +559,7 @@ impl<T: Index + Send + Sync> MemoryOptimization for OptimizedIndex<T> {
 
     fn set_memory_limits(
         &mut self,
-        limits: crate::contracts::optimization::MemoryLimits,
+        _limits: crate::contracts::optimization::MemoryLimits,
     ) -> Result<()> {
         // Would configure memory management parameters
         Ok(())
@@ -597,8 +599,8 @@ mod tests {
 
         optimized.insert(id.clone(), path).await?;
 
-        let query = Query::new();
-        let results = optimized.search(&query).await?;
+        let query = Query::new(Some("*".to_string()), None, None, 10)?;
+        let _results = optimized.search(&query).await?;
 
         let deleted = optimized.delete(&id).await?;
         assert!(deleted);

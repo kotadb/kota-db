@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use uuid::Uuid;
 
 /// A path that has been validated and is guaranteed to be safe

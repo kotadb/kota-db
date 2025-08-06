@@ -442,7 +442,10 @@ async fn test_end_to_end_observability_integration() -> Result<()> {
                     .unwrap_or(0),
             };
 
-            let log_result = read_result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{}", e));
+            let log_result = read_result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{}", e));
             log_operation(&ctx, &read_op, &log_result);
 
             // Record read performance

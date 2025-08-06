@@ -3,7 +3,7 @@
 // Written BEFORE implementation following 6-stage risk reduction
 
 use anyhow::Result;
-use kotadb::{*, contracts::Storage as StorageTrait};
+use kotadb::{contracts::Storage as StorageTrait, *};
 use std::path::Path;
 use tempfile::TempDir;
 use uuid::Uuid;

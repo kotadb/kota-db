@@ -3,7 +3,7 @@
 
 use crate::contracts::optimization::{
     BulkOperationResult, BulkOperationType, ContentionMetrics, OptimizationRecommendation,
-    SLAComplianceReport, TreeStructureMetrics,
+    TreeStructureMetrics,
 };
 use crate::metrics::performance::{PerformanceCollector, PerformanceDashboard};
 use serde::{Deserialize, Serialize};

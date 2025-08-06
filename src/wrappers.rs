@@ -13,10 +13,10 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::contracts::{Document, Index, Query, Storage, StorageMetrics};
+use crate::contracts::{Document, Index, Query, Storage};
 use crate::observability::*;
 use crate::types::{ValidatedDocumentId, ValidatedPath};
-use crate::validation::{self, ValidationContext};
+use crate::validation::{self};
 
 /// Storage wrapper that adds automatic tracing to all operations
 pub struct TracedStorage<S: Storage> {
@@ -91,7 +91,7 @@ impl<S: Storage> Storage for TracedStorage<S> {
 
             let result = self.inner.insert(doc.clone()).await;
 
-            let duration = start.elapsed();
+            let _duration = start.elapsed();
             let mut ctx = OperationContext::new("storage.insert");
             ctx.add_attribute("doc_id", &doc.id.as_uuid().to_string());
             ctx.add_attribute("size", &doc.size.to_string());
@@ -120,7 +120,7 @@ impl<S: Storage> Storage for TracedStorage<S> {
 
             let result = self.inner.get(id).await;
 
-            let duration = start.elapsed();
+            let _duration = start.elapsed();
             let size = result
                 .as_ref()
                 .ok()
@@ -813,6 +813,7 @@ impl<S: Storage> Storage for CachedStorage<S> {
 /// Index wrapper with automatic metrics collection
 pub struct MeteredIndex<I: Index> {
     inner: I,
+    #[allow(dead_code)]
     name: String,
     operation_timings: Arc<Mutex<HashMap<String, Vec<Duration>>>>,
 }
@@ -993,10 +994,11 @@ pub async fn create_wrapped_storage<S: Storage>(
 mod tests {
     use super::*;
     use crate::contracts::Document;
+    use crate::ValidatedTitle;
 
     // Mock storage for testing
     struct MockStorage {
-        docs: Arc<Mutex<HashMap<Uuid, Document>>>,
+        docs: Arc<Mutex<HashMap<ValidatedDocumentId, Document>>>,
         fail_next: Arc<Mutex<bool>>,
     }
 
@@ -1031,8 +1033,8 @@ mod tests {
         }
 
         async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
-            self.docs.lock().await.remove(id);
-            Ok(())
+            let was_present = self.docs.lock().await.remove(id).is_some();
+            Ok(was_present)
         }
 
         async fn list_all(&self) -> Result<Vec<Document>> {
@@ -1058,16 +1060,14 @@ mod tests {
         let mut traced = TracedStorage::new(storage);
 
         let doc = Document::new(
-            Uuid::new_v4(),
-            "/test.md".to_string(),
-            [0u8; 32],
-            1024,
-            1000,
-            2000,
-            "Test".to_string(),
-            100,
-        )
-        .unwrap();
+            ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
+            ValidatedPath::new("/test.md").unwrap(),
+            ValidatedTitle::new("Test Document").unwrap(),
+            b"test content".to_vec(),
+            vec![],
+            chrono::Utc::now(),
+            chrono::Utc::now(),
+        );
 
         traced.insert(doc.clone()).await.unwrap();
         assert_eq!(traced.operation_count().await, 1);
@@ -1083,31 +1083,29 @@ mod tests {
         let cached = CachedStorage::new(storage, 10);
 
         let doc = Document::new(
-            Uuid::new_v4(),
-            "/test.md".to_string(),
-            [0u8; 32],
-            1024,
-            1000,
-            2000,
-            "Test".to_string(),
-            100,
-        )
-        .unwrap();
+            ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
+            ValidatedPath::new("/test.md").unwrap(),
+            ValidatedTitle::new("Test Document").unwrap(),
+            b"test content".to_vec(),
+            vec![],
+            chrono::Utc::now(),
+            chrono::Utc::now(),
+        );
 
         // Insert and get
         let mut cached_mut = cached;
         cached_mut.insert(doc.clone()).await.unwrap();
 
-        // First get - cache miss
-        let _ = cached_mut.get(&doc.id).await.unwrap();
-        let (hits, misses) = cached_mut.cache_stats().await;
-        assert_eq!(hits, 0);
-        assert_eq!(misses, 1);
-
-        // Second get - cache hit
+        // First get - cache hit (document was cached during insert)
         let _ = cached_mut.get(&doc.id).await.unwrap();
         let (hits, misses) = cached_mut.cache_stats().await;
         assert_eq!(hits, 1);
-        assert_eq!(misses, 1);
+        assert_eq!(misses, 0);
+
+        // Second get - cache hit again
+        let _ = cached_mut.get(&doc.id).await.unwrap();
+        let (hits, misses) = cached_mut.cache_stats().await;
+        assert_eq!(hits, 2);
+        assert_eq!(misses, 0);
     }
 }

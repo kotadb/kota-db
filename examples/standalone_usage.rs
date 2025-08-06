@@ -80,8 +80,8 @@ async fn stage6_component_demo() -> Result<()> {
             .word_count(8)  // Optional override
             .build()?;
 
-        println!("   ✓ Document: '{}' ({} bytes, {} words)",
-                document.title, document.size, document.word_count);
+        println!("   ✓ Document: '{}' ({} bytes)",
+                document.title, document.size);
 
         let query = QueryBuilder::new()
             .with_text("attention mechanisms")?
@@ -90,9 +90,9 @@ async fn stage6_component_demo() -> Result<()> {
             .with_limit(10)?
             .build()?;
 
-        println!("   ✓ Query: '{}' with {} tags",
-                query.text.as_ref().unwrap(),
-                query.tags.as_ref().map(|t| t.len()).unwrap_or(0));
+        println!("   ✓ Query: {} search terms with {} tags",
+                query.search_terms.len(),
+                query.tags.len());
 
         let storage_config = StorageConfigBuilder::new()
             .path("/data/ml-research")?

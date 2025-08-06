@@ -2,7 +2,7 @@
 // Enhanced metrics infrastructure for performance monitoring and alerting
 
 use crate::contracts::performance::{ComplexityClass, PerformanceMeasurement};
-use crate::pure::performance::{GrowthAnalysis, PerformanceStats, RegressionReport};
+use crate::pure::performance::{GrowthAnalysis, PerformanceStats};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -443,7 +443,7 @@ impl PerformanceCollector {
 
         // Operation-specific metrics
         for (op_name, metrics) in &dashboard.operations {
-            let safe_name = op_name.replace("-", "_").replace(" ", "_");
+            let _safe_name = op_name.replace("-", "_").replace(" ", "_");
             prometheus.push_str(&format!(
                 "kotadb_operation_invocations{{operation=\"{}\"}} {}\n",
                 op_name, metrics.total_invocations

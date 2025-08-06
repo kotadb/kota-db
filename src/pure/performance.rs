@@ -144,7 +144,7 @@ pub fn calculate_complexity_factor(sizes: &[usize], times: &[Duration]) -> Growt
 
     // Fit different models and find best match
     let linear_fit = fit_linear(&log_sizes, &log_times);
-    let constant_fit = fit_constant(&log_times);
+    let _constant_fit = fit_constant(&log_times);
 
     // Determine complexity based on slope of log-log plot
     let (complexity, confidence, r_squared) = if linear_fit.r_squared > 0.8 {
@@ -206,6 +206,7 @@ pub fn calculate_complexity_factor(sizes: &[usize], times: &[Duration]) -> Growt
 #[derive(Debug)]
 struct LinearFit {
     slope: f64,
+    #[allow(dead_code)]
     intercept: f64,
     r_squared: f64,
 }

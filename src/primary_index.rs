@@ -54,6 +54,16 @@ impl Default for IndexMetadata {
 }
 
 impl PrimaryIndex {
+    /// Create a new PrimaryIndex instance
+    pub fn new(index_path: PathBuf, _cache_capacity: usize) -> Self {
+        Self {
+            index_path,
+            btree_root: RwLock::new(btree::create_empty_tree()),
+            wal_writer: RwLock::new(None),
+            metadata: RwLock::new(IndexMetadata::default()),
+        }
+    }
+
     /// Create directory structure for the index
     async fn ensure_directories(&self) -> Result<()> {
         let paths = [
@@ -206,7 +216,7 @@ impl PrimaryIndex {
     /// Validate preconditions for insert operation
     fn validate_insert_preconditions(
         key: &ValidatedDocumentId,
-        value: &ValidatedPath,
+        _value: &ValidatedPath,
     ) -> Result<()> {
         // Key validation
         let uuid = key.as_uuid();
@@ -231,7 +241,7 @@ impl PrimaryIndex {
     }
 
     /// Validate preconditions for search operation
-    fn validate_search_preconditions(query: &Query) -> Result<()> {
+    fn validate_search_preconditions(_query: &Query) -> Result<()> {
         // Query validation is handled by Query::new() constructor
         // Additional index-specific validation can be added here
 
@@ -289,7 +299,7 @@ impl Index for PrimaryIndex {
         validation::path::validate_directory_path(path)?;
 
         let index_path = PathBuf::from(path);
-        let mut index = Self {
+        let index = Self {
             index_path: index_path.clone(),
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),

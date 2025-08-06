@@ -84,10 +84,10 @@ impl DocumentBuilder {
             .ok_or_else(|| anyhow::anyhow!("Document content is required"))?;
 
         // Calculate hash
-        let hash = crate::pure::metadata::calculate_hash(&content);
+        let _hash = crate::pure::metadata::calculate_hash(&content);
 
         // Calculate word count if not provided
-        let word_count = self.word_count.unwrap_or_else(|| {
+        let _word_count = self.word_count.unwrap_or_else(|| {
             let text = String::from_utf8_lossy(&content);
             text.split_whitespace().count() as u32
         });
@@ -187,7 +187,7 @@ impl QueryBuilder {
             )
         };
 
-        let date_range = self
+        let _date_range = self
             .date_range
             .map(|(start, end)| (start.as_secs(), end.as_secs()));
 

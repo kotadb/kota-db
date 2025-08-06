@@ -2,6 +2,7 @@
 // This example shows how to use the complete KotaDB stack
 
 use anyhow::Result;
+use kotadb::types::ValidatedTitle;
 use kotadb::{
     create_file_storage, init_logging, log_operation, with_trace_id, DocumentBuilder, Operation,
     Storage,
@@ -12,7 +13,7 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    init_logging();
+    let _ = init_logging();
 
     println!("🚀 KotaDB FileStorage Demo");
     println!("========================");
@@ -37,13 +38,13 @@ async fn main() -> Result<()> {
     let doc = DocumentBuilder::new()
         .path("/knowledge/rust-patterns.md")?
         .title("Advanced Rust Design Patterns")?
-        .content(b"# Advanced Rust Design Patterns\n\nThis document covers advanced patterns in Rust programming including:\n\n- Zero-cost abstractions\n- Type-state patterns\n- Builder patterns\n- RAII patterns\n\n## Zero-Cost Abstractions\n\nRust allows you to write high-level code that compiles down to efficient machine code...")?
+        .content(b"# Advanced Rust Design Patterns\n\nThis document covers advanced patterns in Rust programming including:\n\n- Zero-cost abstractions\n- Type-state patterns\n- Builder patterns\n- RAII patterns\n\n## Zero-Cost Abstractions\n\nRust allows you to write high-level code that compiles down to efficient machine code...")
         .build()?;
 
     println!("✅ Document created:");
     println!("   ID: {}", doc.id);
     println!("   Title: {}", doc.title);
-    println!("   Word count: {}", doc.word_count);
+    println!("   Size: {} bytes", doc.size);
 
     // Insert document (automatically traced, validated, cached)
     println!("\n💾 Inserting document...");
@@ -71,8 +72,8 @@ async fn main() -> Result<()> {
     // Update document
     println!("\n✏️  Updating document...");
     let mut updated_doc = doc;
-    updated_doc.title = "Updated: Advanced Rust Design Patterns".to_string();
-    updated_doc.updated = chrono::Utc::now().timestamp();
+    updated_doc.title = ValidatedTitle::new("Updated: Advanced Rust Design Patterns")?;
+    updated_doc.updated_at = chrono::Utc::now();
 
     storage.update(updated_doc.clone()).await?;
     println!("✅ Document updated successfully");
@@ -89,7 +90,7 @@ async fn main() -> Result<()> {
     let doc2 = DocumentBuilder::new()
         .path("/knowledge/async-patterns.md")?
         .title("Async Programming in Rust")?
-        .content(b"# Async Programming in Rust\n\nAsync/await patterns and best practices...")?
+        .content(b"# Async Programming in Rust\n\nAsync/await patterns and best practices...")
         .build()?;
 
     storage.insert(doc2.clone()).await?;

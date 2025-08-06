@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -301,7 +301,7 @@ impl Storage for FileStorage {
             documents.remove(&id.as_uuid())
         };
 
-        if let Some(metadata) = metadata {
+        if let Some(_metadata) = metadata {
             // Remove files
             let doc_path = self.document_file_path(&id.as_uuid());
             let meta_path = self.metadata_file_path(&id.as_uuid());

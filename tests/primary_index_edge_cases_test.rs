@@ -190,7 +190,11 @@ mod primary_index_adversarial_tests {
             let handle = tokio::spawn(async move {
                 for _ in 0..50 {
                     let index_guard = index_clone.lock().await;
-                    let query = QueryBuilder::new().with_limit(100).unwrap().build().unwrap();
+                    let query = QueryBuilder::new()
+                        .with_limit(100)
+                        .unwrap()
+                        .build()
+                        .unwrap();
                     let _results = index_guard.search(&query).await.unwrap();
 
                     // Small delay to increase contention
