@@ -555,7 +555,12 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let index_path = temp_dir.path().join("contract_test");
 
-        let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
+        let mut index = create_primary_index_for_tests(
+            index_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid primary index test path"))?,
+        )
+        .await?;
 
         // Test precondition validation
         let valid_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
@@ -578,7 +583,12 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let index_path = temp_dir.path().join("metadata_test");
 
-        let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
+        let mut index = create_primary_index_for_tests(
+            index_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid primary index test path"))?,
+        )
+        .await?;
 
         // Check initial metadata
         {

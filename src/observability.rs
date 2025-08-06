@@ -435,7 +435,7 @@ mod tests {
         })
         .await;
 
-        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result.expect("Test operation should succeed"), 42);
     }
 
     #[test]

@@ -427,12 +427,12 @@ mod tests {
     #[test]
     fn test_document_validation() {
         let mut existing_ids = std::collections::HashSet::new();
-        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid");
 
         let valid_doc = Document {
             id: doc_id,
-            path: ValidatedPath::new("/test/doc.md").unwrap(),
-            title: ValidatedTitle::new("Test Doc").unwrap(),
+            path: ValidatedPath::new("/test/doc.md").expect("Test path should be valid"),
+            title: ValidatedTitle::new("Test Doc").expect("Test title should be valid"),
             content: vec![0u8; 1024],
             tags: vec![],
             created_at: chrono::Utc::now(),
@@ -457,7 +457,8 @@ mod tests {
         );
 
         invalid = valid_doc.clone();
-        invalid.updated_at = chrono::DateTime::from_timestamp(500, 0).unwrap(); // Before created
+        invalid.updated_at =
+            chrono::DateTime::from_timestamp(500, 0).expect("Test timestamp should be valid"); // Before created
         assert!(
             document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
         );

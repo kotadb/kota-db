@@ -1056,36 +1056,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_traced_storage() {
-        let storage = MockStorage::open("/test").await.unwrap();
+        let storage = MockStorage::open("/test")
+            .await
+            .expect("Mock storage should open");
         let mut traced = TracedStorage::new(storage);
 
         let doc = Document::new(
-            ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
-            ValidatedPath::new("/test.md").unwrap(),
-            ValidatedTitle::new("Test Document").unwrap(),
+            ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
+            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],
             chrono::Utc::now(),
             chrono::Utc::now(),
         );
 
-        traced.insert(doc.clone()).await.unwrap();
+        traced
+            .insert(doc.clone())
+            .await
+            .expect("Insert should succeed");
         assert_eq!(traced.operation_count().await, 1);
 
-        let retrieved = traced.get(&doc.id).await.unwrap();
+        let retrieved = traced.get(&doc.id).await.expect("Get should succeed");
         assert!(retrieved.is_some());
         assert_eq!(traced.operation_count().await, 1); // get doesn't increment
     }
 
     #[tokio::test]
     async fn test_cached_storage() {
-        let storage = MockStorage::open("/test").await.unwrap();
+        let storage = MockStorage::open("/test")
+            .await
+            .expect("Mock storage should open");
         let cached = CachedStorage::new(storage, 10);
 
         let doc = Document::new(
-            ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
-            ValidatedPath::new("/test.md").unwrap(),
-            ValidatedTitle::new("Test Document").unwrap(),
+            ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
+            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],
             chrono::Utc::now(),
@@ -1094,16 +1101,19 @@ mod tests {
 
         // Insert and get
         let mut cached_mut = cached;
-        cached_mut.insert(doc.clone()).await.unwrap();
+        cached_mut
+            .insert(doc.clone())
+            .await
+            .expect("Insert should succeed");
 
         // First get - cache hit (document was cached during insert)
-        let _ = cached_mut.get(&doc.id).await.unwrap();
+        let _ = cached_mut.get(&doc.id).await.expect("Get should succeed");
         let (hits, misses) = cached_mut.cache_stats().await;
         assert_eq!(hits, 1);
         assert_eq!(misses, 0);
 
         // Second get - cache hit again
-        let _ = cached_mut.get(&doc.id).await.unwrap();
+        let _ = cached_mut.get(&doc.id).await.expect("Get should succeed");
         let (hits, misses) = cached_mut.cache_stats().await;
         assert_eq!(hits, 2);
         assert_eq!(misses, 0);

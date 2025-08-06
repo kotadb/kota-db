@@ -427,7 +427,12 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
         // Simulate bulk search - in practice would use optimized search algorithm
         let results: Vec<Option<ValidatedPath>> = keys
             .iter()
-            .map(|_| Some(ValidatedPath::new("/simulated/result.md").unwrap()))
+            .map(|_| {
+                Some(
+                    ValidatedPath::new("/simulated/result.md")
+                        .expect("Simulation path should be valid"),
+                )
+            })
             .collect();
 
         let duration = Duration::from_millis((input_size as f64 * 0.05) as u64); // Very fast search
@@ -455,7 +460,8 @@ impl<T: Index + Send + Sync> ConcurrentAccess for OptimizedIndex<T> {
     fn concurrent_read(&self, _key: &ValidatedDocumentId) -> Result<Option<ValidatedPath>> {
         // Simulate concurrent read with optimized locking
         Ok(Some(
-            ValidatedPath::new("/concurrent/read/result.md").unwrap(),
+            ValidatedPath::new("/concurrent/read/result.md")
+                .expect("Concurrent read path should be valid"),
         ))
     }
 

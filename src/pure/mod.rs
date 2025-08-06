@@ -148,27 +148,28 @@ fn count_entries_recursive(node: &BTreeNode) -> usize {
 /// Time Complexity: O(n) - single tree traversal
 /// Space Complexity: O(log n) - recursion stack
 pub fn analyze_tree_structure(tree: &BTreeRoot) -> Result<TreeStructureMetrics> {
-    if tree.root.is_none() {
-        return Ok(TreeStructureMetrics {
-            total_entries: 0,
-            tree_depth: 0,
-            balance_factor: 1.0,
-            utilization_factor: 0.0,
-            memory_efficiency: 0.0,
-            node_distribution: crate::contracts::optimization::NodeDistribution {
-                total_nodes: 0,
-                leaf_nodes: 0,
-                internal_nodes: 0,
-                avg_keys_per_node: 0.0,
-                min_keys_per_node: 0,
-                max_keys_per_node: 0,
-            },
-            leaf_depth_variance: 0,
-            recommended_actions: Vec::new(),
-        });
-    }
-
-    let root_node = tree.root.as_ref().unwrap();
+    let root_node = match tree.root.as_ref() {
+        Some(node) => node,
+        None => {
+            return Ok(TreeStructureMetrics {
+                total_entries: 0,
+                tree_depth: 0,
+                balance_factor: 1.0,
+                utilization_factor: 0.0,
+                memory_efficiency: 0.0,
+                node_distribution: crate::contracts::optimization::NodeDistribution {
+                    total_nodes: 0,
+                    leaf_nodes: 0,
+                    internal_nodes: 0,
+                    avg_keys_per_node: 0.0,
+                    min_keys_per_node: 0,
+                    max_keys_per_node: 0,
+                },
+                leaf_depth_variance: 0,
+                recommended_actions: Vec::new(),
+            });
+        }
+    };
 
     // Collect structural metrics
     let mut leaf_depths = Vec::new();

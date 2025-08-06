@@ -6,15 +6,19 @@ mod tests {
 
     #[test]
     fn test_btree_deletion_simple() {
-        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-        let path = ValidatedPath::new("/test/delete.md").unwrap();
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())
+            .expect("Failed to create document ID from UUID");
+        let path = ValidatedPath::new("/test/delete.md")
+            .expect("Failed to create valid path for test document");
 
         let mut tree = btree::create_empty_tree();
-        tree = btree::insert_into_tree(tree, doc_id, path).unwrap();
+        tree = btree::insert_into_tree(tree, doc_id, path)
+            .expect("Failed to insert document into B-tree");
 
         assert!(btree::search_in_tree(&tree, &doc_id).is_some());
 
-        tree = btree::delete_from_tree(tree, &doc_id).unwrap();
+        tree =
+            btree::delete_from_tree(tree, &doc_id).expect("Failed to delete document from B-tree");
 
         assert!(btree::search_in_tree(&tree, &doc_id).is_none());
         assert!(btree::is_valid_btree(&tree));
@@ -23,20 +27,26 @@ mod tests {
     #[test]
     fn test_btree_deletion_multiple() {
         let keys: Vec<_> = (0..10)
-            .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
+            .map(|_| {
+                ValidatedDocumentId::from_uuid(Uuid::new_v4())
+                    .expect("Failed to create document ID from UUID")
+            })
             .collect();
 
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/test/doc{i}.md")).unwrap();
-            tree = btree::insert_into_tree(tree, *key, path).unwrap();
+            let path = ValidatedPath::new(format!("/test/doc{i}.md"))
+                .expect("Failed to create valid path for test document");
+            tree = btree::insert_into_tree(tree, *key, path)
+                .expect("Failed to insert document into B-tree");
         }
 
         assert_eq!(btree::count_total_keys(&tree), 10);
 
         // Delete several keys
         for i in [2, 5, 7] {
-            tree = btree::delete_from_tree(tree, &keys[i]).unwrap();
+            tree = btree::delete_from_tree(tree, &keys[i])
+                .expect("Failed to delete document from B-tree");
         }
 
         assert_eq!(btree::count_total_keys(&tree), 7);

@@ -506,8 +506,8 @@ mod tests {
 
     #[test]
     fn test_timestamp_pair() {
-        let created = ValidatedTimestamp::new(1000).unwrap();
-        let updated = ValidatedTimestamp::new(2000).unwrap();
+        let created = ValidatedTimestamp::new(1000).expect("Test timestamp should be valid");
+        let updated = ValidatedTimestamp::new(2000).expect("Test timestamp should be valid");
 
         // Valid pair
         assert!(TimestampPair::new(created, updated).is_ok());
@@ -522,10 +522,10 @@ mod tests {
 
         // Create draft
         let draft = TypedDocument::<Draft>::new(
-            ValidatedPath::new("/test.md").unwrap(),
+            ValidatedPath::new("/test.md").expect("Test path should be valid"),
             [0u8; 32],
-            NonZeroSize::new(1024).unwrap(),
-            ValidatedTitle::new("Test").unwrap(),
+            NonZeroSize::new(1024).expect("Test size should be valid"),
+            ValidatedTitle::new("Test").expect("Test title should be valid"),
             100,
         );
 

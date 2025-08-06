@@ -169,8 +169,8 @@ impl Query {
             search_terms: Vec::new(),
             tags: Vec::new(),
             path_pattern: None,
-            limit: ValidatedLimit::new(10, 1000).unwrap(), // Safe default
-            offset: ValidatedPageId::new(1).unwrap(),      // Safe default
+            limit: ValidatedLimit::new(10, 1000).expect("Default limit values are valid"),
+            offset: ValidatedPageId::new(1).expect("Default page ID is valid"),
         }
     }
 }

@@ -102,15 +102,27 @@ impl Database {
         std::fs::create_dir_all(&trigram_index_path)?;
 
         let storage = create_file_storage(
-            storage_path.to_str().unwrap(),
+            storage_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid storage path: {:?}", storage_path))?,
             Some(100), // Cache size
         )
         .await?;
 
-        let primary_index =
-            create_primary_index(primary_index_path.to_str().unwrap(), Some(1000)).await?;
-        let trigram_index =
-            create_trigram_index(trigram_index_path.to_str().unwrap(), Some(1000)).await?;
+        let primary_index = create_primary_index(
+            primary_index_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Invalid primary index path: {:?}", primary_index_path)
+            })?,
+            Some(1000),
+        )
+        .await?;
+        let trigram_index = create_trigram_index(
+            trigram_index_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+            })?,
+            Some(1000),
+        )
+        .await?;
 
         Ok(Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
@@ -203,8 +215,8 @@ impl Database {
         storage.update(updated_doc.clone()).await?;
 
         // Update indices if path changed
-        if new_path.is_some() {
-            let new_validated_path = ValidatedPath::new(new_path.unwrap())?;
+        if let Some(path) = new_path {
+            let new_validated_path = ValidatedPath::new(path)?;
             self.primary_index
                 .lock()
                 .await

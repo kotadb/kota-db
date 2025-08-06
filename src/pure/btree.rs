@@ -201,7 +201,9 @@ pub fn split_internal_node(node: BTreeNode) -> Result<(BTreeNode, ValidatedDocum
         let right_children = left_children.split_off(mid_index + 1);
 
         // The median key moves up to parent
-        let median_key = left_keys.pop().unwrap();
+        let median_key = left_keys
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("No median key available for split"))?;
 
         // Create new nodes
         let left_node = BTreeNode::Internal {

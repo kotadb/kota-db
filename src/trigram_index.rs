@@ -663,7 +663,12 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let index_path = temp_dir.path().join("trigram_test");
 
-        let mut index = TrigramIndex::open(index_path.to_str().unwrap()).await?;
+        let mut index = TrigramIndex::open(
+            index_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid trigram index test path"))?,
+        )
+        .await?;
 
         // Test insertion
         let doc_id = ValidatedDocumentId::new();
