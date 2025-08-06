@@ -5,7 +5,7 @@ use kotadb::{
     create_file_storage, create_primary_index, create_trigram_index, init_logging, with_trace_id,
     Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -91,7 +91,7 @@ struct Database {
 }
 
 impl Database {
-    async fn new(db_path: &PathBuf) -> Result<Self> {
+    async fn new(db_path: &Path) -> Result<Self> {
         let storage_path = db_path.join("storage");
         let primary_index_path = db_path.join("primary_index");
         let trigram_index_path = db_path.join("trigram_index");
@@ -131,7 +131,7 @@ impl Database {
             .content(content.as_bytes())
             .build()?;
 
-        let doc_id = doc.id.clone();
+        let doc_id = doc.id;
         let doc_path = ValidatedPath::new(&path)?;
 
         // Insert into storage
@@ -141,7 +141,7 @@ impl Database {
         self.primary_index
             .lock()
             .await
-            .insert(doc_id.clone(), doc_path.clone())
+            .insert(doc_id, doc_path.clone())
             .await?;
 
         // For trigram index, we need to pass the document content
@@ -151,7 +151,7 @@ impl Database {
 
             // Downcast to access trigram-specific functionality if possible
             // For now, use the standard insert (which only uses path)
-            trigram_guard.insert(doc_id.clone(), doc_path).await?;
+            trigram_guard.insert(doc_id, doc_path).await?;
         }
 
         // Flush all to ensure persistence
@@ -197,18 +197,18 @@ impl Database {
 
         // Build and set the same ID
         let mut updated_doc = builder.build()?;
-        updated_doc.id = doc_id.clone();
+        updated_doc.id = doc_id;
 
         // Update storage
         storage.update(updated_doc.clone()).await?;
 
         // Update indices if path changed
         if new_path.is_some() {
-            let new_validated_path = ValidatedPath::new(&new_path.unwrap())?;
+            let new_validated_path = ValidatedPath::new(new_path.unwrap())?;
             self.primary_index
                 .lock()
                 .await
-                .update(doc_id.clone(), new_validated_path.clone())
+                .update(doc_id, new_validated_path.clone())
                 .await?;
             self.trigram_index
                 .lock()
@@ -324,8 +324,8 @@ async fn main() -> Result<()> {
                 let doc_id = db.insert(path.clone(), title.clone(), content).await?;
                 println!("✅ Document inserted successfully!");
                 println!("   ID: {}", doc_id.as_uuid());
-                println!("   Path: {}", path);
-                println!("   Title: {}", title);
+                println!("   Path: {path}");
+                println!("   Title: {title}");
             }
 
             Commands::Get { id } => match db.get(&id).await? {
@@ -414,8 +414,8 @@ async fn main() -> Result<()> {
             Commands::Stats => {
                 let (count, total_size) = db.stats().await?;
                 println!("📊 Database Statistics:");
-                println!("   Total documents: {}", count);
-                println!("   Total size: {} bytes", total_size);
+                println!("   Total documents: {count}");
+                println!("   Total size: {total_size} bytes");
                 if count > 0 {
                     println!("   Average size: {} bytes", total_size / count);
                 }

@@ -37,6 +37,8 @@ pub struct FileStorage {
 struct DocumentMetadata {
     id: Uuid,
     file_path: PathBuf,
+    original_path: String, // Store the original document path
+    title: String,         // Store the original document title
     size: u64,
     created: i64,
     updated: i64,
@@ -110,12 +112,12 @@ impl FileStorage {
 
     /// Get the file path for a document
     fn document_file_path(&self, id: &Uuid) -> PathBuf {
-        self.db_path.join("documents").join(format!("{}.md", id))
+        self.db_path.join("documents").join(format!("{id}.md"))
     }
 
     /// Get the metadata file path for a document
     fn metadata_file_path(&self, id: &Uuid) -> PathBuf {
-        self.db_path.join("documents").join(format!("{}.json", id))
+        self.db_path.join("documents").join(format!("{id}.json"))
     }
 
     /// Save document metadata to disk
@@ -141,15 +143,8 @@ impl FileStorage {
             )
         })?;
 
-        // Extract title from content (first line without # prefix)
+        // Parse frontmatter for tags (title is now stored in metadata)
         let content_str = String::from_utf8_lossy(&content);
-        let title = content_str
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim_start_matches('#')
-            .trim()
-            .to_string();
 
         // Parse frontmatter for tags
         let tags = if let Some(frontmatter) = crate::pure::metadata::parse_frontmatter(&content_str)
@@ -164,8 +159,8 @@ impl FileStorage {
 
         Ok(Document {
             id: ValidatedDocumentId::from_uuid(metadata.id)?,
-            path: ValidatedPath::new(&format!("/documents/{}.md", metadata.id))?,
-            title: ValidatedTitle::new(&title)?,
+            path: ValidatedPath::new(&metadata.original_path)?,
+            title: ValidatedTitle::new(&metadata.title)?,
             content,
             tags,
             created_at: DateTime::<Utc>::from_timestamp(metadata.created, 0)
@@ -228,6 +223,8 @@ impl Storage for FileStorage {
         let metadata = DocumentMetadata {
             id: doc_uuid,
             file_path: doc_path,
+            original_path: doc.path.as_str().to_string(),
+            title: doc.title.as_str().to_string(),
             size: doc.content.len() as u64,
             created: doc.created_at.timestamp(),
             updated: doc.updated_at.timestamp(),
@@ -278,6 +275,8 @@ impl Storage for FileStorage {
         let hash = crate::pure::metadata::calculate_hash(&doc.content);
 
         // Update metadata
+        metadata.original_path = doc.path.as_str().to_string();
+        metadata.title = doc.title.as_str().to_string();
         metadata.size = doc.content.len() as u64;
         metadata.updated = doc.updated_at.timestamp();
         metadata.hash = hash;
@@ -388,9 +387,11 @@ impl serde::Serialize for DocumentMetadata {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("DocumentMetadata", 6)?;
+        let mut state = serializer.serialize_struct("DocumentMetadata", 8)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("file_path", &self.file_path)?;
+        state.serialize_field("original_path", &self.original_path)?;
+        state.serialize_field("title", &self.title)?;
         state.serialize_field("size", &self.size)?;
         state.serialize_field("created", &self.created)?;
         state.serialize_field("updated", &self.updated)?;
@@ -408,6 +409,8 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
         struct DocumentMetadataHelper {
             id: Uuid,
             file_path: PathBuf,
+            original_path: Option<String>, // Optional for backward compatibility
+            title: Option<String>,         // Optional for backward compatibility
             size: u64,
             created: i64,
             updated: i64,
@@ -417,7 +420,13 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
         let helper = DocumentMetadataHelper::deserialize(deserializer)?;
         Ok(DocumentMetadata {
             id: helper.id,
-            file_path: helper.file_path,
+            file_path: helper.file_path.clone(),
+            original_path: helper
+                .original_path
+                .unwrap_or_else(|| format!("/documents/{}.md", helper.id)),
+            title: helper
+                .title
+                .unwrap_or_else(|| format!("Document {}", helper.id)),
             size: helper.size,
             created: helper.created,
             updated: helper.updated,

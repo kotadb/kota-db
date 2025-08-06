@@ -40,9 +40,9 @@ mod btree_node_tests {
 
         // Insert keys in non-sorted order
         let mut node = btree::create_leaf_node();
-        node = btree::insert_key_value_in_leaf(node, doc_id2.clone(), path2.clone())?;
-        node = btree::insert_key_value_in_leaf(node, doc_id1.clone(), path1.clone())?;
-        node = btree::insert_key_value_in_leaf(node, doc_id3.clone(), path3.clone())?;
+        node = btree::insert_key_value_in_leaf(node, doc_id2, path2.clone())?;
+        node = btree::insert_key_value_in_leaf(node, doc_id1, path1.clone())?;
+        node = btree::insert_key_value_in_leaf(node, doc_id3, path3.clone())?;
 
         // Keys should be sorted by UUID
         let keys = node.keys();
@@ -60,7 +60,7 @@ mod btree_node_tests {
         let path = ValidatedPath::new("/test/search.md")?;
 
         let mut node = btree::create_leaf_node();
-        node = btree::insert_key_value_in_leaf(node, doc_id.clone(), path.clone())?;
+        node = btree::insert_key_value_in_leaf(node, doc_id, path.clone())?;
 
         let result = btree::search_in_node(&node, &doc_id);
         assert!(result.is_some());
@@ -85,7 +85,7 @@ mod btree_node_tests {
         // Insert up to capacity
         for i in 0..MAX_KEYS {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(&format!("/test/capacity_{}.md", i))?;
+            let path = ValidatedPath::new(format!("/test/capacity_{i}.md"))?;
             node = btree::insert_key_value_in_leaf(node, doc_id, path)?;
         }
 
@@ -116,7 +116,7 @@ mod btree_split_tests {
         // Fill node beyond capacity
         for i in 0..(MAX_KEYS + 1) {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(&format!("/test/split_{:02}.md", i))?;
+            let path = ValidatedPath::new(format!("/test/split_{i:02}.md"))?;
             node = btree::insert_key_value_in_leaf(node, doc_id, path)?;
         }
 
@@ -181,8 +181,8 @@ mod btree_tree_operations_tests {
         // Test complete tree search with path traversal
         // Pure function: search_in_tree(root, key) -> Option<Value>
 
-        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/search_target.md")?;
+        let _doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let _path = ValidatedPath::new("/test/search_target.md")?;
 
         // let mut tree_root = btree::create_empty_tree()?;
         // tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path.clone())?;
@@ -210,7 +210,7 @@ mod btree_tree_operations_tests {
 
         // Create tree and insert key
         let mut tree_root = btree::create_empty_tree();
-        tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path)?;
+        tree_root = btree::insert_into_tree(tree_root, doc_id, path)?;
 
         // Verify key exists
         assert!(btree::search_in_tree(&tree_root, &doc_id).is_some());
@@ -237,8 +237,8 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/test/doc{}.md", i))?;
-            tree_root = btree::insert_into_tree(tree_root, key.clone(), path)?;
+            let path = ValidatedPath::new(format!("/test/doc{i}.md"))?;
+            tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
         // Delete a key from the middle
@@ -263,7 +263,6 @@ mod btree_tree_operations_tests {
     #[test]
     fn test_btree_deletion_causing_redistribution() -> Result<()> {
         // Stage 1: TDD - Test deletion that triggers key redistribution
-        use kotadb::btree::MIN_KEYS;
 
         let mut tree_root = btree::create_empty_tree();
 
@@ -272,13 +271,13 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/test/redistribute{}.md", i))?;
-            tree_root = btree::insert_into_tree(tree_root, key.clone(), path)?;
+            let path = ValidatedPath::new(format!("/test/redistribute{i}.md"))?;
+            tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
         // Delete keys to trigger redistribution
-        for i in 0..5 {
-            tree_root = btree::delete_from_tree(tree_root, &keys[i])?;
+        for (i, key) in keys.iter().enumerate().take(5) {
+            tree_root = btree::delete_from_tree(tree_root, key)?;
             assert!(btree::is_valid_btree(&tree_root));
             assert_eq!(btree::count_total_keys(&tree_root), 20 - i - 1);
         }
@@ -296,13 +295,13 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/test/merge{}.md", i))?;
-            tree_root = btree::insert_into_tree(tree_root, key.clone(), path)?;
+            let path = ValidatedPath::new(format!("/test/merge{i}.md"))?;
+            tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
         // Delete many keys to force merging
-        for i in 0..20 {
-            tree_root = btree::delete_from_tree(tree_root, &keys[i])?;
+        for key in keys.iter().take(20) {
+            tree_root = btree::delete_from_tree(tree_root, key)?;
             assert!(btree::is_valid_btree(&tree_root));
             assert!(btree::all_leaves_at_same_level(&tree_root));
         }
@@ -428,7 +427,6 @@ mod btree_invariant_tests {
 #[cfg(test)]
 mod btree_performance_tests {
     use super::*;
-    use std::time::Instant;
 
     #[test]
     fn test_btree_logarithmic_search_performance() -> Result<()> {

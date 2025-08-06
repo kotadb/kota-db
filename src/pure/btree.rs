@@ -2,8 +2,16 @@
 // This module contains the B+ tree data structures and algorithms
 // All functions are pure (no side effects, deterministic)
 
+#![allow(clippy::ptr_arg, clippy::vec_box)]
+
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use anyhow::{bail, Result};
+
+/// Type alias for complex insert function return type
+type InsertResult = Result<(
+    Box<BTreeNode>,
+    Option<(Box<BTreeNode>, ValidatedDocumentId, Box<BTreeNode>)>,
+)>;
 
 /// B+ Tree node types
 #[derive(Debug, Clone, PartialEq)]
@@ -155,7 +163,7 @@ pub fn split_leaf_node(node: BTreeNode) -> Result<(BTreeNode, ValidatedDocumentI
         let right_values = left_values.split_off(mid_index);
 
         // The median key (first key of right node)
-        let median_key = right_keys[0].clone();
+        let median_key = right_keys[0];
 
         // Create new nodes
         let left_node = BTreeNode::Leaf {
@@ -298,10 +306,7 @@ fn insert_recursive(
     mut node: Box<BTreeNode>,
     key: ValidatedDocumentId,
     value: ValidatedPath,
-) -> Result<(
-    Box<BTreeNode>,
-    Option<(Box<BTreeNode>, ValidatedDocumentId, Box<BTreeNode>)>,
-)> {
+) -> InsertResult {
     match node.as_mut() {
         BTreeNode::Leaf { .. } => {
             // Insert into leaf
@@ -328,7 +333,7 @@ fn insert_recursive(
 
             // Recursively insert into child
             let child = children.remove(child_index);
-            let (new_child, split_info) = insert_recursive(child, key.clone(), value)?;
+            let (new_child, split_info) = insert_recursive(child, key, value)?;
 
             // Handle child split
             if let Some((left_child, median_key, right_child)) = split_info {
@@ -491,7 +496,7 @@ fn borrow_from_left_sibling(
     child_index: usize,
 ) -> Result<()> {
     let separator_index = child_index - 1;
-    let separator_key = parent_keys[separator_index].clone();
+    let separator_key = parent_keys[separator_index];
 
     let (left_children, right_children) = children.split_at_mut(child_index);
     let left_child = left_children
@@ -522,7 +527,7 @@ fn borrow_from_left_sibling(
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("Left sibling has no values to borrow"))?;
 
-            right_keys.insert(0, borrowed_key.clone());
+            right_keys.insert(0, borrowed_key);
             right_values.insert(0, borrowed_value);
 
             // Update parent separator
@@ -566,7 +571,7 @@ fn borrow_from_right_sibling(
     child_index: usize,
 ) -> Result<()> {
     let separator_index = child_index;
-    let separator_key = parent_keys[separator_index].clone();
+    let separator_key = parent_keys[separator_index];
 
     let (left_children, right_children) = children.split_at_mut(child_index + 1);
     let left_child = left_children
@@ -597,7 +602,7 @@ fn borrow_from_right_sibling(
             left_values.push(borrowed_value);
 
             // Update parent separator
-            parent_keys[separator_index] = right_keys[0].clone();
+            parent_keys[separator_index] = right_keys[0];
         }
         (
             BTreeNode::Internal {
@@ -848,7 +853,7 @@ mod tests {
         let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let value = ValidatedPath::new("/test.md")?;
 
-        tree = insert_into_tree(tree, key.clone(), value.clone())?;
+        tree = insert_into_tree(tree, key, value.clone())?;
 
         assert_eq!(tree.total_keys, 1);
         assert_eq!(search_in_tree(&tree, &key), Some(value));
@@ -862,8 +867,8 @@ mod tests {
 
         for i in 0..10 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let value = ValidatedPath::new(&format!("/test{}.md", i))?;
-            keys.push((key.clone(), value.clone()));
+            let value = ValidatedPath::new(format!("/test{i}.md"))?;
+            keys.push((key, value.clone()));
             tree = insert_into_tree(tree, key, value)?;
         }
 

@@ -15,7 +15,7 @@ fn main() {
     let path = ValidatedPath::new("/test/delete_me.md").unwrap();
 
     let mut tree = btree::create_empty_tree();
-    tree = btree::insert_into_tree(tree, doc_id.clone(), path).unwrap();
+    tree = btree::insert_into_tree(tree, doc_id, path).unwrap();
 
     assert!(btree::search_in_tree(&tree, &doc_id).is_some());
     println!("  ✓ Key inserted successfully");
@@ -34,8 +34,8 @@ fn main() {
 
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/test/doc{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/test/doc{i}.md")).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     assert_eq!(kotadb::count_entries(&tree), 5);
@@ -67,8 +67,8 @@ fn main() {
         .collect();
 
     for (i, key) in large_keys.iter().enumerate() {
-        let path = ValidatedPath::new(&format!("/test/large{}.md", i)).unwrap();
-        tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+        let path = ValidatedPath::new(format!("/test/large{i}.md")).unwrap();
+        tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
     println!("  ✓ Created tree with 100 keys");
@@ -83,7 +83,7 @@ fn main() {
     assert_eq!(kotadb::count_entries(&tree), 96);
     assert!(btree::is_valid_btree(&tree));
     assert!(btree::all_leaves_at_same_level(&tree));
-    println!("  ✓ Deleted 4 keys in {:?}", duration);
+    println!("  ✓ Deleted 4 keys in {duration:?}");
     println!("  ✓ Tree remains valid and balanced");
 
     println!("\n✅ All tests passed!");

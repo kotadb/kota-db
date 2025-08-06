@@ -231,7 +231,7 @@ pub fn analyze_tree_structure(tree: &BTreeRoot) -> Result<TreeStructureMetrics> 
     if balance_factor < 0.8 {
         recommendations.push(
             crate::contracts::optimization::OptimizationRecommendation::RebalanceTree {
-                reason: format!("Balance factor {:.2} below optimal 0.8", balance_factor),
+                reason: format!("Balance factor {balance_factor:.2} below optimal 0.8"),
                 estimated_improvement: (0.8 - balance_factor) * 100.0,
             },
         );
@@ -323,7 +323,7 @@ fn extract_pairs_recursive(
     match node {
         BTreeNode::Leaf { keys, values, .. } => {
             for (key, value) in keys.iter().zip(values.iter()) {
-                pairs.push((key.clone(), value.clone()));
+                pairs.push((*key, value.clone()));
             }
         }
         BTreeNode::Internal { children, .. } => {
@@ -354,7 +354,7 @@ fn build_balanced_tree_from_sorted(
     let mut current_level: Vec<Box<BTreeNode>> = Vec::new();
 
     for chunk in pairs.chunks(MAX_KEYS_PER_NODE) {
-        let keys: Vec<_> = chunk.iter().map(|(k, _)| k.clone()).collect();
+        let keys: Vec<_> = chunk.iter().map(|(k, _)| *k).collect();
         let values: Vec<_> = chunk.iter().map(|(_, v)| v.clone()).collect();
 
         let leaf_node = Box::new(BTreeNode::Leaf {
@@ -372,13 +372,13 @@ fn build_balanced_tree_from_sorted(
 
         for chunk in current_level.chunks(MAX_KEYS_PER_NODE + 1) {
             // Internal nodes can have one more child than keys
-            let children: Vec<_> = chunk.iter().cloned().collect();
+            let children: Vec<_> = chunk.to_vec();
 
             // Extract separator keys from children
             let mut keys = Vec::new();
-            for i in 1..children.len() {
+            for child in children.iter().skip(1) {
                 // Use the first key of each child (except the first) as separator
-                let separator_key = extract_first_key(&children[i]);
+                let separator_key = extract_first_key(child);
                 keys.push(separator_key);
             }
 
@@ -403,7 +403,7 @@ fn build_balanced_tree_from_sorted(
 /// Extract the first key from a node (for building internal node separators)
 fn extract_first_key(node: &BTreeNode) -> ValidatedDocumentId {
     match node {
-        BTreeNode::Leaf { keys, .. } => keys[0].clone(),
+        BTreeNode::Leaf { keys, .. } => keys[0],
         BTreeNode::Internal { children, .. } => extract_first_key(children[0].as_ref()),
     }
 }
@@ -450,8 +450,8 @@ mod tests {
         let mut all_keys = Vec::new();
         for i in 0..10 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(&format!("/test/{}.md", i))?;
-            tree = insert_into_tree(tree, key.clone(), path)?;
+            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
+            tree = insert_into_tree(tree, key, path)?;
             all_keys.push(key);
         }
 
@@ -481,7 +481,7 @@ mod tests {
 
         for i in 0..5 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(&format!("/test/{}.md", i))?;
+            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
             tree = insert_into_tree(tree, key, path)?;
             assert_eq!(count_entries(&tree), i + 1);
         }
@@ -496,7 +496,7 @@ mod tests {
         // Build a tree with known structure
         for i in 0..20 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(&format!("/test/{}.md", i))?;
+            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
             tree = insert_into_tree(tree, key, path)?;
         }
 

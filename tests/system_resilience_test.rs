@@ -3,8 +3,6 @@
 
 use anyhow::Result;
 use kotadb::*;
-use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -33,8 +31,7 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
     let mut handles = Vec::new();
 
     println!(
-        "Starting high-load test: {} users, {} ops each",
-        num_concurrent_users, operations_per_user
+        "Starting high-load test: {num_concurrent_users} users, {operations_per_user} ops each"
     );
 
     let start = Instant::now();
@@ -54,19 +51,17 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
             for op_num in 0..operations_per_user {
                 let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                 let path =
-                    ValidatedPath::new(&format!("/load_test/user_{}/doc_{}.md", user_id, op_num))?;
-                let title =
-                    ValidatedTitle::new(&format!("Load Test Doc U{} O{}", user_id, op_num))?;
+                    ValidatedPath::new(format!("/load_test/user_{user_id}/doc_{op_num}.md"))?;
+                let title = ValidatedTitle::new(format!("Load Test Doc U{user_id} O{op_num}"))?;
 
                 let content = format!(
-                    "High load test content for user {} operation {}. \
-                     This simulates realistic document sizes under stress.",
-                    user_id, op_num
+                    "High load test content for user {user_id} operation {op_num}. \
+                     This simulates realistic document sizes under stress."
                 )
                 .into_bytes();
 
                 let tags = vec![
-                    ValidatedTag::new(&format!("user-{}", user_id))?,
+                    ValidatedTag::new(format!("user-{user_id}"))?,
                     ValidatedTag::new("high-load-test")?,
                 ];
 
@@ -84,17 +79,17 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
                 };
 
                 // Write operation
-                match (|| async {
+                match async {
                     {
                         let mut storage_guard = storage_ref.lock().await;
                         storage_guard.insert(doc.clone()).await?;
                     }
                     {
                         let mut index_guard = index_ref.lock().await;
-                        index_guard.insert(doc.id.clone(), doc.path.clone()).await?;
+                        index_guard.insert(doc.id, doc.path.clone()).await?;
                     }
                     Ok::<(), anyhow::Error>(())
-                })()
+                }
                 .await
                 {
                     Ok(_) => {
@@ -155,12 +150,12 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
     let throughput = total_ops as f64 / total_duration.as_secs_f64();
 
     println!("High-load test results:");
-    println!("  - Total operations: {}", total_ops);
-    println!("  - Read operations: {}", total_reads);
-    println!("  - Write operations: {}", total_writes);
-    println!("  - Total errors: {}", total_errors);
-    println!("  - Duration: {:?}", total_duration);
-    println!("  - Throughput: {:.1} ops/sec", throughput);
+    println!("  - Total operations: {total_ops}");
+    println!("  - Read operations: {total_reads}");
+    println!("  - Write operations: {total_writes}");
+    println!("  - Total errors: {total_errors}");
+    println!("  - Duration: {total_duration:?}");
+    println!("  - Throughput: {throughput:.1} ops/sec");
 
     // Performance assertions for high-load scenarios
     let error_rate = total_errors as f64 / (total_ops + total_errors) as f64;
@@ -171,19 +166,20 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
     );
     assert!(
         throughput > 100.0,
-        "Throughput too low under load: {:.1} ops/sec",
-        throughput
+        "Throughput too low under load: {throughput:.1} ops/sec"
     );
     assert!(
         total_duration < Duration::from_secs(60),
-        "High-load test took too long: {:?}",
-        total_duration
+        "High-load test took too long: {total_duration:?}"
     );
 
     // Verify system integrity after high load
     let final_storage = storage.lock().await;
     let final_docs = final_storage.list_all().await?;
-    assert!(final_docs.len() > 0, "No documents survived high-load test");
+    assert!(
+        !final_docs.is_empty(),
+        "No documents survived high-load test"
+    );
 
     Ok(())
 }
@@ -210,16 +206,13 @@ async fn test_memory_pressure_handling() -> Result<()> {
 
     for i in 0..large_doc_count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(&format!("/memory_test/large_doc_{:04}.md", i))?;
-        let title = ValidatedTitle::new(&format!("Large Memory Test Doc {}", i))?;
+        let path = ValidatedPath::new(format!("/memory_test/large_doc_{i:04}.md"))?;
+        let title = ValidatedTitle::new(format!("Large Memory Test Doc {i}"))?;
 
         // Create large content to pressure memory
         let content = format!(
-            "{}{}",
-            format!(
-                "# Large Document {}\n\nThis is a memory pressure test document. ",
-                i
-            ),
+            "# Large Document {}\n\nThis is a memory pressure test document. {}",
+            i,
             "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
                 .repeat(large_content_size / 60)
         )
@@ -227,7 +220,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
 
         let tags = vec![
             ValidatedTag::new("memory-test")?,
-            ValidatedTag::new(&format!("batch-{}", i / 100))?,
+            ValidatedTag::new(format!("batch-{}", i / 100))?,
         ];
 
         let now = chrono::Utc::now();
@@ -244,9 +237,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
         };
 
         storage.insert(doc.clone()).await?;
-        optimized_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        optimized_index.insert(doc.id, doc.path.clone()).await?;
         inserted_ids.push(doc.id);
 
         // Periodic pressure relief test
@@ -271,17 +262,13 @@ async fn test_memory_pressure_handling() -> Result<()> {
             );
             assert!(
                 access_time < Duration::from_millis(100),
-                "Access too slow under memory pressure: {:?}",
-                access_time
+                "Access too slow under memory pressure: {access_time:?}"
             );
         }
     }
 
     let insertion_duration = start.elapsed();
-    println!(
-        "  - Inserted {} documents in {:?}",
-        large_doc_count, insertion_duration
-    );
+    println!("  - Inserted {large_doc_count} documents in {insertion_duration:?}");
 
     // Phase 2: Test bulk operations under memory pressure
     let query = QueryBuilder::new().with_limit(500)?.build()?;
@@ -307,10 +294,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
     }
     let deletion_duration = delete_start.elapsed();
 
-    println!(
-        "  - Deleted {} documents in {:?}",
-        delete_batch_size, deletion_duration
-    );
+    println!("  - Deleted {delete_batch_size} documents in {deletion_duration:?}");
 
     // Phase 4: Verify system cleanup and stability
     let remaining_docs = storage.list_all().await?;
@@ -334,8 +318,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
     );
     assert!(
         final_access_time < Duration::from_millis(50),
-        "Performance degraded after memory pressure: {:?}",
-        final_access_time
+        "Performance degraded after memory pressure: {final_access_time:?}"
     );
 
     Ok(())
@@ -362,8 +345,8 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
 
     while total_size < max_test_size {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(&format!("/disk_test/doc_{:06}.md", doc_count))?;
-        let title = ValidatedTitle::new(&format!("Disk Test Doc {}", doc_count))?;
+        let path = ValidatedPath::new(format!("/disk_test/doc_{doc_count:06}.md"))?;
+        let title = ValidatedTitle::new(format!("Disk Test Doc {doc_count}"))?;
 
         // Variable size content
         let content_size = 5000 + (doc_count % 10000); // 5KB to 15KB
@@ -377,7 +360,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
         let content_size = content.len();
         let tags = vec![
             ValidatedTag::new("disk-test")?,
-            ValidatedTag::new(&format!("size-{}", content_size / 1000))?,
+            ValidatedTag::new(format!("size-{}", content_size / 1000))?,
         ];
 
         let now = chrono::Utc::now();
@@ -395,10 +378,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
         // Attempt insertion with graceful failure handling
         match storage.insert(doc.clone()).await {
             Ok(()) => {
-                match optimized_index
-                    .insert(doc.id.clone(), doc.path.clone())
-                    .await
-                {
+                match optimized_index.insert(doc.id, doc.path.clone()).await {
                     Ok(()) => {
                         total_size += doc.size;
                         inserted_ids.push(doc.id);
@@ -413,13 +393,13 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        println!("  - Index insertion failed at doc {}: {}", doc_count, e);
+                        println!("  - Index insertion failed at doc {doc_count}: {e}");
                         break; // Simulate index space exhaustion
                     }
                 }
             }
             Err(e) => {
-                println!("  - Storage insertion failed at doc {}: {}", doc_count, e);
+                println!("  - Storage insertion failed at doc {doc_count}: {e}");
                 break; // Simulate storage space exhaustion
             }
         }
@@ -467,26 +447,20 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
     let mut cleanup_successes = 0;
 
     for id in &cleanup_ids {
-        match storage.delete(id).await {
-            Ok(true) => {
-                if optimized_index.delete(id).await.unwrap_or(false) {
-                    cleanup_successes += 1;
-                }
+        if let Ok(true) = storage.delete(id).await {
+            if optimized_index.delete(id).await.unwrap_or(false) {
+                cleanup_successes += 1;
             }
-            _ => {}
         }
     }
 
     let cleanup_duration = cleanup_start.elapsed();
-    println!(
-        "  - Cleaned up {}/{} docs in {:?}",
-        cleanup_successes, cleanup_count, cleanup_duration
-    );
+    println!("  - Cleaned up {cleanup_successes}/{cleanup_count} docs in {cleanup_duration:?}");
 
     // Phase 4: Verify system recovery
     let remaining_docs = storage.list_all().await?;
     assert!(
-        remaining_docs.len() > 0,
+        !remaining_docs.is_empty(),
         "All documents lost during cleanup"
     );
     assert!(
@@ -546,22 +520,17 @@ async fn test_graceful_degradation() -> Result<()> {
     for i in 0..baseline_docs {
         let doc = create_test_document(i, "baseline")?;
         storage.insert(doc.clone()).await?;
-        optimized_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        optimized_index.insert(doc.id, doc.path.clone()).await?;
         baseline_ids.push(doc.id);
     }
     let baseline_duration = baseline_start.elapsed();
 
-    println!(
-        "  - Baseline: {} docs in {:?}",
-        baseline_docs, baseline_duration
-    );
+    println!("  - Baseline: {baseline_docs} docs in {baseline_duration:?}");
 
     // Phase 2: Approach capacity limits
     let stress_docs = 75; // Approaching the 100 limit
     let mut stress_ids = Vec::new();
-    let mut degradation_detected = false;
+    let mut _degradation_detected = false;
 
     let stress_start = Instant::now();
     for i in 0..stress_docs {
@@ -570,17 +539,14 @@ async fn test_graceful_degradation() -> Result<()> {
         let insert_start = Instant::now();
         match storage.insert(doc.clone()).await {
             Ok(()) => {
-                match optimized_index
-                    .insert(doc.id.clone(), doc.path.clone())
-                    .await
-                {
+                match optimized_index.insert(doc.id, doc.path.clone()).await {
                     Ok(()) => {
                         stress_ids.push(doc.id);
 
                         let insert_duration = insert_start.elapsed();
                         // Detect performance degradation
                         if insert_duration > Duration::from_millis(100) {
-                            degradation_detected = true;
+                            _degradation_detected = true;
                             println!(
                                 "  - Degradation detected at doc {}: {:?}",
                                 baseline_docs + i,
@@ -644,20 +610,17 @@ async fn test_graceful_degradation() -> Result<()> {
         let max_read_time = read_times.iter().max().unwrap();
 
         println!(
-            "  - Read performance under stress: avg {:?}, max {:?}, failures {}",
-            avg_read_time, max_read_time, read_failures
+            "  - Read performance under stress: avg {avg_read_time:?}, max {max_read_time:?}, failures {read_failures}"
         );
 
         // Graceful degradation acceptance criteria
         assert!(
             avg_read_time < Duration::from_millis(50),
-            "Average read time too slow under stress: {:?}",
-            avg_read_time
+            "Average read time too slow under stress: {avg_read_time:?}"
         );
         assert!(
             *max_read_time < Duration::from_millis(200),
-            "Maximum read time too slow under stress: {:?}",
-            max_read_time
+            "Maximum read time too slow under stress: {max_read_time:?}"
         );
     }
 
@@ -684,14 +647,13 @@ async fn test_graceful_degradation() -> Result<()> {
     let recovery_result = storage.insert(recovery_doc.clone()).await;
     let recovery_duration = recovery_start.elapsed();
 
-    println!("  - Recovery insert time: {:?}", recovery_duration);
+    println!("  - Recovery insert time: {recovery_duration:?}");
 
     // Should perform better after load reduction
     assert!(recovery_result.is_ok(), "Failed to insert during recovery");
     assert!(
         recovery_duration < Duration::from_millis(50),
-        "Recovery performance not improved: {:?}",
-        recovery_duration
+        "Recovery performance not improved: {recovery_duration:?}"
     );
 
     Ok(())
@@ -700,8 +662,8 @@ async fn test_graceful_degradation() -> Result<()> {
 // Helper function to create test documents
 fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(&format!("/{}/doc_{:04}.md", test_type, index))?;
-    let title = ValidatedTitle::new(&format!("{} Test Document {}", test_type, index))?;
+    let path = ValidatedPath::new(format!("/{test_type}/doc_{index:04}.md"))?;
+    let title = ValidatedTitle::new(format!("{test_type} Test Document {index}"))?;
 
     let content =
         format!(

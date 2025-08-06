@@ -17,17 +17,17 @@ async fn create_coordinated_storage_index() -> Result<(
     let db_path = temp_dir.path().to_str().unwrap();
 
     // Ensure the parent directories exist first
-    let storage_path = format!("{}/storage", db_path);
-    let index_path = format!("{}/index", db_path);
+    let storage_path = format!("{db_path}/storage");
+    let index_path = format!("{db_path}/index");
 
     std::fs::create_dir_all(&storage_path)?;
     std::fs::create_dir_all(&index_path)?;
 
     // Also ensure the subdirectories that FileStorage expects
-    std::fs::create_dir_all(&format!("{}/documents", storage_path))?;
-    std::fs::create_dir_all(&format!("{}/indices", storage_path))?;
-    std::fs::create_dir_all(&format!("{}/wal", storage_path))?;
-    std::fs::create_dir_all(&format!("{}/meta", storage_path))?;
+    std::fs::create_dir_all(format!("{storage_path}/documents"))?;
+    std::fs::create_dir_all(format!("{storage_path}/indices"))?;
+    std::fs::create_dir_all(format!("{storage_path}/wal"))?;
+    std::fs::create_dir_all(format!("{storage_path}/meta"))?;
 
     // Create storage and index in same directory structure
     let storage = create_file_storage(&storage_path, Some(100)).await?;
@@ -52,13 +52,13 @@ mod storage_index_integration_tests {
             .content(b"This tests storage and index coordination")
             .build()?;
 
-        let _doc_id = doc.id.clone();
+        let _doc_id = doc.id;
         let doc_path = doc.path.clone();
-        let validated_id = doc.id.clone();
+        let validated_id = doc.id;
 
         // Insert into both storage and index (simulating coordinated operation)
         storage.insert(doc.clone()).await?;
-        index.insert(validated_id.clone(), doc_path.clone()).await?;
+        index.insert(validated_id, doc_path.clone()).await?;
 
         // Verify storage has the document
         let stored_doc = storage.get(&validated_id).await?;
@@ -88,13 +88,13 @@ mod storage_index_integration_tests {
             .content(b"This document will be deleted")
             .build()?;
 
-        let _doc_id = doc.id.clone();
+        let _doc_id = doc.id;
         let doc_path = doc.path.clone();
-        let validated_id = doc.id.clone();
+        let validated_id = doc.id;
 
         // Insert into both
         storage.insert(doc).await?;
-        index.insert(validated_id.clone(), doc_path).await?;
+        index.insert(validated_id, doc_path).await?;
 
         // Delete from both (simulating coordinated operation)
         storage.delete(&validated_id).await?;
@@ -123,13 +123,13 @@ mod storage_index_integration_tests {
             .content(b"Original content")
             .build()?;
 
-        let doc_id = doc.id.clone();
+        let _doc_id = doc.id;
         let original_path = doc.path.clone();
-        let validated_id = doc.id.clone();
+        let validated_id = doc.id;
 
         // Insert original
         storage.insert(doc.clone()).await?;
-        index.insert(validated_id.clone(), original_path).await?;
+        index.insert(validated_id, original_path).await?;
 
         // Update document (same ID, different content)
         let updated_doc = DocumentBuilder::new()
@@ -140,14 +140,14 @@ mod storage_index_integration_tests {
 
         // Manually set same ID to simulate update
         let mut updated_doc = updated_doc;
-        updated_doc.id = validated_id.clone();
+        updated_doc.id = validated_id;
         updated_doc.updated_at = chrono::Utc::now();
 
         let new_path = updated_doc.path.clone();
 
         // Update both storage and index
         storage.update(updated_doc.clone()).await?;
-        index.insert(validated_id.clone(), new_path.clone()).await?; // Overwrite in index
+        index.insert(validated_id, new_path.clone()).await?; // Overwrite in index
 
         // Verify storage has updated document
         let stored_doc = storage.get(&validated_id).await?;
@@ -176,18 +176,18 @@ mod storage_index_integration_tests {
         // Create and insert multiple documents
         for i in 0..5 {
             let doc = DocumentBuilder::new()
-                .path(&format!("/integration/multi_{}.md", i))?
-                .title(&format!("Multi Document {}", i))?
-                .content(format!("Content for document {}", i).as_bytes())
+                .path(format!("/integration/multi_{i}.md"))?
+                .title(format!("Multi Document {i}"))?
+                .content(format!("Content for document {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id.clone();
+            let _doc_id = doc.id;
             let doc_path = doc.path.clone();
-            let validated_id = doc.id.clone();
+            let validated_id = doc.id;
 
             // Coordinate storage and index insertion
             storage.insert(doc).await?;
-            index.insert(validated_id.clone(), doc_path.clone()).await?;
+            index.insert(validated_id, doc_path.clone()).await?;
 
             doc_ids.push(validated_id);
             _doc_paths.push(doc_path);
@@ -225,17 +225,17 @@ mod storage_index_integration_tests {
 
             let handle = tokio::spawn(async move {
                 let doc = DocumentBuilder::new()
-                    .path(&format!("/integration/concurrent_{}.md", i))
+                    .path(format!("/integration/concurrent_{i}.md"))
                     .unwrap()
-                    .title(&format!("Concurrent Document {}", i))
+                    .title(format!("Concurrent Document {i}"))
                     .unwrap()
-                    .content(format!("Concurrent content {}", i).as_bytes())
+                    .content(format!("Concurrent content {i}").as_bytes())
                     .build()
                     .unwrap();
 
-                let _doc_id = doc.id.clone();
+                let _doc_id = doc.id;
                 let doc_path = doc.path.clone();
-                let validated_id = doc.id.clone();
+                let validated_id = doc.id;
 
                 // Coordinate insertion
                 {
@@ -272,16 +272,16 @@ mod storage_index_integration_tests {
     async fn test_persistence_coordination() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let db_path = temp_dir.path().to_str().unwrap();
-        let storage_path = format!("{}/storage", db_path);
-        let index_path = format!("{}/index", db_path);
+        let storage_path = format!("{db_path}/storage");
+        let index_path = format!("{db_path}/index");
 
         // Ensure directories exist
         std::fs::create_dir_all(&storage_path)?;
         std::fs::create_dir_all(&index_path)?;
-        std::fs::create_dir_all(&format!("{}/documents", storage_path))?;
-        std::fs::create_dir_all(&format!("{}/indices", storage_path))?;
-        std::fs::create_dir_all(&format!("{}/wal", storage_path))?;
-        std::fs::create_dir_all(&format!("{}/meta", storage_path))?;
+        std::fs::create_dir_all(format!("{storage_path}/documents"))?;
+        std::fs::create_dir_all(format!("{storage_path}/indices"))?;
+        std::fs::create_dir_all(format!("{storage_path}/wal"))?;
+        std::fs::create_dir_all(format!("{storage_path}/meta"))?;
 
         let doc_id = Uuid::new_v4();
         let doc_path = "/integration/persistent.md";
@@ -364,14 +364,14 @@ mod storage_index_performance_integration_tests {
         // Insert 100 documents to both storage and index
         for i in 0..100 {
             let doc = DocumentBuilder::new()
-                .path(&format!("/integration/perf_{}.md", i))?
-                .title(&format!("Performance Document {}", i))?
-                .content(format!("Performance test content {}", i).as_bytes())
+                .path(format!("/integration/perf_{i}.md"))?
+                .title(format!("Performance Document {i}"))?
+                .content(format!("Performance test content {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id.clone();
+            let _doc_id = doc.id;
             let doc_path = doc.path.clone();
-            let validated_id = doc.id.clone();
+            let validated_id = doc.id;
 
             // Coordinate insertion (simulates real coordination overhead)
             storage.insert(doc).await?;
@@ -384,8 +384,7 @@ mod storage_index_performance_integration_tests {
         // Should be faster than 10ms per coordinated operation
         assert!(
             avg_per_coordinated_insert.as_millis() < 10,
-            "Coordinated insert too slow: {:?} per operation",
-            avg_per_coordinated_insert
+            "Coordinated insert too slow: {avg_per_coordinated_insert:?} per operation"
         );
 
         Ok(())
@@ -398,14 +397,14 @@ mod storage_index_performance_integration_tests {
         // Pre-populate with 1000 documents
         for i in 0..1000 {
             let doc = DocumentBuilder::new()
-                .path(&format!("/integration/search_perf_{}.md", i))?
-                .title(&format!("Search Performance Document {}", i))?
-                .content(format!("Search performance test content {}", i).as_bytes())
+                .path(format!("/integration/search_perf_{i}.md"))?
+                .title(format!("Search Performance Document {i}"))?
+                .content(format!("Search performance test content {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id.clone();
+            let _doc_id = doc.id;
             let doc_path = doc.path.clone();
-            let validated_id = doc.id.clone();
+            let validated_id = doc.id;
 
             storage.insert(doc).await?;
             index.insert(validated_id, doc_path).await?;
@@ -414,7 +413,7 @@ mod storage_index_performance_integration_tests {
         let start = Instant::now();
 
         // Perform coordinated searches (index lookup + storage retrieval)
-        for i in 0..100 {
+        for _i in 0..100 {
             // Use index to find paths, then retrieve from storage
             let query = Query::new(Some("*".to_string()), None, None, 10)?;
             let index_results = index.search(&query).await?;
@@ -433,8 +432,7 @@ mod storage_index_performance_integration_tests {
         // Should be faster than 5ms per coordinated search
         assert!(
             avg_per_coordinated_search.as_millis() < 5,
-            "Coordinated search too slow: {:?} per operation",
-            avg_per_coordinated_search
+            "Coordinated search too slow: {avg_per_coordinated_search:?} per operation"
         );
 
         Ok(())

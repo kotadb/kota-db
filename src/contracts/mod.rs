@@ -196,7 +196,9 @@ pub type PageId = ValidatedPageId;
 
 /// Transaction interface for ACID operations
 pub trait Transaction {
+    #[allow(async_fn_in_trait)]
     async fn commit(&mut self) -> Result<()>;
+    #[allow(async_fn_in_trait)]
     async fn rollback(&mut self) -> Result<()>;
     fn is_active(&self) -> bool;
 }
@@ -210,6 +212,7 @@ pub trait MetricsCollector {
 
 /// Health check interface
 pub trait HealthCheck {
+    #[allow(async_fn_in_trait)]
     async fn health(&self) -> Result<HealthStatus>;
 }
 

@@ -3,12 +3,8 @@
 
 use anyhow::Result;
 use kotadb::types::ValidatedTitle;
-use kotadb::{
-    create_file_storage, init_logging, log_operation, with_trace_id, DocumentBuilder, Operation,
-    Storage,
-};
+use kotadb::{create_file_storage, init_logging, DocumentBuilder, Storage};
 use tempfile::TempDir;
-use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +18,7 @@ async fn main() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    println!("📁 Creating database at: {}", db_path);
+    println!("📁 Creating database at: {db_path}");
 
     // Create fully wrapped FileStorage with all Stage 6 components
     let mut storage = create_file_storage(db_path, Some(100)).await?;

@@ -131,17 +131,17 @@ impl PrimaryIndex {
             let mut btree_root = btree::create_empty_tree();
             for (id_str, path_str) in raw_mappings {
                 let uuid = Uuid::parse_str(&id_str)
-                    .with_context(|| format!("Invalid UUID in B+ tree data: {}", id_str))?;
+                    .with_context(|| format!("Invalid UUID in B+ tree data: {id_str}"))?;
 
                 let doc_id = ValidatedDocumentId::from_uuid(uuid)
-                    .with_context(|| format!("Invalid document ID: {}", id_str))?;
+                    .with_context(|| format!("Invalid document ID: {id_str}"))?;
 
                 let validated_path = ValidatedPath::new(&path_str)
-                    .with_context(|| format!("Invalid path in B+ tree data: {}", path_str))?;
+                    .with_context(|| format!("Invalid path in B+ tree data: {path_str}"))?;
 
                 btree_root = btree::insert_into_tree(btree_root, doc_id, validated_path)
                     .with_context(|| {
-                        format!("Failed to insert into B+ tree: {} -> {}", id_str, path_str)
+                        format!("Failed to insert into B+ tree: {id_str} -> {path_str}")
                     })?;
             }
 
@@ -342,7 +342,7 @@ impl Index for PrimaryIndex {
         // Insert into B+ tree using pure functions (O(log n))
         {
             let mut btree_root = self.btree_root.write().await;
-            *btree_root = btree::insert_into_tree(btree_root.clone(), id.clone(), path.clone())
+            *btree_root = btree::insert_into_tree(btree_root.clone(), id, path.clone())
                 .context("Failed to insert into B+ tree")?;
         }
 
@@ -562,7 +562,7 @@ mod tests {
         let valid_path = ValidatedPath::new("/test/contract.md")?;
 
         // This should succeed
-        index.insert(valid_id.clone(), valid_path.clone()).await?;
+        index.insert(valid_id, valid_path.clone()).await?;
 
         // Test postcondition - document should be findable
         let query = Query::new(Some("*".to_string()), None, None, 10)?;
@@ -591,7 +591,7 @@ mod tests {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc_path = ValidatedPath::new("/test/metadata.md")?;
 
-        index.insert(doc_id.clone(), doc_path).await?;
+        index.insert(doc_id, doc_path).await?;
 
         {
             let metadata = index.metadata.read().await;

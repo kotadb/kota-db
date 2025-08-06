@@ -93,14 +93,14 @@ impl<S: Storage> Storage for TracedStorage<S> {
 
             let _duration = start.elapsed();
             let mut ctx = OperationContext::new("storage.insert");
-            ctx.add_attribute("doc_id", &doc.id.as_uuid().to_string());
-            ctx.add_attribute("size", &doc.size.to_string());
+            ctx.add_attribute("doc_id", doc.id.as_uuid().to_string());
+            ctx.add_attribute("size", doc.size.to_string());
 
             log_operation(
                 &ctx,
                 &Operation::StorageWrite {
                     doc_id: doc.id.as_uuid(),
-                    size_bytes: doc.size as usize,
+                    size_bytes: doc.size,
                 },
                 &result
                     .as_ref()
@@ -125,14 +125,14 @@ impl<S: Storage> Storage for TracedStorage<S> {
                 .as_ref()
                 .ok()
                 .and_then(|opt| opt.as_ref())
-                .map(|doc| doc.size as usize)
+                .map(|doc| doc.size)
                 .unwrap_or(0);
 
             let mut ctx = OperationContext::new("storage.get");
-            ctx.add_attribute("doc_id", &id.as_uuid().to_string());
+            ctx.add_attribute("doc_id", id.as_uuid().to_string());
             ctx.add_attribute(
                 "found",
-                &result
+                result
                     .as_ref()
                     .map(|opt| opt.is_some().to_string())
                     .unwrap_or_else(|_| "error".to_string()),
@@ -292,7 +292,7 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
         self.inner.insert(doc.clone()).await?;
 
         // Update tracking
-        self.existing_ids.write().await.insert(doc.id.clone());
+        self.existing_ids.write().await.insert(doc.id);
 
         Ok(())
     }
@@ -870,7 +870,7 @@ impl<I: Index> Index for MeteredIndex<I> {
         Self: Sized,
     {
         let inner = I::open(path).await?;
-        Ok(Self::new(inner, format!("metered_index_{}", path)))
+        Ok(Self::new(inner, format!("metered_index_{path}")))
     }
 
     async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()> {
@@ -986,8 +986,8 @@ pub async fn create_wrapped_storage<S: Storage>(
     let cached = CachedStorage::new(inner, cache_capacity);
     let retryable = RetryableStorage::new(cached);
     let validated = ValidatedStorage::new(retryable);
-    let traced = TracedStorage::new(validated);
-    traced
+
+    TracedStorage::new(validated)
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 /// Helper to create a test index with a unique temporary directory
+#[allow(dead_code)]
 async fn create_test_index() -> Result<(impl Index, TempDir)> {
     let temp_dir = TempDir::new()?;
     let index_path = temp_dir.path().join("test_index");
@@ -115,8 +116,7 @@ async fn test_persistence_corrupted_metadata() -> Result<()> {
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Failed to deserialize index metadata"),
-        "Error should mention metadata deserialization: {}",
-        error_message
+        "Error should mention metadata deserialization: {error_message}"
     );
 
     Ok(())
@@ -149,8 +149,7 @@ async fn test_persistence_corrupted_btree_data() -> Result<()> {
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Failed to deserialize B+ tree data"),
-        "Error should mention B+ tree deserialization: {}",
-        error_message
+        "Error should mention B+ tree deserialization: {error_message}"
     );
 
     Ok(())
@@ -187,8 +186,7 @@ async fn test_persistence_invalid_uuid_in_data() -> Result<()> {
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Invalid UUID"),
-        "Error should mention invalid UUID: {}",
-        error_message
+        "Error should mention invalid UUID: {error_message}"
     );
 
     Ok(())
@@ -217,9 +215,8 @@ async fn test_persistence_invalid_path_in_data() -> Result<()> {
     let uuid = Uuid::new_v4().to_string();
     let btree_data = format!(
         r#"{{
-        "{}": "../../../etc/passwd"
-    }}"#,
-        uuid
+        "{uuid}": "../../../etc/passwd"
+    }}"#
     );
     fs::write(index_path.join("data").join("btree_data.json"), btree_data)?;
 
@@ -229,8 +226,7 @@ async fn test_persistence_invalid_path_in_data() -> Result<()> {
     let error_message = result.err().unwrap().to_string();
     assert!(
         error_message.contains("Invalid path"),
-        "Error should mention invalid path: {}",
-        error_message
+        "Error should mention invalid path: {error_message}"
     );
 
     Ok(())
@@ -324,7 +320,7 @@ async fn test_persistence_large_dataset() -> Result<()> {
 
         for i in 0..NUM_DOCS {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/docs/doc_{:04}.md", i))?;
+            let doc_path = ValidatedPath::new(format!("/docs/doc_{i:04}.md"))?;
             doc_ids.push(doc_id);
             index.insert(doc_id, doc_path).await?;
         }
@@ -343,8 +339,7 @@ async fn test_persistence_large_dataset() -> Result<()> {
         assert_eq!(
             results.len(),
             NUM_DOCS,
-            "Should have all {} documents after reload",
-            NUM_DOCS
+            "Should have all {NUM_DOCS} documents after reload"
         );
     }
 
@@ -369,7 +364,7 @@ async fn test_persistence_concurrent_modifications() -> Result<()> {
     for i in 0..5 {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new(format!("/concurrent_{}.md", i))?;
+        let doc_path = ValidatedPath::new(format!("/concurrent_{i}.md"))?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
         // Index dropped here, simulating process exit

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 187ff93303d7934d55ce5b8e237649c214b3a49578607b0e24c958412e7c70b9 # shrinks to path = "/test..md"
+cc 84912388c801ae0ffdf0874e8e89b0caaee0244273e0a0520893b3f1f55a256b # shrinks to path = "/тест/файл.md", size = 18446744073709551615, created = 1000000000, updated = 1000000000, title = "a", word_count = 0

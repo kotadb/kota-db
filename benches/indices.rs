@@ -16,14 +16,13 @@ fn bench_btree_insertion(c: &mut Criterion) {
                 .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
                 .collect();
             let paths: Vec<_> = (0..size)
-                .map(|i| ValidatedPath::new(&format!("/bench/doc_{}.md", i)).unwrap())
+                .map(|i| ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap())
                 .collect();
 
             b.iter(|| {
                 let mut tree = btree::create_empty_tree();
                 for i in 0..size {
-                    tree =
-                        btree::insert_into_tree(tree, keys[i].clone(), paths[i].clone()).unwrap();
+                    tree = btree::insert_into_tree(tree, keys[i], paths[i].clone()).unwrap();
                 }
                 black_box(tree)
             });
@@ -46,8 +45,8 @@ fn bench_btree_search(c: &mut Criterion) {
                 .collect();
 
             for (i, key) in keys.iter().enumerate() {
-                let path = ValidatedPath::new(&format!("/bench/doc_{}.md", i)).unwrap();
-                tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+                let path = ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap();
+                tree = btree::insert_into_tree(tree, *key, path).unwrap();
             }
 
             // Benchmark searching for middle elements
@@ -66,7 +65,7 @@ fn bench_btree_search(c: &mut Criterion) {
 
 /// Benchmark B+ tree deletion performance (once implemented)
 fn bench_btree_deletion(c: &mut Criterion) {
-    let mut group = c.benchmark_group("btree_deletion");
+    let group = c.benchmark_group("btree_deletion");
 
     // This will be uncommented once delete_from_tree is implemented
     /*
@@ -133,8 +132,8 @@ fn bench_complexity_comparison(c: &mut Criterion) {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/bench/doc_{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         let target = &keys[5000];

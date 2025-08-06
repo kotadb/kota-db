@@ -103,7 +103,7 @@ impl TrigramIndex {
         let title = document.title.as_str();
         let content = String::from_utf8_lossy(&document.content);
 
-        format!("{} {}", title, content)
+        format!("{title} {content}")
     }
 
     /// Calculate simple relevance score for a document

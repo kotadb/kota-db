@@ -45,7 +45,7 @@ async fn test_production_configuration_validation() -> Result<()> {
     );
 
     // Test creating storage with valid config
-    let storage = create_file_storage(
+    let _storage = create_file_storage(
         &base_path.join("prod_storage").to_string_lossy(),
         Some(valid_config.max_documents),
     )
@@ -55,7 +55,7 @@ async fn test_production_configuration_validation() -> Result<()> {
         Some(valid_config.max_documents),
     )
     .await?;
-    let optimized_index = create_optimized_index_with_defaults(primary_index);
+    let _optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("    - Storage and index created successfully with production config");
 
@@ -324,29 +324,18 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
 
     for doc in &test_docs {
         match limited_storage.insert(doc.clone()).await {
-            Ok(()) => {
-                match optimized_index
-                    .insert(doc.id.clone(), doc.path.clone())
-                    .await
-                {
-                    Ok(()) => {
-                        inserted_count += 1;
-                    }
-                    Err(_) => {
-                        println!(
-                            "    - Index capacity reached at {} documents",
-                            inserted_count
-                        );
-                        capacity_reached = true;
-                        break;
-                    }
+            Ok(()) => match optimized_index.insert(doc.id, doc.path.clone()).await {
+                Ok(()) => {
+                    inserted_count += 1;
                 }
-            }
+                Err(_) => {
+                    println!("    - Index capacity reached at {inserted_count} documents");
+                    capacity_reached = true;
+                    break;
+                }
+            },
             Err(_) => {
-                println!(
-                    "    - Storage capacity reached at {} documents",
-                    inserted_count
-                );
+                println!("    - Storage capacity reached at {inserted_count} documents");
                 capacity_reached = true;
                 break;
             }
@@ -354,10 +343,7 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
 
         // Check if we're near the configured limit
         if inserted_count >= limited_config.max_documents {
-            println!(
-                "    - Configured capacity limit reached: {}",
-                inserted_count
-            );
+            println!("    - Configured capacity limit reached: {inserted_count}");
             capacity_reached = true;
             break;
         }
@@ -366,7 +352,7 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
     // Should have reached capacity before processing all documents
     assert!(capacity_reached, "Capacity limits not enforced properly");
     assert!(
-        inserted_count <= limited_config.max_documents as usize,
+        inserted_count <= limited_config.max_documents,
         "Inserted more documents than configured limit"
     );
 
@@ -403,8 +389,7 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
     // Verify system remains responsive under memory constraints
     assert!(
         memory_duration < Duration::from_secs(10),
-        "Memory-intensive operations took too long: {:?}",
-        memory_duration
+        "Memory-intensive operations took too long: {memory_duration:?}"
     );
 
     // Phase 4: Test connection limits (simulated)
@@ -417,10 +402,7 @@ async fn test_resource_limits_and_capacity_planning() -> Result<()> {
     for conn_id in 0..max_connections + 5 {
         // Try to exceed limit
         if conn_id >= max_connections {
-            println!(
-                "    - Connection {} would be rejected (limit: {})",
-                conn_id, max_connections
-            );
+            println!("    - Connection {conn_id} would be rejected (limit: {max_connections})");
             break;
         }
 
@@ -498,13 +480,12 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
 
     let init_duration = init_start.elapsed();
 
-    println!("    - System initialized in {:?}", init_duration);
+    println!("    - System initialized in {init_duration:?}");
 
     // Initialization should be fast for deployment
     assert!(
         init_duration < Duration::from_secs(5),
-        "System initialization too slow for deployment: {:?}",
-        init_duration
+        "System initialization too slow for deployment: {init_duration:?}"
     );
 
     // Phase 2: Test health check operations
@@ -523,14 +504,10 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
     );
     assert!(
         connectivity_duration < Duration::from_millis(100),
-        "Connectivity health check too slow: {:?}",
-        connectivity_duration
+        "Connectivity health check too slow: {connectivity_duration:?}"
     );
 
-    println!(
-        "    - Connectivity health: OK ({:?})",
-        connectivity_duration
-    );
+    println!("    - Connectivity health: OK ({connectivity_duration:?})");
 
     // Test storage health check
     let storage_health = health_checks.check_storage_health(&storage).await?;
@@ -557,9 +534,7 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
     let health_test_docs = create_config_test_documents(10, "health")?;
     for doc in &health_test_docs {
         mutable_storage.insert(doc.clone()).await?;
-        mutable_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        mutable_index.insert(doc.id, doc.path.clone()).await?;
     }
 
     let index_health = health_checks.check_index_health(&mutable_index).await?;
@@ -613,11 +588,10 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
 
     assert!(
         avg_score >= 0.8,
-        "Average health score too low: {:.2}",
-        avg_score
+        "Average health score too low: {avg_score:.2}"
     );
 
-    println!("    - Comprehensive health: OK (score: {:.2})", avg_score);
+    println!("    - Comprehensive health: OK (score: {avg_score:.2})");
 
     // Phase 5: Test failure detection
     println!("  - Testing failure detection...");
@@ -629,7 +603,7 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
     for doc in &stress_docs {
         mutable_storage.insert(doc.clone()).await?;
     }
-    let stress_duration = stress_start.elapsed();
+    let _stress_duration = stress_start.elapsed();
 
     // Re-check health under stress
     let stressed_health = health_checks
@@ -938,6 +912,7 @@ impl SystemHealthChecker {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ConnectivityHealth {
     is_healthy: bool,
     response_time: Duration,
@@ -980,16 +955,15 @@ fn create_config_test_documents(count: usize, test_type: &str) -> Result<Vec<Doc
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(&format!("/config/{}/doc_{:04}.md", test_type, i))?;
-        let title = ValidatedTitle::new(&format!("{} Config Test Doc {}", test_type, i))?;
+        let path = ValidatedPath::new(format!("/config/{test_type}/doc_{i:04}.md"))?;
+        let title = ValidatedTitle::new(format!("{test_type} Config Test Doc {i}"))?;
 
         let content = format!(
-            "# Configuration Test Document {}\n\n\
-             Test Type: {}\n\
-             Document Number: {}\n\
+            "# Configuration Test Document {i}\n\n\
+             Test Type: {test_type}\n\
+             Document Number: {i}\n\
              Configuration testing content.\n\n\
-             This document is used for testing configuration management.",
-            i, test_type, i
+             This document is used for testing configuration management."
         )
         .into_bytes();
 
@@ -1013,12 +987,12 @@ fn create_large_config_documents(count: usize, content_size: usize) -> Result<Ve
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(&format!("/config/large/doc_{:04}.md", i))?;
-        let title = ValidatedTitle::new(&format!("Large Config Test Doc {}", i))?;
+        let path = ValidatedPath::new(format!("/config/large/doc_{i:04}.md"))?;
+        let title = ValidatedTitle::new(format!("Large Config Test Doc {i}"))?;
 
-        let base_content = format!("# Large Configuration Test Document {}\n\n", i);
+        let base_content = format!("# Large Configuration Test Document {i}\n\n");
         let padding = "Config test data. ".repeat(content_size / 20);
-        let content = format!("{}{}", base_content, padding).into_bytes();
+        let content = format!("{base_content}{padding}").into_bytes();
 
         let tags = vec![
             ValidatedTag::new("large-config")?,

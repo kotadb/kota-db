@@ -61,6 +61,12 @@ pub struct ValidatedDocumentId {
     inner: Uuid,
 }
 
+impl Default for ValidatedDocumentId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidatedDocumentId {
     /// Create a new document ID
     pub fn new() -> Self {

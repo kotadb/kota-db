@@ -31,6 +31,7 @@ impl LinearIndex {
     }
 
     /// O(n) deletion - find and remove
+    #[allow(dead_code)]
     fn delete(&mut self, key: &ValidatedDocumentId) {
         self.entries.retain(|(k, _)| k != key);
     }
@@ -59,6 +60,7 @@ impl HashMapIndex {
     }
 
     /// O(1) average deletion
+    #[allow(dead_code)]
     fn delete(&mut self, key: &ValidatedDocumentId) {
         self.map.remove(key);
     }
@@ -76,7 +78,7 @@ fn compare_insertion_performance(sizes: &[usize]) {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(format!("/cmp/doc_{}.md", i)).unwrap())
+            .map(|i| ValidatedPath::new(format!("/cmp/doc_{i}.md")).unwrap())
             .collect();
 
         // Linear insertion
@@ -136,14 +138,14 @@ fn compare_search_performance(sizes: &[usize]) {
         let mut btree_idx = btree::create_empty_tree();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/cmp/doc_{}.md", i)).unwrap();
+            let path = ValidatedPath::new(format!("/cmp/doc_{i}.md")).unwrap();
             linear.insert(*key, path.clone());
             hashmap.insert(*key, path.clone());
             btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
         }
 
         // Search for random keys
-        let search_count = (size / 10).max(100).min(1000);
+        let search_count = (size / 10).clamp(100, 1000);
         let search_indices: Vec<_> = (0..search_count)
             .map(|i| (i * size) / search_count)
             .collect();
@@ -203,7 +205,7 @@ fn demonstrate_complexity_growth() {
         // Build linear index and measure worst-case search
         let mut linear = LinearIndex::new();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/growth/doc_{}.md", i)).unwrap();
+            let path = ValidatedPath::new(format!("/growth/doc_{i}.md")).unwrap();
             linear.insert(*key, path);
         }
 
@@ -219,7 +221,7 @@ fn demonstrate_complexity_growth() {
         // Build B+ tree and measure search
         let mut btree_idx = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/growth/doc_{}.md", i)).unwrap();
+            let path = ValidatedPath::new(format!("/growth/doc_{i}.md")).unwrap();
             btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
         }
 
@@ -235,12 +237,12 @@ fn demonstrate_complexity_growth() {
     println!("Linear Search (O(n)):");
     for i in 0..linear_times.len() {
         let (size, time) = linear_times[i];
-        print!("  Size {:7}: {:?}", size, time);
+        print!("  Size {size:7}: {time:?}");
 
         if i > 0 {
             let size_growth = size as f64 / linear_times[i - 1].0 as f64;
             let time_growth = time.as_nanos() as f64 / linear_times[i - 1].1.as_nanos() as f64;
-            print!(" ({}x size = {:.2}x time)", size_growth, time_growth);
+            print!(" ({size_growth}x size = {time_growth:.2}x time)");
         }
         println!();
     }
@@ -248,12 +250,12 @@ fn demonstrate_complexity_growth() {
     println!("\nB+ Tree Search (O(log n)):");
     for i in 0..btree_times.len() {
         let (size, time) = btree_times[i];
-        print!("  Size {:7}: {:?}", size, time);
+        print!("  Size {size:7}: {time:?}");
 
         if i > 0 {
             let size_growth = size as f64 / btree_times[i - 1].0 as f64;
             let time_growth = time.as_nanos() as f64 / btree_times[i - 1].1.as_nanos() as f64;
-            print!(" ({}x size = {:.2}x time)", size_growth, time_growth);
+            print!(" ({size_growth}x size = {time_growth:.2}x time)");
         }
         println!();
     }
@@ -295,7 +297,7 @@ fn test_worst_case_scenarios() {
     let mut btree_idx = btree::create_empty_tree();
 
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/worst/doc_{}.md", i)).unwrap();
+        let path = ValidatedPath::new(format!("/worst/doc_{i}.md")).unwrap();
         linear.insert(*key, path.clone());
         btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
@@ -316,7 +318,7 @@ fn test_worst_case_scenarios() {
     let btree_worst = start.elapsed() / 100;
 
     println!("Non-existent key search (worst case):");
-    println!("  Linear: {:?} (scans all {} elements)", linear_worst, size);
+    println!("  Linear: {linear_worst:?} (scans all {size} elements)");
     println!(
         "  B+Tree: {:?} (traverses ~{} levels)",
         btree_worst,
@@ -342,8 +344,8 @@ fn test_worst_case_scenarios() {
     }
     let btree_seq = start.elapsed();
 
-    println!("  Linear: {:?}", linear_seq);
-    println!("  B+Tree: {:?}", btree_seq);
+    println!("  Linear: {linear_seq:?}");
+    println!("  B+Tree: {btree_seq:?}");
     println!("  Note: B+ tree maintains good cache locality in leaf nodes");
 }
 
@@ -355,7 +357,7 @@ fn test_performance_at_scale() {
     let size = 1_000_000; // 1 million entries
     let sample_size = 1000; // Sample searches
 
-    println!("Building B+ tree with {} entries...", size);
+    println!("Building B+ tree with {size} entries...");
     let keys: Vec<_> = (0..sample_size)
         .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
         .collect();
@@ -365,22 +367,22 @@ fn test_performance_at_scale() {
 
     // Insert sample keys
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/scale/doc_{}.md", i)).unwrap();
+        let path = ValidatedPath::new(format!("/scale/doc_{i}.md")).unwrap();
         btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
 
     // Insert many more keys
     for i in sample_size..size {
         if i % 100_000 == 0 {
-            println!("  Inserted {} entries...", i);
+            println!("  Inserted {i} entries...");
         }
         let key = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-        let path = ValidatedPath::new(format!("/scale/doc_{}.md", i)).unwrap();
+        let path = ValidatedPath::new(format!("/scale/doc_{i}.md")).unwrap();
         btree_idx = btree::insert_into_tree(btree_idx, key, path).unwrap();
     }
 
     let build_time = start.elapsed();
-    println!("Built tree in {:?}", build_time);
+    println!("Built tree in {build_time:?}");
 
     // Search performance at scale
     let start = Instant::now();
@@ -390,17 +392,14 @@ fn test_performance_at_scale() {
     let search_time = start.elapsed();
     let avg_search = search_time / sample_size as u32;
 
-    println!("\nSearch performance with {} entries:", size);
-    println!("  {} searches in {:?}", sample_size, search_time);
-    println!("  Average: {:?} per search", avg_search);
+    println!("\nSearch performance with {size} entries:");
+    println!("  {sample_size} searches in {search_time:?}");
+    println!("  Average: {avg_search:?} per search");
     println!("  Tree depth: ~{} levels", (size as f64).log2() as u32);
 
     // Compare with theoretical linear search time
     let theoretical_linear_us = (size as f64 / 2.0) * 0.01; // Assume 0.01μs per comparison
-    println!(
-        "\nTheoretical linear search would take ~{:.0}μs average",
-        theoretical_linear_us
-    );
+    println!("\nTheoretical linear search would take ~{theoretical_linear_us:.0}μs average");
     println!(
         "B+ tree is ~{:.0}x faster!",
         theoretical_linear_us / avg_search.as_micros() as f64

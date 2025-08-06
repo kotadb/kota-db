@@ -200,7 +200,7 @@ impl QueryBuilder {
         if let Some(tag_strings) = tags {
             query.tags = tag_strings
                 .into_iter()
-                .map(|t| ValidatedTag::new(t))
+                .map(ValidatedTag::new)
                 .collect::<Result<Vec<_>, _>>()?;
         }
 
@@ -350,7 +350,7 @@ impl IndexConfigBuilder {
     /// Set similarity threshold for fuzzy search (0.0 - 1.0)
     pub fn similarity_threshold(mut self, threshold: f32) -> Result<Self> {
         ensure!(
-            threshold >= 0.0 && threshold <= 1.0,
+            (0.0..=1.0).contains(&threshold),
             "Similarity threshold must be between 0.0 and 1.0"
         );
         self.similarity_threshold = threshold;

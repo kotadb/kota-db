@@ -35,13 +35,20 @@ pub fn init_logging() -> Result<()> {
         .with_file(true)
         .with_ansi(true);
 
-    tracing_subscriber::registry()
+    match tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt_layer)
-        .init();
-
-    info!("KotaDB observability initialized");
-    Ok(())
+        .try_init()
+    {
+        Ok(()) => {
+            info!("KotaDB observability initialized");
+            Ok(())
+        }
+        Err(_) => {
+            // Already initialized, which is fine in test environments
+            Ok(())
+        }
+    }
 }
 
 /// Represents different types of operations for structured logging
@@ -202,7 +209,7 @@ pub fn log_operation(ctx: &OperationContext, op: &Operation, result: &Result<()>
     let attrs = ctx
         .attributes
         .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
+        .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -408,7 +415,7 @@ mod tests {
         });
         record_metric(MetricType::Gauge {
             name: "test.gauge",
-            value: 3.14,
+            value: std::f64::consts::PI,
         });
         record_metric(MetricType::Timer {
             name: "test.timer",
@@ -440,6 +447,6 @@ mod tests {
         }
         // Check that drop was called and metrics recorded
         let metrics = get_metrics();
-        assert!(metrics["operations"]["total"].as_u64().unwrap() >= 0);
+        assert!(metrics["operations"]["total"].as_u64().is_some());
     }
 }

@@ -30,7 +30,7 @@ mod primary_index_tests {
         let doc_path = ValidatedPath::new("/test/document.md")?;
 
         // Insert key-value pair
-        index.insert(doc_id.clone(), doc_path.clone()).await?;
+        index.insert(doc_id, doc_path.clone()).await?;
 
         // Search for the document by ID
         let query = Query::new(
@@ -61,10 +61,10 @@ mod primary_index_tests {
         let path2 = ValidatedPath::new("/test/doc2.md")?;
 
         // First insert
-        index.insert(doc_id.clone(), path1).await?;
+        index.insert(doc_id, path1).await?;
 
         // Second insert with same key should overwrite
-        index.insert(doc_id.clone(), path2.clone()).await?;
+        index.insert(doc_id, path2.clone()).await?;
 
         // Should find only the second value
         let query = Query::new(Some("*".to_string()), None, None, 10)?;
@@ -84,7 +84,7 @@ mod primary_index_tests {
         let doc_path = ValidatedPath::new("/test/document.md")?;
 
         // Insert then delete
-        index.insert(doc_id.clone(), doc_path).await?;
+        index.insert(doc_id, doc_path).await?;
         index.delete(&doc_id).await?;
 
         // Should find no results
@@ -151,7 +151,7 @@ mod primary_index_tests {
         // Create index, insert data, and flush
         {
             let mut index = kotadb::create_primary_index_for_tests(index_path_str).await?;
-            index.insert(doc_id.clone(), doc_path.clone()).await?;
+            index.insert(doc_id, doc_path.clone()).await?;
             index.flush().await?;
         }
 
@@ -190,14 +190,14 @@ mod primary_index_tests {
         let mut expected_paths = Vec::new();
         for i in 0..1000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(&format!("/test/doc_{}.md", i))?;
+            let doc_path = ValidatedPath::new(format!("/test/doc_{i}.md"))?;
 
             index.insert(doc_id, doc_path.clone()).await?;
             expected_paths.push(doc_path);
         }
 
         // Search should return all documents
-        let query = Query::new(Some("*".to_string()), None, None, 2000)?; // Higher limit
+        let query = Query::new(Some("*".to_string()), None, None, 1000)?; // Maximum allowed limit
         let results = index.search(&query).await?;
 
         assert_eq!(results.len(), 1000);
@@ -223,7 +223,7 @@ mod primary_index_tests {
 
             let handle = tokio::spawn(async move {
                 let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let doc_path = ValidatedPath::new(&format!("/test/concurrent_{}.md", i)).unwrap();
+                let doc_path = ValidatedPath::new(format!("/test/concurrent_{i}.md")).unwrap();
 
                 let mut index_guard = index_clone.lock().await;
                 index_guard.insert(doc_id, doc_path).await.unwrap();
@@ -262,7 +262,7 @@ mod primary_index_performance_tests {
         // Insert 100 documents and measure time
         for i in 0..100 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(&format!("/test/perf_{}.md", i))?;
+            let doc_path = ValidatedPath::new(format!("/test/perf_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
         }
@@ -273,8 +273,7 @@ mod primary_index_performance_tests {
         // Should be faster than 5ms per insert on average
         assert!(
             avg_per_insert.as_millis() < 5,
-            "Insert too slow: {:?} per operation",
-            avg_per_insert
+            "Insert too slow: {avg_per_insert:?} per operation"
         );
 
         Ok(())
@@ -287,7 +286,7 @@ mod primary_index_performance_tests {
         // Pre-populate with 1000 documents
         for i in 0..1000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(&format!("/test/search_perf_{}.md", i))?;
+            let doc_path = ValidatedPath::new(format!("/test/search_perf_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
         }
@@ -306,8 +305,7 @@ mod primary_index_performance_tests {
         // Should be faster than 1ms per search on average
         assert!(
             avg_per_search.as_millis() < 1,
-            "Search too slow: {:?} per operation",
-            avg_per_search
+            "Search too slow: {avg_per_search:?} per operation"
         );
 
         Ok(())

@@ -716,13 +716,15 @@ mod tests {
 
     #[test]
     fn test_optimization_metrics_collector() {
-        let mut config = OptimizationMetricsConfig::default();
-        config.contention_sample_rate = 1.0; // 100% sampling for reliable tests
+        let config = OptimizationMetricsConfig {
+            contention_sample_rate: 1.0, // 100% sampling for reliable tests
+            ..Default::default()
+        };
         let collector = OptimizationMetricsCollector::new(config);
 
         // Record a bulk operation
         let result = BulkOperationResult::success(1000, Duration::from_millis(100), 1024, 0.95);
-        collector.record_bulk_operation(
+        let _ = collector.record_bulk_operation(
             BulkOperationType::Insert,
             1000,
             result,
@@ -757,7 +759,7 @@ mod tests {
         };
 
         let score = collector.calculate_efficiency_score(&good_result);
-        assert!(score > 0.8, "Expected high efficiency score, got {}", score);
+        assert!(score > 0.8, "Expected high efficiency score, got {score}");
 
         // Test low-efficiency operation
         let bad_result = BulkOperationResult {
@@ -771,6 +773,6 @@ mod tests {
         };
 
         let score = collector.calculate_efficiency_score(&bad_result);
-        assert!(score < 0.5, "Expected low efficiency score, got {}", score);
+        assert!(score < 0.5, "Expected low efficiency score, got {score}");
     }
 }

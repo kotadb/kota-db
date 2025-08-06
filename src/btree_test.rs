@@ -10,7 +10,7 @@ mod tests {
         let path = ValidatedPath::new("/test/delete.md").unwrap();
 
         let mut tree = btree::create_empty_tree();
-        tree = btree::insert_into_tree(tree, doc_id.clone(), path).unwrap();
+        tree = btree::insert_into_tree(tree, doc_id, path).unwrap();
 
         assert!(btree::search_in_tree(&tree, &doc_id).is_some());
 
@@ -28,14 +28,14 @@ mod tests {
 
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(&format!("/test/doc{}.md", i)).unwrap();
-            tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
+            let path = ValidatedPath::new(format!("/test/doc{i}.md")).unwrap();
+            tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
         assert_eq!(btree::count_total_keys(&tree), 10);
 
         // Delete several keys
-        for i in vec![2, 5, 7] {
+        for i in [2, 5, 7] {
             tree = btree::delete_from_tree(tree, &keys[i]).unwrap();
         }
 

@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use kotadb::builders::*;
-use kotadb::{Document, Query};
 
 #[test]
 fn test_document_builder_basic() -> Result<()> {

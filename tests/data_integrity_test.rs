@@ -4,7 +4,6 @@
 use anyhow::Result;
 use kotadb::*;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -41,22 +40,17 @@ async fn test_acid_atomicity() -> Result<()> {
     for (i, doc) in transaction_docs.iter().enumerate() {
         // Simulate potential failure on the 3rd operation (but don't actually fail)
         match storage.insert(doc.clone()).await {
-            Ok(()) => {
-                match optimized_index
-                    .insert(doc.id.clone(), doc.path.clone())
-                    .await
-                {
-                    Ok(()) => {
-                        committed_ids.push(doc.id);
-                        println!("    - Operation {}/5 succeeded: {}", i + 1, doc.id);
-                    }
-                    Err(e) => {
-                        println!("    - Index operation failed at {}: {}", i + 1, e);
-                        transaction_successful = false;
-                        break;
-                    }
+            Ok(()) => match optimized_index.insert(doc.id, doc.path.clone()).await {
+                Ok(()) => {
+                    committed_ids.push(doc.id);
+                    println!("    - Operation {}/5 succeeded: {}", i + 1, doc.id);
                 }
-            }
+                Err(e) => {
+                    println!("    - Index operation failed at {}: {}", i + 1, e);
+                    transaction_successful = false;
+                    break;
+                }
+            },
             Err(e) => {
                 println!("    - Storage operation failed at {}: {}", i + 1, e);
                 transaction_successful = false;
@@ -79,8 +73,7 @@ async fn test_acid_atomicity() -> Result<()> {
             let retrieved = storage.get(doc_id).await?;
             assert!(
                 retrieved.is_some(),
-                "Document missing after successful transaction: {}",
-                doc_id
+                "Document missing after successful transaction: {doc_id}"
             );
         }
 
@@ -109,9 +102,7 @@ async fn test_acid_atomicity() -> Result<()> {
 
         // These operations would need to be rolled back in a real implementation
         storage.insert(doc.clone()).await?;
-        optimized_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        optimized_index.insert(doc.id, doc.path.clone()).await?;
         partial_commits.push(doc.id);
         println!(
             "    - Partial operation {} succeeded (needs rollback): {}",
@@ -135,8 +126,7 @@ async fn test_acid_atomicity() -> Result<()> {
         let retrieved = storage.get(doc_id).await?;
         assert!(
             retrieved.is_none(),
-            "Partially committed document not rolled back: {}",
-            doc_id
+            "Partially committed document not rolled back: {doc_id}"
         );
     }
 
@@ -172,9 +162,7 @@ async fn test_acid_consistency() -> Result<()> {
 
     for doc in &docs {
         storage.insert(doc.clone()).await?;
-        optimized_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        optimized_index.insert(doc.id, doc.path.clone()).await?;
         reference_map.insert(doc.id, doc.path.clone());
     }
 
@@ -213,7 +201,7 @@ async fn test_acid_consistency() -> Result<()> {
     updated_doc.content = b"Updated content for consistency test".to_vec();
     updated_doc.size = updated_doc.content.len();
 
-    storage.insert(updated_doc.clone()).await?; // Insert overwrites in this implementation
+    storage.update(updated_doc.clone()).await?; // Use update for existing documents
 
     // Verify update maintained consistency
     let retrieved_update = storage.get(&updated_doc.id).await?;
@@ -288,7 +276,7 @@ async fn test_acid_consistency() -> Result<()> {
             {
                 let mut index_guard = index_ref.lock().await;
                 index_guard
-                    .insert(doc_clone.id.clone(), doc_clone.path.clone())
+                    .insert(doc_clone.id, doc_clone.path.clone())
                     .await?;
             }
 
@@ -315,7 +303,7 @@ async fn test_acid_consistency() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(_) => successful_ops += 1,
-            Err(e) => println!("    - Concurrent operation failed: {}", e),
+            Err(e) => println!("    - Concurrent operation failed: {e}"),
         }
     }
 
@@ -385,12 +373,12 @@ async fn test_acid_isolation() -> Result<()> {
                     // Simulate transaction isolation by holding both locks
                     match storage_guard.insert(doc.clone()).await {
                         Ok(()) => {
-                            match index_guard.insert(doc.id.clone(), doc.path.clone()).await {
+                            match index_guard.insert(doc.id, doc.path.clone()).await {
                                 Ok(()) => {
                                     batch_results.push((doc.id, true, insert_start.elapsed()));
                                 }
                                 Err(e) => {
-                                    println!("      - Batch {} index failure: {}", batch_id, e);
+                                    println!("      - Batch {batch_id} index failure: {e}");
                                     // In a real implementation, would rollback storage insert
                                     storage_guard.delete(&doc.id).await.ok();
                                     batch_results.push((doc.id, false, insert_start.elapsed()));
@@ -398,7 +386,7 @@ async fn test_acid_isolation() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            println!("      - Batch {} storage failure: {}", batch_id, e);
+                            println!("      - Batch {batch_id} storage failure: {e}");
                             batch_results.push((doc.id, false, insert_start.elapsed()));
                         }
                     }
@@ -425,7 +413,7 @@ async fn test_acid_isolation() -> Result<()> {
     for handle in handles {
         let (batch_id, batch_results) = handle.await??;
 
-        for (doc_id, success, duration) in batch_results {
+        for (doc_id, success, _duration) in batch_results {
             total_operations += 1;
             if success {
                 successful_operations += 1;
@@ -433,12 +421,11 @@ async fn test_acid_isolation() -> Result<()> {
             }
         }
 
-        println!("    - Batch {} completed", batch_id);
+        println!("    - Batch {batch_id} completed");
     }
 
     println!(
-        "  - Isolation test: {}/{} operations successful",
-        successful_operations, total_operations
+        "  - Isolation test: {successful_operations}/{total_operations} operations successful"
     );
 
     // Verify isolation was maintained - no partial states visible
@@ -485,9 +472,7 @@ async fn test_acid_durability() -> Result<()> {
 
         for doc in &docs {
             storage.insert(doc.clone()).await?;
-            optimized_index
-                .insert(doc.id.clone(), doc.path.clone())
-                .await?;
+            optimized_index.insert(doc.id, doc.path.clone()).await?;
             committed_ids.insert(doc.id);
         }
 
@@ -538,8 +523,7 @@ async fn test_acid_durability() -> Result<()> {
             let retrieved = storage.get(doc_id).await?;
             assert!(
                 retrieved.is_some(),
-                "Committed document not durable after restart: {}",
-                doc_id
+                "Committed document not durable after restart: {doc_id}"
             );
 
             // Verify content integrity
@@ -548,18 +532,15 @@ async fn test_acid_durability() -> Result<()> {
 
             assert_eq!(
                 recovered_doc.content, original_doc.content,
-                "Document content corrupted after restart: {}",
-                doc_id
+                "Document content corrupted after restart: {doc_id}"
             );
             assert_eq!(
                 recovered_doc.size, original_doc.size,
-                "Document size corrupted after restart: {}",
-                doc_id
+                "Document size corrupted after restart: {doc_id}"
             );
             assert_eq!(
                 recovered_doc.path, original_doc.path,
-                "Document path corrupted after restart: {}",
-                doc_id
+                "Document path corrupted after restart: {doc_id}"
             );
         }
 
@@ -574,9 +555,7 @@ async fn test_acid_durability() -> Result<()> {
         let new_doc = &post_restart_doc[0];
 
         storage_mut.insert(new_doc.clone()).await?;
-        index_mut
-            .insert(new_doc.id.clone(), new_doc.path.clone())
-            .await?;
+        index_mut.insert(new_doc.id, new_doc.path.clone()).await?;
 
         // Verify new document is accessible
         let new_doc_retrieved = storage_mut.get(&new_doc.id).await?;
@@ -617,9 +596,7 @@ async fn test_data_corruption_detection() -> Result<()> {
 
     for doc in &docs {
         storage.insert(doc.clone()).await?;
-        optimized_index
-            .insert(doc.id.clone(), doc.path.clone())
-            .await?;
+        optimized_index.insert(doc.id, doc.path.clone()).await?;
     }
 
     println!("  - Inserted {} clean documents", docs.len());
@@ -717,16 +694,16 @@ async fn test_data_corruption_detection() -> Result<()> {
 
     if actual_content_size != declared_size {
         println!(
-            "    - Size corruption detected: declared={}, actual={}",
-            declared_size, actual_content_size
+            "    - Size corruption detected: declared={declared_size}, actual={actual_content_size}"
         );
 
         // In a real system, this would trigger corruption handling
         // For now, we'll correct it by updating the size
         let mut corrected_doc = malformed.clone();
         corrected_doc.size = actual_content_size;
+        corrected_doc.updated_at = chrono::Utc::now(); // Update timestamp for validation
 
-        storage.insert(corrected_doc.clone()).await?;
+        storage.update(corrected_doc.clone()).await?;
 
         // Verify correction
         let corrected_retrieved = storage.get(&invalid_id).await?;
@@ -783,8 +760,8 @@ fn create_test_documents(count: usize, test_type: &str) -> Result<Vec<Document>>
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(&format!("/{}/integrity_test_{:04}.md", test_type, i))?;
-        let title = ValidatedTitle::new(&format!("{} Integrity Test Document {}", test_type, i))?;
+        let path = ValidatedPath::new(format!("/{test_type}/integrity_test_{i:04}.md"))?;
+        let title = ValidatedTitle::new(format!("{test_type} Integrity Test Document {i}"))?;
 
         let content = format!(
             r#"---
@@ -835,14 +812,14 @@ This concludes the integrity test document.
             doc_id,
             i,
             i,
-            format!("{:x}", i * 12345) // Simple checksum simulation
+            format_args!("{:x}", i * 12345) // Simple checksum simulation
         )
         .into_bytes();
 
         let tags = vec![
             ValidatedTag::new(test_type)?,
             ValidatedTag::new("integrity-test")?,
-            ValidatedTag::new(&format!("doc-{}", i))?,
+            ValidatedTag::new(format!("doc-{i}"))?,
         ];
 
         let now = chrono::Utc::now();

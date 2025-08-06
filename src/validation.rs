@@ -85,7 +85,7 @@ pub mod path {
         // Check length
         ctx.clone().validate(
             path.len() < MAX_PATH_LENGTH,
-            &format!("Path exceeds maximum length of {}", MAX_PATH_LENGTH),
+            &format!("Path exceeds maximum length of {MAX_PATH_LENGTH}"),
         )?;
 
         // Check for null bytes
@@ -110,7 +110,7 @@ pub mod path {
             if RESERVED_NAMES.contains(&upper.as_str()) {
                 bail!(ValidationError::InvalidInput {
                     field: "path".to_string(),
-                    reason: format!("Reserved filename: {}", stem),
+                    reason: format!("Reserved filename: {stem}"),
                 });
             }
         }
@@ -155,7 +155,7 @@ pub mod document {
         existing_ids: &std::collections::HashSet<ValidatedDocumentId>,
     ) -> Result<()> {
         let ctx = ValidationContext::new("document_insert")
-            .with_attribute("doc_id", &doc.id.to_string())
+            .with_attribute("doc_id", doc.id.to_string())
             .with_attribute("path", doc.path.as_str());
 
         // Check ID uniqueness
@@ -204,7 +204,7 @@ pub mod document {
     /// Validate document for update
     pub fn validate_for_update(new_doc: &Document, old_doc: &Document) -> Result<()> {
         let ctx = ValidationContext::new("document_update")
-            .with_attribute("doc_id", &new_doc.id.to_string());
+            .with_attribute("doc_id", new_doc.id.to_string());
 
         // IDs must match
         ctx.clone().validate(
@@ -238,7 +238,7 @@ pub mod index {
     /// Validate trigram extraction
     pub fn validate_trigram(text: &str) -> Result<()> {
         let ctx = ValidationContext::new("trigram_extraction")
-            .with_attribute("text_length", &text.len().to_string());
+            .with_attribute("text_length", text.len().to_string());
 
         ctx.clone().validate(
             text.len() >= 3,
@@ -298,7 +298,7 @@ pub mod transaction {
     /// Validate transaction begin
     pub fn validate_begin(tx_id: u64) -> Result<()> {
         let ctx =
-            ValidationContext::new("transaction_begin").with_attribute("tx_id", &tx_id.to_string());
+            ValidationContext::new("transaction_begin").with_attribute("tx_id", tx_id.to_string());
 
         ctx.clone()
             .validate(tx_id > 0, "Transaction ID must be positive")?;
@@ -314,8 +314,8 @@ pub mod transaction {
 
     /// Validate transaction commit
     pub fn validate_commit(tx_id: u64) -> Result<()> {
-        let ctx = ValidationContext::new("transaction_commit")
-            .with_attribute("tx_id", &tx_id.to_string());
+        let ctx =
+            ValidationContext::new("transaction_commit").with_attribute("tx_id", tx_id.to_string());
 
         let mut active = ACTIVE_TRANSACTIONS
             .lock()
@@ -334,8 +334,8 @@ pub mod storage {
     /// Validate storage metrics consistency
     pub fn validate_metrics(metrics: &StorageMetrics) -> Result<()> {
         let ctx = ValidationContext::new("storage_metrics")
-            .with_attribute("doc_count", &metrics.total_documents.to_string())
-            .with_attribute("total_size", &metrics.total_size_bytes.to_string());
+            .with_attribute("doc_count", metrics.total_documents.to_string())
+            .with_attribute("total_size", metrics.total_size_bytes.to_string());
 
         // Basic sanity checks
         ctx.clone().validate(
@@ -365,7 +365,7 @@ pub mod storage {
     /// Validate page allocation
     pub fn validate_page_id(id: u64) -> Result<()> {
         let ctx =
-            ValidationContext::new("page_allocation").with_attribute("page_id", &id.to_string());
+            ValidationContext::new("page_allocation").with_attribute("page_id", id.to_string());
 
         ctx.clone().validate(id > 0, "Page ID must be positive")?;
 
@@ -394,7 +394,7 @@ impl<T> ValidationLayer<T> {
         error!("Validation failed: {}", error);
 
         if self.strict_mode {
-            panic!("Validation failed in strict mode: {}", error);
+            panic!("Validation failed in strict mode: {error}");
         }
 
         Err(error.into())
@@ -430,7 +430,7 @@ mod tests {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
 
         let valid_doc = Document {
-            id: doc_id.clone(),
+            id: doc_id,
             path: ValidatedPath::new("/test/doc.md").unwrap(),
             title: ValidatedTitle::new("Test Doc").unwrap(),
             content: vec![0u8; 1024],
@@ -444,7 +444,7 @@ mod tests {
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_ok());
 
         // Add ID to existing set
-        existing_ids.insert(doc_id.clone());
+        existing_ids.insert(doc_id);
 
         // Should fail with duplicate ID
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_err());

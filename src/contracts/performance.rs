@@ -304,6 +304,12 @@ pub struct PerformanceValidator {
     slas: Vec<Box<dyn PerformanceGuarantee + Send + Sync>>,
 }
 
+impl Default for PerformanceValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceValidator {
     pub fn new() -> Self {
         Self { slas: Vec::new() }
@@ -328,7 +334,7 @@ impl PerformanceValidator {
         for measurement in measurements {
             by_operation
                 .entry(measurement.operation.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(measurement);
         }
 

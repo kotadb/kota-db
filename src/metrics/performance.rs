@@ -211,7 +211,7 @@ impl PerformanceCollector {
         for measurement in measurements.iter() {
             operation_groups
                 .entry(measurement.operation.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(measurement);
         }
 

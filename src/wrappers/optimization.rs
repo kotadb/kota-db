@@ -597,7 +597,7 @@ mod tests {
         let id = ValidatedDocumentId::from_uuid(uuid::Uuid::new_v4())?;
         let path = ValidatedPath::new("/test/optimized.md")?;
 
-        optimized.insert(id.clone(), path).await?;
+        optimized.insert(id, path).await?;
 
         let query = Query::new(Some("*".to_string()), None, None, 10)?;
         let _results = optimized.search(&query).await?;
