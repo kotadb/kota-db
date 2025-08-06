@@ -45,6 +45,10 @@ test-perf:
 test-property:
   cargo test --test property_tests
 
+# Run infrastructure validation tests
+test-infrastructure:
+  ./scripts/infrastructure_test.sh
+
 # Generate test coverage report
 coverage:
   cargo llvm-cov --all-features --workspace --html
