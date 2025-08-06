@@ -1,58 +1,84 @@
 # Rust
-target/
-Cargo.lock
+/target/
 **/*.rs.bk
-*.pdb
+Cargo.lock
 
-# Database files
-*.db
-*.idx
-*.log
-*.wal
-
-# Test data
-test_data/
-test_db/
-
-# Benchmarks
-benches/results/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Editor
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Project specific
-/data/
-/indices/
-/logs/
-.kota-db/
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Profiling
-perf.data
-perf.data.old
-flamegraph.svg
-*.prof
+# Logs
+*.log
+logs/
 
-# Coverage
-tarpaulin-report.html
-cobertura.xml
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
 coverage/
+*.lcov
 
-# Documentation
-/doc/
+# nyc test coverage
+.nyc_output
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
+# Dependency directories
+node_modules/
 
-# Environment
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
 .env
-.env.local
+.env.test
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# KotaDB specific
+/data/
+/config/
+/cache/
+kota-db-data/
+*.kotadb
+
+# Test artifacts
+/test-results/
+/test-output/
+
+# Benchmark results
+/benchmarks/results/
+criterion/
+
+# Local development
+.local/
+.tmp/
+temp/
+
+# Documentation build
+/book/
