@@ -1,0 +1,78 @@
+groups:
+- name: kotadb.rules
+  rules:
+  # Performance Rules
+  - alert: KotaDBHighQueryLatency
+    expr: histogram_quantile(0.95, rate(kotadb_query_duration_seconds_bucket[5m])) > 0.01
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: KotaDB high query latency
+      description: "95th percentile query latency is {{ $value }}s, above 10ms threshold"
+
+  - alert: KotaDBHighErrorRate
+    expr: rate(kotadb_errors_total[5m]) > 0.1
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: KotaDB high error rate
+      description: "Error rate is {{ $value }} errors/sec"
+
+  # Resource Rules
+  - alert: KotaDBHighMemoryUsage
+    expr: (kotadb_memory_usage_bytes / kotadb_memory_limit_bytes) > 0.9
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: KotaDB high memory usage
+      description: "Memory usage is {{ $value | humanizePercentage }}"
+
+  - alert: KotaDBDiskSpaceLow
+    expr: (kotadb_disk_usage_bytes / kotadb_disk_capacity_bytes) > 0.8
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: KotaDB disk space low
+      description: "Disk usage is {{ $value | humanizePercentage }}"
+
+  # MCP Server Rules
+  - alert: KotaDBMCPServerDown
+    expr: up{job="kotadb-mcp"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: KotaDB MCP server is down
+      description: "MCP server has been down for more than 1 minute"
+
+  - alert: KotaDBMCPHighLatency
+    expr: histogram_quantile(0.95, rate(kotadb_mcp_request_duration_seconds_bucket[5m])) > 0.1
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: KotaDB MCP high latency
+      description: "95th percentile MCP request latency is {{ $value }}s"
+
+  # Index Health Rules
+  - alert: KotaDBIndexCorruption
+    expr: kotadb_index_corruption_detected > 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: KotaDB index corruption detected
+      description: "Index corruption detected in {{ $labels.index_type }}"
+
+  - alert: KotaDBIndexRebalanceNeeded
+    expr: kotadb_index_balance_factor < 0.7
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: KotaDB index needs rebalancing
+      description: "Index balance factor is {{ $value }}, below 0.7 threshold"

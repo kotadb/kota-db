@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kotadb
+  labels:
+    app: kotadb
+spec:
+  selector:
+    matchLabels:
+      app: kotadb
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: http
