@@ -17,9 +17,7 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "CC0-1.0",
-    "MPL-2.0",
     "Unicode-3.0",
 ]
 
@@ -70,7 +68,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # A list of advisory IDs to ignore
 ignore = [
     # Ignore advisories for specific reasons
-    # "RUSTSEC-2020-0001", # reason for ignoring
+    "RUSTSEC-2024-0436", # paste crate unmaintained - used transitively by rmp-serde, low risk
 ]
 
 [sources]

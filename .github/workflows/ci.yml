@@ -54,9 +54,9 @@ jobs:
       run: cargo build --verbose --all-features
     
     - name: Run tests
-      run: cargo test --verbose --all-features
+      run: cargo test --all-features
       env:
-        RUST_LOG: debug
+        RUST_LOG: warn
     
     - name: Run doc tests
       run: cargo test --doc --all-features
