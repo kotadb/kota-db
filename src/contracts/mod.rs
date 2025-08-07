@@ -1,6 +1,7 @@
 // Contracts Module - Stage 2: Contract-First Design
 // Defines all contracts and interfaces for KotaDB components
 
+pub mod connection_pool;
 pub mod optimization;
 pub mod performance;
 
@@ -8,6 +9,11 @@ pub mod performance;
 pub use performance::{
     ComplexityClass, ComplexityContract, MemoryContract, PerformanceGuarantee,
     PerformanceMeasurement,
+};
+
+pub use connection_pool::{
+    ConnectionMetrics, ConnectionPool, ConnectionPoolConfig, ConnectionStats, RateLimitResult,
+    RateLimiter, ResourceMonitor,
 };
 
 pub use optimization::{

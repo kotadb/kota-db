@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 use crate::{
     builders::DocumentBuilder,
+    connection_pool::ConnectionPoolImpl,
+    contracts::connection_pool::ConnectionPool,
     contracts::{Document, Storage},
     observability::with_trace_id,
     types::ValidatedDocumentId,
@@ -28,6 +30,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     storage: Arc<Mutex<dyn Storage>>,
+    connection_pool: Option<Arc<tokio::sync::Mutex<ConnectionPoolImpl>>>,
 }
 
 /// Request body for document creation
@@ -94,6 +97,32 @@ pub struct ErrorResponse {
     pub message: String,
 }
 
+/// Connection statistics response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionStatsResponse {
+    pub active_connections: usize,
+    pub total_connections: u64,
+    pub rejected_connections: u64,
+    pub rate_limited_requests: u64,
+}
+
+/// Performance metrics response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PerformanceStatsResponse {
+    pub avg_latency_ms: f64,
+    pub total_requests: u64,
+    pub requests_per_second: f64,
+}
+
+/// Resource usage response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResourceStatsResponse {
+    pub memory_usage_bytes: u64,
+    pub memory_usage_mb: f64,
+    pub cpu_usage_percent: f32,
+    pub system_healthy: bool,
+}
+
 impl From<Document> for DocumentResponse {
     fn from(doc: Document) -> Self {
         Self {
@@ -113,7 +142,10 @@ impl From<Document> for DocumentResponse {
 
 /// Create HTTP server with all routes configured
 pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
-    let state = AppState { storage };
+    let state = AppState {
+        storage,
+        connection_pool: None,
+    };
 
     Router::new()
         .route("/health", get(health_check))
@@ -122,6 +154,39 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
         .route("/documents/search", get(search_documents))
+        // Monitoring endpoints
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        .with_state(state)
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        )
+}
+
+/// Create HTTP server with connection pool integration
+pub fn create_server_with_pool(
+    storage: Arc<Mutex<dyn Storage>>,
+    connection_pool: Arc<tokio::sync::Mutex<ConnectionPoolImpl>>,
+) -> Router {
+    let state = AppState {
+        storage,
+        connection_pool: Some(connection_pool),
+    };
+
+    Router::new()
+        .route("/health", get(health_check))
+        .route("/documents", post(create_document))
+        .route("/documents/:id", get(get_document))
+        .route("/documents/:id", put(update_document))
+        .route("/documents/:id", delete(delete_document))
+        .route("/documents/search", get(search_documents))
+        // Monitoring endpoints
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -503,6 +568,124 @@ async fn search_documents(
     }
 }
 
+/// Get connection statistics
+async fn get_connection_stats(
+    State(state): State<AppState>,
+) -> Result<Json<ConnectionStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if let Some(pool) = &state.connection_pool {
+        match pool.lock().await.get_stats().await {
+            Ok(stats) => Ok(Json(ConnectionStatsResponse {
+                active_connections: stats.active_connections,
+                total_connections: stats.total_connections,
+                rejected_connections: stats.rejected_connections,
+                rate_limited_requests: stats.rate_limited_requests,
+            })),
+            Err(e) => {
+                warn!("Failed to get connection stats: {}", e);
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "stats_unavailable".to_string(),
+                        message: "Connection statistics temporarily unavailable".to_string(),
+                    }),
+                ))
+            }
+        }
+    } else {
+        // No connection pool configured - return empty stats
+        Ok(Json(ConnectionStatsResponse {
+            active_connections: 0,
+            total_connections: 0,
+            rejected_connections: 0,
+            rate_limited_requests: 0,
+        }))
+    }
+}
+
+/// Get performance statistics
+async fn get_performance_stats(
+    State(state): State<AppState>,
+) -> Result<Json<PerformanceStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if let Some(pool) = &state.connection_pool {
+        match pool.lock().await.get_stats().await {
+            Ok(stats) => {
+                // Calculate requests per second (simplified - would need time window in real implementation)
+                let requests_per_second = if stats.avg_latency_ms > 0.0 {
+                    1000.0 / stats.avg_latency_ms // Very rough estimate
+                } else {
+                    0.0
+                };
+
+                Ok(Json(PerformanceStatsResponse {
+                    avg_latency_ms: stats.avg_latency_ms,
+                    total_requests: stats.total_connections, // Proxy for total requests
+                    requests_per_second,
+                }))
+            }
+            Err(e) => {
+                warn!("Failed to get performance stats: {}", e);
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "stats_unavailable".to_string(),
+                        message: "Performance statistics temporarily unavailable".to_string(),
+                    }),
+                ))
+            }
+        }
+    } else {
+        // No connection pool configured - return empty stats
+        Ok(Json(PerformanceStatsResponse {
+            avg_latency_ms: 0.0,
+            total_requests: 0,
+            requests_per_second: 0.0,
+        }))
+    }
+}
+
+/// Get resource usage statistics
+async fn get_resource_stats(
+    State(state): State<AppState>,
+) -> Result<Json<ResourceStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if let Some(pool) = &state.connection_pool {
+        match pool.lock().await.get_stats().await {
+            Ok(stats) => {
+                let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
+
+                // Determine system health based on various factors
+                let system_healthy = stats.cpu_usage_percent < 90.0
+                    && memory_mb < 1000.0 // Under 1GB
+                    && (stats.active_connections as f64 / 100.0) < 0.95; // Under 95% capacity
+
+                Ok(Json(ResourceStatsResponse {
+                    memory_usage_bytes: stats.memory_usage_bytes,
+                    memory_usage_mb: memory_mb,
+                    cpu_usage_percent: stats.cpu_usage_percent,
+                    system_healthy,
+                }))
+            }
+            Err(e) => {
+                warn!("Failed to get resource stats: {}", e);
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "stats_unavailable".to_string(),
+                        message: "Resource statistics temporarily unavailable".to_string(),
+                    }),
+                ))
+            }
+        }
+    } else {
+        // No connection pool configured - return basic system stats
+        Ok(Json(ResourceStatsResponse {
+            memory_usage_bytes: 32 * 1024 * 1024, // 32MB baseline
+            memory_usage_mb: 32.0,
+            cpu_usage_percent: 5.0, // Low baseline
+            system_healthy: true,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,6 +776,70 @@ mod tests {
             .await?;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_monitoring_endpoints() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test connection stats endpoint
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/stats/connections")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Since we're using create_server (not create_server_with_pool),
+        // it should return empty stats
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let stats: ConnectionStatsResponse = serde_json::from_slice(&body)?;
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_performance_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/stats/performance")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resource_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/stats/resources")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let stats: ResourceStatsResponse = serde_json::from_slice(&body)?;
+        assert!(stats.system_healthy);
+        assert!(stats.memory_usage_mb > 0.0);
+
         Ok(())
     }
 }

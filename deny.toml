@@ -69,6 +69,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 ignore = [
     # Ignore advisories for specific reasons
     "RUSTSEC-2024-0436", # paste crate unmaintained - used transitively by rmp-serde, low risk
+    "RUSTSEC-2024-0384", # instant crate unmaintained - used transitively by tantivy, low risk
 ]
 
 [sources]
