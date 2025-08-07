@@ -76,6 +76,7 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
                     created_at: now,
                     updated_at: now,
                     size: content_size,
+                    embedding: None,
                 };
 
                 // Write operation
@@ -234,6 +235,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
             created_at: now,
             updated_at: now,
             size: content_size,
+            embedding: None,
         };
 
         storage.insert(doc.clone()).await?;
@@ -373,6 +375,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
             created_at: now,
             updated_at: now,
             size: content_size,
+            embedding: None,
         };
 
         // Attempt insertion with graceful failure handling
@@ -487,6 +490,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
         created_at: now,
         updated_at: now,
         size: recovery_content_size,
+        embedding: None,
     };
 
     let recovery_result = storage.insert(recovery_doc.clone()).await;
@@ -689,5 +693,6 @@ fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
         created_at: now,
         updated_at: now,
         size: content_size,
+        embedding: None,
     })
 }

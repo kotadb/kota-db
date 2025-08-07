@@ -438,6 +438,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 1024,
+            embedding: None,
         };
 
         // Should validate successfully
