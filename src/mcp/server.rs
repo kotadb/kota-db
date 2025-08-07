@@ -1,0 +1,353 @@
+use crate::contracts::Storage;
+use crate::create_file_storage;
+use crate::mcp::{config::MCPConfig, tools::MCPToolRegistry};
+use crate::wrappers::*;
+use anyhow::Result;
+use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
+use jsonrpc_derive::rpc;
+use jsonrpc_http_server::ServerBuilder;
+use jsonrpc_http_server::{DomainsValidation, Server};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+
+/// MCP Server implementation for KotaDB
+pub struct MCPServer {
+    config: MCPConfig,
+    tool_registry: Arc<MCPToolRegistry>,
+    storage: Arc<Mutex<dyn Storage>>,
+    start_time: Instant,
+}
+
+/// Handle to control a running MCP server
+pub struct MCPServerHandle {
+    server: Server,
+}
+
+impl MCPServerHandle {
+    /// Wait for the server to finish running
+    pub fn wait(self) {
+        self.server.wait();
+    }
+
+    /// Close the server gracefully
+    pub fn close(self) {
+        self.server.close();
+    }
+}
+
+/// JSON-RPC interface for MCP protocol
+#[rpc(server)]
+pub trait MCPRpc {
+    /// Initialize the MCP session
+    #[rpc(name = "initialize")]
+    fn initialize(&self, params: Params) -> RpcResult<Value>;
+
+    /// List available tools
+    #[rpc(name = "tools/list")]
+    fn list_tools(&self) -> RpcResult<Value>;
+
+    /// Call a specific tool
+    #[rpc(name = "tools/call")]
+    fn call_tool(&self, params: Params) -> RpcResult<Value>;
+
+    /// List available resources
+    #[rpc(name = "resources/list")]
+    fn list_resources(&self) -> RpcResult<Value>;
+
+    /// Read a specific resource
+    #[rpc(name = "resources/read")]
+    fn read_resource(&self, params: Params) -> RpcResult<Value>;
+
+    /// Get server capabilities
+    #[rpc(name = "capabilities")]
+    fn capabilities(&self) -> RpcResult<Value>;
+
+    /// Health check endpoint
+    #[rpc(name = "ping")]
+    fn ping(&self) -> RpcResult<Value>;
+}
+
+impl MCPServer {
+    /// Create a new MCP server with the given configuration
+    pub async fn new(config: MCPConfig) -> Result<Self> {
+        tracing::info!("Creating MCP server with config: {:?}", config.mcp);
+
+        // Create wrapped storage using the component library
+        let storage = create_mcp_storage(
+            &config.database.data_dir,
+            Some(config.database.max_cache_size),
+        )
+        .await?;
+        let storage = Arc::new(Mutex::new(storage));
+
+        // Initialize tool registry based on configuration
+        let mut tool_registry = MCPToolRegistry::new();
+
+        if config.mcp.enable_document_tools {
+            use crate::mcp::tools::document_tools::DocumentTools;
+            let document_tools = Arc::new(DocumentTools::new(storage.clone()));
+            tool_registry = tool_registry.with_document_tools(document_tools);
+        }
+
+        // Search tools disabled due to compilation issues - can be re-enabled later
+        // TODO: Fix search tools implementation
+        // if config.mcp.enable_search_tools {
+        //     use crate::mcp::tools::search_tools::SearchTools;
+        //     let search_tools = Arc::new(SearchTools::new(storage.clone()));
+        //     tool_registry = tool_registry.with_search_tools(search_tools);
+        // }
+
+        // TODO: Re-enable analytics tools after fixing HealthCheck trait compatibility
+        // if config.mcp.enable_analytics_tools {
+        //     use crate::mcp::tools::analytics_tools::AnalyticsTools;
+        //     let analytics_tools = Arc::new(AnalyticsTools::new(storage.clone()));
+        //     tool_registry = tool_registry.with_analytics_tools(analytics_tools);
+        // }
+
+        // TODO: Re-enable graph tools after fixing Document type conversion
+        // if config.mcp.enable_graph_tools {
+        //     use crate::mcp::tools::graph_tools::GraphTools;
+        //     let graph_tools = Arc::new(GraphTools::new(storage.clone()));
+        //     tool_registry = tool_registry.with_graph_tools(graph_tools);
+        // }
+
+        Ok(Self {
+            config,
+            tool_registry: Arc::new(tool_registry),
+            storage,
+            start_time: Instant::now(),
+        })
+    }
+
+    /// Start the MCP server and return a handle to control it
+    pub async fn start(self) -> Result<MCPServerHandle> {
+        let mut io = IoHandler::new();
+        let server_impl = MCPServerImpl {
+            config: self.config.clone(),
+            tool_registry: self.tool_registry.clone(),
+            storage: self.storage.clone(),
+            start_time: self.start_time,
+        };
+
+        io.extend_with(server_impl.to_delegate());
+
+        let server = ServerBuilder::new(io)
+            .cors(DomainsValidation::AllowOnly(vec![
+                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
+            ]))
+            .start_http(
+                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
+
+        tracing::info!(
+            "MCP server started on {}:{}",
+            self.config.server.host,
+            self.config.server.port
+        );
+
+        Ok(MCPServerHandle { server })
+    }
+
+    /// Get the uptime in seconds
+    pub fn uptime_seconds(&self) -> u64 {
+        self.start_time.elapsed().as_secs()
+    }
+}
+
+/// Implementation of the MCP RPC interface
+#[derive(Clone)]
+struct MCPServerImpl {
+    config: MCPConfig,
+    tool_registry: Arc<MCPToolRegistry>,
+    #[allow(dead_code)] // Storage will be used when implementing tool handlers
+    storage: Arc<Mutex<dyn Storage>>,
+    start_time: Instant,
+}
+
+impl MCPRpc for MCPServerImpl {
+    fn initialize(&self, _params: Params) -> RpcResult<Value> {
+        tracing::info!("MCP session initialized");
+
+        let response = serde_json::json!({
+            "protocolVersion": self.config.mcp.protocol_version,
+            "serverInfo": {
+                "name": self.config.mcp.server_name,
+                "version": self.config.mcp.server_version
+            },
+            "capabilities": {
+                "tools": {},
+                "resources": {},
+                "logging": {}
+            }
+        });
+
+        Ok(response)
+    }
+
+    fn list_tools(&self) -> RpcResult<Value> {
+        let tools = self.tool_registry.get_all_tool_definitions();
+        let response = serde_json::json!({
+            "tools": tools
+        });
+
+        tracing::debug!("Listed {} tools", tools.len());
+        Ok(response)
+    }
+
+    fn call_tool(&self, params: Params) -> RpcResult<Value> {
+        let request: serde_json::Value = params
+            .parse()
+            .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
+
+        let name = request
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError::invalid_params("Missing 'name' parameter"))?;
+
+        let arguments = request
+            .get("arguments")
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        tracing::debug!("Calling tool: {}", name);
+
+        // Handle tool call asynchronously
+        let tool_registry = self.tool_registry.clone();
+        let method = name.to_string();
+
+        let rt = tokio::runtime::Handle::current();
+        let result =
+            rt.block_on(async { tool_registry.handle_tool_call(&method, arguments).await });
+
+        match result {
+            Ok(response) => {
+                let wrapped_response = serde_json::json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": serde_json::to_string_pretty(&response)
+                                .unwrap_or_else(|_| response.to_string())
+                        }
+                    ]
+                });
+                Ok(wrapped_response)
+            }
+            Err(e) => {
+                tracing::error!("Tool call failed: {}", e);
+                Err(RpcError::internal_error())
+            }
+        }
+    }
+
+    fn list_resources(&self) -> RpcResult<Value> {
+        // For now, return empty resources - can be extended later
+        let response = serde_json::json!({
+            "resources": []
+        });
+
+        Ok(response)
+    }
+
+    fn read_resource(&self, _params: Params) -> RpcResult<Value> {
+        // For now, return not implemented
+        Err(RpcError::method_not_found())
+    }
+
+    fn capabilities(&self) -> RpcResult<Value> {
+        let response = serde_json::json!({
+            "capabilities": {
+                "tools": {
+                    "listChanged": false,
+                    "supportsProgress": false
+                },
+                "resources": {
+                    "subscribe": false,
+                    "listChanged": false
+                },
+                "logging": {},
+                "prompts": {
+                    "listChanged": false
+                }
+            },
+            "serverInfo": {
+                "name": self.config.mcp.server_name,
+                "version": self.config.mcp.server_version
+            },
+            "protocolVersion": self.config.mcp.protocol_version
+        });
+
+        Ok(response)
+    }
+
+    fn ping(&self) -> RpcResult<Value> {
+        let response = serde_json::json!({
+            "status": "ok",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "uptime_seconds": self.start_time.elapsed().as_secs(),
+            "version": self.config.mcp.server_version
+        });
+
+        Ok(response)
+    }
+}
+
+/// Helper function to create wrapped storage using the component library
+async fn create_mcp_storage(data_dir: &str, cache_size: Option<usize>) -> Result<impl Storage> {
+    // Use the component library factory function
+    let storage = create_file_storage(data_dir, cache_size).await?;
+    Ok(storage)
+}
+
+/// Create fully wrapped storage with all safety guarantees
+#[allow(dead_code)] // Utility function for future storage implementations
+async fn create_wrapped_storage<S: Storage + 'static>(
+    storage: S,
+    cache_size: usize,
+) -> Result<impl Storage> {
+    let cached = CachedStorage::new(storage, cache_size);
+    let retryable = RetryableStorage::new(cached);
+    let validated = ValidatedStorage::new(retryable);
+    let traced = TracedStorage::new(validated);
+    Ok(traced)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_mcp_server_creation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mut config = MCPConfig::default();
+        config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+
+        let server = MCPServer::new(config).await?;
+        assert!(server.uptime_seconds() < 1); // Should be very fresh
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_initialization() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mut config = MCPConfig::default();
+        config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+
+        let server = MCPServer::new(config).await?;
+        let tools = server.tool_registry.get_all_tool_definitions();
+
+        // Should have tools from enabled categories
+        assert!(!tools.is_empty());
+        assert!(tools
+            .iter()
+            .any(|t| t.name.starts_with("kotadb://document_")));
+        // Search tools are currently disabled
+        // assert!(tools
+        //     .iter()
+        //     .any(|t| t.name.starts_with("kotadb://text_search")));
+
+        Ok(())
+    }
+}
