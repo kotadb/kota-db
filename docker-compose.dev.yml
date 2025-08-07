@@ -20,8 +20,8 @@ services:
       - ~/.ssh:/home/dev/.ssh:ro
       - ~/.gitconfig:/home/dev/.gitconfig:ro
     ports:
-      # MCP server development port
-      - "8080:8080"
+      # HTTP REST API server port
+      - "${KOTADB_HTTP_PORT:-8080}:${KOTADB_HTTP_PORT:-8080}"
       # Documentation server
       - "8000:8000"
       # Metrics/monitoring
@@ -31,6 +31,9 @@ services:
       - CARGO_TARGET_DIR=/workspace/target
       - USER_ID=${USER_ID:-1000}
       - GROUP_ID=${GROUP_ID:-1000}
+      # HTTP server configuration
+      - KOTADB_HTTP_PORT=${KOTADB_HTTP_PORT:-8080}
+      - KOTADB_HTTP_HOST=${KOTADB_HTTP_HOST:-0.0.0.0}
     stdin_open: true
     tty: true
     command: /bin/bash

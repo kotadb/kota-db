@@ -2,8 +2,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
-    create_file_storage, create_primary_index, create_trigram_index, init_logging, with_trace_id,
-    Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
+    create_file_storage, create_primary_index, create_trigram_index, create_wrapped_storage,
+    init_logging, start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder,
+    Storage, ValidatedDocumentId, ValidatedPath,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,6 +23,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start HTTP REST API server
+    Serve {
+        /// Port to listen on
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
+
     /// Insert a new document
     Insert {
         /// Path of the document (e.g., /docs/readme.md)
@@ -317,6 +325,36 @@ async fn main() -> Result<()> {
         let db = Database::new(&cli.db_path).await?;
 
         match cli.command {
+            Commands::Serve { port } => {
+                // Create storage for the HTTP server
+                let storage_path = cli.db_path.join("storage");
+                std::fs::create_dir_all(&storage_path)?;
+
+                let storage = create_file_storage(
+                    storage_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid storage path: {:?}", storage_path)
+                    })?,
+                    Some(1000), // Cache size
+                )
+                .await?;
+
+                // Wrap storage with observability and validation
+                let wrapped_storage = create_wrapped_storage(storage, 1000).await;
+                let shared_storage = Arc::new(tokio::sync::Mutex::new(wrapped_storage));
+
+                println!("🚀 Starting KotaDB HTTP server on port {port}");
+                println!("📄 API endpoints:");
+                println!("   POST   /documents       - Create document");
+                println!("   GET    /documents/:id   - Get document");
+                println!("   PUT    /documents/:id   - Update document");
+                println!("   DELETE /documents/:id   - Delete document");
+                println!("   GET    /documents/search - Search documents");
+                println!("   GET    /health         - Health check");
+                println!();
+
+                start_server(shared_storage, port).await?;
+            }
+
             Commands::Insert {
                 path,
                 title,
