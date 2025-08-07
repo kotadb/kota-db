@@ -257,16 +257,25 @@ pub fn log_operation(ctx: &OperationContext, op: &Operation, result: &Result<()>
 pub fn record_metric(metric: MetricType) {
     match metric {
         MetricType::Counter { name, value } => {
-            debug!("metric.counter {} = {}", name, value);
+            // Suppress debug logging for high-frequency test metrics to prevent log spam
+            if !name.starts_with("high_frequency.") {
+                debug!("metric.counter {} = {}", name, value);
+            }
         }
         MetricType::Gauge { name, value } => {
-            debug!("metric.gauge {} = {}", name, value);
+            if !name.starts_with("high_frequency.") {
+                debug!("metric.gauge {} = {}", name, value);
+            }
         }
         MetricType::Histogram { name, value, unit } => {
-            debug!("metric.histogram {} = {} {}", name, value, unit);
+            if !name.starts_with("high_frequency.") {
+                debug!("metric.histogram {} = {} {}", name, value, unit);
+            }
         }
         MetricType::Timer { name, duration } => {
-            debug!("metric.timer {} = {:?}", name, duration);
+            if !name.starts_with("high_frequency.") {
+                debug!("metric.timer {} = {:?}", name, duration);
+            }
         }
     }
 }
