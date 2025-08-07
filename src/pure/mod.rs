@@ -2,6 +2,7 @@
 // All algorithms implemented as side-effect-free functions
 
 pub mod btree;
+pub mod connection_pool;
 pub mod metadata;
 pub mod performance;
 

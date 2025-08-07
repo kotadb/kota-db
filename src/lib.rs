@@ -2,6 +2,7 @@
 // Root library module
 
 pub mod builders;
+pub mod connection_pool;
 pub mod contracts;
 pub mod file_storage;
 pub mod http_server;
@@ -47,8 +48,12 @@ pub use wrappers::optimization::{
 // Re-export storage implementations
 pub use file_storage::{create_file_storage, FileStorage};
 
-// Re-export HTTP server
-pub use http_server::{create_server, start_server};
+// Re-export HTTP server and connection pool
+pub use connection_pool::{
+    create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
+    TokenBucketRateLimiter,
+};
+pub use http_server::{create_server, create_server_with_pool, start_server};
 
 // Re-export index implementations
 pub use primary_index::{create_primary_index, create_primary_index_for_tests, PrimaryIndex};
