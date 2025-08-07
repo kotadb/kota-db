@@ -2,7 +2,7 @@
 FROM rust:1.82-alpine AS builder
 
 # Install dependencies
-RUN apk add --no-cache musl-dev openssl-dev
+RUN apk add --no-cache musl-dev openssl-dev pkgconfig openssl-libs-static
 
 # Set up workspace
 WORKDIR /usr/src/kotadb
