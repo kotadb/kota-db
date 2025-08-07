@@ -4,15 +4,18 @@
 pub mod builders;
 pub mod connection_pool;
 pub mod contracts;
+pub mod embeddings;
 pub mod file_storage;
 pub mod http_server;
 pub mod metrics;
 pub mod observability;
 pub mod primary_index;
 pub mod pure;
+pub mod semantic_search;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;
+pub mod vector_index;
 pub mod wrappers;
 
 // Re-export key types
@@ -58,6 +61,19 @@ pub use http_server::{create_server, create_server_with_pool, start_server};
 // Re-export index implementations
 pub use primary_index::{create_primary_index, create_primary_index_for_tests, PrimaryIndex};
 pub use trigram_index::{create_trigram_index, create_trigram_index_for_tests, TrigramIndex};
+pub use vector_index::{DistanceMetric, SemanticQuery, VectorIndex};
+
+// Re-export embedding providers
+pub use embeddings::models;
+pub use embeddings::{
+    EmbeddingConfig, EmbeddingProvider, EmbeddingProviderType, EmbeddingResult, EmbeddingService,
+    ProviderConfig,
+}; // Predefined model configurations
+
+// Re-export semantic search
+pub use semantic_search::{
+    EmbeddingStats, HybridSearchConfig, ScoredDocument, SemanticSearchEngine,
+};
 
 // Re-export pure functions
 pub use pure::btree;

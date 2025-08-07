@@ -108,6 +108,8 @@ pub struct Document {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub size: usize,
+    /// Optional vector embedding for semantic search (typically 1536 dimensions for OpenAI)
+    pub embedding: Option<Vec<f32>>,
 }
 
 impl Document {
@@ -131,6 +133,33 @@ impl Document {
             created_at,
             updated_at,
             size,
+            embedding: None,
+        }
+    }
+
+    /// Create a new document with embedding
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_embedding(
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        title: ValidatedTitle,
+        content: Vec<u8>,
+        tags: Vec<ValidatedTag>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        embedding: Vec<f32>,
+    ) -> Self {
+        let size = content.len();
+        Self {
+            id,
+            path,
+            title,
+            content,
+            tags,
+            created_at,
+            updated_at,
+            size,
+            embedding: Some(embedding),
         }
     }
 }

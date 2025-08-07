@@ -834,6 +834,7 @@ This concludes the integrity test document.
             created_at: now,
             updated_at: now,
             size: content_size,
+            embedding: None,
         };
 
         documents.push(document);

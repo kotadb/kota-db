@@ -43,6 +43,7 @@ struct DocumentMetadata {
     created: i64,
     updated: i64,
     hash: [u8; 32],
+    embedding: Option<Vec<f32>>, // Vector embedding for semantic search
 }
 
 impl FileStorage {
@@ -168,6 +169,7 @@ impl FileStorage {
             updated_at: DateTime::<Utc>::from_timestamp(metadata.updated, 0)
                 .ok_or_else(|| anyhow::anyhow!("Invalid updated timestamp"))?,
             size: metadata.size as usize,
+            embedding: metadata.embedding.clone(),
         })
     }
 }
@@ -229,6 +231,7 @@ impl Storage for FileStorage {
             created: doc.created_at.timestamp(),
             updated: doc.updated_at.timestamp(),
             hash,
+            embedding: doc.embedding.clone(),
         };
 
         // Save metadata to disk
@@ -280,6 +283,7 @@ impl Storage for FileStorage {
         metadata.size = doc.content.len() as u64;
         metadata.updated = doc.updated_at.timestamp();
         metadata.hash = hash;
+        metadata.embedding = doc.embedding.clone();
 
         // Save metadata
         self.save_metadata(&metadata).await?;
@@ -387,7 +391,7 @@ impl serde::Serialize for DocumentMetadata {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("DocumentMetadata", 8)?;
+        let mut state = serializer.serialize_struct("DocumentMetadata", 9)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("file_path", &self.file_path)?;
         state.serialize_field("original_path", &self.original_path)?;
@@ -396,6 +400,7 @@ impl serde::Serialize for DocumentMetadata {
         state.serialize_field("created", &self.created)?;
         state.serialize_field("updated", &self.updated)?;
         state.serialize_field("hash", &self.hash)?;
+        state.serialize_field("embedding", &self.embedding)?;
         state.end()
     }
 }
@@ -415,6 +420,7 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
             created: i64,
             updated: i64,
             hash: [u8; 32],
+            embedding: Option<Vec<f32>>, // Optional for backward compatibility
         }
 
         let helper = DocumentMetadataHelper::deserialize(deserializer)?;
@@ -431,6 +437,7 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
             created: helper.created,
             updated: helper.updated,
             hash: helper.hash,
+            embedding: helper.embedding,
         })
     }
 }
