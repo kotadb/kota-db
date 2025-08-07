@@ -1,0 +1,73 @@
+# Multi-stage build for KotaDB MCP Server
+# Stage 1: Builder
+FROM rust:1.75-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    git
+
+# Set working directory
+WORKDIR /build
+
+# Copy dependency files first for better layer caching
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+
+# Create a dummy main.rs to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies (this layer will be cached)
+RUN cargo build --release --features mcp-server
+RUN rm src/main.rs
+
+# Copy source code
+COPY src/ src/
+COPY tests/ tests/
+COPY benches/ benches/
+
+# Build the MCP server binary
+RUN cargo build --release --bin kotadb-mcp --features mcp-server
+
+# Stage 2: Runtime
+FROM alpine:3.19 AS runtime
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    tini
+
+# Create non-root user for security
+RUN addgroup -g 1000 kotadb && \
+    adduser -D -s /bin/sh -u 1000 -G kotadb kotadb
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /build/target/release/kotadb-mcp /usr/local/bin/kotadb-mcp
+
+# Create directories for data and config
+RUN mkdir -p /app/data /app/config /app/logs && \
+    chown -R kotadb:kotadb /app
+
+# Copy default configuration
+COPY docker/mcp/kotadb-mcp.toml /app/config/
+
+# Switch to non-root user
+USER kotadb
+
+# Expose MCP server port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD kotadb-mcp --health-check || exit 1
+
+# Use tini as init system for proper signal handling
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Default command
+CMD ["kotadb-mcp", "--config", "/app/config/kotadb-mcp.toml", "--data-dir", "/app/data"]

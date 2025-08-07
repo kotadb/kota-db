@@ -91,6 +91,10 @@ pub use contracts::performance as performance_contracts;
 pub use metrics::optimization as optimization_metrics;
 pub use metrics::performance as performance_metrics;
 
+/// Model Context Protocol (MCP) Server
+#[cfg(feature = "mcp-server")]
+pub mod mcp;
+
 // Test modules
 #[cfg(test)]
 mod btree_test;

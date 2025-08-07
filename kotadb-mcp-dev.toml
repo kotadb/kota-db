@@ -1,0 +1,51 @@
+# KotaDB MCP Server Development Configuration
+
+[server]
+host = "127.0.0.1"
+port = 9876
+max_connections = 100
+request_timeout = "30s"
+enable_cors = true
+
+[database]
+data_dir = "./kotadb-data"
+max_cache_size = 1000
+enable_wal = true
+worker_threads = 4
+max_blocking_threads = 16
+
+[mcp]
+# MCP Protocol Configuration
+protocol_version = "2024-11-05"
+server_name = "kotadb"
+server_version = "0.2.0"
+
+# Tool Categories
+enable_document_tools = true
+enable_search_tools = false  # Currently disabled due to compilation issues
+enable_analytics_tools = false  # Currently disabled
+enable_graph_tools = false  # Currently disabled
+
+[logging]
+level = "debug"
+format = "pretty"
+output = "stdout"
+
+[performance]
+# Query Performance Targets
+max_query_latency_ms = 10
+max_semantic_search_latency_ms = 100
+bulk_operation_batch_size = 1000
+
+[security]
+# Security Settings
+max_request_size = "10MB"
+rate_limit_requests_per_minute = 1000
+enable_request_validation = true
+
+[embeddings]
+# Embedding Configuration for Semantic Search
+provider = "local"
+model = "all-MiniLM-L6-v2"
+dimension = 384
+batch_size = 32

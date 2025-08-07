@@ -67,11 +67,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# System info
+num_cpus = "1.16"
+
 # Bitmaps
 roaring = "0.10"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
+
+# MCP Server dependencies
+jsonrpc-core = { version = "18.0", optional = true }
+jsonrpc-derive = { version = "18.0", optional = true }
+jsonrpc-http-server = { version = "18.0", optional = true }
+jsonrpc-stdio-server = { version = "18.0", optional = true }
+config = { version = "0.14", optional = true }
+mime = "0.3"
+toml = "0.8"
 
 # Testing & Benchmarking
 criterion = { version = "0.5", optional = true }
@@ -103,6 +115,8 @@ reqwest = { version = "0.11", features = ["json"] }
 default = []
 # Advanced search features
 advanced-search = ["tantivy", "hnsw"]
+# MCP Server features
+mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
 # Benchmarking
 bench = ["criterion", "proptest"]
 # Development features
@@ -119,6 +133,18 @@ opt-level = 3
 [[bin]]
 name = "kotadb"
 path = "src/main.rs"
+
+[[bin]]
+name = "mcp_server"
+path = "src/bin/mcp_server.rs"
+required-features = ["mcp-server"]
+
+[[bin]]
+name = "mcp_server_minimal"
+path = "src/bin/mcp_server_minimal.rs"
+required-features = ["mcp-server"]
+
+
 
 [[example]]
 name = "standalone_usage"
