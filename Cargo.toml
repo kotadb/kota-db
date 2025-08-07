@@ -52,7 +52,7 @@ lz4 = "1.28"
 memmap2 = "0.9"
 
 # File watching
-notify = "6.1"
+notify = "8.2"
 
 # Checksums
 crc32c = "0.6"
