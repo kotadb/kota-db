@@ -375,32 +375,6 @@ pub mod storage {
     }
 }
 
-/// Validation middleware for automatic contract enforcement
-pub struct ValidationLayer<T> {
-    #[allow(dead_code)]
-    inner: T,
-    #[allow(dead_code)]
-    strict_mode: bool,
-}
-
-impl<T> ValidationLayer<T> {
-    pub fn new(inner: T, strict_mode: bool) -> Self {
-        Self { inner, strict_mode }
-    }
-
-    /// Log validation error and optionally panic
-    #[allow(dead_code)]
-    fn handle_validation_error(&self, error: ValidationError) -> Result<()> {
-        error!("Validation failed: {}", error);
-
-        if self.strict_mode {
-            panic!("Validation failed in strict mode: {error}");
-        }
-
-        Err(error.into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
