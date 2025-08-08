@@ -57,7 +57,7 @@ class KotaDB:
         retry_strategy = Retry(
             total=retries,
             status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+            allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
@@ -65,6 +65,15 @@ class KotaDB:
         
         # Test connection
         self._test_connection()
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """
+        Test connection to the database.
+        
+        Returns:
+            Health status information
+        """
+        return self.health()
     
     def _parse_url(self, url: Optional[str]) -> str:
         """Parse and normalize the database URL."""
@@ -117,13 +126,14 @@ class KotaDB:
         except requests.RequestException as e:
             raise ConnectionError(f"Request failed: {e}")
     
-    def query(self, query: str, limit: Optional[int] = None) -> QueryResult:
+    def query(self, query: str, limit: Optional[int] = None, offset: int = 0) -> QueryResult:
         """
         Search documents using text query.
         
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            offset: Number of results to skip
             
         Returns:
             QueryResult with matching documents and metadata
@@ -131,17 +141,20 @@ class KotaDB:
         params = {'q': query}
         if limit:
             params['limit'] = limit
+        if offset:
+            params['offset'] = offset
             
         response = self._make_request('GET', '/api/documents/search', params=params)
         return QueryResult.from_dict(response.json())
     
-    def semantic_search(self, query: str, limit: Optional[int] = None) -> QueryResult:
+    def semantic_search(self, query: str, limit: Optional[int] = None, offset: int = 0) -> QueryResult:
         """
         Perform semantic search using embeddings.
         
         Args:
             query: Semantic search query
             limit: Maximum number of results to return
+            offset: Number of results to skip
             
         Returns:
             QueryResult with semantically similar documents
@@ -149,11 +162,13 @@ class KotaDB:
         data = {'query': query}
         if limit:
             data['limit'] = limit
+        if offset:
+            data['offset'] = offset
             
         response = self._make_request('POST', '/api/search/semantic', json=data)
         return QueryResult.from_dict(response.json())
     
-    def hybrid_search(self, query: str, limit: Optional[int] = None, 
+    def hybrid_search(self, query: str, limit: Optional[int] = None, offset: int = 0,
                      semantic_weight: float = 0.7) -> QueryResult:
         """
         Perform hybrid search combining text and semantic search.
@@ -161,6 +176,7 @@ class KotaDB:
         Args:
             query: Search query
             limit: Maximum number of results to return
+            offset: Number of results to skip
             semantic_weight: Weight for semantic vs text search (0.0-1.0)
             
         Returns:
@@ -172,6 +188,8 @@ class KotaDB:
         }
         if limit:
             data['limit'] = limit
+        if offset:
+            data['offset'] = offset
             
         response = self._make_request('POST', '/api/search/hybrid', json=data)
         return QueryResult.from_dict(response.json())
