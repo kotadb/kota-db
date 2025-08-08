@@ -209,10 +209,16 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
 /// Health check endpoint
 async fn health_check() -> Json<HealthResponse> {
+    use std::sync::LazyLock;
+    use std::time::Instant;
+
+    static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
+    let uptime = START_TIME.elapsed().as_secs();
+
     Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 0, // TODO: Implement actual uptime tracking
+        uptime_seconds: uptime,
     })
 }
 
