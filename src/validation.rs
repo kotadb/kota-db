@@ -63,9 +63,16 @@ impl ValidationContext {
 /// Path validation with detailed checks
 pub mod path {
     use super::*;
+    use std::ffi::OsStr;
 
     /// Maximum path length across platforms
     const MAX_PATH_LENGTH: usize = 4096;
+
+    /// Reserved filenames on Windows
+    const RESERVED_NAMES: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
 
     /// Validate a file path for storage
     pub fn validate_file_path(path: &str) -> Result<()> {
@@ -93,6 +100,17 @@ pub mod path {
                 bail!(ValidationError::InvalidInput {
                     field: "path".to_string(),
                     reason: "Parent directory references (..) not allowed".to_string(),
+                });
+            }
+        }
+
+        // Check for reserved names (Windows compatibility)
+        if let Some(stem) = path_obj.file_stem().and_then(OsStr::to_str) {
+            let upper = stem.to_uppercase();
+            if RESERVED_NAMES.contains(&upper.as_str()) {
+                bail!(ValidationError::InvalidInput {
+                    field: "path".to_string(),
+                    reason: format!("Reserved filename: {stem}"),
                 });
             }
         }
@@ -373,6 +391,7 @@ mod tests {
         assert!(path::validate_file_path("").is_err());
         assert!(path::validate_file_path("../../../etc/passwd").is_err());
         assert!(path::validate_file_path("file\0with\0nulls").is_err());
+        assert!(path::validate_file_path("CON.txt").is_err()); // Windows reserved
 
         // Path too long
         let long_path = "x".repeat(5000);

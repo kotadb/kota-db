@@ -91,20 +91,21 @@ impl MCPServer {
         }
 
         // Search tools disabled due to compilation issues - can be re-enabled later
+        // TODO: Fix search tools implementation
         // if config.mcp.enable_search_tools {
         //     use crate::mcp::tools::search_tools::SearchTools;
         //     let search_tools = Arc::new(SearchTools::new(storage.clone()));
         //     tool_registry = tool_registry.with_search_tools(search_tools);
         // }
 
-        // Analytics tools disabled due to HealthCheck trait compatibility issues
+        // TODO: Re-enable analytics tools after fixing HealthCheck trait compatibility
         // if config.mcp.enable_analytics_tools {
         //     use crate::mcp::tools::analytics_tools::AnalyticsTools;
         //     let analytics_tools = Arc::new(AnalyticsTools::new(storage.clone()));
         //     tool_registry = tool_registry.with_analytics_tools(analytics_tools);
         // }
 
-        // Graph tools disabled due to Document type conversion issues
+        // TODO: Re-enable graph tools after fixing Document type conversion
         // if config.mcp.enable_graph_tools {
         //     use crate::mcp::tools::graph_tools::GraphTools;
         //     let graph_tools = Arc::new(GraphTools::new(storage.clone()));
