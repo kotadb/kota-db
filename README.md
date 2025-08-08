@@ -20,30 +20,39 @@ KotaDB is a production-ready database designed specifically for distributed huma
 
 ## 🏎️ Performance Benchmarks
 
-Real-world benchmarks showing KotaDB's exceptional performance on modern hardware:
+Real-world benchmarks measured on Apple Silicon hardware:
 
 ### Apple M2 Ultra (192GB RAM, 24 cores)
 | Operation | Size | Latency | Throughput |
 |-----------|------|---------|------------|
-| **Insert** | 100 docs | 16.3 µs | **6.1M ops/sec** |
-| **Insert** | 1,000 docs | 343 µs | **2.9M ops/sec** |
-| **Insert** | 10,000 docs | 5.05 ms | **1.98M ops/sec** |
-| **Search** | 10,000 docs | 554 µs | **1,800 searches/sec** |
-| **Direct B+ Tree Lookup** | 10,000 docs | **61 ns** | **16.4M lookups/sec** |
+| **BTree Insert** | 100 docs | 15.8 µs | **63,300 ops/sec** |
+| **BTree Insert** | 1,000 docs | 325 µs | **3,080 ops/sec** |
+| **BTree Insert** | 10,000 docs | 4.77 ms | **210 ops/sec** |
+| **BTree Search** | 100 docs | 2.08 µs | **482,000 queries/sec** |
+| **BTree Search** | 1,000 docs | 33.2 µs | **30,100 queries/sec** |
+| **BTree Search** | 10,000 docs | 546 µs | **1,830 queries/sec** |
+| **Bulk Operations** | 1,000 docs | 25.4 ms | **39,400 ops/sec** |
+| **Bulk Operations** | 5,000 docs | 23.7 ms | **211,000 ops/sec** |
+| **Mixed Workload** | realistic | 15.0 ms | **67 ops/sec** |
 
 ### Apple Silicon (Standard Configuration)
 | Operation | Size | Latency | Throughput |
 |-----------|------|---------|------------|
-| **Insert** | 100 docs | 111 µs | **893K ops/sec** |
-| **Insert** | 1,000 docs | 817 ns/op | **1.2M ops/sec** |
-| **Insert** | 10,000 docs | 858 ns/op | **1.17M ops/sec** |
-| **Insert** | 100,000 docs | 710 ns/op | **1.4M ops/sec** |
+| **BTree Insert** | 100 docs | 15.2 µs | **65,800 ops/sec** |
+| **BTree Insert** | 1,000 docs | 277 µs | **3,600 ops/sec** |
+| **BTree Insert** | 10,000 docs | 4.74 ms | **211 ops/sec** |
+| **BTree Search** | 100 docs | 1.55 µs | **645,000 queries/sec** |
+| **BTree Search** | 1,000 docs | 29.4 µs | **34,000 queries/sec** |
+| **BTree Search** | 10,000 docs | 489 µs | **2,000 queries/sec** |
+| **Bulk Operations** | 1,000 docs | 20 ms | **50,000 ops/sec** |
+| **Mixed Workload** | realistic | 11.5 ms | **87 ops/sec** |
 
 **Key Performance Highlights:**
-- **30x faster** than linear search (61ns vs 1.8µs)
-- **164x faster** than Redis for lookups
+- **Sub-millisecond query routing** for all search operations (546 µs for 10K docs on M2 Ultra)
+- **39,000-211,000 ops/sec** for bulk operations depending on batch size
+- **30x faster** than linear search (61ns vs 1.8µs) 
 - Maintains **O(log n) complexity** even at scale
-- Cache-optimized design scales with available hardware
+- Consistent performance across different hardware configurations
 
 ## Why KotaDB?
 
@@ -58,8 +67,8 @@ Traditional databases weren't designed for the unique requirements of distribute
 ## Key Features
 
 ### 🚀 Performance
-- **Sub-10ms query latency** for most operations
-- **10,000+ documents/second** write throughput
+- **Sub-millisecond query latency** for BTree searches (489 µs for 10K docs)
+- **50,000+ ops/second** for bulk operations
 - **Memory-mapped I/O** for frequently accessed data
 - **Parallel query execution** for complex operations
 

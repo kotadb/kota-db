@@ -22,11 +22,10 @@ fn concurrent_read_scaling(c: &mut Criterion) {
     group.sample_size(10);
 
     // Pre-populate storage with test data
-    let (storage, test_doc_ids) = rt.block_on(async {
+    let (storage, test_doc_ids, _temp_dir) = rt.block_on(async {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = create_file_storage(temp_dir.path().to_str().unwrap(), Some(10000))
-            .await
-            .unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+        let mut storage = create_file_storage(temp_path, Some(10000)).await.unwrap();
 
         let mut doc_ids = Vec::new();
         for i in 0..1000 {
@@ -35,7 +34,12 @@ fn concurrent_read_scaling(c: &mut Criterion) {
             doc_ids.push(doc.id);
         }
 
-        (Arc::new(tokio::sync::Mutex::new(storage)), doc_ids)
+        // Return temp_dir to keep it alive for the duration of the benchmark
+        (
+            Arc::new(tokio::sync::Mutex::new(storage)),
+            doc_ids,
+            temp_dir,
+        )
     });
 
     // Test different concurrent reader counts

@@ -10,7 +10,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::task;
+use tracing::{error, info};
 use uuid::Uuid;
+
+mod test_constants;
+use test_constants::performance::SLOW_OPERATION_THRESHOLD;
+use test_constants::quality::MIN_CONFLICT_RESOLUTION_RATE;
 
 /// Phase 2B - Enhanced Multi-threaded Stress Testing (200+ concurrent operations)
 #[tokio::test]
@@ -80,7 +85,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
                             .await
                             {
                                 pattern_results.errors += 1;
-                                eprintln!("Write error in read-heavy pattern {pattern_id}: {_e}");
+                                error!("Write error in read-heavy pattern {}: {}", pattern_id, _e);
                             } else {
                                 pattern_results.writes += 1;
                             }
@@ -206,7 +211,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
                 pattern_results.operations_completed += 1;
 
                 // Track performance degradation
-                if operation_duration > Duration::from_millis(100) {
+                if operation_duration > SLOW_OPERATION_THRESHOLD {
                     pattern_results.slow_operations += 1;
                 }
 
@@ -227,7 +232,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(result) => all_results.push(result),
-            Err(e) => eprintln!("Pattern execution failed: {e}"),
+            Err(e) => error!("Pattern execution failed: {}", e),
         }
     }
 
@@ -394,7 +399,7 @@ async fn test_phase2b_lock_contention_analysis() -> Result<()> {
 
                 if let Err(e) = result {
                     thread_metrics.errors += 1;
-                    eprintln!("Lock operation error in thread {thread_id}: {e}");
+                    error!("Lock operation error in thread {}: {}", thread_id, e);
                 }
 
                 // Small delay to increase contention
@@ -617,12 +622,13 @@ async fn test_phase2b_race_condition_detection() -> Result<()> {
     // Allow lower conflict resolution rates since the system may handle conflicts
     // differently than expected. A 0% rate is acceptable if data consistency is maintained.
     if analysis.conflict_resolution_rate == 0.0 {
-        println!("ℹ️  No explicit conflict resolution needed - system handled concurrency safely");
+        info!("No explicit conflict resolution needed - system handled concurrency safely");
     } else {
         assert!(
-            analysis.conflict_resolution_rate > 0.1,
-            "Conflict resolution rate too low: {:.2}%",
-            analysis.conflict_resolution_rate * 100.0
+            analysis.conflict_resolution_rate > MIN_CONFLICT_RESOLUTION_RATE,
+            "Conflict resolution rate too low: {:.2}% (minimum required: {:.1}%)",
+            analysis.conflict_resolution_rate * 100.0,
+            MIN_CONFLICT_RESOLUTION_RATE * 100.0
         );
     }
 

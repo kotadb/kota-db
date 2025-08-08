@@ -8,7 +8,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::task;
+use tracing::error;
 use uuid::Uuid;
+
+mod test_constants;
+use test_constants::performance::SLOW_OPERATION_THRESHOLD;
 
 /// Phase 2B - Enhanced Multi-threaded Stress Testing (200+ concurrent operations)
 #[tokio::test]
@@ -131,7 +135,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
 
                 // Track slow operations
                 let operation_duration = operation_start.elapsed();
-                if operation_duration > Duration::from_millis(100) {
+                if operation_duration > SLOW_OPERATION_THRESHOLD {
                     // This is a slow operation but we continue
                 }
 
@@ -167,7 +171,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
                 total_errors += errors;
             }
             Err(e) => {
-                eprintln!("Pattern execution failed: {e}");
+                error!("Pattern execution failed: {}", e);
                 total_errors += 1;
             }
         }
