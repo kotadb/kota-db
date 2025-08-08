@@ -209,11 +209,18 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
 /// Health check endpoint
 async fn health_check() -> Json<HealthResponse> {
-    use std::sync::LazyLock;
+    use std::sync::Once;
     use std::time::Instant;
 
-    static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
-    let uptime = START_TIME.elapsed().as_secs();
+    static mut START_TIME: Option<Instant> = None;
+    static INIT: Once = Once::new();
+
+    let uptime = unsafe {
+        INIT.call_once(|| {
+            START_TIME = Some(Instant::now());
+        });
+        START_TIME.unwrap().elapsed().as_secs()
+    };
 
     Json(HealthResponse {
         status: "healthy".to_string(),
