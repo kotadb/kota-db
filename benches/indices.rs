@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Index benchmarks - Stage 1: TDD Performance Benchmarks for B+ Tree
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -81,7 +82,7 @@ fn bench_btree_deletion(c: &mut Criterion) {
                     // Setup for each iteration
                     let mut tree = btree::create_empty_tree();
                     for (i, key) in keys.iter().enumerate() {
-                        let path = ValidatedPath::new(&format!("/bench/doc_{}.md", i)).unwrap();
+                        let path = ValidatedPath::new(&format!("/bench/doc_{i}.md")).unwrap();
                         tree = btree::insert_into_tree(tree, key.clone(), path).unwrap();
                     }
                     (tree, keys.clone())

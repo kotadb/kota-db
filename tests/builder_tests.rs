@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Tests for Builder Patterns - Stage 6
 // These tests ensure that our builders provide ergonomic APIs with proper validation
 

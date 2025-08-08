@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Standalone test for B+ tree deletion
 // Run with: rustc test_btree_deletion.rs -L target/debug/deps && ./test_btree_deletion
 

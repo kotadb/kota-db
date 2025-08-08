@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Primary Index Tests - Stage 1: Test-Driven Development
 // These tests define the expected behavior before implementation
 
@@ -296,7 +297,7 @@ mod primary_index_performance_tests {
         // Perform 100 searches
         for _ in 0..100 {
             let query = Query::new(Some("*".to_string()), None, None, 10)?;
-            let _results = index.search(&query).await?;
+            let results = index.search(&query).await?;
         }
 
         let duration = start.elapsed();

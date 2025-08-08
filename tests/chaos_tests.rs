@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Chaos Testing - Stage 5: Extreme Failure Scenarios
 // These tests simulate catastrophic failures and system-wide issues
 
@@ -22,7 +23,7 @@ async fn test_sudden_shutdown() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for ShutdownStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -57,7 +58,7 @@ async fn test_sudden_shutdown() -> Result<()> {
             Ok(docs.get(id).cloned())
         }
 
-        async fn update(&mut self, _doc: Document) -> Result<()> {
+        async fn update(&mut self, doc: Document) -> Result<()> {
             anyhow::bail!("System is down")
         }
 
@@ -158,7 +159,7 @@ async fn test_network_partition() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for PartitionedNodeStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -292,7 +293,7 @@ async fn test_resource_exhaustion() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for ResourceLimitedStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -332,7 +333,7 @@ async fn test_resource_exhaustion() -> Result<()> {
         }
 
         async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
-            let _permit = self
+            let permit = self
                 .file_handles
                 .try_acquire()
                 .map_err(|_| anyhow::anyhow!("Too many open files"))?;
@@ -342,7 +343,7 @@ async fn test_resource_exhaustion() -> Result<()> {
         }
 
         async fn update(&mut self, doc: Document) -> Result<()> {
-            let _permit = self
+            let permit = self
                 .file_handles
                 .try_acquire()
                 .map_err(|_| anyhow::anyhow!("Too many open files"))?;
@@ -368,7 +369,7 @@ async fn test_resource_exhaustion() -> Result<()> {
         }
 
         async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
-            let _permit = self
+            let permit = self
                 .file_handles
                 .try_acquire()
                 .map_err(|_| anyhow::anyhow!("Too many open files"))?;
@@ -508,14 +509,14 @@ async fn test_cascading_failure() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for CascadingSystem {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
             Ok(Self::new())
         }
 
-        async fn insert(&mut self, _doc: Document) -> Result<()> {
+        async fn insert(&mut self, doc: Document) -> Result<()> {
             self.inject_failure();
             self.check_health()?;
             Ok(())
@@ -526,7 +527,7 @@ async fn test_cascading_failure() -> Result<()> {
             Ok(None)
         }
 
-        async fn update(&mut self, _doc: Document) -> Result<()> {
+        async fn update(&mut self, doc: Document) -> Result<()> {
             self.inject_failure();
             self.check_health()?;
             Ok(())
@@ -636,7 +637,7 @@ async fn test_byzantine_failures() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for ByzantineStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {

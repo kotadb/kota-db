@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Tests for Primary Index persistence functionality
 // Covers edge cases like corrupted files, version migration, and recovery
 

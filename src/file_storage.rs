@@ -212,9 +212,52 @@ impl Storage for FileStorage {
             }
         }
 
-        // Write document content to file
+        // Write document content to file with frontmatter
         let doc_path = self.document_file_path(&doc_uuid);
-        fs::write(&doc_path, &doc.content)
+
+        // Add YAML frontmatter with tags if document has tags
+        let content_to_write = if !doc.tags.is_empty() {
+            let tag_strings: Vec<String> =
+                doc.tags.iter().map(|t| t.as_str().to_string()).collect();
+            // Create proper YAML frontmatter with tags array
+            let mut frontmatter_data = std::collections::HashMap::new();
+            frontmatter_data.insert(
+                "tags".to_string(),
+                serde_yaml::Value::Sequence(
+                    tag_strings
+                        .into_iter()
+                        .map(serde_yaml::Value::String)
+                        .collect(),
+                ),
+            );
+
+            let frontmatter = format!(
+                "---\n{}\n---\n",
+                serde_yaml::to_string(&frontmatter_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize frontmatter: {}", e))?
+                    .trim()
+            );
+
+            // Check if content already has frontmatter
+            let content_str = String::from_utf8_lossy(&doc.content);
+            if content_str.starts_with("---\n") {
+                // Content already has frontmatter, replace it
+                if let Some(end_pos) = content_str.find("\n---\n") {
+                    let after_frontmatter = &content_str[end_pos + 5..];
+                    format!("{frontmatter}{after_frontmatter}")
+                } else {
+                    // Malformed frontmatter, just prepend our frontmatter
+                    format!("{frontmatter}{content_str}")
+                }
+            } else {
+                // No frontmatter, add ours
+                format!("{frontmatter}{content_str}")
+            }
+        } else {
+            String::from_utf8_lossy(&doc.content).to_string()
+        };
+
+        fs::write(&doc_path, content_to_write.as_bytes())
             .await
             .with_context(|| format!("Failed to write document: {}", doc_path.display()))?;
 

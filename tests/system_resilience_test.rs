@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // System Resilience Integration Tests - Stage 1: TDD for Phase 3 Production Readiness
 // Tests system behavior under stress, resource constraints, and adverse conditions
 

@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Tests for Validated Types - Stage 6
 // These tests ensure that our validated types enforce their invariants correctly
 
@@ -242,7 +243,7 @@ fn test_document_state_machine() {
     assert!(modified.timestamps.updated().as_secs() >= modified.timestamps.created().as_secs());
 
     // Back to persisted
-    let _persisted_again = modified.into_persisted();
+    let persisted_again = modified.into_persisted();
 
     // Note: The following would not compile due to type safety:
     // let bad = draft.into_modified(); // Error: Draft cannot transition to Modified

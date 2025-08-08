@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // Adversarial Tests - Stage 5: Simulating Failures and Edge Cases
 // These tests exercise failure modes, race conditions, and error handling
 // to ensure the system degrades gracefully under stress
@@ -85,7 +86,7 @@ mod mocks {
 
     #[async_trait]
     impl Storage for FlakyStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -167,7 +168,7 @@ mod mocks {
 
     #[async_trait]
     impl Storage for DiskFullStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -256,7 +257,7 @@ mod mocks {
 
     #[async_trait]
     impl Storage for SlowStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -425,7 +426,7 @@ async fn test_concurrent_stress() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for ConcurrentStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -584,7 +585,7 @@ async fn test_invalid_inputs() -> Result<()> {
     let updated = Utc.timestamp_opt(999, 0).unwrap(); // Before created
 
     // This is valid construction, but semantically incorrect
-    let _doc = Document::new(
+    let doc = Document::new(
         ValidatedDocumentId::new(),
         ValidatedPath::new("/test.md")?,
         ValidatedTitle::new("Test")?,
@@ -646,7 +647,7 @@ async fn test_memory_pressure() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for MemoryTrackingStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -777,8 +778,8 @@ async fn test_transaction_failures() -> Result<()> {
     }
 
     // Test transaction ID conflicts
-    let _tx1 = crate::Transaction::begin(100)?;
-    let _tx2 = crate::Transaction::begin(100)?; // Same ID
+    let tx1 = crate::Transaction::begin(100)?;
+    let tx2 = crate::Transaction::begin(100)?; // Same ID
 
     // In real implementation, this would fail due to ID conflict
     // but our simple implementation doesn't track active transactions
@@ -801,7 +802,7 @@ async fn test_concurrent_update_race() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for RaceTestStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -825,7 +826,7 @@ async fn test_concurrent_update_race() -> Result<()> {
 
         async fn update(&mut self, doc: Document) -> Result<()> {
             // Simulate race condition detection
-            let _count_before = self.update_count.fetch_add(1, Ordering::SeqCst);
+            let count_before = self.update_count.fetch_add(1, Ordering::SeqCst);
 
             // Small delay to increase chance of race
             tokio::time::sleep(Duration::from_micros(10)).await;
@@ -924,14 +925,14 @@ async fn test_panic_during_operation() {
 
     #[async_trait::async_trait]
     impl Storage for PanicStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
             Ok(Self)
         }
 
-        async fn insert(&mut self, _doc: Document) -> Result<()> {
+        async fn insert(&mut self, doc: Document) -> Result<()> {
             panic!("Simulated panic during insert");
         }
 
@@ -939,7 +940,7 @@ async fn test_panic_during_operation() {
             Ok(None)
         }
 
-        async fn update(&mut self, _doc: Document) -> Result<()> {
+        async fn update(&mut self, doc: Document) -> Result<()> {
             Ok(())
         }
 
@@ -1018,7 +1019,7 @@ async fn test_resource_cleanup() -> Result<()> {
 
     #[async_trait::async_trait]
     impl Storage for TrackedStorage {
-        async fn open(_path: &str) -> Result<Self>
+        async fn open(path: &str) -> Result<Self>
         where
             Self: Sized,
         {
@@ -1035,7 +1036,7 @@ async fn test_resource_cleanup() -> Result<()> {
             Ok(storage)
         }
 
-        async fn insert(&mut self, _doc: Document) -> Result<()> {
+        async fn insert(&mut self, doc: Document) -> Result<()> {
             // Simulate error that requires cleanup
             anyhow::bail!("Simulated insert error");
         }
@@ -1044,7 +1045,7 @@ async fn test_resource_cleanup() -> Result<()> {
             Ok(None)
         }
 
-        async fn update(&mut self, _doc: Document) -> Result<()> {
+        async fn update(&mut self, doc: Document) -> Result<()> {
             Ok(())
         }
 

@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 // HTTP Server Integration Tests
 // Tests the complete HTTP REST API with real HTTP requests
 // Following anti-mock philosophy - uses real server and real HTTP calls
