@@ -114,6 +114,22 @@ profile binary="kotadb":
 demo:
   ./run_standalone.sh demo
 
+# Run all examples
+examples:
+  @echo "🧠 Running KotaDB Examples"
+  @echo "=========================="
+  @echo
+  @echo "📚 1. Personal Knowledge Base"
+  RUST_LOG=warn cargo run --example 01_personal_knowledge_base
+  @echo
+  @echo "🔬 2. Research Project Manager"  
+  RUST_LOG=warn cargo run --example 02_research_project_manager
+  @echo
+  @echo "📅 3. Meeting Notes System"
+  RUST_LOG=warn cargo run --example 03_meeting_notes_system
+  @echo
+  @echo "✅ All examples completed successfully!"
+
 # Initialize a test database
 init-db path="./test-data":
   mkdir -p {{path}}

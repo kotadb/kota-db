@@ -45,7 +45,7 @@ async fn test_production_configuration_validation() -> Result<()> {
     );
 
     // Test creating storage with valid config
-    let _storage = create_file_storage(
+    let storage = create_file_storage(
         &base_path.join("prod_storage").to_string_lossy(),
         Some(valid_config.max_documents),
     )
@@ -55,7 +55,7 @@ async fn test_production_configuration_validation() -> Result<()> {
         Some(valid_config.max_documents),
     )
     .await?;
-    let _optimized_index = create_optimized_index_with_defaults(primary_index);
+    let optimized_index = create_optimized_index_with_defaults(primary_index);
 
     println!("    - Storage and index created successfully with production config");
 
@@ -603,7 +603,7 @@ async fn test_deployment_readiness_and_health_checks() -> Result<()> {
     for doc in &stress_docs {
         mutable_storage.insert(doc.clone()).await?;
     }
-    let _stress_duration = stress_start.elapsed();
+    let stress_duration = stress_start.elapsed();
 
     // Re-check health under stress
     let stressed_health = health_checks
@@ -830,7 +830,7 @@ impl SystemHealthChecker {
         let start = Instant::now();
 
         // Simple connectivity test - try to list documents
-        let _docs = storage.list_all().await?;
+        let docs = storage.list_all().await?;
 
         let response_time = start.elapsed();
 

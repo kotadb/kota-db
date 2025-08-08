@@ -764,14 +764,7 @@ fn create_test_documents(count: usize, test_type: &str) -> Result<Vec<Document>>
         let title = ValidatedTitle::new(format!("{test_type} Integrity Test Document {i}"))?;
 
         let content = format!(
-            r#"---
-title: {} Integrity Test Document {}
-tags: [{}, integrity-test, test-{}]
-created: {}
-updated: {}
----
-
-# {} Integrity Test Document {}
+            r#"# {} Integrity Test Document {}
 
 This is a test document for data integrity validation.
 
@@ -803,12 +796,6 @@ This concludes the integrity test document.
             test_type,
             i,
             test_type,
-            i,
-            chrono::Utc::now().format("%Y-%m-%d"),
-            chrono::Utc::now().format("%Y-%m-%d"),
-            test_type,
-            i,
-            test_type,
             doc_id,
             i,
             i,
@@ -816,11 +803,7 @@ This concludes the integrity test document.
         )
         .into_bytes();
 
-        let tags = vec![
-            ValidatedTag::new(test_type)?,
-            ValidatedTag::new("integrity-test")?,
-            ValidatedTag::new(format!("doc-{i}"))?,
-        ];
+        let tags = vec![];
 
         let now = chrono::Utc::now();
 

@@ -119,7 +119,7 @@ async fn test_metrics_collection_and_recording() -> Result<()> {
 
     let timer_start = Instant::now();
     {
-        let _perf_timer = PerfTimer::new("test_perf_operation");
+        let perf_timer = PerfTimer::new("test_perf_operation");
         tokio::time::sleep(Duration::from_millis(50)).await;
         // Timer will automatically record metrics on drop
     }
@@ -298,7 +298,7 @@ async fn test_distributed_tracing_integration() -> Result<()> {
     println!("  - Testing trace timing accuracy...");
 
     let timing_ctx = OperationContext::new("timing_test");
-    let _start_time = timing_ctx.start_time;
+    let start_time = timing_ctx.start_time;
 
     tokio::time::sleep(Duration::from_millis(25)).await;
 

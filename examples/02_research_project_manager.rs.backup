@@ -1,0 +1,928 @@
+#!/usr/bin/env cargo run --bin
+//! # Research Project Manager Example
+//! 
+//! This example demonstrates using KotaDB for academic research management.
+//! It shows:
+//! - Paper and citation tracking
+//! - Research note organization
+//! - Literature review workflows
+//! - Citation network analysis
+//! - Progress tracking over time
+//! 
+//! ## Usage
+//! ```bash
+//! cargo run --example 02_research_project_manager
+//! ```
+
+use anyhow::Result;
+use kotadb::{
+    create_file_storage, create_primary_index, create_trigram_index,
+    DocumentBuilder, ValidatedPath, Query,
+    init_logging, Storage, Index
+};
+use std::collections::{HashMap, HashSet};
+use chrono::{DateTime, Utc, NaiveDate};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    init_logging();
+    println!("🔬 Research Project Manager - KotaDB Example");
+    println!("=============================================\n");
+
+    // Create storage and indices for research data
+    let mut storage = create_file_storage("./examples-data/research-manager", Some(1000)).await?;
+    let mut primary_index = create_primary_index("./examples-data/research-primary", Some(1000)).await?;
+    let mut search_index = create_trigram_index("./examples-data/research-search", Some(1000)).await?;
+
+    println!("📚 Setting up research project database...");
+
+    // Create realistic research content
+    let research_data = create_research_database();
+    
+    println!("📝 Adding {} research documents...", research_data.len());
+    
+    // Insert all research documents
+    for (i, (path, title, content, tags)) in research_data.iter().enumerate() {
+        let doc = DocumentBuilder::new()
+            .path(path)?
+            .title(title)?
+            .content(content.as_bytes())?
+            .tag(&tags[0])?.tag(&tags[1])?.tag(&tags[2])?.tag(&tags[3])?
+            .build()?;
+
+        storage.insert(doc.clone()).await?;
+        let validated_path = ValidatedPath::new(&doc.path)?;
+        primary_index.insert(doc.id.clone(), validated_path.clone()).await?;
+        search_index.insert(doc.id.clone(), validated_path).await?;
+
+        if i % 5 == 0 {
+            println!("  📄 Added {} documents...", i + 1);
+        }
+    }
+
+    println!("✅ Research database populated!\n");
+
+    // Demonstrate research workflows
+    demonstrate_literature_review(&storage, &search_index).await?;
+    demonstrate_citation_analysis(&storage).await?;
+    demonstrate_progress_tracking(&storage).await?;
+    demonstrate_research_queries(&storage, &search_index).await?;
+
+    println!("\n🎉 Research Project Manager example completed!");
+    println!("   Research data: ./examples-data/research-manager/");
+
+    Ok(())
+}
+
+/// Create realistic research project content
+fn create_research_database() -> Vec<(String, String, String, Vec<String>)> {
+    vec![
+        // Academic papers
+        (
+            "/papers/distributed-consensus-survey.md".to_string(),
+            "Distributed Consensus Algorithms: A Comprehensive Survey".to_string(),
+            r#"# Distributed Consensus Algorithms: A Comprehensive Survey
+
+**Authors**: Smith, J., Johnson, A., Brown, M.  
+**Journal**: ACM Computing Surveys  
+**Year**: 2024  
+**DOI**: 10.1145/3589334.3645123  
+**Citations**: 47  
+
+## Abstract
+This survey provides a comprehensive overview of distributed consensus algorithms, from classical Paxos to modern Raft and beyond. We analyze theoretical foundations, practical implementations, and performance characteristics across different failure models.
+
+## Key Contributions
+1. Taxonomy of consensus algorithms by failure model
+2. Performance comparison under various network conditions  
+3. Implementation complexity analysis
+4. Future research directions
+
+## Notes
+- Excellent overview of Raft vs Paxos trade-offs
+- Good performance data for network partition scenarios
+- Missing coverage of Byzantine fault tolerant algorithms
+- Useful for understanding consensus landscape
+
+## Related Work
+- Lamport, L. "The Part-Time Parliament" (original Paxos paper)
+- Ongaro, D. "In Search of an Understandable Consensus Algorithm" (Raft paper)
+- Castro, M. "Practical Byzantine Fault Tolerance" (PBFT)
+
+## Citations in My Work
+- Used in Chapter 3 of dissertation for consensus background
+- Referenced in paper on "Consensus in Edge Computing Environments"
+- Helpful for understanding CAP theorem implications
+
+## Keywords
+consensus, distributed systems, Paxos, Raft, fault tolerance, replication
+"#.to_string(),
+            vec!["paper".to_string(), "consensus".to_string(), "distributed-systems".to_string(), "survey".to_string()],
+        ),
+
+        (
+            "/papers/machine-learning-databases.md".to_string(),
+            "Machine Learning for Database Query Optimization".to_string(),
+            r#"# Machine Learning for Database Query Optimization
+
+**Authors**: Chen, L., Williams, K., Davis, R.  
+**Conference**: SIGMOD 2024  
+**Year**: 2024  
+**DOI**: 10.1145/3654321.3678901  
+**Citations**: 23  
+
+## Abstract
+We present a machine learning approach to database query optimization that learns from past query execution patterns to predict optimal execution plans. Our method achieves 15-30% performance improvements over traditional cost-based optimizers.
+
+## Key Findings
+1. Neural networks can effectively predict query execution costs
+2. Historical execution data provides valuable optimization signals
+3. Adaptive learning improves performance over time
+4. Works particularly well for complex analytical queries
+
+## Technical Approach
+- **Model**: Deep neural network with attention mechanism
+- **Features**: Query structure, table statistics, index information
+- **Training**: Online learning from query execution feedback
+- **Integration**: Replaces cost model in PostgreSQL optimizer
+
+## Experimental Results
+- **Datasets**: TPC-H, TPC-DS, real production workloads
+- **Improvement**: 15-30% reduction in query execution time
+- **Overhead**: <5% optimization time increase
+- **Adaptability**: Continues improving with more data
+
+## Personal Notes
+- Highly relevant to my thesis on adaptive database systems
+- Could apply similar techniques to index selection
+- Need to understand attention mechanism details
+- Potential collaboration opportunity with database systems lab
+
+## Questions for Authors
+- How does the model handle novel query patterns?
+- What happens when underlying data distribution changes?
+- Can this approach work for transactional workloads?
+
+## Related Work
+- References foundational work on learned index structures
+- Builds on classical query optimization literature
+- Connects to broader ML for systems research area
+"#.to_string(),
+            vec!["paper".to_string(), "machine-learning".to_string(), "databases".to_string(), "optimization".to_string()],
+        ),
+
+        // Research notes
+        (
+            "/notes/consensus-algorithms-comparison.md".to_string(),
+            "Consensus Algorithms Comparison Matrix".to_string(),
+            r#"# Consensus Algorithms Comparison Matrix
+
+## Overview
+Detailed comparison of major consensus algorithms for my dissertation chapter on distributed coordination.
+
+## Comparison Matrix
+
+| Algorithm | Failure Model | Messages per Decision | Latency | Complexity | Production Use |
+|-----------|---------------|----------------------|---------|------------|----------------|
+| Paxos | Crash | 2 phases, 4+ msgs | 2 RTT | High | Google (Chubby) |
+| Raft | Crash | 2+ msgs | 1 RTT | Medium | etcd, Consul |
+| PBFT | Byzantine | O(n²) msgs | 3 phases | Very High | Hyperledger Fabric |
+| HotStuff | Byzantine | O(n) msgs | 3 phases | High | Meta Diem |
+| Tendermint | Byzantine | O(n²) msgs | Variable | High | Cosmos |
+
+## Key Insights
+
+### Paxos Family
+- **Classic Paxos**: Theoretically elegant but complex to implement
+- **Multi-Paxos**: More practical with leader optimization
+- **Fast Paxos**: Reduces latency but increases message complexity
+- **Vertical Paxos**: Handles configuration changes
+
+### Raft Advantages
+- Understandable algorithm design
+- Strong leader model simplifies reasoning
+- Excellent tooling and implementations
+- Good performance for most use cases
+
+### Byzantine Algorithms
+- PBFT: First practical BFT algorithm
+- HotStuff: Linear communication complexity
+- Tendermint: Practical blockchain consensus
+- FLP impossibility theorem implications
+
+## Research Questions
+1. Can we combine Raft's simplicity with Byzantine fault tolerance?
+2. How do these algorithms perform in edge computing scenarios?
+3. What are the implications for partial synchrony assumptions?
+
+## Implementation Notes
+- etcd (Raft): Production-ready, well-tested
+- Consul (Raft): Good for service discovery use cases
+- Chubby (Paxos): Google's lock service
+- Hyperledger (PBFT): Permissioned blockchain networks
+
+## Future Work
+- Implement simplified BFT variant
+- Performance analysis in edge environments
+- Formal verification of safety properties
+"#.to_string(),
+            vec!["notes".to_string(), "consensus".to_string(), "comparison".to_string(), "research".to_string()],
+        ),
+
+        // Literature review
+        (
+            "/literature-review/database-systems-evolution.md".to_string(),
+            "Evolution of Database Systems: Literature Review".to_string(),
+            r#"# Evolution of Database Systems: Literature Review
+
+## Introduction
+This literature review traces the evolution of database systems from early hierarchical models to modern distributed and cloud-native architectures.
+
+## Historical Timeline
+
+### 1960s-1970s: Early Database Systems
+- **IMS (1968)**: IBM's hierarchical database
+- **CODASYL (1971)**: Network database model
+- **System R (1974)**: First relational database prototype
+
+### 1980s-1990s: Relational Era
+- **SQL standardization**: ANSI SQL-86, SQL-89, SQL-92
+- **ACID properties**: Formalization of transaction guarantees
+- **Commercial systems**: Oracle, IBM DB2, Microsoft SQL Server
+
+### 2000s: Internet Scale Challenges
+- **Google BigTable (2006)**: Large-scale distributed storage
+- **Amazon Dynamo (2007)**: Eventually consistent key-value store
+- **NoSQL movement**: Document, column, graph databases
+
+### 2010s: Big Data and Cloud
+- **MapReduce and Hadoop**: Distributed data processing
+- **Spark**: In-memory distributed computing
+- **Cloud databases**: Managed services, auto-scaling
+
+### 2020s: Modern Trends
+- **Serverless databases**: Auto-scaling, pay-per-use
+- **Machine learning integration**: Learned indices, query optimization
+- **Multi-model databases**: Support for multiple data models
+
+## Key Papers by Category
+
+### Foundational Theory
+1. **Codd, E.F. (1970)**: "A Relational Model of Data for Large Shared Data Banks"
+   - Introduced relational model
+   - Mathematical foundation for modern databases
+   - Still relevant today
+
+2. **Gray, J. (1981)**: "The Transaction Concept: Virtues and Limitations" 
+   - Defined ACID properties
+   - Transaction processing foundations
+   - Influenced all subsequent database systems
+
+### Distributed Systems
+3. **DeCandia, G. et al. (2007)**: "Dynamo: Amazon's Highly Available Key-value Store"
+   - Eventually consistent distributed storage
+   - Influenced NoSQL movement
+   - Practical approach to CAP theorem trade-offs
+
+4. **Chang, F. et al. (2008)**: "Bigtable: A Distributed Storage System for Structured Data"
+   - Column-family data model
+   - Influenced HBase, Cassandra
+   - Scalable structured storage
+
+### Modern Innovations
+5. **Kraska, T. et al. (2018)**: "The Case for Learned Index Structures"
+   - Machine learning for database internals
+   - Challenges traditional index design
+   - Opens new research directions
+
+6. **Pavlo, A. et al. (2017)**: "Self-Driving Database Management Systems"
+   - Autonomous database administration
+   - Machine learning for tuning
+   - Vision for future database systems
+
+## Research Gaps and Opportunities
+
+### Current Limitations
+- **Consistency vs Performance**: Still fundamental trade-off
+- **Heterogeneous Workloads**: Mixed OLTP/OLAP challenges
+- **Edge Computing**: Distributed databases for edge scenarios
+- **Privacy and Security**: Zero-knowledge proofs, secure computation
+
+### Emerging Directions
+- **Quantum-resistant cryptography**: Post-quantum database security
+- **Neuromorphic computing**: Brain-inspired data processing
+- **DNA storage**: Ultra-long-term data persistence
+- **Federated learning**: Distributed machine learning on databases
+
+## Implications for My Research
+
+### Relevant Themes
+1. **Index Structures**: Evolution from B-trees to learned indices
+2. **Distributed Consensus**: Critical for my consensus research
+3. **Performance Optimization**: ML approaches to query optimization
+4. **Human-AI Collaboration**: Databases as cognitive tools
+
+### Research Questions
+- How can databases better support human-AI collaborative workflows?
+- What are the implications of learned indices for distributed systems?
+- How do we maintain consistency in edge computing scenarios?
+
+## Bibliography
+[Detailed bibliography with 47 references - abbreviated for this example]
+"#.to_string(),
+            vec!["literature-review".to_string(), "databases".to_string(), "evolution".to_string(), "history".to_string()],
+        ),
+
+        // Project progress
+        (
+            "/progress/dissertation-chapter-3.md".to_string(),
+            "Dissertation Chapter 3: Progress Update".to_string(),
+            r#"# Dissertation Chapter 3: Progress Update
+
+**Chapter Title**: Distributed Consensus in Edge Computing Environments  
+**Target Length**: 25-30 pages  
+**Deadline**: September 30, 2025  
+**Current Status**: 40% complete  
+
+## Progress Summary
+
+### ✅ Completed Sections
+- [x] **3.1 Introduction** (3 pages)
+  - Problem motivation for edge consensus
+  - Research questions and contributions
+  - Chapter organization
+
+- [x] **3.2 Background** (4 pages)
+  - Classical consensus algorithms (Paxos, Raft)
+  - CAP theorem and consistency models
+  - Edge computing characteristics
+
+- [x] **3.3 Related Work** (5 pages)
+  - Consensus in mobile ad-hoc networks
+  - Blockchain consensus mechanisms
+  - Geo-distributed consensus protocols
+
+### 🚧 In Progress
+- [ ] **3.4 Edge Consensus Model** (6 pages) - 60% complete
+  - Network topology assumptions
+  - Failure model for edge environments
+  - Performance requirements
+
+### 📋 Remaining Work
+- [ ] **3.5 Algorithm Design** (7 pages)
+  - Adaptive leader selection
+  - Network-aware message routing
+  - Byzantine fault tolerance extensions
+
+- [ ] **3.6 Experimental Evaluation** (5 pages)
+  - Simulation framework setup
+  - Performance comparison with baselines
+  - Analysis of results
+
+- [ ] **3.7 Conclusion** (2 pages)
+  - Summary of contributions
+  - Limitations and future work
+
+## Weekly Progress Log
+
+### Week of August 7, 2025
+- **Monday**: Completed related work section draft
+- **Tuesday**: Started edge consensus model formalization
+- **Wednesday**: Literature review for Byzantine protocols
+- **Thursday**: Writing - network topology assumptions
+- **Friday**: Advisor meeting - received feedback on model
+
+### Key Insights This Week
+1. **Network Partitions**: Edge environments have unique partition patterns
+2. **Energy Constraints**: Battery-powered devices affect protocol design
+3. **Mobility**: Node movement creates dynamic network topology
+4. **Heterogeneity**: Different device capabilities require adaptive protocols
+
+## Advisor Feedback (August 7 meeting)
+
+### Positive Points
+- Strong motivation for edge-specific consensus
+- Good coverage of related work
+- Clear problem formulation
+
+### Areas for Improvement
+- Need more formal analysis of failure model
+- Include energy consumption in performance metrics
+- Consider practical implementation challenges
+- Add discussion of security implications
+
+### Action Items
+- [ ] Formalize edge-specific failure model by August 14
+- [ ] Add energy consumption analysis to evaluation plan
+- [ ] Research security implications of mobile consensus
+- [ ] Schedule follow-up meeting for August 21
+
+## Research Challenges
+
+### Technical Challenges
+1. **Dynamic Topology**: How to maintain consensus with mobile nodes?
+2. **Asymmetric Networks**: Different link qualities and bandwidths
+3. **Resource Constraints**: Limited battery, CPU, memory
+4. **Security**: Byzantine behavior in open edge environments
+
+### Methodological Challenges
+1. **Evaluation**: How to fairly compare algorithms across environments?
+2. **Simulation**: Realistic modeling of edge network conditions
+3. **Metrics**: What performance measures matter most?
+4. **Validation**: How to validate results without large-scale deployment?
+
+## Next Steps
+
+### Short Term (Next 2 weeks)
+1. Complete edge consensus model formalization
+2. Begin algorithm design section
+3. Set up simulation framework
+4. Implement baseline algorithms for comparison
+
+### Medium Term (Next month)
+1. Complete algorithm design and analysis
+2. Run comprehensive simulations
+3. Analyze results and identify key insights
+4. Begin writing evaluation section
+
+### Long Term (Semester)
+1. Complete chapter draft
+2. Get advisor approval
+3. Present work at research seminar
+4. Submit conference paper based on chapter
+
+## References to Add
+- Recent edge computing surveys
+- Mobile consensus protocol papers
+- Energy-efficient distributed algorithms
+- Real-world edge deployment case studies
+"#.to_string(),
+            vec!["progress".to_string(), "dissertation".to_string(), "consensus".to_string(), "edge-computing".to_string()],
+        ),
+
+        // Meeting notes
+        (
+            "/meetings/advisor-meeting-2025-08-07.md".to_string(),
+            "Advisor Meeting - August 7, 2025".to_string(),
+            r#"# Advisor Meeting - August 7, 2025
+
+**Attendees**: Prof. Smith (advisor), Me  
+**Duration**: 1 hour  
+**Location**: Prof. Smith's office  
+**Focus**: Dissertation Chapter 3 progress review  
+
+## Discussion Points
+
+### Chapter 3 Progress Review
+- **Current Status**: 40% complete, on track for September deadline
+- **Quality**: Writing quality is good, technical content solid
+- **Scope**: May need to narrow focus for conference paper version
+
+### Technical Feedback
+
+#### Positive Aspects
+- Strong motivation for edge-specific consensus protocols
+- Good literature review covering relevant work
+- Clear identification of research gaps
+
+#### Areas for Improvement
+1. **Formal Model**: Need more rigorous failure model definition
+   - Specify exactly what types of failures we consider
+   - Include probabilistic analysis of failure scenarios
+   - Consider correlated failures in edge environments
+
+2. **Evaluation Metrics**: Expand beyond traditional consensus metrics
+   - Include energy consumption analysis
+   - Consider network bandwidth utilization
+   - Add metrics for mobile/dynamic scenarios
+
+3. **Security Analysis**: Address Byzantine behavior in edge settings
+   - How do we detect malicious nodes?
+   - What's the impact of Sybil attacks?
+   - Can we use trusted hardware (TPM, TEE)?
+
+### Research Direction Discussion
+
+#### Core Contribution
+Focus on adaptive consensus that adjusts to:
+- Network topology changes
+- Varying device capabilities
+- Dynamic failure patterns
+- Energy constraints
+
+#### Algorithm Design Principles
+1. **Hierarchy-Aware**: Leverage edge computing hierarchies
+2. **Energy-Efficient**: Minimize battery drain on mobile devices
+3. **Adaptive**: Adjust behavior based on network conditions
+4. **Secure**: Resist Byzantine attacks in open environments
+
+### Next Steps
+
+#### Immediate Actions (by August 14)
+- [ ] Formalize edge-specific failure model
+- [ ] Add energy consumption to evaluation framework
+- [ ] Research security implications of edge consensus
+- [ ] Begin algorithm design section
+
+#### Conference Paper Strategy
+- Target NSDI or OSDI for systems-focused paper
+- Alternatively, consider ICDCS for distributed systems audience
+- Focus on one specific scenario (e.g., autonomous vehicles)
+- Provide real implementation and evaluation
+
+### Long-term Research Plan
+
+#### Semester Goals
+1. Complete Chapter 3 by September 30
+2. Submit conference paper by October deadline
+3. Begin Chapter 4 on implementation
+4. Present work at research seminar
+
+#### Potential Collaborations
+- **Mobile Systems Lab**: Access to real edge devices
+- **Security Group**: Byzantine fault tolerance expertise
+- **Industry Partners**: Real-world edge deployment scenarios
+
+## Action Items
+
+### For Me
+- [ ] Revise failure model with formal definitions
+- [ ] Research energy-efficient consensus protocols
+- [ ] Set up simulation framework with energy modeling
+- [ ] Schedule follow-up meeting for August 21
+
+### For Advisor
+- [ ] Review revised failure model draft
+- [ ] Connect me with security group contacts
+- [ ] Provide feedback on conference venue selection
+- [ ] Review algorithm design once complete
+
+## Key Insights
+
+### Research Direction
+The edge computing angle is novel and important. Focus on what makes edge environments unique rather than trying to solve general consensus problems.
+
+### Implementation Strategy
+Consider building on existing consensus implementations (etcd, Consul) rather than starting from scratch. This will help with evaluation and adoption.
+
+### Publication Strategy
+Aim for a systems conference that values implementation and real-world evaluation. Theoretical analysis is important but practical impact matters more.
+
+## Follow-up
+Next meeting scheduled for August 21, 2025 at 2:00 PM.
+Send draft failure model by August 18 for review.
+"#.to_string(),
+            vec!["meeting".to_string(), "advisor".to_string(), "feedback".to_string(), "dissertation".to_string()],
+        ),
+
+        // Citation tracking
+        (
+            "/citations/influential-papers.md".to_string(),
+            "Most Influential Papers in My Research".to_string(),
+            r#"# Most Influential Papers in My Research
+
+## Top 10 Most Cited Papers in My Work
+
+### 1. Lamport, L. (1978) "Time, Clocks, and the Ordering of Events"
+- **My Citations**: 15 times across 3 papers
+- **Why Important**: Fundamental to understanding distributed systems
+- **Key Concepts**: Logical clocks, happened-before relationship
+- **Used In**: Background sections, causality discussions
+
+### 2. Gilbert, S. & Lynch, N. (2002) "Brewer's Conjecture and the Feasibility of Consistent, Available, Partition-tolerant Web Services"
+- **My Citations**: 12 times across 4 papers  
+- **Why Important**: Formal proof of CAP theorem
+- **Key Concepts**: Consistency, availability, partition tolerance trade-offs
+- **Used In**: Edge computing trade-off analysis
+
+### 3. Ongaro, D. & Ousterhout, J. (2014) "In Search of an Understandable Consensus Algorithm"
+- **My Citations**: 18 times across 5 papers
+- **Why Important**: Practical consensus algorithm design
+- **Key Concepts**: Leader election, log replication, safety
+- **Used In**: Algorithm design, performance comparisons
+
+### 4. DeCandia, G. et al. (2007) "Dynamo: Amazon's Highly Available Key-value Store"
+- **My Citations**: 8 times across 2 papers
+- **Why Important**: Real-world eventually consistent systems
+- **Key Concepts**: Vector clocks, consistent hashing, gossip protocols
+- **Used In**: Edge storage system design
+
+### 5. Castro, M. & Liskov, B. (1999) "Practical Byzantine Fault Tolerance"
+- **My Citations**: 10 times across 3 papers
+- **Why Important**: First practical BFT algorithm
+- **Key Concepts**: Three-phase protocol, view changes, checkpoints
+- **Used In**: Security analysis, Byzantine extensions
+
+## Citation Network Analysis
+
+### Core Research Areas
+1. **Distributed Consensus** (45% of citations)
+2. **Edge Computing** (25% of citations)  
+3. **Database Systems** (20% of citations)
+4. **Security & Byzantine Tolerance** (10% of citations)
+
+### Citation Evolution Over Time
+- **Early Research** (2023): Focus on classical consensus papers
+- **Current Work** (2024-2025): More edge computing and mobile systems
+- **Future Direction**: Machine learning for distributed systems
+
+### Most Cited Authors in My Work
+1. **Leslie Lamport**: 28 citations (distributed systems theory)
+2. **Nancy Lynch**: 15 citations (theoretical foundations)
+3. **Diego Ongaro**: 18 citations (practical consensus)
+4. **Barbara Liskov**: 12 citations (fault tolerance)
+
+## Impact on My Research
+
+### Theoretical Foundation
+- Lamport's work provides theoretical grounding
+- Lynch's work gives formal analysis tools
+- CAP theorem shapes system design decisions
+
+### Practical Implementation
+- Raft algorithm influences my consensus design
+- Dynamo's approach guides edge storage decisions
+- PBFT provides security analysis framework
+
+### Research Methodology
+- Emphasis on both theory and practice
+- Importance of clear algorithm description
+- Need for comprehensive evaluation
+
+## Gaps in Current Literature
+
+### Missing Areas
+1. **Energy-Aware Consensus**: Most papers ignore battery constraints
+2. **Mobile Consensus**: Limited work on highly dynamic networks
+3. **Heterogeneous Environments**: Different device capabilities
+4. **Security in Edge**: Byzantine behavior in open edge environments
+
+### Opportunities
+- Combine mobile ad-hoc network techniques with blockchain consensus
+- Apply machine learning to adaptive consensus protocols
+- Develop energy-efficient Byzantine fault tolerance
+- Create consensus protocols for IoT and edge computing
+
+## Reading List for Next Semester
+
+### High Priority
+- Recent edge computing surveys (2024-2025)
+- Energy-efficient distributed algorithms
+- Mobile blockchain consensus papers
+- Machine learning for systems papers
+
+### Medium Priority  
+- Formal verification of consensus algorithms
+- Hardware-assisted security in distributed systems
+- Performance analysis methodologies
+- Case studies of real-world deployments
+
+## Research Collaboration Opportunities
+
+### Potential Co-authors
+- Mobile systems researchers for device studies
+- Security experts for Byzantine extensions
+- Industry practitioners for real-world validation
+- Machine learning researchers for adaptive protocols
+
+### Conference Networking
+- NSDI, OSDI: Systems implementation focus
+- PODC, DISC: Theoretical distributed systems
+- MobiCom, MobiSys: Mobile and edge computing
+- USENIX Security: Security aspects
+"#.to_string(),
+            vec!["citations".to_string(), "influential".to_string(), "research".to_string(), "analysis".to_string()],
+        ),
+    ]
+}
+
+/// Demonstrate literature review and paper discovery workflows
+async fn demonstrate_literature_review(
+    storage: &impl Storage,
+    search_index: &impl Index,
+) -> Result<()> {
+    println!("📖 Literature Review Workflows");
+    println!("==============================\n");
+
+    // Find papers by topic
+    println!("1. 🔍 Finding papers on 'consensus algorithms':");
+    let consensus_papers = search_index.search(Query::new(Some("consensus algorithms".to_string()), None, None, 10)?).await?;
+    for doc in consensus_papers.iter().take(3) {
+        if doc.tags.contains(&"paper".to_string()) {
+            println!("   📄 {} - {}", doc.title, doc.path);
+        }
+    }
+    println!();
+
+    // Find related work by tags
+    println!("2. 🏷️  Papers tagged with 'distributed-systems':");
+    let all_docs = storage.list_all().await?;
+    let distributed_papers: Vec<_> = all_docs.iter()
+        .filter(|doc| doc.tags.contains(&"distributed-systems".to_string()))
+        .collect();
+    for doc in distributed_papers.iter().take(3) {
+        println!("   📄 {} - {}", doc.title, doc.path);
+    }
+    println!();
+
+    // Search research notes
+    println!("3. 📝 Research notes containing 'Byzantine':");
+    let byzantine_notes = search_index.search(Query::new(Some("Byzantine".to_string()), None, None, 10)?).await?;
+    for doc in byzantine_notes.iter().take(2) {
+        if doc.tags.contains(&"notes".to_string()) {
+            println!("   📝 {} - {}", doc.title, doc.path);
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Demonstrate citation network analysis
+async fn demonstrate_citation_analysis(storage: &impl Storage) -> Result<()> {
+    println!("🔗 Citation Network Analysis");
+    println!("============================\n");
+
+    let all_docs = storage.list_all().await?;
+    
+    // Count papers by type
+    let papers: Vec<_> = all_docs.iter()
+        .filter(|doc| doc.tags.contains(&"paper".to_string()))
+        .collect();
+    let notes: Vec<_> = all_docs.iter()
+        .filter(|doc| doc.tags.contains(&"notes".to_string()))
+        .collect();
+    let progress: Vec<_> = all_docs.iter()
+        .filter(|doc| doc.tags.contains(&"progress".to_string()))
+        .collect();
+
+    println!("📊 Research Database Statistics:");
+    println!("   📄 Academic papers: {}", papers.len());
+    println!("   📝 Research notes: {}", notes.len());
+    println!("   📈 Progress reports: {}", progress.len());
+    println!("   📚 Total documents: {}", all_docs.len());
+    println!();
+
+    // Analyze citation patterns
+    println!("🔗 Citation Pattern Analysis:");
+    let mut citation_counts = HashMap::new();
+    for doc in &all_docs {
+        let content = String::from_utf8_lossy(&doc.content);
+        if content.contains("Lamport") {
+            *citation_counts.entry("Lamport").or_insert(0) += 1;
+        }
+        if content.contains("Raft") {
+            *citation_counts.entry("Raft").or_insert(0) += 1;
+        }
+        if content.contains("PBFT") || content.contains("Byzantine") {
+            *citation_counts.entry("Byzantine").or_insert(0) += 1;
+        }
+        if content.contains("consensus") {
+            *citation_counts.entry("Consensus").or_insert(0) += 1;
+        }
+    }
+
+    for (topic, count) in citation_counts.iter() {
+        println!("   🔗 {}: mentioned in {} documents", topic, count);
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Demonstrate research progress tracking
+async fn demonstrate_progress_tracking(storage: &impl Storage) -> Result<()> {
+    println!("📈 Research Progress Tracking");
+    println!("=============================\n");
+
+    let all_docs = storage.list_all().await?;
+    
+    // Find progress-related documents
+    let progress_docs: Vec<_> = all_docs.iter()
+        .filter(|doc| {
+            doc.frontmatter.tags.contains(&"progress".to_string()) ||
+            doc.frontmatter.tags.contains(&"meeting".to_string()) ||
+            doc.frontmatter.path.contains("progress")
+        })
+        .collect();
+
+    println!("📋 Recent Progress Updates:");
+    for doc in progress_docs.iter().take(3) {
+        println!("   📅 {} - {} ({})", 
+            doc.frontmatter.created_at.format("%Y-%m-%d"),
+            doc.frontmatter.title,
+            doc.frontmatter.path
+        );
+    }
+    println!();
+
+    // Analyze completion status
+    println!("✅ Project Status Analysis:");
+    let mut total_tasks = 0;
+    let mut completed_tasks = 0;
+    
+    for doc in &all_docs {
+        let content = String::from_utf8_lossy(&doc.content);
+        let lines: Vec<&str> = content.lines().collect();
+        
+        for line in lines {
+            if line.contains("- [x]") {
+                completed_tasks += 1;
+                total_tasks += 1;
+            } else if line.contains("- [ ]") {
+                total_tasks += 1;
+            }
+        }
+    }
+    
+    if total_tasks > 0 {
+        let completion_rate = (completed_tasks as f64 / total_tasks as f64) * 100.0;
+        println!("   📊 Overall Progress: {:.1}% ({}/{} tasks completed)", 
+            completion_rate, completed_tasks, total_tasks);
+    }
+    
+    println!("   🎯 Active Projects: Dissertation Chapter 3, Literature Review");
+    println!("   ⏰ Upcoming Deadlines: September 30 (Chapter 3), October (Conference Paper)");
+    println!();
+
+    Ok(())
+}
+
+/// Demonstrate advanced research queries
+async fn demonstrate_research_queries(
+    storage: &impl Storage,
+    search_index: &impl Index,
+) -> Result<()> {
+    println!("🔬 Advanced Research Queries");
+    println!("============================\n");
+
+    // Multi-keyword search
+    println!("1. 🔍 Multi-concept search ('machine learning' + 'database'):");
+    let ml_db_results = search_index.search("machine learning database").await?;
+    for doc in ml_db_results.iter().take(2) {
+        println!("   📄 {} - {}", doc.frontmatter.title, doc.frontmatter.path);
+    }
+    println!();
+
+    // Time-based queries
+    println!("2. ⏰ Recent research activity (last 30 days):");
+    let now = Utc::now();
+    let thirty_days_ago = now - chrono::Duration::days(30);
+    
+    let all_docs = storage.list_all().await?;
+    let recent_docs: Vec<_> = all_docs.iter()
+        .filter(|doc| doc.frontmatter.created_at > thirty_days_ago)
+        .collect();
+    
+    for doc in recent_docs.iter().take(3) {
+        println!("   📅 {} - {} ({})", 
+            doc.frontmatter.created_at.format("%m-%d"),
+            doc.frontmatter.title,
+            doc.frontmatter.path
+        );
+    }
+    println!();
+
+    // Cross-reference analysis
+    println!("3. 🔗 Cross-references between documents:");
+    let mut reference_map: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for doc in &all_docs {
+        let content = String::from_utf8_lossy(&doc.content);
+        let references = extract_document_references(&content);
+        if !references.is_empty() {
+            reference_map.insert(doc.frontmatter.title.clone(), references);
+        }
+    }
+    
+    for (source, targets) in reference_map.iter().take(2) {
+        println!("   📄 '{}' references:", source);
+        for target in targets.iter().take(3) {
+            println!("      → {}", target);
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Extract document references from content (simplified)
+fn extract_document_references(content: &str) -> Vec<String> {
+    let mut references = Vec::new();
+    
+    // Look for common reference patterns
+    if content.contains("Lamport") {
+        references.push("Lamport's foundational work".to_string());
+    }
+    if content.contains("Raft") {
+        references.push("Raft consensus algorithm".to_string());
+    }
+    if content.contains("PBFT") {
+        references.push("Practical Byzantine Fault Tolerance".to_string());
+    }
+    if content.contains("Chapter 3") {
+        references.push("Dissertation Chapter 3".to_string());
+    }
+    
+    references
+}

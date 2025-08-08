@@ -1,92 +1,233 @@
 # KotaDB Examples
 
-This directory contains examples demonstrating how to use KotaDB as a standalone system.
+This directory contains comprehensive real-world examples demonstrating KotaDB's capabilities for different use cases. Each example shows how to use KotaDB's production-ready Stage 6 component library with realistic data and scenarios.
 
-## Running Examples
+## Available Examples
 
-### Standalone Usage Example
+### 1. Personal Knowledge Base (`01_personal_knowledge_base.rs`)
+
+**Use Case**: Managing personal knowledge and documentation  
+**Features Demonstrated**:
+- Document storage with markdown content and metadata
+- Full-text search across knowledge base
+- Tag-based filtering and organization
+- Temporal queries for recent activity
+- Performance testing with bulk operations
+
+**Data**: Programming guides, database design principles, learning notes
 
 ```bash
-# From the project root
-cargo run --example standalone_usage
+cargo run --example 01_personal_knowledge_base
 ```
 
-This example demonstrates:
-- Validated types that prevent invalid states
-- Builder patterns for ergonomic construction  
-- Wrapper components for automatic best practices
-- Risk reduction methodology in action
+**Expected Output**:
+- 8 realistic knowledge documents created
+- 100 performance test documents generated
+- Search demonstrations across different content types
+- Storage statistics and performance metrics
+- Sub-1ms search performance validation
 
-### Expected Output
+### 2. Research Project Manager (`02_research_project_manager.rs`)
 
-```
-🔧 KotaDB Standalone Usage Example
-===================================
+**Use Case**: Academic research management and literature review  
+**Features Demonstrated**:
+- Academic paper and citation tracking
+- Research note organization
+- Literature review workflows
+- Citation network analysis
+- Progress tracking over time
 
-1. 🛡️  Validated Types - Invalid States Unrepresentable
-   ------------------------------------------------
-   ✓ Safe path: /documents/research.md
-   ✓ Unique ID: f47ac10b-58cc-4372-a567-0e02b2c3d479
-   ✓ Clean title: 'Machine Learning Research'
-   ✓ Positive size: 1024 bytes
-   ✓ Valid timestamp: 1641024000
-   ✓ Ordered timestamps: 1641024000 -> 1641024000
-   ✓ Safe tag: machine-learning
+**Data**: Research papers, academic notes, citation tracking, progress reports
 
-2. 🏗️  Builder Patterns - Ergonomic Construction
-   ----------------------------------------------
-   ✓ Document: 'Machine Learning Papers' (75 bytes, 8 words)
-   ✓ Query: 'attention mechanisms' with 2 tags
-   ✓ Storage config: /data/ml-research (cache: 268435456 bytes)
-
-3. 🔧 Wrapper Components - Automatic Best Practices
-   ------------------------------------------------
-   When storage engine is implemented, wrappers provide:
-   ✓ TracedStorage    - Unique trace IDs for every operation
-   ✓ ValidatedStorage - Input/output validation
-   ✓ RetryableStorage - Exponential backoff on failures
-   ✓ CachedStorage    - LRU caching with hit/miss metrics
-   ✓ SafeTransaction  - RAII rollback on scope exit
-   ✓ MeteredIndex     - Automatic performance metrics
-
-4. 📊 Risk Reduction Summary
-   -------------------------
-   Stage 1: TDD                     -5.0 points
-   Stage 2: Contracts               -5.0 points
-   Stage 3: Pure Functions          -3.5 points
-   Stage 4: Observability           -4.5 points
-   Stage 5: Adversarial Testing     -0.5 points
-   Stage 6: Component Library        -1.0 points
-   ----------------------------------------
-   Total Risk Reduction:            -19.5 points
-   Success Rate: ~99% (vs ~78% baseline)
-
-✅ Stage 6 implementation verified!
-   All components working correctly
-   Ready for storage engine implementation
+```bash
+cargo run --example 02_research_project_manager
 ```
 
-## Example Files
+### 3. Meeting Notes System (`03_meeting_notes_system.rs`)
 
-- `standalone_usage.rs` - Comprehensive demonstration of Stage 6 components
+**Use Case**: Meeting management and organizational memory  
+**Features Demonstrated**:
+- Meeting note organization and storage
+- Temporal queries (find meetings by date/time)
+- Action item tracking across meetings
+- Participant and decision analysis
+- Meeting effectiveness analytics
 
-## Adding Examples
+**Data**: Team standups, client meetings, retrospectives, one-on-ones
+
+```bash
+cargo run --example 03_meeting_notes_system
+```
+
+## Running the Examples
+
+### Prerequisites
+
+1. **Rust**: Version 1.70+ (specified in `rust-toolchain.toml`)
+2. **Just**: Task runner (optional, can use cargo directly)
+
+### Quick Start
+
+```bash
+# Run all examples in sequence
+just examples
+
+# Or run individual examples
+cargo run --example 01_personal_knowledge_base
+cargo run --example 02_research_project_manager  
+cargo run --example 03_meeting_notes_system
+
+# View example output with less logging
+RUST_LOG=warn cargo run --example 01_personal_knowledge_base
+```
+
+### Data Storage
+
+Each example creates its own data directory:
+- Personal KB: `./examples-data/personal-kb/`
+- Research Manager: `./examples-data/research-manager/`
+- Meeting Notes: `./examples-data/meeting-notes/`
+
+You can inspect the stored markdown files directly in these directories.
+
+## Example Architecture
+
+All examples use KotaDB's production patterns:
+
+### Stage 6 Component Library
+- **Validated Types**: Compile-time safety with `ValidatedPath`, `ValidatedTitle`, etc.
+- **Builder Patterns**: Fluent APIs for `DocumentBuilder`, `Query`, etc.
+- **Wrapper Components**: Automatic tracing, validation, caching, retry logic
+
+### Storage and Indexing
+- **FileStorage**: Production-ready file-based storage with ACID guarantees
+- **Primary Index**: B+ tree for fast path-based lookups
+- **Trigram Index**: Full-text search with relevance ranking
+- **Query Engine**: Structured search with filters and limits
+
+### Observability
+- **Tracing**: Every operation gets unique trace IDs
+- **Metrics**: Performance counters and timing data
+- **Logging**: Structured logs with full context
+
+## Performance Expectations
+
+Based on Apple Silicon M-series hardware:
+
+| Operation | Latency | Throughput | Notes |
+|-----------|---------|------------|-------|
+| Document Insert | <1ms | >1,000/sec | Including indexing |
+| Document Retrieval | <1ms | >5,000/sec | With caching |
+| Full-Text Search | <10ms | >100/sec | Trigram index |
+| Bulk Operations | 5x faster | Batch optimized | vs individual |
+
+## Common Patterns
+
+### Document Creation
+```rust
+let doc = DocumentBuilder::new()
+    .path("/knowledge/rust-patterns.md")?
+    .title("Advanced Rust Design Patterns")?
+    .content(content.as_bytes())
+    .tag("rust")?
+    .tag("programming")?
+    .build()?;
+```
+
+### Search Operations
+```rust
+// Full-text search
+let query = Query::new(Some("ownership".to_string()), None, None, 10)?;
+let results = search_index.search(&query).await?;
+
+// Get actual documents
+for doc_id in results {
+    if let Some(doc) = storage.get(&doc_id).await? {
+        println!("Found: {}", doc.title);
+    }
+}
+```
+
+### Storage Operations
+```rust
+// Insert with automatic tracing and validation
+storage.insert(doc.clone()).await?;
+
+// Update indices
+primary_index.insert(doc.id.clone(), ValidatedPath::new(&path)?).await?;
+search_index.insert(doc.id.clone(), ValidatedPath::new(&path)?).await?;
+```
+
+## Extending the Examples
+
+### Adding New Use Cases
+
+1. **Copy an existing example** as a starting point
+2. **Update the sample data** generation function
+3. **Modify the demonstration functions** for your use case
+4. **Add any specialized queries** or analytics
+
+### Custom Content Types
+
+Examples support any UTF-8 content:
+- Markdown documents with YAML frontmatter
+- Plain text files
+- JSON data (as text content)
+- Code files with syntax highlighting
+- Academic papers in various formats
+
+### Integration Patterns
+
+These examples show how to integrate KotaDB into larger applications:
+- **CLI tools**: Command-line interfaces with search
+- **Web services**: HTTP APIs with JSON responses  
+- **Desktop apps**: Local data management
+- **Academic tools**: Research and citation management
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"No documents found"**: Check that documents are being inserted before search
+2. **Compilation errors**: Ensure Rust 1.70+ and all dependencies are current
+3. **Performance issues**: Verify examples run with `--release` for production speed
+4. **Storage permissions**: Ensure write access to example data directories
+
+### Debug Mode
+
+```bash
+# Enable debug logging for detailed operation traces
+RUST_LOG=debug cargo run --example 01_personal_knowledge_base
+
+# Enable only KotaDB logs
+RUST_LOG=kotadb=debug cargo run --example 01_personal_knowledge_base
+```
+
+### Performance Profiling
+
+```bash
+# Build with optimizations
+cargo build --release --examples
+
+# Run with timing
+time ./target/release/examples/01_personal_knowledge_base
+```
+
+## Contributing
 
 When adding new examples:
 
-1. Follow the 6-stage risk reduction methodology
-2. Use Stage 6 components for all constructions
-3. Include error handling and logging
-4. Document the risk reduction benefits
-5. Show both correct usage and prevented errors
+1. **Follow the established pattern**: Use the same structure and error handling
+2. **Include realistic data**: Examples should demonstrate real-world usage
+3. **Document clearly**: Add comprehensive comments and documentation
+4. **Test thoroughly**: Ensure examples run reliably on different systems
+5. **Update this README**: Add your example to the list above
 
-## Library Integration
+## Related Documentation
 
-These examples also serve as templates for integrating KotaDB into other Rust projects:
+- [AGENT.md](../AGENT.md): Essential development guide
+- [README.md](../README.md): Project overview and features  
+- [src/examples/](./): Example source code
+- [API Documentation](https://docs.rs/kotadb): Generated API docs
 
-```toml
-[dependencies]
-kotadb = { path = "../path/to/kotadb" }
-tokio = { version = "1.0", features = ["full"] }
-anyhow = "1.0"
-```
+Each example is self-contained and can be studied independently to understand different aspects of KotaDB's capabilities.

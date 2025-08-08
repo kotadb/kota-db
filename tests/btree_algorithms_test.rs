@@ -165,7 +165,7 @@ mod btree_tree_operations_tests {
         // let mut current_root = tree_root;
         // for i in 0..20 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/tree_{}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/tree_{i}.md"))?;
         //     current_root = btree::insert_into_tree(current_root, doc_id, path)?;
         // }
 
@@ -181,8 +181,8 @@ mod btree_tree_operations_tests {
         // Test complete tree search with path traversal
         // Pure function: search_in_tree(root, key) -> Option<Value>
 
-        let _doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let _path = ValidatedPath::new("/test/search_target.md")?;
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let path = ValidatedPath::new("/test/search_target.md")?;
 
         // let mut tree_root = btree::create_empty_tree()?;
         // tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path.clone())?;
@@ -350,7 +350,7 @@ mod btree_tree_operations_tests {
         // let mut inserted_keys = Vec::new();
         // for i in 0..10 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/range_{:02}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/range_{i:02}.md"))?;
         //     tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path)?;
         //     inserted_keys.push(doc_id);
         // }
@@ -384,7 +384,7 @@ mod btree_invariant_tests {
         // Insert many keys to force multiple levels
         // for i in 0..100 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/balance_{:03}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/balance_{i:03}.md"))?;
         //     tree_root = btree::insert_into_tree(tree_root, doc_id, path)?;
         //
         //     // Verify invariants after each insertion
@@ -406,7 +406,7 @@ mod btree_invariant_tests {
         // let mut keys_to_insert = Vec::new();
         // for i in 0..50 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/order_{:02}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/order_{i:02}.md"))?;
         //     keys_to_insert.push((doc_id, path));
         // }
 
@@ -438,7 +438,7 @@ mod btree_performance_tests {
         // Insert 10,000 documents
         // for i in 0..10000 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/perf_{:05}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/perf_{i:05}.md"))?;
         //     tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path)?;
         //     if i % 1000 == 0 {
         //         test_keys.push(doc_id);
@@ -448,13 +448,13 @@ mod btree_performance_tests {
         // Time search operations
         // let start = Instant::now();
         // for test_key in &test_keys {
-        //     let _result = btree::search_in_tree(&tree_root, test_key);
+        //     let result = btree::search_in_tree(&tree_root, test_key);
         // }
         // let duration = start.elapsed();
 
         // Should be much faster than O(n) linear search
         // let avg_search_time = duration / test_keys.len() as u32;
-        // assert!(avg_search_time.as_micros() < 100, "Search too slow: {:?}", avg_search_time);
+        // assert!(avg_search_time.as_micros() < 100, "Search too slow: {avg_search_time:?}");
 
         Ok(())
     }
@@ -469,13 +469,13 @@ mod btree_performance_tests {
         // let start = Instant::now();
         // for i in 0..1000 {
         //     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        //     let path = ValidatedPath::new(&format!("/test/insert_perf_{:04}.md", i))?;
+        //     let path = ValidatedPath::new(&format!("/test/insert_perf_{i:04}.md"))?;
         //     tree_root = btree::insert_into_tree(tree_root, doc_id, path)?;
         // }
         // let duration = start.elapsed();
 
         // let avg_insert_time = duration / 1000;
-        // assert!(avg_insert_time.as_micros() < 500, "Insertion too slow: {:?}", avg_insert_time);
+        // assert!(avg_insert_time.as_micros() < 500, "Insertion too slow: {avg_insert_time:?}");
 
         Ok(())
     }

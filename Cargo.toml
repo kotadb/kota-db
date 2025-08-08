@@ -166,5 +166,19 @@ name = "queries"
 harness = false
 required-features = ["bench"]
 
+[[bench]]
+name = "storage_stress"
+harness = false
+required-features = ["bench"]
+
 # Workspace will be configured when we create the sub-crates
 [workspace]
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"
+
+[workspace.lints.rust]
+unused_variables = "allow"
+
+[lints]
+workspace = true

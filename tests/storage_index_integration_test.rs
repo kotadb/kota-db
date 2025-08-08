@@ -52,7 +52,7 @@ mod storage_index_integration_tests {
             .content(b"This tests storage and index coordination")
             .build()?;
 
-        let _doc_id = doc.id;
+        let doc_id = doc.id;
         let doc_path = doc.path.clone();
         let validated_id = doc.id;
 
@@ -88,7 +88,7 @@ mod storage_index_integration_tests {
             .content(b"This document will be deleted")
             .build()?;
 
-        let _doc_id = doc.id;
+        let doc_id = doc.id;
         let doc_path = doc.path.clone();
         let validated_id = doc.id;
 
@@ -123,7 +123,7 @@ mod storage_index_integration_tests {
             .content(b"Original content")
             .build()?;
 
-        let _doc_id = doc.id;
+        let doc_id = doc.id;
         let original_path = doc.path.clone();
         let validated_id = doc.id;
 
@@ -171,7 +171,7 @@ mod storage_index_integration_tests {
         let (mut storage, mut index, _temp_dir) = create_coordinated_storage_index().await?;
 
         let mut doc_ids = Vec::new();
-        let mut _doc_paths = Vec::new();
+        let mut doc_paths = Vec::new();
 
         // Create and insert multiple documents
         for i in 0..5 {
@@ -181,7 +181,7 @@ mod storage_index_integration_tests {
                 .content(format!("Content for document {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id;
+            let doc_id = doc.id;
             let doc_path = doc.path.clone();
             let validated_id = doc.id;
 
@@ -190,7 +190,7 @@ mod storage_index_integration_tests {
             index.insert(validated_id, doc_path.clone()).await?;
 
             doc_ids.push(validated_id);
-            _doc_paths.push(doc_path);
+            doc_paths.push(doc_path);
         }
 
         // Verify all documents in storage
@@ -233,7 +233,7 @@ mod storage_index_integration_tests {
                     .build()
                     .unwrap();
 
-                let _doc_id = doc.id;
+                let doc_id = doc.id;
                 let doc_path = doc.path.clone();
                 let validated_id = doc.id;
 
@@ -258,7 +258,7 @@ mod storage_index_integration_tests {
         }
 
         // Verify coordination worked
-        let _storage_guard = storage.lock().await;
+        let storage_guard = storage.lock().await;
         let index_guard = index.lock().await;
 
         let query = Query::new(Some("*".to_string()), None, None, 20)?;
@@ -369,7 +369,7 @@ mod storage_index_performance_integration_tests {
                 .content(format!("Performance test content {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id;
+            let doc_id = doc.id;
             let doc_path = doc.path.clone();
             let validated_id = doc.id;
 
@@ -402,7 +402,7 @@ mod storage_index_performance_integration_tests {
                 .content(format!("Search performance test content {i}").as_bytes())
                 .build()?;
 
-            let _doc_id = doc.id;
+            let doc_id = doc.id;
             let doc_path = doc.path.clone();
             let validated_id = doc.id;
 

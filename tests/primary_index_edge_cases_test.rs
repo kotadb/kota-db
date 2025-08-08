@@ -26,11 +26,11 @@ mod primary_index_edge_cases {
         let index_path = temp_dir.path().join("zero_capacity");
 
         // Should handle zero cache capacity gracefully
-        let _index = kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
+        let index = kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
 
         // Basic operations should still work
-        let _doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let _doc_path = ValidatedPath::new("/edge/zero_capacity.md")?;
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let doc_path = ValidatedPath::new("/edge/zero_capacity.md")?;
 
         // This should work even with zero cache
         // index.insert(doc_id, doc_path).await?;
@@ -190,7 +190,7 @@ mod primary_index_adversarial_tests {
                         .unwrap()
                         .build()
                         .unwrap();
-                    let _results = index_guard.search(&query).await.unwrap();
+                    let results = index_guard.search(&query).await.unwrap();
 
                     // Small delay to increase contention
                     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -233,7 +233,7 @@ mod primary_index_adversarial_tests {
                 // In real implementation, we'd check memory usage here
                 // For now, just verify index remains functional
                 let query = QueryBuilder::new().with_limit(10)?.build()?;
-                let _results = index.search(&query).await?;
+                let results = index.search(&query).await?;
             }
         }
 
@@ -302,11 +302,11 @@ mod primary_index_adversarial_tests {
         index.insert(doc_id, doc_path.clone()).await?;
 
         // Simulate recovery by creating new index instance
-        let _recovered_index = primary_index_edge_cases::create_test_index().await?;
+        let recovered_index = primary_index_edge_cases::create_test_index().await?;
 
         // Should be able to operate on recovered index
-        let _new_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let _new_doc_path = ValidatedPath::new("/adversarial/post_recovery.md")?;
+        let new_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let new_doc_path = ValidatedPath::new("/adversarial/post_recovery.md")?;
 
         // recovered_index.insert(new_doc_id, new_doc_path).await?;
 
@@ -392,7 +392,7 @@ mod primary_index_recovery_tests {
     #[tokio::test]
     async fn test_index_partial_write_recovery() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let _index_path = temp_dir.path().join("recovery_test");
+        let index_path = temp_dir.path().join("recovery_test");
 
         // This test will be implemented when we have the actual file format
         // It should test recovery from various partial write scenarios:

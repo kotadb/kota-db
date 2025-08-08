@@ -1,7 +1,5 @@
 # KotaDB - A Custom Database for Distributed Human-AI Cognition
 
-> **🤖 For AI Agents**: This is a **standalone project**. See [`AGENT.md`](AGENT.md) for essential guidelines and project status.
-
 KotaDB is a production-ready database designed specifically for distributed human-AI cognitive partnerships. It combines the best aspects of document stores, graph databases, and vector databases while maintaining human readability and git compatibility.
 
 ## 🎯 Project Status: Production Ready
@@ -20,6 +18,42 @@ KotaDB is a production-ready database designed specifically for distributed huma
 - **18 Test Suites**: Comprehensive coverage across all components ✅
 - **Production Infrastructure**: CI/CD, monitoring, containerization ready ✅
 
+## 🏎️ Performance Benchmarks
+
+Real-world benchmarks measured on Apple Silicon hardware:
+
+### Apple M2 Ultra (192GB RAM, 24 cores)
+| Operation | Size | Latency | Throughput |
+|-----------|------|---------|------------|
+| **BTree Insert** | 100 docs | 15.8 µs | **63,300 ops/sec** |
+| **BTree Insert** | 1,000 docs | 325 µs | **3,080 ops/sec** |
+| **BTree Insert** | 10,000 docs | 4.77 ms | **210 ops/sec** |
+| **BTree Search** | 100 docs | 2.08 µs | **482,000 queries/sec** |
+| **BTree Search** | 1,000 docs | 33.2 µs | **30,100 queries/sec** |
+| **BTree Search** | 10,000 docs | 546 µs | **1,830 queries/sec** |
+| **Bulk Operations** | 1,000 docs | 25.4 ms | **39,400 ops/sec** |
+| **Bulk Operations** | 5,000 docs | 23.7 ms | **211,000 ops/sec** |
+| **Mixed Workload** | realistic | 15.0 ms | **67 ops/sec** |
+
+### Apple Silicon (Standard Configuration)
+| Operation | Size | Latency | Throughput |
+|-----------|------|---------|------------|
+| **BTree Insert** | 100 docs | 15.2 µs | **65,800 ops/sec** |
+| **BTree Insert** | 1,000 docs | 277 µs | **3,600 ops/sec** |
+| **BTree Insert** | 10,000 docs | 4.74 ms | **211 ops/sec** |
+| **BTree Search** | 100 docs | 1.55 µs | **645,000 queries/sec** |
+| **BTree Search** | 1,000 docs | 29.4 µs | **34,000 queries/sec** |
+| **BTree Search** | 10,000 docs | 489 µs | **2,000 queries/sec** |
+| **Bulk Operations** | 1,000 docs | 20 ms | **50,000 ops/sec** |
+| **Mixed Workload** | realistic | 11.5 ms | **87 ops/sec** |
+
+**Key Performance Highlights:**
+- **Sub-millisecond query routing** for all search operations (546 µs for 10K docs on M2 Ultra)
+- **39,000-211,000 ops/sec** for bulk operations depending on batch size
+- **30x faster** than linear search (61ns vs 1.8µs) 
+- Maintains **O(log n) complexity** even at scale
+- Consistent performance across different hardware configurations
+
 ## Why KotaDB?
 
 Traditional databases weren't designed for the unique requirements of distributed cognition:
@@ -33,8 +67,8 @@ Traditional databases weren't designed for the unique requirements of distribute
 ## Key Features
 
 ### 🚀 Performance
-- **Sub-10ms query latency** for most operations
-- **10,000+ documents/second** write throughput
+- **Sub-millisecond query latency** for BTree searches (489 µs for 10K docs)
+- **50,000+ ops/second** for bulk operations
 - **Memory-mapped I/O** for frequently accessed data
 - **Parallel query execution** for complex operations
 

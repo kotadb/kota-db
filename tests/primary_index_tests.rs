@@ -296,7 +296,7 @@ mod primary_index_performance_tests {
         // Perform 100 searches
         for _ in 0..100 {
             let query = Query::new(Some("*".to_string()), None, None, 10)?;
-            let _results = index.search(&query).await?;
+            let results = index.search(&query).await?;
         }
 
         let duration = start.elapsed();

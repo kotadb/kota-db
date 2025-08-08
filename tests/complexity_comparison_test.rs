@@ -112,9 +112,9 @@ fn compare_insertion_performance(sizes: &[usize]) {
         println!(
             "{:9} | {:>13} | {:>14} | {:>18} | {:>12.2}x | {:>13.2}x",
             size,
-            format!("{:?}", linear_time),
-            format!("{:?}", hashmap_time),
-            format!("{:?}", btree_time),
+            format!("{linear_time:?}"),
+            format!("{hashmap_time:?}"),
+            format!("{btree_time:?}"),
             linear_ratio,
             hashmap_ratio
         );
@@ -179,9 +179,9 @@ fn compare_search_performance(sizes: &[usize]) {
             "{:9} | {:8} | {:>13} | {:>14} | {:>18} | {:>12.2}x | {:>13.2}x",
             size,
             search_count,
-            format!("{:?}", linear_time),
-            format!("{:?}", hashmap_time),
-            format!("{:?}", btree_time),
+            format!("{linear_time:?}"),
+            format!("{hashmap_time:?}"),
+            format!("{btree_time:?}"),
             linear_ratio,
             hashmap_ratio
         );
