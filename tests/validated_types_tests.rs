@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Tests for Validated Types - Stage 6
 // These tests ensure that our validated types enforce their invariants correctly
 

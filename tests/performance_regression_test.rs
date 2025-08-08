@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Performance Regression Tests - Stage 1: TDD
 // These tests ensure B+ tree operations maintain O(log n) performance
 

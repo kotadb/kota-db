@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Index Stress Tests - Enhanced benchmarks for Phase 2A scale requirements
 // Comprehensive stress testing for B+ Tree, Trigram Index, and index integration at scale
 

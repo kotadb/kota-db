@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Storage-Index Integration Tests - Stage 1: Test-Driven Development
 // These tests define how FileStorage and PrimaryIndex work together
 

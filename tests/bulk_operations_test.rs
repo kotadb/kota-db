@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Bulk Operations Tests - Stage 1: TDD for Phase 2 Optimization Infrastructure
 // Test-driven development for bulk insert/delete operations achieving 10x throughput improvement
 

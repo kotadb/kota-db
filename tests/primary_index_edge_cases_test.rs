@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Primary Index Edge Cases and Adversarial Tests - Stage 1: Test-Driven Development
 // These tests cover failure scenarios, edge cases, and adversarial conditions
 

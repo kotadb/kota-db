@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Data Integrity Integration Tests - Stage 1: TDD for Phase 3 Production Readiness
 // Tests ACID properties, data consistency, corruption detection, and data validation
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Phase 2B Concurrent Stress Testing - Advanced Multi-threaded Stress Tests
 // Beyond 100 concurrent user baseline - tests 200+ concurrent operations with advanced patterns
 
@@ -419,7 +418,7 @@ async fn test_phase2b_lock_contention_analysis() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(metrics) => all_thread_metrics.push(metrics),
-            Err(e) => eprintln!("Thread failed: {e}"),
+            Err(e) => error!("Thread failed: {e}"),
         }
     }
 
@@ -550,7 +549,7 @@ async fn test_phase2b_race_condition_detection() -> Result<()> {
                     }
                     Err(e) => {
                         modifier_results.errors += 1;
-                        eprintln!("Race operation error modifier {modifier_id}: {e}");
+                        error!("Race operation error modifier {modifier_id}: {e}");
                     }
                 }
 
@@ -571,7 +570,7 @@ async fn test_phase2b_race_condition_detection() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(results) => all_modifier_results.push(results),
-            Err(e) => eprintln!("Modifier failed: {e}"),
+            Err(e) => error!("Modifier failed: {e}"),
         }
     }
 
@@ -621,16 +620,33 @@ async fn test_phase2b_race_condition_detection() -> Result<()> {
         final_consistency * 100.0
     );
 
-    // Allow lower conflict resolution rates since the system may handle conflicts
-    // differently than expected. A 0% rate is acceptable if data consistency is maintained.
+    // Validate conflict resolution logic with enhanced diagnostics
     if analysis.conflict_resolution_rate == 0.0 {
-        info!("No explicit conflict resolution needed - system handled concurrency safely");
+        // Zero conflict resolution could indicate either excellent conflict avoidance
+        // or that conflict detection logic isn't working. Verify with error rates.
+        if all_modifier_results.iter().all(|r| r.errors == 0) {
+            info!(
+                "✅ No explicit conflict resolution needed - excellent conflict avoidance achieved"
+            );
+        } else {
+            let total_errors: usize = all_modifier_results.iter().map(|r| r.errors).sum();
+            error!(
+                "⚠️  Zero conflict resolution with {total_errors} errors detected - potential race detection issue"
+            );
+            panic!(
+                "Zero conflict resolution rate with {total_errors} errors suggests race detection logic may not be working"
+            );
+        }
     } else {
         assert!(
             analysis.conflict_resolution_rate > MIN_CONFLICT_RESOLUTION_RATE,
             "Conflict resolution rate too low: {:.2}% (minimum required: {:.1}%)",
             analysis.conflict_resolution_rate * 100.0,
             MIN_CONFLICT_RESOLUTION_RATE * 100.0
+        );
+        info!(
+            "✅ Conflict resolution operating within acceptable range: {:.2}%",
+            analysis.conflict_resolution_rate * 100.0
         );
     }
 
@@ -794,7 +810,7 @@ async fn test_phase2b_concurrent_index_operations() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(results) => all_indexer_results.push(results),
-            Err(e) => eprintln!("Indexer failed: {e}"),
+            Err(e) => error!("Indexer failed: {e}"),
         }
     }
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Observability Integration Tests - Stage 1: TDD for Phase 3 Production Readiness
 // Comprehensive tests for logging, metrics, tracing, and monitoring integration
 

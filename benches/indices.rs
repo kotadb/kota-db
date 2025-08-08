@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Index benchmarks - Stage 1: TDD Performance Benchmarks for B+ Tree
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};

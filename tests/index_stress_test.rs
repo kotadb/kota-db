@@ -1,8 +1,6 @@
 // Index Stress Tests - Comprehensive testing for Phase 2A scale requirements
 // Tests all index implementations under extreme load conditions
 
-#![allow(clippy::uninlined_format_args)]
-
 use anyhow::Result;
 use kotadb::{
     btree,
@@ -45,7 +43,7 @@ fn generate_test_documents(
         let topic = topics[i % topics.len()];
 
         // Create realistic paths that would contain the topic content
-        let path = ValidatedPath::new(format!("/{}/guide_{}_{}bytes.md", topic, i, avg_size))?;
+        let path = ValidatedPath::new(format!("/{topic}/guide_{i}_{avg_size}bytes.md"))?;
         documents.push((id, path));
     }
 
@@ -77,12 +75,12 @@ async fn test_btree_stress_50k_entries() -> Result<()> {
         tree = btree::insert_into_tree(tree, keys[i], paths[i].clone())?;
 
         if i % 10_000 == 0 {
-            println!("  📈 Inserted {}/{} entries", i, test_size);
+            println!("  📈 Inserted {i}/{test_size} entries");
         }
     }
 
     let insert_duration = insert_start.elapsed();
-    println!("✅ Inserted {} entries in {:?}", test_size, insert_duration);
+    println!("✅ Inserted {test_size} entries in {insert_duration:?}");
 
     // Test search performance
     let search_start = Instant::now();
@@ -98,10 +96,7 @@ async fn test_btree_stress_50k_entries() -> Result<()> {
     }
 
     let search_duration = search_start.elapsed();
-    println!(
-        "✅ Searched {} entries in {:?}",
-        search_sample_size, search_duration
-    );
+    println!("✅ Searched {search_sample_size} entries in {search_duration:?}");
 
     // Performance assertions
     let total_duration = start_time.elapsed();
@@ -158,7 +153,7 @@ async fn test_btree_stress_100k_entries() -> Result<()> {
     };
 
     let insert_duration = insert_start.elapsed();
-    println!("✅ Inserted {} entries in {:?}", test_size, insert_duration);
+    println!("✅ Inserted {test_size} entries in {insert_duration:?}");
 
     // Test search performance with larger sample
     let search_start = Instant::now();
@@ -175,10 +170,7 @@ async fn test_btree_stress_100k_entries() -> Result<()> {
     }
 
     let search_duration = search_start.elapsed();
-    println!(
-        "✅ Searched {} entries in {:?}",
-        search_sample_size, search_duration
-    );
+    println!("✅ Searched {search_sample_size} entries in {search_duration:?}");
 
     // Performance assertions for 100K scale
     let total_duration = start_time.elapsed();
@@ -217,15 +209,12 @@ async fn test_trigram_index_large_corpus() -> Result<()> {
         index.insert(*doc_id, doc_path.clone()).await?;
 
         if i % 5_000 == 0 {
-            println!("  📈 Indexed {}/{} documents", i, doc_count);
+            println!("  📈 Indexed {i}/{doc_count} documents");
         }
     }
 
     let insert_duration = insert_start.elapsed();
-    println!(
-        "✅ Indexed {} documents in {:?}",
-        doc_count, insert_duration
-    );
+    println!("✅ Indexed {doc_count} documents in {insert_duration:?}");
 
     // Test search performance with various query types
     let search_start = Instant::now();
@@ -310,18 +299,12 @@ async fn test_index_integration_stress() -> Result<()> {
         trigram_index.insert(*doc_id, doc_path.clone()).await?;
 
         if i % 3_000 == 0 {
-            println!(
-                "  📈 Inserted into both indices: {}/{} documents",
-                i, doc_count
-            );
+            println!("  📈 Inserted into both indices: {i}/{doc_count} documents");
         }
     }
 
     let insert_duration = insert_start.elapsed();
-    println!(
-        "✅ Inserted {} documents into both indices in {:?}",
-        doc_count, insert_duration
-    );
+    println!("✅ Inserted {doc_count} documents into both indices in {insert_duration:?}");
 
     // Test mixed query workload
     let query_start = Instant::now();
@@ -346,10 +329,7 @@ async fn test_index_integration_stress() -> Result<()> {
     }
 
     let query_duration = query_start.elapsed();
-    println!(
-        "✅ Performed {} primary + {} text queries in {:?}",
-        primary_queries, text_queries, query_duration
-    );
+    println!("✅ Performed {primary_queries} primary + {text_queries} text queries in {query_duration:?}");
 
     // Performance assertions for integrated operations
     assert!(
@@ -392,15 +372,12 @@ async fn test_index_memory_pressure() -> Result<()> {
         index.insert(*doc_id, doc_path.clone()).await?;
 
         if i % 1_000 == 0 {
-            println!("  📈 Indexed large document: {}/{}", i, doc_count);
+            println!("  📈 Indexed large document: {i}/{doc_count}");
         }
     }
 
     let insert_duration = insert_start.elapsed();
-    println!(
-        "✅ Indexed {} large documents in {:?}",
-        doc_count, insert_duration
-    );
+    println!("✅ Indexed {doc_count} large documents in {insert_duration:?}");
 
     // Test search performance under memory pressure
     let search_start = Instant::now();
@@ -462,14 +439,11 @@ async fn test_realistic_workload_simulation() -> Result<()> {
         index.insert(*doc_id, doc_path.clone()).await?;
 
         if i % 5_000 == 0 {
-            println!("  📈 Bulk loading: {}/{} documents", i, initial_docs);
+            println!("  📈 Bulk loading: {i}/{initial_docs} documents");
         }
     }
     let bulk_load_duration = bulk_load_start.elapsed();
-    println!(
-        "✅ Bulk loaded {} documents in {:?}",
-        initial_docs, bulk_load_duration
-    );
+    println!("✅ Bulk loaded {initial_docs} documents in {bulk_load_duration:?}");
 
     // Phase 2: Mixed workload simulation (70% reads, 20% inserts, 10% updates)
     let workload_start = Instant::now();
@@ -523,18 +497,12 @@ async fn test_realistic_workload_simulation() -> Result<()> {
         }
 
         if i % 500 == 0 {
-            println!(
-                "  📊 Completed {}/{} operations (R:{} I:{} U:{})",
-                i, operation_count, reads, inserts, updates
-            );
+            println!("  📊 Completed {i}/{operation_count} operations (R:{reads} I:{inserts} U:{updates})");
         }
     }
 
     let workload_duration = workload_start.elapsed();
-    println!(
-        "✅ Completed mixed workload: {} reads, {} inserts, {} updates in {:?}",
-        reads, inserts, updates, workload_duration
-    );
+    println!("✅ Completed mixed workload: {reads} reads, {inserts} inserts, {updates} updates in {workload_duration:?}");
 
     // Performance assertions for realistic workload
     assert!(
@@ -587,15 +555,12 @@ async fn test_concurrent_index_stress() -> Result<()> {
         for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
             idx.insert(*doc_id, doc_path.clone()).await?;
             if i % 2_000 == 0 {
-                println!("  📈 Populated: {}/{} documents", i, doc_count);
+                println!("  📈 Populated: {i}/{doc_count} documents");
             }
         }
     }
     let populate_duration = populate_start.elapsed();
-    println!(
-        "✅ Populated index with {} documents in {:?}",
-        doc_count, populate_duration
-    );
+    println!("✅ Populated index with {doc_count} documents in {populate_duration:?}");
 
     // Test concurrent operations
     let concurrent_start = Instant::now();

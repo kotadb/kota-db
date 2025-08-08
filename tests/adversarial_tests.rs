@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Adversarial Tests - Stage 5: Simulating Failures and Edge Cases
 // These tests exercise failure modes, race conditions, and error handling
 // to ensure the system degrades gracefully under stress

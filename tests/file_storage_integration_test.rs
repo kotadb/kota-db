@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Integration test for FileStorage implementation
 use anyhow::Result;
 use kotadb::{create_file_storage, DocumentBuilder, Storage, ValidatedTitle};

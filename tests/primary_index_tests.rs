@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Primary Index Tests - Stage 1: Test-Driven Development
 // These tests define the expected behavior before implementation
 

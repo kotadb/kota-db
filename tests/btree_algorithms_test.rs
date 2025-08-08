@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // B+ Tree Algorithms Tests - Stage 1: Test-Driven Development
 // These tests define pure function interfaces for B+ tree operations
 // Following Stage 3: Pure Function Modularization methodology

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Phase 2B Concurrent Stress Testing - Simplified Version
 // Beyond 100 concurrent user baseline - tests 200+ concurrent operations
 
@@ -475,10 +474,7 @@ async fn test_phase2b_burst_workload_patterns() -> Result<()> {
         let pattern_duration = pattern_start.elapsed();
         let pattern_throughput = total_ops as f64 / pattern_duration.as_secs_f64();
 
-        println!(
-            "    📊 {total_ops} operations in {:?} ({:.1} ops/sec)",
-            pattern_duration, pattern_throughput
-        );
+        println!("    📊 {total_ops} operations in {pattern_duration:?} ({pattern_throughput:.1} ops/sec)");
 
         // Each pattern should achieve reasonable throughput
         assert!(

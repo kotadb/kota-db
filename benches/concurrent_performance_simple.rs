@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Simplified Concurrent Performance Benchmarks - Phase 2B Benchmark Suite
 // Performance testing for concurrent operations beyond 100 user baseline
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Storage benchmarks - Enhanced with realistic stress testing
 // Use storage_stress.rs for comprehensive stress testing
 

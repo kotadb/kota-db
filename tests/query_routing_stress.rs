@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Query Routing Stress Tests - Comprehensive testing for intelligent index selection under load
 // Tests the routing logic between Primary Index and Trigram Index under heavy concurrent access
 

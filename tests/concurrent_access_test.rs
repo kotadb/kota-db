@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Concurrent Access Pattern Tests - Stage 1: TDD for Phase 2 Optimization Infrastructure
 // Test-driven development for thread-safe concurrent operations with read-write optimization
 

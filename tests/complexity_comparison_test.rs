@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Complexity Comparison Tests - Stage 1: TDD
 // Compare B+ tree O(log n) performance against O(n) baseline implementations
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Query Routing Performance Benchmarks
 // Comprehensive benchmarks for routing decision performance and index selection efficiency
 

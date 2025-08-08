@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Stress Test Data Generator
 // Generates realistic document datasets for comprehensive benchmarking
 
@@ -73,21 +72,20 @@ impl StressDocumentGenerator {
     pub fn generate_documents(&mut self) -> Result<Vec<kotadb::contracts::Document>> {
         let mut documents = Vec::with_capacity(self.config.count);
 
-        println!("🏭 Generating {} realistic documents...", self.config.count);
+        let count = self.config.count;
+        println!("🏭 Generating {count} realistic documents...");
 
         for i in 0..self.config.count {
             if i % 1000 == 0 {
-                println!("  📝 Generated {}/{} documents", i, self.config.count);
+                println!("  📝 Generated {i}/{count} documents");
             }
 
             let doc = self.generate_single_document(i)?;
             documents.push(doc);
         }
 
-        println!(
-            "✅ Generated {} documents with realistic content",
-            documents.len()
-        );
+        let len = documents.len();
+        println!("✅ Generated {len} documents with realistic content");
         Ok(documents)
     }
 
@@ -136,36 +134,22 @@ impl StressDocumentGenerator {
     }
 
     fn generate_filename(&mut self, topic: &str, index: usize) -> String {
+        let topic_slug = topic.replace(" ", "-").to_lowercase();
         let patterns = [
-            format!("{}-{:04}.md", topic.replace(" ", "-").to_lowercase(), index),
-            format!(
-                "{}-notes-{:04}.md",
-                topic.replace(" ", "-").to_lowercase(),
-                index
-            ),
-            format!(
-                "{}-guide-{:04}.md",
-                topic.replace(" ", "-").to_lowercase(),
-                index
-            ),
-            format!(
-                "{}-reference-{:04}.md",
-                topic.replace(" ", "-").to_lowercase(),
-                index
-            ),
-            format!(
-                "{}-tutorial-{:04}.md",
-                topic.replace(" ", "-").to_lowercase(),
-                index
-            ),
+            format!("{topic_slug}-{index:04}.md"),
+            format!("{topic_slug}-notes-{index:04}.md"),
+            format!("{topic_slug}-guide-{index:04}.md"),
+            format!("{topic_slug}-reference-{index:04}.md"),
+            format!("{topic_slug}-tutorial-{index:04}.md"),
         ];
 
         patterns[self.rng.gen_range(0..patterns.len())].clone()
     }
 
     fn generate_title(&mut self, topic: &str, index: usize) -> String {
+        let part = index % 10 + 1;
         let patterns = [
-            format!("{topic} - Part {}", index % 10 + 1),
+            format!("{topic} - Part {part}"),
             format!("Understanding {topic}"),
             format!("{topic} Best Practices"),
             format!("Advanced {topic} Techniques"),
@@ -200,9 +184,9 @@ impl StressDocumentGenerator {
         {
             let referenced_path =
                 &self.generated_paths[self.rng.gen_range(0..self.generated_paths.len())];
+            let doc_name = referenced_path.split('/').next_back().unwrap_or("document");
             content.push_str(&format!(
-                "\n\n## Related\n- See also: [{}]({referenced_path})",
-                referenced_path.split('/').next_back().unwrap_or("document")
+                "\n\n## Related\n- See also: [{doc_name}]({referenced_path})"
             ));
         }
 
@@ -210,15 +194,16 @@ impl StressDocumentGenerator {
     }
 
     fn generate_content_section(&mut self, topic: &DocumentTopic) -> String {
+        let topic_name = &topic.name;
         let sections = [
-            format!("## Key Concepts in {}\n\nThis section explores the fundamental principles and core ideas.", topic.name),
-            format!("### Implementation Details\n\nHere we dive into the practical aspects of working with {}.", topic.name),
-            format!("## Best Practices\n\nBased on experience, these are the recommended approaches for {}.", topic.name),
-            format!("### Common Pitfalls\n\nThese are frequent mistakes when working with {} and how to avoid them.", topic.name),
-            format!("## Examples\n\n```\n// Example code demonstrating {} concepts\nfn example() {{\n    // Implementation here\n}}\n```", topic.name),
-            format!("### Performance Considerations\n\nWhen optimizing {}, consider these performance factors.", topic.name),
-            format!("## Advanced Topics\n\nFor experts in {}, these advanced concepts provide deeper insight.", topic.name),
-            format!("### Troubleshooting\n\nCommon issues in {} and their solutions.", topic.name),
+            format!("## Key Concepts in {topic_name}\n\nThis section explores the fundamental principles and core ideas."),
+            format!("### Implementation Details\n\nHere we dive into the practical aspects of working with {topic_name}."),
+            format!("## Best Practices\n\nBased on experience, these are the recommended approaches for {topic_name}."),
+            format!("### Common Pitfalls\n\nThese are frequent mistakes when working with {topic_name} and how to avoid them."),
+            format!("## Examples\n\n```\n// Example code demonstrating {topic_name} concepts\nfn example() {{\n    // Implementation here\n}}\n```"),
+            format!("### Performance Considerations\n\nWhen optimizing {topic_name}, consider these performance factors."),
+            format!("## Advanced Topics\n\nFor experts in {topic_name}, these advanced concepts provide deeper insight."),
+            format!("### Troubleshooting\n\nCommon issues in {topic_name} and their solutions."),
         ];
 
         sections[self.rng.gen_range(0..sections.len())].clone()
@@ -352,14 +337,11 @@ pub struct GenerationStats {
 
 impl std::fmt::Display for GenerationStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Generated {} docs (~{:.1}MB total, ~{}KB avg) across {} topics (seed: {})",
-            self.total_documents,
-            self.total_size_bytes as f64 / 1_048_576.0,
-            self.avg_size_bytes / 1024,
-            self.topics_covered,
-            self.seed_used
-        )
+        let total_docs = self.total_documents;
+        let total_mb = self.total_size_bytes as f64 / 1_048_576.0;
+        let avg_kb = self.avg_size_bytes / 1024;
+        let topics = self.topics_covered;
+        let seed = self.seed_used;
+        write!(f, "Generated {total_docs} docs (~{total_mb:.1}MB total, ~{avg_kb}KB avg) across {topics} topics (seed: {seed})")
     }
 }

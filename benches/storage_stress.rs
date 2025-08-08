@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Storage Stress Test - Simplified Version for Initial Testing
 // Tests storage engine performance with realistic document loads
 
@@ -35,7 +34,7 @@ fn storage_stress_test(c: &mut Criterion) {
                 .expect("Failed to generate documents")
         });
 
-        println!("📊 Testing {} documents: {}", size, generator.get_stats());
+        println!("📊 Testing {size} documents: {}", generator.get_stats());
 
         group.bench_with_input(
             BenchmarkId::new("bulk_operations", size),

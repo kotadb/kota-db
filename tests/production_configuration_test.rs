@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Production Configuration Integration Tests - Stage 1: TDD for Phase 3 Production Readiness
 // Tests configuration management, environment setup, deployment readiness, and production settings
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // B+ Tree Performance Test - Stage 1: TDD
 // This test verifies O(log n) performance characteristics
 

@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Query benchmarks - placeholder for when query engine is implemented
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};

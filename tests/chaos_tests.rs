@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 // Chaos Testing - Stage 5: Extreme Failure Scenarios
 // These tests simulate catastrophic failures and system-wide issues
 
