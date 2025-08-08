@@ -329,7 +329,6 @@ impl SearchTools {
             .collect();
 
         let response = SearchResponse {
-        let total_count = results.len();
             results,
             total_count: results.len(),
             query_time_ms: start_time.elapsed().as_millis() as u64,
@@ -385,7 +384,6 @@ impl SearchTools {
             .collect();
 
         let response = SearchResponse {
-        let total_count = results.len();
             results,
             total_count: results.len(),
             query_time_ms: start_time.elapsed().as_millis() as u64,
