@@ -15,7 +15,9 @@ use uuid::Uuid;
 
 mod test_constants;
 use test_constants::performance::SLOW_OPERATION_THRESHOLD;
-use test_constants::quality::MIN_CONFLICT_RESOLUTION_RATE;
+
+// Minimum conflict resolution rate for valid tests
+const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
 
 /// Phase 2B - Enhanced Multi-threaded Stress Testing (200+ concurrent operations)
 #[tokio::test]
