@@ -461,7 +461,7 @@ mod tests {
 
     async fn create_real_semantic_engine() -> Result<SemanticSearchEngine> {
         // Real implementation would go here - no mocking allowed per AGENT.md
-        todo!("Implement real semantic engine")
+        anyhow::bail!("Semantic engine not yet implemented")
     }
     */
 }
