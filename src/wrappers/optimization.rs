@@ -66,38 +66,8 @@ impl Default for OptimizationConfig {
 struct CachedTreeState {
     metrics: TreeStructureMetrics,
     last_updated: Instant,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Implement operation counter for optimization decisions
     operation_count_since_update: usize,
-}
-
-/// Batch of pending operations for bulk processing
-#[derive(Debug)]
-#[allow(dead_code)]
-struct OperationBatch {
-    inserts: Vec<(ValidatedDocumentId, ValidatedPath)>,
-    deletes: Vec<ValidatedDocumentId>,
-    searches: Vec<ValidatedDocumentId>,
-    created_at: Instant,
-}
-
-#[allow(dead_code)]
-impl OperationBatch {
-    fn new() -> Self {
-        Self {
-            inserts: Vec::new(),
-            deletes: Vec::new(),
-            searches: Vec::new(),
-            created_at: Instant::now(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.inserts.is_empty() && self.deletes.is_empty() && self.searches.is_empty()
-    }
-
-    fn total_operations(&self) -> usize {
-        self.inserts.len() + self.deletes.len() + self.searches.len()
-    }
 }
 
 impl<T: Index + Send + Sync> OptimizedIndex<T> {

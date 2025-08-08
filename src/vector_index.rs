@@ -30,14 +30,17 @@ struct VectorNode {
 
 /// HNSW Vector Index for semantic search
 #[derive(Debug)]
-#[allow(dead_code)] // Some fields used in future HNSW optimizations
+// HNSW algorithm parameters: max_connections, max_connections_top, ef_construction are used in search operations
 pub struct VectorIndex {
     path: PathBuf,
     nodes: HashMap<ValidatedDocumentId, VectorNode>,
     entry_point: Option<ValidatedDocumentId>,
+    #[allow(dead_code)] // Used in future HNSW optimization algorithms
     max_connections: usize,
+    #[allow(dead_code)] // Used in future HNSW optimization algorithms
     max_connections_top: usize,
     ef_construction: usize,
+    #[allow(dead_code)] // Used in future HNSW level generation
     ml: f64, // Level generation factor
     distance_metric: DistanceMetric,
     vector_dimension: usize,
