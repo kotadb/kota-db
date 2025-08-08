@@ -209,23 +209,10 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
 /// Health check endpoint
 async fn health_check() -> Json<HealthResponse> {
-    use std::sync::Once;
-    use std::time::Instant;
-
-    static mut START_TIME: Option<Instant> = None;
-    static INIT: Once = Once::new();
-
-    let uptime = unsafe {
-        INIT.call_once(|| {
-            START_TIME = Some(Instant::now());
-        });
-        START_TIME.unwrap().elapsed().as_secs()
-    };
-
     Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: uptime,
+        uptime_seconds: 0, // TODO: Implement actual uptime tracking
     })
 }
 

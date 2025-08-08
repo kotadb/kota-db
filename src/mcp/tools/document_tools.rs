@@ -246,7 +246,7 @@ impl DocumentTools {
                 .into_iter()
                 .map(|tag| tag.as_str().to_string())
                 .collect(),
-            metadata: HashMap::new(), // Metadata support not yet implemented
+            metadata: HashMap::new(), // TODO: Add metadata support
             created_at: document.created_at,
             updated_at: document.updated_at,
         };
@@ -288,7 +288,7 @@ impl DocumentTools {
                 .map(|tag| ValidatedTag::new(&tag))
                 .collect::<Result<Vec<_>, _>>()?;
         }
-        // Metadata support not yet implemented in Document struct
+        // TODO: Add metadata support to Document struct
         // if let Some(metadata) = request.metadata {
         //     // Merge metadata instead of replacing
         //     for (key, value) in metadata {
