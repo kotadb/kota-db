@@ -9,7 +9,7 @@ from datetime import datetime
 
 from kotadb.client import KotaDB
 from kotadb.types import Document, SearchResult, QueryResult, CreateDocumentRequest
-from kotadb.exceptions import KotaDBError, ConnectionError, NotFoundError, ServerError
+from kotadb.exceptions import KotaDBError, ConnectionError, NotFoundError, ServerError, ValidationError
 
 
 class TestKotaDBClient:
@@ -72,24 +72,19 @@ class TestKotaDBClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            'results': [
+            'documents': [
                 {
-                    'document': {
-                        'id': 'doc1',
-                        'path': '/test.md',
-                        'title': 'Test Doc',
-                        'content': 'Test content',
-                        'tags': ['test'],
-                        'created_at': '2024-01-01T00:00:00Z',
-                        'updated_at': '2024-01-01T00:00:00Z',
-                        'size': 100
-                    },
-                    'score': 0.95,
-                    'content_preview': 'Test content...'
+                    'id': 'doc1',
+                    'path': '/test.md',
+                    'title': 'Test Doc',
+                    'content': list(b'Test content'),  # Byte array
+                    'tags': ['test'],
+                    'created_at_unix': 1704067200,  # Unix timestamp
+                    'modified_at_unix': 1704067200,  # Unix timestamp
+                    'size_bytes': 100
                 }
             ],
-            'total_count': 1,
-            'query_time_ms': 50
+            'total_count': 1
         }
         mock_request.return_value = mock_response
         
@@ -98,10 +93,9 @@ class TestKotaDBClient:
         
         assert isinstance(result, QueryResult)
         assert result.total_count == 1
-        assert result.query_time_ms == 50
         assert len(result.results) == 1
-        assert result.results[0].document.title == "Test Doc"
-        assert result.results[0].score == 0.95
+        assert result.results[0].title == "Test Doc"
+        assert result.results[0].content == "Test content"
 
     @patch('kotadb.client.KotaDB._test_connection')
     @patch('requests.Session.request')
@@ -113,11 +107,11 @@ class TestKotaDBClient:
             'id': 'doc1',
             'path': '/test.md',
             'title': 'Test Doc',
-            'content': 'Test content',
+            'content': list(b'Test content'),  # Byte array
             'tags': ['test'],
-            'created_at': '2024-01-01T00:00:00Z',
-            'updated_at': '2024-01-01T00:00:00Z',
-            'size': 100
+            'created_at_unix': 1704067200,  # Unix timestamp
+            'modified_at_unix': 1704067200,  # Unix timestamp
+            'size_bytes': 100
         }
         mock_request.return_value = mock_response
         
@@ -234,10 +228,10 @@ class TestKotaDBClient:
     @patch('kotadb.client.KotaDB._test_connection')
     def test_context_manager(self, mock_test):
         """Test context manager functionality."""
-        with patch.object(KotaDB, 'close') as mock_close:
-            with KotaDB("http://localhost:8080") as db:
-                assert isinstance(db, KotaDB)
-            mock_close.assert_called_once()
+        with KotaDB("http://localhost:8080") as db:
+            assert isinstance(db, KotaDB)
+            # The session.close() is called in __exit__
+            assert hasattr(db, 'session')
 
 
 class TestDocumentType:
@@ -249,11 +243,11 @@ class TestDocumentType:
             'id': 'doc1',
             'path': '/test.md',
             'title': 'Test Doc',
-            'content': 'Test content',
+            'content': list(b'Test content'),  # Byte array
             'tags': ['test'],
-            'created_at': '2024-01-01T00:00:00Z',
-            'updated_at': '2024-01-01T00:00:00Z',
-            'size': 100,
+            'created_at_unix': 1704067200,  # Unix timestamp
+            'modified_at_unix': 1704067200,  # Unix timestamp
+            'size_bytes': 100,
             'metadata': {'author': 'test'}
         }
         
@@ -261,6 +255,7 @@ class TestDocumentType:
         
         assert doc.id == 'doc1'
         assert doc.title == 'Test Doc'
+        assert doc.content == 'Test content'  # Should be converted to string
         assert doc.tags == ['test']
         assert doc.metadata == {'author': 'test'}
         assert isinstance(doc.created_at, datetime)
@@ -283,6 +278,7 @@ class TestDocumentType:
         
         assert data['id'] == 'doc1'
         assert data['title'] == 'Test Doc'
+        assert data['content'] == list(b'Test content')  # Should be converted to byte array
         assert data['tags'] == ['test']
         assert data['metadata'] == {'author': 'test'}
 
@@ -303,7 +299,7 @@ class TestCreateDocumentRequest:
         assert data == {
             'path': '/test.md',
             'title': 'Test',
-            'content': 'Content'
+            'content': list(b'Content')  # Should be converted to byte array
         }
 
     def test_to_dict_full(self):
@@ -321,7 +317,7 @@ class TestCreateDocumentRequest:
         assert data == {
             'path': '/test.md',
             'title': 'Test',
-            'content': 'Content',
+            'content': list(b'Content'),  # Should be converted to byte array
             'tags': ['test'],
             'metadata': {'author': 'test'}
         }

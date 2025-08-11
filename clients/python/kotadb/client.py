@@ -144,7 +144,7 @@ class KotaDB:
         if offset:
             params['offset'] = offset
             
-        response = self._make_request('GET', '/api/documents/search', params=params)
+        response = self._make_request('GET', '/documents/search', params=params)
         return QueryResult.from_dict(response.json())
     
     def semantic_search(self, query: str, limit: Optional[int] = None, offset: int = 0) -> QueryResult:
@@ -165,7 +165,7 @@ class KotaDB:
         if offset:
             data['offset'] = offset
             
-        response = self._make_request('POST', '/api/search/semantic', json=data)
+        response = self._make_request('POST', '/search/semantic', json=data)
         return QueryResult.from_dict(response.json())
     
     def hybrid_search(self, query: str, limit: Optional[int] = None, offset: int = 0,
@@ -191,7 +191,7 @@ class KotaDB:
         if offset:
             data['offset'] = offset
             
-        response = self._make_request('POST', '/api/search/hybrid', json=data)
+        response = self._make_request('POST', '/search/hybrid', json=data)
         return QueryResult.from_dict(response.json())
     
     def get(self, doc_id: str) -> Document:
@@ -204,7 +204,7 @@ class KotaDB:
         Returns:
             Document object
         """
-        response = self._make_request('GET', f'/api/documents/{doc_id}')
+        response = self._make_request('GET', f'/documents/{doc_id}')
         return Document.from_dict(response.json())
     
     def insert(self, document: Union[DocumentDict, CreateDocumentRequest]) -> str:
@@ -233,7 +233,7 @@ class KotaDB:
                 metadata=document.get('metadata')
             )
         
-        response = self._make_request('POST', '/api/documents', json=document.to_dict())
+        response = self._make_request('POST', '/documents', json=document.to_dict())
         result = response.json()
         return result['id']
     
@@ -248,7 +248,7 @@ class KotaDB:
         Returns:
             Updated document
         """
-        response = self._make_request('PUT', f'/api/documents/{doc_id}', json=updates)
+        response = self._make_request('PUT', f'/documents/{doc_id}', json=updates)
         return Document.from_dict(response.json())
     
     def delete(self, doc_id: str) -> bool:
@@ -261,7 +261,7 @@ class KotaDB:
         Returns:
             True if deletion was successful
         """
-        self._make_request('DELETE', f'/api/documents/{doc_id}')
+        self._make_request('DELETE', f'/documents/{doc_id}')
         return True
     
     def list_all(self, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
@@ -279,7 +279,7 @@ class KotaDB:
         if limit:
             params['limit'] = limit
             
-        response = self._make_request('GET', '/api/documents', params=params)
+        response = self._make_request('GET', '/documents', params=params)
         data = response.json()
         return [Document.from_dict(doc) for doc in data['documents']]
     
@@ -300,7 +300,7 @@ class KotaDB:
         Returns:
             Database statistics
         """
-        response = self._make_request('GET', '/api/stats')
+        response = self._make_request('GET', '/stats')
         return response.json()
     
     def __enter__(self):
