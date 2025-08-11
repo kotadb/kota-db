@@ -83,6 +83,7 @@ temp/
 
 # Documentation build
 /book/
+/site/
 
 # Python
 __pycache__/

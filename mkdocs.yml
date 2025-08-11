@@ -1,0 +1,171 @@
+site_name: KotaDB Documentation
+site_url: https://jayminwest.github.io/kota-db/
+site_description: A custom database for distributed human-AI cognition built in Rust
+site_author: KotaDB Contributors
+repo_url: https://github.com/jayminwest/kota-db
+repo_name: jayminwest/kota-db
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  favicon: assets/favicon.ico
+  icon:
+    logo: material/database
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search:
+      separator: '[\s\-\.]+'
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - meta
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/jayminwest/kota-db
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/kotadb/kotadb
+  version:
+    provider: mike
+    default: stable
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+    feedback:
+      title: Was this page helpful?
+      ratings:
+        - icon: material/emoticon-happy-outline
+          name: This page was helpful
+          data: 1
+          note: >-
+            Thanks for your feedback!
+        - icon: material/emoticon-sad-outline
+          name: This page could be improved
+          data: 0
+          note: >-
+            Thanks for your feedback! Help us improve by
+            <a href="https://github.com/jayminwest/kota-db/issues/new?title=[Docs Feedback]&labels=documentation" target="_blank" rel="noopener">filing an issue</a>.
+
+nav:
+  - Home:
+    - index.md
+    - quick-start.md
+    - installation.md
+    - contributing.md
+  
+  - Getting Started:
+    - getting-started/index.md
+  
+  - Architecture:
+    - TECHNICAL_ARCHITECTURE.md
+    - FILESTORAGE_IMPLEMENTATION.md
+    - STAGE6_COMPONENT_LIBRARY.md
+    - DATA_MODEL_SPECIFICATION.md
+    - QUERY_LANGUAGE_DESIGN.md
+  
+  - API Reference:
+    - API_REFERENCE.md
+    - API.md
+  
+  - Developer Guide:
+    - development-guides/DEV_GUIDE.md
+    - development-guides/AGENT_CONTEXT.md
+    - development-guides/CLI_USAGE.md
+    - development-guides/STANDALONE.md
+    - development-guides/MCP_INTEGRATION_PLAN.md
+    - development-guides/MIGRATION_NOTES.md
+  
+  - Planning & Reports:
+    - PLANNING_OVERVIEW.md
+    - MVP_SPECIFICATION.md
+    - IMPLEMENTATION_PLAN.md
+    - Completion Reports:
+      - completion-reports/STAGE_2_PRIMARY_INDEX_COMPLETION.md
+      - completion-reports/PHASE_2_OPTIMIZATION_COMPLETE.md
+      - completion-reports/BTREE_DELETION_COMPLETE.md
+      - completion-reports/PERFORMANCE_REPORT.md
+  
+  - Reference:
+    - QUICK_REFERENCE.md
+
+copyright: |
+  Copyright &copy; 2025 KotaDB Contributors - 
+  <a href="#__consent">Change Cookie Settings</a>

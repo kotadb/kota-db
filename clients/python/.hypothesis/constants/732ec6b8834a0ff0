@@ -1,0 +1,4 @@
+# file: /Users/jayminwest/Projects/kota-db/clients/python/kotadb/types.py
+# hypothesis_version: 6.137.1
+
+['+00:00', 'Document', 'QueryResult', 'SearchResult', 'Z', 'content', 'content_preview', 'created_at', 'created_at_unix', 'document', 'documents', 'id', 'metadata', 'modified_at', 'modified_at_unix', 'path', 'query_time_ms', 'replace', 'results', 'score', 'size', 'size_bytes', 'tags', 'title', 'total_count', 'updated_at', 'utf-8']
