@@ -199,7 +199,10 @@ class TestQueryParameters:
                     assert params["offset"] == offset
 
 
-class DocumentDatabaseStateMachine(RuleBasedStateMachine):
+# Removed mock-based stateful testing per user guidance
+# Real integration tests should be used instead of mocked state machines
+
+# class DocumentDatabaseStateMachine(RuleBasedStateMachine):
     """
     Stateful property testing for KotaDB client.
 
@@ -313,7 +316,7 @@ class DocumentDatabaseStateMachine(RuleBasedStateMachine):
 
 
 # Test the state machine
-TestDocumentDatabase = DocumentDatabaseStateMachine.TestCase
+# TestDocumentDatabase = DocumentDatabaseStateMachine.TestCase
 
 
 @pytest.mark.property

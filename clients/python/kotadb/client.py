@@ -102,7 +102,7 @@ class KotaDB:
             if response.status_code != 200:
                 raise ConnectionError(f"Health check failed with status {response.status_code}")
         except requests.RequestException as e:
-            raise ConnectionError(f"Failed to connect to KotaDB at {self.base_url}: {e}")
+            raise ConnectionError(f"Failed to connect to KotaDB at {self.base_url}: {e}") from e
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make an HTTP request with error handling."""
@@ -117,14 +117,14 @@ class KotaDB:
                 try:
                     error_data = response.json()
                     error_msg = error_data.get("error", f"HTTP {response.status_code}")
-                except:
+                except (ValueError, KeyError, AttributeError):
                     error_msg = f"HTTP {response.status_code}: {response.text}"
                 raise ServerError(error_msg, response.status_code, response.text)
 
             return response
 
         except requests.RequestException as e:
-            raise ConnectionError(f"Request failed: {e}")
+            raise ConnectionError(f"Request failed: {e}") from e
 
     def query(self, query: str, limit: Optional[int] = None, offset: int = 0) -> QueryResult:
         """
