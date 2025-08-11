@@ -135,36 +135,34 @@ nav:
     - getting-started/index.md
   
   - Architecture:
-    - TECHNICAL_ARCHITECTURE.md
-    - FILESTORAGE_IMPLEMENTATION.md
-    - STAGE6_COMPONENT_LIBRARY.md
-    - DATA_MODEL_SPECIFICATION.md
-    - QUERY_LANGUAGE_DESIGN.md
+    - architecture/technical_architecture.md
+    - architecture/filestorage_implementation.md
+    - architecture/stage6_component_library.md
+    - architecture/data_model_specification.md
+    - architecture/query_language_design.md
   
   - API Reference:
-    - API_REFERENCE.md
-    - API.md
+    - api/api_reference.md
+    - api/api.md
+    - api/quick_reference.md
   
   - Developer Guide:
-    - development-guides/DEV_GUIDE.md
-    - development-guides/AGENT_CONTEXT.md
-    - development-guides/CLI_USAGE.md
-    - development-guides/STANDALONE.md
-    - development-guides/MCP_INTEGRATION_PLAN.md
-    - development-guides/MIGRATION_NOTES.md
+    - development-guides/dev_guide.md
+    - development-guides/agent_context.md
+    - development-guides/cli_usage.md
+    - development-guides/standalone.md
+    - development-guides/mcp_integration_plan.md
+    - development-guides/migration_notes.md
   
   - Planning & Reports:
-    - PLANNING_OVERVIEW.md
-    - MVP_SPECIFICATION.md
-    - IMPLEMENTATION_PLAN.md
+    - planning/planning_overview.md
+    - planning/mvp_specification.md
+    - planning/implementation_plan.md
     - Completion Reports:
-      - completion-reports/STAGE_2_PRIMARY_INDEX_COMPLETION.md
-      - completion-reports/PHASE_2_OPTIMIZATION_COMPLETE.md
-      - completion-reports/BTREE_DELETION_COMPLETE.md
-      - completion-reports/PERFORMANCE_REPORT.md
-  
-  - Reference:
-    - QUICK_REFERENCE.md
+      - completion-reports/stage_2_primary_index_completion.md
+      - completion-reports/phase_2_optimization_complete.md
+      - completion-reports/btree_deletion_complete.md
+      - completion-reports/performance_report.md
 
 copyright: |
   Copyright &copy; 2025 KotaDB Contributors - 

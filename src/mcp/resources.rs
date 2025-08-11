@@ -113,7 +113,7 @@ impl MCPResourceHandler {
             "kotadb://docs/api".to_string(),
             "KotaDB API Documentation".to_string(),
             "Complete API documentation for KotaDB operations".to_string(),
-            include_str!("../../docs/API.md").to_string(),
+            include_str!("../../docs/api/api.md").to_string(),
         );
 
         // Configuration Schema

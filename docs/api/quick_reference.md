@@ -314,4 +314,4 @@ let query = QueryBuilder::new()
 - Concurrent access patterns validated
 - Fuzz testing for input validation
 
-This reference covers the essential Stage 6 components. For detailed documentation, see `docs/STAGE6_COMPONENT_LIBRARY.md`.
+This reference covers the essential Stage 6 components. For detailed documentation, see `docs/architecture/stage6_component_library.md`.

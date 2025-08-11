@@ -101,9 +101,9 @@ kota-db/
 ## 🎯 For New Agents: Essential Reading
 
 1. **Read `handoffs/README.md`** - Understand project history
-2. **Read `docs/STAGE6_COMPONENT_LIBRARY.md`** - Core architecture
+2. **Read `docs/architecture/stage6_component_library.md`** - Core architecture
 3. **Run `./run_standalone.sh demo`** - See components in action
-4. **Check `docs/QUICK_REFERENCE.md`** - Development patterns
+4. **Check `docs/api/quick_reference.md`** - Development patterns
 
 ## 🚨 Critical Guidelines
 
