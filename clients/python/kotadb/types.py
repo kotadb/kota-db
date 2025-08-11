@@ -2,9 +2,9 @@
 KotaDB data types and models.
 """
 
-from typing import Dict, List, Any, Optional, Union
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass

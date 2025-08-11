@@ -12,16 +12,16 @@ Example usage:
 """
 
 from .client import KotaDB
-from .types import Document, SearchResult, QueryResult
-from .exceptions import KotaDBError, ConnectionError, ValidationError
+from .exceptions import ConnectionError, KotaDBError, ValidationError
+from .types import Document, QueryResult, SearchResult
 
 __version__ = "0.1.0"
 __all__ = [
-    "KotaDB",
-    "Document",
-    "SearchResult",
-    "QueryResult",
-    "KotaDBError",
     "ConnectionError",
+    "Document",
+    "KotaDB",
+    "KotaDBError",
+    "QueryResult",
+    "SearchResult",
     "ValidationError",
 ]

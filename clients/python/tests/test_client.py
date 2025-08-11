@@ -2,20 +2,20 @@
 Tests for KotaDB Python client.
 """
 
-import pytest
-from unittest.mock import Mock, patch
-import requests
 from datetime import datetime
+from unittest.mock import Mock, patch
+
+import pytest
+import requests
 
 from kotadb.client import KotaDB
-from kotadb.types import Document, SearchResult, QueryResult, CreateDocumentRequest
 from kotadb.exceptions import (
-    KotaDBError,
     ConnectionError,
     NotFoundError,
     ServerError,
     ValidationError,
 )
+from kotadb.types import CreateDocumentRequest, Document, QueryResult
 
 
 class TestKotaDBClient:

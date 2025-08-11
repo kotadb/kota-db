@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import pytest
-from hypothesis import assume, given, settings, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
 
 from kotadb.client import KotaDB
-from kotadb.types import CreateDocumentRequest, Document
+from kotadb.types import CreateDocumentRequest
 
 
 # Custom strategies for generating test data
@@ -131,6 +132,7 @@ class TestClientURLParsing:
     def test_url_parsing_http(self, host: str, port: int) -> None:
         """Test that various HTTP URLs are parsed correctly."""
         from unittest.mock import patch
+
         from kotadb.client import KotaDB
 
         url = f"http://{host}:{port}"
@@ -151,6 +153,7 @@ class TestClientURLParsing:
     def test_url_parsing_kotadb_scheme(self, host: str, port: int, database: str) -> None:
         """Test that kotadb:// URLs are parsed correctly."""
         from unittest.mock import patch
+
         from kotadb.client import KotaDB
 
         url = f"kotadb://{host}:{port}/{database}"
@@ -172,6 +175,7 @@ class TestQueryParameters:
     def test_query_parameters_valid(self, query: str, limit: int, offset: int) -> None:
         """Test that various query parameters are handled correctly."""
         from unittest.mock import Mock, patch
+
         from kotadb.client import KotaDB
 
         with patch.object(KotaDB, "_test_connection"):
@@ -206,7 +210,7 @@ class DocumentDatabaseStateMachine(RuleBasedStateMachine):
 
     def __init__(self):
         super().__init__()
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
 
         # Mock the client to avoid network calls
         with patch("kotadb.client.KotaDB._test_connection"):
@@ -245,6 +249,7 @@ class DocumentDatabaseStateMachine(RuleBasedStateMachine):
     def get_document(self, doc_id: str) -> None:
         """Get a document by ID."""
         from unittest.mock import Mock, patch
+
         from kotadb.exceptions import NotFoundError
 
         if doc_id in self.stored_documents:

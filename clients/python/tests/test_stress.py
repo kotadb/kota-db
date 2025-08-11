@@ -10,12 +10,11 @@ import string
 import threading
 import time
 import uuid
-from typing import List, Tuple
+from typing import Tuple
 
 import pytest
 
 from kotadb import KotaDB
-from kotadb.exceptions import KotaDBError
 
 
 def generate_random_document(size_kb: int = 1) -> dict:
@@ -333,7 +332,7 @@ class TestEdgeCases:
                     # Try to update
                     updates = {
                         "title": f"Updated by thread {thread_id}",
-                        "content": list(f"Content from thread {thread_id}".encode("utf-8")),
+                        "content": list(f"Content from thread {thread_id}".encode()),
                     }
                     client.update(doc_id, updates)
                     time.sleep(0.01)
@@ -390,8 +389,9 @@ class TestEdgeCases:
     def test_network_timeout_handling(self, client: KotaDB) -> None:
         """Test handling of network timeouts."""
         # Create a client with very short timeout
-        import requests
         from unittest.mock import patch
+
+        import requests
 
         with patch.object(client.session, "request") as mock_request:
             # Simulate timeout

@@ -5,15 +5,15 @@ Main client class for interacting with KotaDB HTTP API.
 """
 
 import os
-import json
 import urllib.parse
-from typing import Dict, List, Any, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .types import Document, SearchResult, QueryResult, CreateDocumentRequest, DocumentDict
-from .exceptions import KotaDBError, ConnectionError, ValidationError, NotFoundError, ServerError
+from .exceptions import ConnectionError, NotFoundError, ServerError, ValidationError
+from .types import CreateDocumentRequest, Document, DocumentDict, QueryResult
 
 
 class KotaDB:

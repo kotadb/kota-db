@@ -4,7 +4,6 @@ Integration tests for KotaDB Python client against a real server.
 These tests require a running KotaDB server on localhost:8080.
 """
 
-import os
 import time
 import uuid
 from typing import Generator
@@ -14,7 +13,7 @@ import requests
 
 from kotadb import KotaDB
 from kotadb.exceptions import NotFoundError
-from kotadb.types import CreateDocumentRequest, Document
+from kotadb.types import Document
 
 
 def server_is_running(url: str = "http://localhost:8080") -> bool:
@@ -135,7 +134,7 @@ class TestDocumentCRUD:
         # Update it
         updates = {
             "title": "Updated Title",
-            "content": list("Updated content".encode("utf-8")),
+            "content": list(b"Updated content"),
             "tags": ["updated", "modified"],
         }
         updated_doc = client.update(doc_id, updates)

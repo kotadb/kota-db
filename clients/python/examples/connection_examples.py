@@ -7,6 +7,7 @@ including environment variables and connection strings.
 """
 
 import os
+
 from kotadb import KotaDB, connect
 from kotadb.exceptions import ConnectionError
 
@@ -26,10 +27,10 @@ def example_direct_url():
 def example_environment_variable():
     """Connect using environment variable."""
     print("\n🔗 Example 2: Environment Variable")
-    
+
     # Set environment variable
-    os.environ['KOTADB_URL'] = 'http://localhost:8080'
-    
+    os.environ["KOTADB_URL"] = "http://localhost:8080"
+
     try:
         db = KotaDB()  # Uses KOTADB_URL automatically
         health = db.health()
@@ -82,7 +83,7 @@ def example_custom_configuration():
         db = KotaDB(
             url="http://localhost:8080",
             timeout=60,  # 60 second timeout
-            retries=5    # 5 retry attempts
+            retries=5,  # 5 retry attempts
         )
         health = db.health()
         print(f"  ✅ Connected with custom config: {health.get('status')}")
@@ -94,7 +95,7 @@ def example_custom_configuration():
 def example_multiple_connections():
     """Demonstrate multiple simultaneous connections."""
     print("\n🔗 Example 7: Multiple Connections")
-    
+
     connections = []
     try:
         # Create multiple connections
@@ -103,12 +104,12 @@ def example_multiple_connections():
             health = db.health()
             print(f"  ✅ Connection {i+1}: {health.get('status')}")
             connections.append(db)
-        
+
         # Use connections
         for i, db in enumerate(connections):
             stats = db.stats()
             print(f"  📊 Connection {i+1} stats: {stats.get('document_count', 'unknown')} docs")
-            
+
     except ConnectionError as e:
         print(f"  ❌ Connection failed: {e}")
     finally:
@@ -121,7 +122,7 @@ def main():
     """Run all connection examples."""
     print("KotaDB Python Client - Connection Examples")
     print("=" * 50)
-    
+
     example_direct_url()
     example_environment_variable()
     example_connection_string()
@@ -129,7 +130,7 @@ def main():
     example_convenience_function()
     example_custom_configuration()
     example_multiple_connections()
-    
+
     print("\n✅ All connection examples completed!")
     print("\nNote: These examples require KotaDB server running on localhost:8080")
 

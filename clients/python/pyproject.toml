@@ -143,6 +143,8 @@ markers = [
     "integration: Integration tests",
     "slow: Slow tests",
     "benchmark: Performance benchmark tests",
+    "property: Property-based tests using Hypothesis",
+    "stress: Stress tests that push limits",
 ]
 
 [tool.coverage.run]

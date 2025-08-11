@@ -228,7 +228,7 @@ class TestUpdatePerformance:
         """Benchmark single document update."""
         updates = {
             "title": f"Updated at {time.time()}",
-            "content": list("Updated content".encode("utf-8")),
+            "content": list(b"Updated content"),
             "tags": ["updated", "benchmark"],
         }
 
@@ -246,7 +246,7 @@ class TestUpdatePerformance:
 
         def rapid_update():
             for i in range(10):
-                updates = {"title": f"Update {i}", "content": list(f"Content {i}".encode("utf-8"))}
+                updates = {"title": f"Update {i}", "content": list(f"Content {i}".encode())}
                 client.update(doc_id, updates)
 
         benchmark(rapid_update)
@@ -356,6 +356,7 @@ class TestMemoryUsage:
 def client() -> Any:
     """Create a client for benchmarking."""
     import requests
+
     from kotadb import KotaDB
 
     # Check if server is running
