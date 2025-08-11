@@ -68,14 +68,18 @@ def demo_connection_management(db_url="http://localhost:8080"):
     # Context manager (auto-closes connection)
     print("\n2. Context manager pattern:")
     with KotaDB(db_url) as db:
-        stats = db.stats()
-        print(f"   Documents in database: {stats.get('document_count', 0)}")
-        print(f"   Total size: {stats.get('total_size', 0)} bytes")
+        try:
+            stats = db.stats()
+            print(f"   Documents in database: {stats.get('document_count', 0)}")
+            print(f"   Total size: {stats.get('total_size', 0)} bytes")
+        except (NotFoundError, KotaDBError):
+            # Stats endpoint might not be implemented
+            print("   Stats endpoint not available (optional feature)")
     
     # Connection with custom timeout
     print("\n3. Custom timeout configuration:")
-    db = KotaDB(db_url, timeout=10, retries=3)
-    print(f"   Configured with {db.timeout}s timeout and {db.retries} retries")
+    db = KotaDB(db_url, timeout=10)
+    print(f"   Configured with custom timeout settings")
     
     return db
 
@@ -192,12 +196,15 @@ def get_db_connection(host, database, user, password):
         print(f"   Updated meeting notes with completion status")
         print(f"   New tags: {', '.join(updated_doc.tags)}")
         
-        # List all documents
+        # List all documents (if endpoint is available)
         print("\n4. Listing all documents:")
-        all_docs = db.list_all(limit=10)
-        print(f"   Found {len(all_docs)} documents:")
-        for doc in all_docs[:5]:  # Show first 5
-            print(f"   - {doc.path}: {doc.title}")
+        try:
+            all_docs = db.list_all(limit=10)
+            print(f"   Found {len(all_docs)} documents:")
+            for doc in all_docs[:5]:  # Show first 5
+                print(f"   - {doc.path}: {doc.title}")
+        except (NotFoundError, KotaDBError):
+            print("   List endpoint not available (optional feature)")
         
     except KotaDBError as e:
         print(f"   Error during document operations: {e}")
@@ -215,24 +222,24 @@ def demo_search_operations(db):
         results = db.query("python", limit=5)
         print(f"   Found {results.total_count} results in {results.query_time_ms}ms")
         for i, result in enumerate(results.results[:3], 1):
-            print(f"   {i}. {result.document.title} (score: {result.score:.3f})")
-            print(f"      Preview: {result.content_preview[:80]}...")
+            print(f"   {i}. {result.title}")
+            # Score and preview not available in current API
         
         # Search with specific terms
         print("\n2. Search for 'planning meeting':")
         results = db.query("planning meeting", limit=5)
         print(f"   Found {results.total_count} results")
         for result in results.results:
-            print(f"   - {result.document.title}")
-            if result.document.tags:
-                print(f"     Tags: {', '.join(result.document.tags)}")
+            print(f"   - {result.title}")
+            if result.tags:
+                print(f"     Tags: {', '.join(result.tags)}")
         
         # Pattern-based search
         print("\n3. Search for code patterns:")
         results = db.query("database connection", limit=5)
         print(f"   Found {results.total_count} code-related results")
         for result in results.results:
-            print(f"   - {result.document.path}: {result.document.title}")
+            print(f"   - {result.path}: {result.title}")
         
     except KotaDBError as e:
         print(f"   Error during search: {e}")
@@ -261,12 +268,15 @@ def demo_bulk_operations(db, doc_ids):
         print(f"   Created 5 documents in {elapsed:.3f} seconds")
         print(f"   Average: {elapsed/5:.3f} seconds per document")
         
-        # Bulk retrieval with pagination
+        # Bulk retrieval with pagination (if available)
         print("\n2. Paginated retrieval:")
-        page1 = db.list_all(limit=3, offset=0)
-        page2 = db.list_all(limit=3, offset=3)
-        print(f"   Page 1: {len(page1)} documents")
-        print(f"   Page 2: {len(page2)} documents")
+        try:
+            page1 = db.list_all(limit=3, offset=0)
+            page2 = db.list_all(limit=3, offset=3)
+            print(f"   Page 1: {len(page1)} documents")
+            print(f"   Page 2: {len(page2)} documents")
+        except (NotFoundError, KotaDBError):
+            print("   Pagination endpoint not available (optional feature)")
         
         # Cleanup bulk documents
         print("\n3. Bulk deletion:")
@@ -289,9 +299,9 @@ def demo_error_handling(db):
     
     print("\n1. Handling not found errors:")
     try:
-        doc = db.get("non-existent-id-12345")
-    except NotFoundError as e:
-        print(f"   ✓ Correctly caught NotFoundError: {e}")
+        doc = db.get("00000000-0000-0000-0000-000000000000")  # Valid UUID format but doesn't exist
+    except (NotFoundError, KotaDBError) as e:
+        print(f"   ✓ Correctly caught error: {type(e).__name__}")
     
     print("\n2. Handling invalid document creation:")
     try:

@@ -248,6 +248,14 @@ class KotaDB:
         Returns:
             Updated document
         """
+        # Convert content to byte array if present
+        if "content" in updates:
+            content = updates["content"]
+            if isinstance(content, str):
+                updates["content"] = list(content.encode("utf-8"))
+            elif isinstance(content, bytes):
+                updates["content"] = list(content)
+        
         response = self._make_request("PUT", f"/documents/{doc_id}", json=updates)
         return Document.from_dict(response.json())
 
