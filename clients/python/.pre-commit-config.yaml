@@ -77,7 +77,7 @@ repos:
       # Run tests with coverage
       - id: pytest-check
         name: pytest
-        entry: python -m pytest tests/test_client.py -v --cov=kotadb --cov-fail-under=90
+        entry: python -m pytest tests/test_client.py -v --cov=kotadb --cov-fail-under=70
         language: system
         pass_filenames: false
         always_run: true

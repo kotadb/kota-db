@@ -198,11 +198,10 @@ class TestQueryParameters:
                 if offset:
                     assert params["offset"] == offset
 
+    # Removed mock-based stateful testing per user guidance
+    # Real integration tests should be used instead of mocked state machines
 
-# Removed mock-based stateful testing per user guidance
-# Real integration tests should be used instead of mocked state machines
-
-# class DocumentDatabaseStateMachine(RuleBasedStateMachine):
+    # class DocumentDatabaseStateMachine(RuleBasedStateMachine):
     """
     Stateful property testing for KotaDB client.
 
@@ -313,8 +312,6 @@ class TestQueryParameters:
         """Invariant: all document IDs should be unique."""
         ids = list(self.stored_documents.keys())
         assert len(ids) == len(set(ids))
-
-
 
 
 @pytest.mark.property

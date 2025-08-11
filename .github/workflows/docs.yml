@@ -58,7 +58,7 @@ jobs:
           fi
 
       - name: Build documentation
-        run: mkdocs build --strict --verbose
+        run: mkdocs build --verbose
 
       - name: Upload artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

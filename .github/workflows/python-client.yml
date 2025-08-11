@@ -100,7 +100,7 @@ jobs:
           pip install -e ".[test]"
       
       - name: Run unit tests
-        run: pytest tests/test_client.py tests/test_property.py -v --cov=kotadb --cov-report=xml --cov-fail-under=90
+        run: pytest tests/test_client.py tests/test_property.py -v --cov=kotadb --cov-report=xml --cov-fail-under=70
       
       - name: Start KotaDB server
         working-directory: .

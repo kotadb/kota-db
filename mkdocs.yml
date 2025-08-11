@@ -133,63 +133,38 @@ nav:
   
   - Getting Started:
     - getting-started/index.md
-    - getting-started/installation.md
-    - getting-started/configuration.md
-    - getting-started/first-database.md
-    - getting-started/basic-operations.md
   
   - Architecture:
-    - architecture/index.md
-    - architecture/overview.md
-    - architecture/storage-engine.md
-    - architecture/index-systems.md
-    - architecture/query-engine.md
-    - architecture/component-library.md
-    - architecture/risk-reduction.md
+    - TECHNICAL_ARCHITECTURE.md
+    - FILESTORAGE_IMPLEMENTATION.md
+    - STAGE6_COMPONENT_LIBRARY.md
+    - DATA_MODEL_SPECIFICATION.md
+    - QUERY_LANGUAGE_DESIGN.md
   
   - API Reference:
-    - api/index.md
-    - api/rust-api.md
-    - api/http-api.md
-    - api/mcp-server.md
-    - Client Libraries:
-      - api/clients/python.md
-      - api/clients/typescript.md
-      - api/clients/rust.md
+    - API_REFERENCE.md
+    - API.md
   
   - Developer Guide:
-    - developer/index.md
-    - developer/building.md
-    - developer/testing.md
-    - developer/debugging.md
-    - developer/performance.md
-    - developer/contributing.md
-    - developer/agent-guide.md
+    - development-guides/DEV_GUIDE.md
+    - development-guides/AGENT_CONTEXT.md
+    - development-guides/CLI_USAGE.md
+    - development-guides/STANDALONE.md
+    - development-guides/MCP_INTEGRATION_PLAN.md
+    - development-guides/MIGRATION_NOTES.md
   
-  - Operations:
-    - operations/index.md
-    - operations/deployment.md
-    - operations/monitoring.md
-    - operations/backup-restore.md
-    - operations/scaling.md
-    - operations/troubleshooting.md
-  
-  - Advanced Topics:
-    - advanced/index.md
-    - advanced/custom-indices.md
-    - advanced/vector-search.md
-    - advanced/distributed-mode.md
-    - advanced/security.md
-    - advanced/performance-tuning.md
+  - Planning & Reports:
+    - PLANNING_OVERVIEW.md
+    - MVP_SPECIFICATION.md
+    - IMPLEMENTATION_PLAN.md
+    - Completion Reports:
+      - completion-reports/STAGE_2_PRIMARY_INDEX_COMPLETION.md
+      - completion-reports/PHASE_2_OPTIMIZATION_COMPLETE.md
+      - completion-reports/BTREE_DELETION_COMPLETE.md
+      - completion-reports/PERFORMANCE_REPORT.md
   
   - Reference:
-    - reference/index.md
-    - reference/configuration.md
-    - reference/cli.md
-    - reference/environment-variables.md
-    - reference/error-codes.md
-    - reference/glossary.md
-    - reference/changelog.md
+    - QUICK_REFERENCE.md
 
 copyright: |
   Copyright &copy; 2025 KotaDB Contributors - 
