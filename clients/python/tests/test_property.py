@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
+from hypothesis.stateful import Bundle, rule
 
 from kotadb.client import KotaDB
 from kotadb.types import CreateDocumentRequest
@@ -315,8 +315,6 @@ class TestQueryParameters:
         assert len(ids) == len(set(ids))
 
 
-# Test the state machine
-# TestDocumentDatabase = DocumentDatabaseStateMachine.TestCase
 
 
 @pytest.mark.property
