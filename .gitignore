@@ -10,6 +10,9 @@
 *.swp
 *.swo
 *~
+*.backup
+*.bak
+*.orig
 
 # OS
 .DS_Store
@@ -36,6 +39,16 @@ coverage/
 
 # nyc test coverage
 .nyc_output
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+*.egg
 
 # Dependency directories
 node_modules/
