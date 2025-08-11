@@ -44,6 +44,7 @@ smallvec = "1.13"
 smallstr = "0.3"
 dashmap = "6.0"
 indexmap = "2.5"
+parking_lot = "0.12"  # High-performance RwLock replacement
 
 # Compression
 zstd = "0.13"

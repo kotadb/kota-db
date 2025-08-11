@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::contracts::{Document, Storage};
@@ -29,7 +29,7 @@ pub struct FileStorage {
     /// In-memory document metadata for fast lookups
     documents: RwLock<HashMap<Uuid, DocumentMetadata>>,
     /// Write-ahead log for crash recovery
-    wal_writer: RwLock<Option<tokio::fs::File>>,
+    wal_writer: Mutex<Option<tokio::fs::File>>,
 }
 
 /// Metadata for documents stored in memory for fast access
@@ -75,7 +75,7 @@ impl FileStorage {
             .await
             .with_context(|| format!("Failed to open WAL file: {}", wal_path.display()))?;
 
-        *self.wal_writer.write().await = Some(wal_file);
+        *self.wal_writer.lock().await = Some(wal_file);
         Ok(())
     }
 
@@ -91,20 +91,32 @@ impl FileStorage {
             format!("Failed to read documents directory: {}", docs_dir.display())
         })?;
 
-        let mut documents = self.documents.write().await;
-
+        // Collect all metadata files first, then process them
+        let mut metadata_files = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
             // Only process .json metadata files
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                metadata_files.push(path);
             }
+        }
 
+        // Process metadata files and collect results
+        let mut metadata_list = Vec::new();
+        for path in metadata_files {
             if let Ok(content) = fs::read_to_string(&path).await {
                 if let Ok(metadata) = serde_json::from_str::<DocumentMetadata>(&content) {
-                    documents.insert(metadata.id, metadata);
+                    metadata_list.push(metadata);
                 }
+            }
+        }
+
+        // Now acquire the lock and insert all metadata at once
+        {
+            let mut documents = self.documents.write().await;
+            for metadata in metadata_list {
+                documents.insert(metadata.id, metadata);
             }
         }
 
@@ -187,7 +199,7 @@ impl Storage for FileStorage {
         let storage = Self {
             db_path,
             documents: RwLock::new(HashMap::new()),
-            wal_writer: RwLock::new(None),
+            wal_writer: Mutex::new(None),
         };
 
         // Ensure directory structure exists
@@ -290,10 +302,13 @@ impl Storage for FileStorage {
     }
 
     async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>> {
-        let documents = self.documents.read().await;
+        let metadata = {
+            let documents = self.documents.read().await;
+            documents.get(&id.as_uuid()).cloned()
+        };
 
-        if let Some(metadata) = documents.get(&id.as_uuid()) {
-            let document = self.metadata_to_document(metadata).await?;
+        if let Some(metadata) = metadata {
+            let document = self.metadata_to_document(&metadata).await?;
             Ok(Some(document))
         } else {
             Ok(None)
@@ -376,7 +391,7 @@ impl Storage for FileStorage {
         // For this simple implementation, we sync by ensuring all files are written
         // In a more sophisticated implementation, this would flush WAL buffers
 
-        if let Some(wal_file) = self.wal_writer.write().await.as_mut() {
+        if let Some(wal_file) = self.wal_writer.lock().await.as_mut() {
             wal_file
                 .sync_all()
                 .await
@@ -387,12 +402,17 @@ impl Storage for FileStorage {
     }
 
     async fn list_all(&self) -> Result<Vec<Document>> {
-        let documents = self.documents.read().await;
-        let mut result = Vec::with_capacity(documents.len());
+        // Clone metadata to avoid holding the lock across async calls
+        let metadata_list = {
+            let documents = self.documents.read().await;
+            documents.values().cloned().collect::<Vec<_>>()
+        };
+
+        let mut result = Vec::with_capacity(metadata_list.len());
 
         // Convert each metadata entry to a full document
-        for metadata in documents.values() {
-            if let Ok(doc) = self.metadata_to_document(metadata).await {
+        for metadata in metadata_list {
+            if let Ok(doc) = self.metadata_to_document(&metadata).await {
                 result.push(doc);
             }
         }
@@ -406,9 +426,13 @@ impl Storage for FileStorage {
         self.sync().await?;
 
         // Additionally, we could force metadata updates
-        let documents = self.documents.read().await;
-        for metadata in documents.values() {
-            self.save_metadata(metadata).await?;
+        let metadata_list = {
+            let documents = self.documents.read().await;
+            documents.values().cloned().collect::<Vec<_>>()
+        };
+
+        for metadata in metadata_list {
+            self.save_metadata(&metadata).await?;
         }
 
         Ok(())

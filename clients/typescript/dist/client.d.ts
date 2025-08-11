@@ -46,6 +46,7 @@ export declare class KotaDB {
      * Search documents using text query.
      */
     query(query: string, options?: SearchOptions): Promise<QueryResult>;
+    private getContentPreview;
     /**
      * Perform semantic search using embeddings.
      */
@@ -54,6 +55,7 @@ export declare class KotaDB {
      * Perform hybrid search combining text and semantic search.
      */
     hybridSearch(query: string, options?: HybridSearchOptions): Promise<QueryResult>;
+    private convertContentToString;
     /**
      * Get a document by ID.
      */

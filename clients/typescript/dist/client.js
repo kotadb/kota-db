@@ -119,8 +119,23 @@ class KotaDB {
             params.limit = options.limit;
         if (options.offset)
             params.offset = options.offset;
-        const response = await this.client.get('/api/documents/search', { params });
-        return response.data;
+        const response = await this.client.get('/documents/search', { params });
+        // Transform server response to expected format
+        return {
+            results: response.data.documents.map(doc => ({
+                document: this.convertContentToString(doc),
+                score: 1.0, // Server doesn't provide scores yet
+                content_preview: this.getContentPreview(doc)
+            })),
+            total_count: response.data.total_count,
+            query_time_ms: 0 // Server doesn't provide query time yet
+        };
+    }
+    getContentPreview(doc) {
+        const content = Array.isArray(doc.content)
+            ? new TextDecoder().decode(new Uint8Array(doc.content))
+            : doc.content;
+        return content.substring(0, 200) + (content.length > 200 ? '...' : '');
     }
     /**
      * Perform semantic search using embeddings.
@@ -133,7 +148,7 @@ class KotaDB {
             data.offset = options.offset;
         if (options.model)
             data.model = options.model;
-        const response = await this.client.post('/api/search/semantic', data);
+        const response = await this.client.post('/search/semantic', data);
         return response.data;
     }
     /**
@@ -148,15 +163,25 @@ class KotaDB {
             data.limit = options.limit;
         if (options.offset)
             data.offset = options.offset;
-        const response = await this.client.post('/api/search/hybrid', data);
+        const response = await this.client.post('/search/hybrid', data);
         return response.data;
+    }
+    convertContentToString(doc) {
+        // Convert byte array content back to string for better UX
+        if (Array.isArray(doc.content)) {
+            return {
+                ...doc,
+                content: new TextDecoder().decode(new Uint8Array(doc.content))
+            };
+        }
+        return doc;
     }
     /**
      * Get a document by ID.
      */
     async get(docId) {
-        const response = await this.client.get(`/api/documents/${docId}`);
-        return response.data;
+        const response = await this.client.get(`/documents/${docId}`);
+        return this.convertContentToString(response.data);
     }
     /**
      * Insert a new document.
@@ -169,21 +194,31 @@ class KotaDB {
                 throw new types_1.ValidationError(`Required field '${field}' missing`);
             }
         }
-        const response = await this.client.post('/api/documents', document);
+        // Convert content to byte array if it's a string
+        const processedDocument = { ...document };
+        if (typeof processedDocument.content === 'string') {
+            processedDocument.content = Array.from(new TextEncoder().encode(processedDocument.content));
+        }
+        const response = await this.client.post('/documents', processedDocument);
         return response.data.id;
     }
     /**
      * Update an existing document.
      */
     async update(docId, updates) {
-        const response = await this.client.put(`/api/documents/${docId}`, updates);
-        return response.data;
+        // Convert content to byte array if it's a string
+        const processedUpdates = { ...updates };
+        if ('content' in processedUpdates && typeof processedUpdates.content === 'string') {
+            processedUpdates.content = Array.from(new TextEncoder().encode(processedUpdates.content));
+        }
+        const response = await this.client.put(`/documents/${docId}`, processedUpdates);
+        return this.convertContentToString(response.data);
     }
     /**
      * Delete a document.
      */
     async delete(docId) {
-        await this.client.delete(`/api/documents/${docId}`);
+        await this.client.delete(`/documents/${docId}`);
         return true;
     }
     /**
@@ -195,8 +230,8 @@ class KotaDB {
             params.limit = options.limit;
         if (options.offset)
             params.offset = options.offset;
-        const response = await this.client.get('/api/documents', { params });
-        return response.data.documents;
+        const response = await this.client.get('/documents', { params });
+        return response.data.documents.map(doc => this.convertContentToString(doc));
     }
     /**
      * Check database health status.
@@ -209,7 +244,7 @@ class KotaDB {
      * Get database statistics.
      */
     async stats() {
-        const response = await this.client.get('/api/stats');
+        const response = await this.client.get('/stats');
         return response.data;
     }
 }

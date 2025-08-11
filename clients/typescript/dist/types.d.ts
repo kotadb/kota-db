@@ -5,11 +5,13 @@ export interface Document {
     id: string;
     path: string;
     title: string;
-    content: string;
+    content: number[] | string;
+    content_hash?: string;
+    size_bytes?: number;
     tags: string[];
-    created_at: string;
-    updated_at: string;
-    size: number;
+    created_at: number;
+    modified_at?: number;
+    word_count?: number;
     metadata?: Record<string, any>;
 }
 export interface SearchResult {
@@ -25,14 +27,14 @@ export interface QueryResult {
 export interface CreateDocumentRequest {
     path: string;
     title: string;
-    content: string;
+    content: string | number[];
     tags?: string[];
     metadata?: Record<string, any>;
 }
 export interface UpdateDocumentRequest {
     path?: string;
     title?: string;
-    content?: string;
+    content?: string | number[];
     tags?: string[];
     metadata?: Record<string, any>;
 }

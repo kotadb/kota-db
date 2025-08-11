@@ -6,11 +6,13 @@ export interface Document {
   id: string;
   path: string;
   title: string;
-  content: string;
+  content: number[] | string; // Server returns byte array, but we can also accept string
+  content_hash?: string;
+  size_bytes?: number;
   tags: string[];
-  created_at: string;
-  updated_at: string;
-  size: number;
+  created_at: number; // Unix timestamp
+  modified_at?: number; // Unix timestamp  
+  word_count?: number;
   metadata?: Record<string, any>;
 }
 
@@ -29,7 +31,7 @@ export interface QueryResult {
 export interface CreateDocumentRequest {
   path: string;
   title: string;
-  content: string;
+  content: string | number[]; // Accept string or byte array
   tags?: string[];
   metadata?: Record<string, any>;
 }
@@ -37,7 +39,7 @@ export interface CreateDocumentRequest {
 export interface UpdateDocumentRequest {
   path?: string;
   title?: string;
-  content?: string;
+  content?: string | number[]; // Accept string or byte array
   tags?: string[];
   metadata?: Record<string, any>;
 }

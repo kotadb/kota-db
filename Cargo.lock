@@ -1603,6 +1603,7 @@ dependencies = [
  "mime",
  "notify",
  "num_cpus",
+ "parking_lot 0.12.4",
  "pretty_assertions",
  "proptest",
  "rand 0.8.5",

@@ -149,8 +149,25 @@ export class KotaDB {
     if (options.limit) params.limit = options.limit;
     if (options.offset) params.offset = options.offset;
 
-    const response = await this.client.get<QueryResult>('/api/documents/search', { params });
-    return response.data;
+    const response = await this.client.get<{documents: Document[], total_count: number}>('/documents/search', { params });
+    
+    // Transform server response to expected format
+    return {
+      results: response.data.documents.map(doc => ({
+        document: this.convertContentToString(doc),
+        score: 1.0, // Server doesn't provide scores yet
+        content_preview: this.getContentPreview(doc)
+      })),
+      total_count: response.data.total_count,
+      query_time_ms: 0 // Server doesn't provide query time yet
+    };
+  }
+
+  private getContentPreview(doc: Document): string {
+    const content = Array.isArray(doc.content) 
+      ? new TextDecoder().decode(new Uint8Array(doc.content))
+      : doc.content;
+    return content.substring(0, 200) + (content.length > 200 ? '...' : '');
   }
 
   /**
@@ -162,7 +179,7 @@ export class KotaDB {
     if (options.offset) data.offset = options.offset;
     if (options.model) data.model = options.model;
 
-    const response = await this.client.post<QueryResult>('/api/search/semantic', data);
+    const response = await this.client.post<QueryResult>('/search/semantic', data);
     return response.data;
   }
 
@@ -177,16 +194,27 @@ export class KotaDB {
     if (options.limit) data.limit = options.limit;
     if (options.offset) data.offset = options.offset;
 
-    const response = await this.client.post<QueryResult>('/api/search/hybrid', data);
+    const response = await this.client.post<QueryResult>('/search/hybrid', data);
     return response.data;
+  }
+
+  private convertContentToString(doc: Document): Document {
+    // Convert byte array content back to string for better UX
+    if (Array.isArray(doc.content)) {
+      return {
+        ...doc,
+        content: new TextDecoder().decode(new Uint8Array(doc.content))
+      };
+    }
+    return doc;
   }
 
   /**
    * Get a document by ID.
    */
   async get(docId: string): Promise<Document> {
-    const response = await this.client.get<Document>(`/api/documents/${docId}`);
-    return response.data;
+    const response = await this.client.get<Document>(`/documents/${docId}`);
+    return this.convertContentToString(response.data);
   }
 
   /**
@@ -201,7 +229,13 @@ export class KotaDB {
       }
     }
 
-    const response = await this.client.post<{ id: string }>('/api/documents', document);
+    // Convert content to byte array if it's a string
+    const processedDocument = { ...document };
+    if (typeof processedDocument.content === 'string') {
+      processedDocument.content = Array.from(new TextEncoder().encode(processedDocument.content));
+    }
+
+    const response = await this.client.post<{ id: string }>('/documents', processedDocument);
     return response.data.id;
   }
 
@@ -209,15 +243,21 @@ export class KotaDB {
    * Update an existing document.
    */
   async update(docId: string, updates: DocumentUpdate): Promise<Document> {
-    const response = await this.client.put<Document>(`/api/documents/${docId}`, updates);
-    return response.data;
+    // Convert content to byte array if it's a string
+    const processedUpdates = { ...updates };
+    if ('content' in processedUpdates && typeof processedUpdates.content === 'string') {
+      processedUpdates.content = Array.from(new TextEncoder().encode(processedUpdates.content));
+    }
+
+    const response = await this.client.put<Document>(`/documents/${docId}`, processedUpdates);
+    return this.convertContentToString(response.data);
   }
 
   /**
    * Delete a document.
    */
   async delete(docId: string): Promise<boolean> {
-    await this.client.delete(`/api/documents/${docId}`);
+    await this.client.delete(`/documents/${docId}`);
     return true;
   }
 
@@ -229,8 +269,8 @@ export class KotaDB {
     if (options.limit) params.limit = options.limit;
     if (options.offset) params.offset = options.offset;
 
-    const response = await this.client.get<{ documents: Document[] }>('/api/documents', { params });
-    return response.data.documents;
+    const response = await this.client.get<{ documents: Document[] }>('/documents', { params });
+    return response.data.documents.map(doc => this.convertContentToString(doc));
   }
 
   /**
@@ -245,7 +285,7 @@ export class KotaDB {
    * Get database statistics.
    */
   async stats(): Promise<DatabaseStats> {
-    const response = await this.client.get<DatabaseStats>('/api/stats');
+    const response = await this.client.get<DatabaseStats>('/stats');
     return response.data;
   }
 }
