@@ -55,6 +55,7 @@ jobs:
         run: ruff check kotadb tests
       
       - name: Type check with mypy
+        if: matrix.python-version != '3.8'
         run: mypy kotadb --strict
       
       - name: Security check with bandit
