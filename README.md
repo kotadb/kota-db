@@ -3,7 +3,6 @@
 **A custom database for distributed human-AI cognition, built entirely by LLM agents.**
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/jayminwest/kota-db/ci.yml?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
