@@ -1,5 +1,5 @@
 # Multi-stage build for optimal size
-FROM rust:1.82-alpine AS builder
+FROM rust:1.89-alpine AS builder
 
 # Install dependencies
 RUN apk add --no-cache musl-dev openssl-dev pkgconfig openssl-libs-static
