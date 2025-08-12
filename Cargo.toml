@@ -18,7 +18,7 @@ path = "src/lib.rs"
 # Core dependencies
 anyhow = "1.0"
 thiserror = "1.0"
-uuid = { version = "1.10", features = ["v4", "serde"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
 
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
