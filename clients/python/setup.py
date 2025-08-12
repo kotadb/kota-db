@@ -9,7 +9,7 @@ with open("README.md", encoding="utf-8") as fh:
 
 setup(
     name="kotadb-client",
-    version="0.1.0",
+    version="0.2.0",
     author="KotaDB Team",
     author_email="support@kotadb.dev",
     description="Python client for KotaDB - PostgreSQL-level ease of use for document database",
