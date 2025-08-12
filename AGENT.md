@@ -89,6 +89,50 @@ This keeps your main context focused on high-level coordination and decision-mak
 - Multi-tenant support
 - Distributed indexing
 
+## 🌳 Branching Strategy (Git Flow)
+
+**CRITICAL**: All development must follow our Git Flow branching model.
+
+### Branch Structure
+```
+feature/* ──┐
+            ├──> develop ──> release/* ──> main
+hotfix/*  ──────────────────────────────┘
+```
+
+### Where to Work
+- **New features**: Create `feature/*` branches from `develop`
+- **Bug fixes**: Create `feature/*` branches from `develop`
+- **Emergency fixes**: Create `hotfix/*` branches from `main`
+- **NEVER**: Push directly to `main` or `develop`
+
+### Workflow for Agents
+```bash
+# 1. Start new work
+git checkout develop
+git pull origin develop
+git checkout -b feature/your-feature-name
+
+# 2. Make changes and commit
+git add .
+git commit -m "feat: describe your change"
+
+# 3. Push and create PR
+git push -u origin feature/your-feature-name
+gh pr create --base develop --title "feat: your feature"
+
+# 4. After merge, clean up
+git checkout develop
+git pull origin develop
+git branch -d feature/your-feature-name
+```
+
+### Branch Protection Rules
+- **main**: Requires PR, review, all CI checks, up-to-date
+- **develop**: Requires PR, CI checks (no review needed)
+
+See `docs/BRANCHING_STRATEGY.md` for complete details.
+
 ## 🛠️ Development Commands
 
 ### Essential Commands (Use these frequently)
