@@ -62,10 +62,22 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch gh-pages branch
+      - name: Initialize gh-pages branch if needed
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          git fetch origin gh-pages --depth=1 || true
+          # Check if gh-pages branch exists
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Creating gh-pages branch..."
+            git checkout --orphan gh-pages
+            git rm -rf .
+            echo "# GitHub Pages" > README.md
+            git add README.md
+            git commit -m "Initialize gh-pages branch"
+            git push origin gh-pages
+            git checkout main
+          else
+            git fetch origin gh-pages --depth=1
+          fi
 
       - name: Deploy development documentation
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -73,8 +85,14 @@ jobs:
           # Deploy main branch docs as 'dev' version
           mike deploy --push --update-aliases dev
           
-          # Ensure latest is still the default
-          mike set-default --push latest || mike set-default --push dev
+          # Deploy current stable version if VERSION file exists
+          if [ -f VERSION ]; then
+            VERSION=$(cat VERSION)
+            mike deploy --push --update-aliases "$VERSION" latest stable
+            mike set-default --push latest
+          else
+            mike set-default --push dev
+          fi
 
       - name: Build documentation for PR preview
         if: github.event_name == 'pull_request'
@@ -86,4 +104,21 @@ jobs:
         with:
           name: docs-preview
           path: ./site
+
+      - name: Configure GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "📝 GitHub Pages Configuration Notes:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "After this workflow completes, please configure GitHub Pages:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Go to Settings → Pages" >> $GITHUB_STEP_SUMMARY
+          echo "2. Change Source from 'Deploy from a branch'" >> $GITHUB_STEP_SUMMARY
+          echo "3. Select Branch: **gh-pages**" >> $GITHUB_STEP_SUMMARY
+          echo "4. Select Folder: **/ (root)**" >> $GITHUB_STEP_SUMMARY
+          echo "5. Click Save" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The versioned documentation will then be available at:" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest stable: https://jayminwest.github.io/kota-db/" >> $GITHUB_STEP_SUMMARY
+          echo "- Development: https://jayminwest.github.io/kota-db/dev/" >> $GITHUB_STEP_SUMMARY
+          echo "- Version 0.2.0: https://jayminwest.github.io/kota-db/0.2.0/" >> $GITHUB_STEP_SUMMARY
 
