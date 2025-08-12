@@ -16,7 +16,8 @@ RUN mkdir src benches && \
     echo "" > src/lib.rs && \
     echo "fn main() {}" > benches/storage.rs && \
     echo "fn main() {}" > benches/indices.rs && \
-    echo "fn main() {}" > benches/queries.rs
+    echo "fn main() {}" > benches/queries.rs && \
+    echo "fn main() {}" > benches/storage_stress.rs
 RUN cargo build --release && rm -rf src benches
 
 # Copy actual source code
