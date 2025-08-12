@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-08-11
+
 ### Added
 - Phase 1 client libraries for PostgreSQL-level ease of use (#50)
   - Python client library with full async support
@@ -48,3 +50,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/jayminwest/kota-db/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jayminwest/kota-db/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jayminwest/kota-db/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jayminwest/kota-db/compare/v0.1.0...v0.2.0
