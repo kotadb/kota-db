@@ -79,7 +79,7 @@ jobs:
             git fetch origin gh-pages --depth=1
           fi
 
-      - name: Deploy development documentation
+      - name: Deploy versioned documentation
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           # Deploy main branch docs as 'dev' version
@@ -93,6 +93,19 @@ jobs:
           else
             mike set-default --push dev
           fi
+          
+          echo "## 📚 Documentation Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ GitHub Pages Configuration Required (One-Time Setup)" >> $GITHUB_STEP_SUMMARY
+          echo "1. Go to [Settings → Pages](https://github.com/jayminwest/kota-db/settings/pages)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Change Source branch from **main** to **gh-pages**" >> $GITHUB_STEP_SUMMARY
+          echo "3. Keep folder as **/ (root)**" >> $GITHUB_STEP_SUMMARY
+          echo "4. Click Save" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Documentation URLs (after configuration):" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest stable: https://jayminwest.github.io/kota-db/" >> $GITHUB_STEP_SUMMARY
+          echo "- Development: https://jayminwest.github.io/kota-db/dev/" >> $GITHUB_STEP_SUMMARY
+          echo "- Version 0.2.0: https://jayminwest.github.io/kota-db/0.2.0/" >> $GITHUB_STEP_SUMMARY
 
       - name: Build documentation for PR preview
         if: github.event_name == 'pull_request'
@@ -104,21 +117,4 @@ jobs:
         with:
           name: docs-preview
           path: ./site
-
-      - name: Configure GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          echo "📝 GitHub Pages Configuration Notes:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "After this workflow completes, please configure GitHub Pages:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Go to Settings → Pages" >> $GITHUB_STEP_SUMMARY
-          echo "2. Change Source from 'Deploy from a branch'" >> $GITHUB_STEP_SUMMARY
-          echo "3. Select Branch: **gh-pages**" >> $GITHUB_STEP_SUMMARY
-          echo "4. Select Folder: **/ (root)**" >> $GITHUB_STEP_SUMMARY
-          echo "5. Click Save" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The versioned documentation will then be available at:" >> $GITHUB_STEP_SUMMARY
-          echo "- Latest stable: https://jayminwest.github.io/kota-db/" >> $GITHUB_STEP_SUMMARY
-          echo "- Development: https://jayminwest.github.io/kota-db/dev/" >> $GITHUB_STEP_SUMMARY
-          echo "- Version 0.2.0: https://jayminwest.github.io/kota-db/0.2.0/" >> $GITHUB_STEP_SUMMARY
 
