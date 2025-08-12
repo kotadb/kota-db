@@ -4,6 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands for Development
 
+### Versioning and Release
+```bash
+# Check current version
+just version
+
+# Preview next release
+just release-preview        # Shows unreleased changes and recent commits
+
+# Quick release commands (automatic version bump)
+just release-patch          # Bump patch: 0.1.0 -> 0.1.1
+just release-minor          # Bump minor: 0.1.0 -> 0.2.0
+just release-major          # Bump major: 0.1.0 -> 1.0.0
+just release-beta           # Beta release: 0.1.0 -> 0.1.0-beta.1
+
+# Release specific version
+just release 0.2.0          # Full release process
+
+# Test release process
+just release-dry-run 0.2.0  # Dry run without changes
+
+# Update changelog
+just changelog-update       # Add new unreleased section
+```
+
+The release process automatically:
+- Runs all tests and quality checks
+- Updates version in Cargo.toml, VERSION, CHANGELOG.md
+- Updates client library versions
+- Creates git tag with changelog
+- Triggers GitHub Actions for binaries, Docker images, and crates.io
+
 ### Build and Run
 ```bash
 # Build the project
@@ -158,3 +189,15 @@ Model Context Protocol server for LLM integration:
 - Use `thiserror` for library errors
 - Always include context with `.context()`
 - Log errors at appropriate levels with `tracing`
+
+## Important Files
+
+### Versioning & Release
+- `VERSION` - Current version number (plain text)
+- `CHANGELOG.md` - Version history following Keep a Changelog format
+- `scripts/release.sh` - Automated release script
+- `scripts/version-bump.sh` - Version bumping utility
+- `docs/RELEASE_PROCESS.md` - Complete release documentation
+- `.github/workflows/release.yml` - GitHub Actions release automation
+
+Always update CHANGELOG.md when making user-facing changes by adding entries to the `[Unreleased]` section.

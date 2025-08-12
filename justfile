@@ -195,21 +195,68 @@ clean-all: clean
 
 # === Release ===
 
-# Prepare for release
-pre-release version:
-  @echo "Preparing release {{version}}"
-  # Update version in Cargo.toml
-  sed -i 's/version = ".*"/version = "{{version}}"/' Cargo.toml
-  # Run all checks
-  just ci
-  # Build release
-  just build-release
-  @echo "✅ Ready for release {{version}}"
+# Show current version
+version:
+  @grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2
 
-# Create release tag
-release version: (pre-release version)
-  git add Cargo.toml Cargo.lock
-  git commit -m "chore: bump version to {{version}}"
-  git tag -a v{{version}} -m "Release v{{version}}"
-  @echo "🏷️  Created tag v{{version}}"
-  @echo "Push with: git push origin main && git push origin v{{version}}"
+# Bump version (major, minor, patch, or prerelease)
+bump type="patch":
+  ./scripts/version-bump.sh {{type}} --preview
+
+# Create a new release (runs full release process)
+release version:
+  ./scripts/release.sh {{version}}
+
+# Create a release with automatic version bump
+release-patch:
+  ./scripts/version-bump.sh patch
+
+release-minor:
+  ./scripts/version-bump.sh minor
+
+release-major:
+  ./scripts/version-bump.sh major
+
+release-beta:
+  ./scripts/version-bump.sh prerelease
+
+# Dry run of release process
+release-dry-run version:
+  ./scripts/release.sh {{version}} --dry-run
+
+# Update changelog (add new unreleased section)
+changelog-update:
+  @echo "## [Unreleased]" > CHANGELOG.tmp
+  @echo "" >> CHANGELOG.tmp
+  @echo "### Added" >> CHANGELOG.tmp
+  @echo "" >> CHANGELOG.tmp
+  @echo "### Changed" >> CHANGELOG.tmp
+  @echo "" >> CHANGELOG.tmp
+  @echo "### Fixed" >> CHANGELOG.tmp
+  @echo "" >> CHANGELOG.tmp
+  @echo "### Security" >> CHANGELOG.tmp
+  @echo "" >> CHANGELOG.tmp
+  @tail -n +2 CHANGELOG.md >> CHANGELOG.tmp
+  @mv CHANGELOG.tmp CHANGELOG.md
+  @echo "✅ CHANGELOG.md updated with new unreleased section"
+
+# Check what would be included in next release
+release-preview:
+  @echo "📦 Next Release Preview"
+  @echo "======================="
+  @echo
+  @echo "Current version: $(just version)"
+  @echo
+  @echo "Unreleased changes:"
+  @echo "-------------------"
+  @awk '/^## \[Unreleased\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md
+  @echo
+  @echo "Recent commits since last tag:"
+  @echo "------------------------------"
+  @git log --oneline $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)..HEAD 2>/dev/null || echo "No tags found"
+
+# Tag current commit without full release process
+tag-version version:
+  git tag -a v{{version}} -m "Version {{version}}"
+  @echo "Tagged as v{{version}}"
+  @echo "Push with: git push origin v{{version}}"

@@ -4,8 +4,8 @@
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/jayminwest/kota-db/ci.yml?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
-[![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
-[![License](https://img.shields.io/badge/license-proprietary-blue?style=for-the-badge)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
 ```
 KotaDB combines document storage, graph relationships, and semantic search
@@ -32,15 +32,19 @@ Real-world benchmarks on Apple Silicon:
 ## Quick Start
 
 ```bash
-# Clone and run
+# Clone and build
 git clone https://github.com/jayminwest/kota-db.git
 cd kota-db
-cargo run -- --config kotadb-dev.toml
+cargo build
 
-# Search examples
-cargo run search "rust"     # Full-text search
-cargo run search "*"        # Wildcard search
-cargo run stats            # Database statistics
+# Start HTTP server
+cargo run --bin kotadb -- serve
+
+# CLI examples
+cargo run --bin kotadb -- insert /test/doc "My Document" "Document content"
+cargo run --bin kotadb -- search "rust"     # Full-text search
+cargo run --bin kotadb -- search "*"        # Wildcard search
+cargo run --bin kotadb -- stats            # Database statistics
 ```
 
 <details>
@@ -68,7 +72,7 @@ just bench            # Performance benchmarks
 │         Automatic index selection based on query             │
 ├──────────────┬───────────────┬───────────────┬──────────────┤
 │   Primary    │   Full-Text   │     Graph     │   Semantic   │
-│   B+ Tree    │    Trigram    │   Adjacency   │     HNSW     │
+│   B+ Tree    │    Trigram    │  (Planned)    │     HNSW     │
 ├──────────────┴───────────────┴───────────────┴──────────────┤
 │                    Storage Engine                            │
 │        Pages + WAL + Compression + Memory Map                │
@@ -82,17 +86,17 @@ just bench            # Performance benchmarks
 ### Storage
 - **Native Format**: Markdown files with YAML frontmatter
 - **Git Compatible**: Human-readable, diff-friendly
-- **ACID Compliant**: Full transactional guarantees
-- **Zero Dependencies**: Pure Rust implementation
+- **Crash-Safe**: WAL ensures data durability
+- **Zero Database Dependencies**: No external database required
 
 ### Indexing
 - **B+ Tree**: O(log n) path-based lookups
 - **Trigram**: Fuzzy-tolerant full-text search
-- **Graph**: Relationship traversal with cycle detection
+- **Graph**: Relationship traversal (MCP tools only, not fully implemented)
 - **Vector**: Semantic similarity with HNSW
 
 ### Safety
-- **99% Reliability**: 6-stage risk reduction methodology
+- **Systematic Testing**: 6-stage risk reduction methodology
 - **Type Safety**: Validated types at compile time
 - **Observability**: Distributed tracing on every operation
 - **Resilience**: Automatic retries with exponential backoff
@@ -153,7 +157,7 @@ GRAPH {
 
 ## Development Philosophy
 
-**100% LLM-Developed**: Every line of code written by AI agents collaborating through GitHub.
+**LLM-First Development**: Developed primarily through AI agents collaborating on GitHub.
 
 **6-Stage Risk Reduction**: From 22 risk points down to 3:
 1. Test-Driven Development (-5.0)
@@ -163,7 +167,7 @@ GRAPH {
 5. Adversarial Testing (-0.5)
 6. Component Library (-1.0)
 
-**Production Ready**: 195+ tests, zero warnings, comprehensive CI/CD.
+**Production Ready**: 271+ tests, zero warnings, comprehensive CI/CD.
 
 ---
 
@@ -178,8 +182,8 @@ GRAPH {
 - Performance benchmarks
 
 ### In Progress
-- [ ] Model Context Protocol (MCP) server
-- [ ] Python/TypeScript client libraries
+- [x] Model Context Protocol (MCP) server
+- [x] Python/TypeScript client libraries
 - [ ] Semantic vector search
 - [ ] Graph relationship queries
 
@@ -196,7 +200,9 @@ GRAPH {
 ### As a CLI Tool
 ```bash
 cargo install --path .
-kotadb --config ~/.kota/config.toml
+kotadb serve                    # Start HTTP server
+kotadb insert /path "Title" "Content"  # Insert document
+kotadb search "query"           # Search documents
 ```
 
 ### As a Library
@@ -207,7 +213,8 @@ kotadb = { git = "https://github.com/jayminwest/kota-db" }
 
 ### Docker
 ```bash
-docker run -p 8080:8080 jayminwest/kotadb
+docker build -t kotadb .
+docker run -p 8080:8080 kotadb serve
 ```
 
 ---
@@ -247,7 +254,7 @@ See [AGENT.md](AGENT.md) for the agent collaboration protocol.
 
 ## License
 
-Proprietary - See [LICENSE](LICENSE) for details.
+MIT - See [LICENSE](LICENSE) for details.
 
 ---
 

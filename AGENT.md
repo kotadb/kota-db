@@ -34,6 +34,7 @@ EVERY agent action must be accompanied by:
 - **Commit messages** following conventional commits format
 - **PR descriptions** with detailed impact analysis
 - **Code comments** only when logic is complex (prefer self-documenting code)
+- **CHANGELOG.md updates** for any user-facing changes (add to Unreleased section)
 
 ### 4. Documentation Location Priority
 **ALWAYS prefer GitHub over creating .md files:**
@@ -292,15 +293,53 @@ Every PR triggers:
 7. **Documentation** - Must build successfully
 8. **Container** - Docker build validation
 
-### Release Process
-```bash
-# Prepare release
-just pre-release 0.2.0    # Updates version, runs all checks
-just release 0.2.0        # Creates tag and commits
+### Release Process & Versioning
 
-# Manual steps
-git push origin main && git push origin v0.2.0
+KotaDB follows **Semantic Versioning** (MAJOR.MINOR.PATCH) with comprehensive release automation.
+
+#### Quick Release Commands
+```bash
+# Check current version
+just version                 # Shows current version from Cargo.toml
+
+# Preview what's in next release
+just release-preview         # Shows unreleased changes and recent commits
+
+# Automatic version bump releases
+just release-patch           # 0.1.0 -> 0.1.1 (bug fixes)
+just release-minor           # 0.1.0 -> 0.2.0 (new features)
+just release-major           # 0.1.0 -> 1.0.0 (breaking changes)
+just release-beta            # 0.1.0 -> 0.1.0-beta.1 (prerelease)
+
+# Release specific version
+just release 0.2.0           # Full automated release process
+
+# Test the release process
+just release-dry-run 0.2.0   # Dry run without making changes
 ```
+
+#### Release Process Details
+The automated release (`scripts/release.sh`) will:
+1. ✅ Verify clean working directory
+2. ✅ Run all tests and quality checks
+3. ✅ Update version in Cargo.toml, VERSION file, CHANGELOG.md
+4. ✅ Update client library versions (Python, TypeScript, Go)
+5. ✅ Commit all changes with proper message
+6. ✅ Create annotated git tag with changelog excerpt
+7. ✅ Push to remote (with confirmation prompt)
+
+#### GitHub Actions Automation
+Once a tag is pushed, GitHub Actions automatically:
+- 📦 Creates GitHub Release with changelog notes
+- 🔨 Builds binaries for all platforms (Linux, macOS, Windows)
+- 🐳 Publishes Docker images to ghcr.io
+- 📚 Publishes to crates.io (non-prerelease only)
+
+#### Version Files
+- `Cargo.toml` - Main version source
+- `VERSION` - Plain text version file
+- `CHANGELOG.md` - Version history with changes
+- `docs/RELEASE_PROCESS.md` - Complete release guide
 
 ## 🔍 Debugging & Observability
 
@@ -429,7 +468,36 @@ docs(api): add examples for document builder
 test(index): add property tests for B+ tree
 perf(query): optimize graph traversal algorithm
 refactor(types): simplify validation layer
+chore: update dependencies
+ci: add new test workflow
 ```
+
+### Changelog Maintenance
+**IMPORTANT**: Always update CHANGELOG.md for user-facing changes:
+
+```markdown
+## [Unreleased]
+
+### Added
+- New feature or capability
+
+### Changed
+- Changes to existing functionality
+
+### Fixed
+- Bug fixes
+
+### Deprecated
+- Features that will be removed
+
+### Removed
+- Features that were removed
+
+### Security
+- Security vulnerability fixes
+```
+
+Run `just changelog-update` to add a new Unreleased section after a release.
 
 ## 🚨 Common Pitfalls to Avoid
 

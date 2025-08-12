@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+
+# KotaDB Release Script
+# Usage: ./scripts/release.sh <version> [--dry-run]
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+DRY_RUN=false
+
+# Parse arguments
+VERSION="${1:-}"
+if [ -z "$VERSION" ]; then
+    echo -e "${RED}Error: Version number required${NC}"
+    echo "Usage: $0 <version> [--dry-run]"
+    echo "Example: $0 0.2.0"
+    echo "Example: $0 0.2.0-beta.1 --dry-run"
+    exit 1
+fi
+
+if [ "${2:-}" = "--dry-run" ]; then
+    DRY_RUN=true
+    echo -e "${YELLOW}Running in dry-run mode - no changes will be made${NC}"
+fi
+
+# Validate version format
+if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+    echo -e "${RED}Error: Invalid version format${NC}"
+    echo "Version must follow semantic versioning (e.g., 1.0.0, 1.0.0-beta.1)"
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+
+echo -e "${BLUE}🚀 KotaDB Release Process - Version $VERSION${NC}"
+echo "================================================"
+
+# Step 1: Check for uncommitted changes
+echo -e "\n${BLUE}1. Checking for uncommitted changes...${NC}"
+if [ -n "$(git status --porcelain)" ]; then
+    echo -e "${RED}Error: Uncommitted changes detected${NC}"
+    echo "Please commit or stash your changes before releasing"
+    git status --short
+    exit 1
+fi
+echo -e "${GREEN}✓ Working directory clean${NC}"
+
+# Step 2: Check current branch
+echo -e "\n${BLUE}2. Checking current branch...${NC}"
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "main" ]; then
+    echo -e "${YELLOW}Warning: Not on main branch (current: $CURRENT_BRANCH)${NC}"
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Release cancelled"
+        exit 1
+    fi
+fi
+echo -e "${GREEN}✓ On branch: $CURRENT_BRANCH${NC}"
+
+# Step 3: Pull latest changes
+echo -e "\n${BLUE}3. Pulling latest changes...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    git pull origin "$CURRENT_BRANCH"
+    echo -e "${GREEN}✓ Repository up to date${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would pull from origin/$CURRENT_BRANCH${NC}"
+fi
+
+# Step 4: Run tests
+echo -e "\n${BLUE}4. Running tests...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    echo "Running format check..."
+    cargo fmt --all -- --check
+    
+    echo "Running clippy..."
+    cargo clippy --all-targets --all-features -- -D warnings
+    
+    echo "Running tests..."
+    cargo test --all
+    
+    echo -e "${GREEN}✓ All tests passed${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would run: cargo fmt, clippy, and tests${NC}"
+fi
+
+# Step 5: Update version in Cargo.toml and VERSION file
+echo -e "\n${BLUE}5. Updating version in Cargo.toml and VERSION file...${NC}"
+CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+echo "Current version: $CURRENT_VERSION"
+echo "New version: $VERSION"
+
+if [ "$DRY_RUN" = false ]; then
+    # Update Cargo.toml
+    sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+    rm Cargo.toml.bak
+    
+    # Update VERSION file
+    echo "$VERSION" > VERSION
+    
+    # Update Cargo.lock
+    cargo update --workspace
+    
+    echo -e "${GREEN}✓ Version updated${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would update version from $CURRENT_VERSION to $VERSION${NC}"
+fi
+
+# Step 6: Update CHANGELOG.md
+echo -e "\n${BLUE}6. Updating CHANGELOG.md...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    # Get current date
+    DATE=$(date +%Y-%m-%d)
+    
+    # Update unreleased section header to new version
+    sed -i.bak "s/## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+    
+    # Update links at bottom
+    echo "" >> CHANGELOG.md
+    echo "[Unreleased]: https://github.com/jayminwest/kota-db/compare/v$VERSION...HEAD" >> CHANGELOG.md
+    echo "[$VERSION]: https://github.com/jayminwest/kota-db/compare/v$CURRENT_VERSION...v$VERSION" >> CHANGELOG.md
+    
+    rm CHANGELOG.md.bak
+    echo -e "${GREEN}✓ CHANGELOG.md updated${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would update CHANGELOG.md with version $VERSION and date $(date +%Y-%m-%d)${NC}"
+fi
+
+# Step 7: Update client library versions (if they exist)
+echo -e "\n${BLUE}7. Updating client library versions...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    # Python client
+    if [ -f "clients/python/pyproject.toml" ]; then
+        sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" clients/python/pyproject.toml
+        rm clients/python/pyproject.toml.bak
+        echo -e "${GREEN}✓ Python client version updated${NC}"
+    fi
+    
+    # TypeScript client
+    if [ -f "clients/typescript/package.json" ]; then
+        cd clients/typescript
+        npm version "$VERSION" --no-git-tag-version
+        cd "$PROJECT_ROOT"
+        echo -e "${GREEN}✓ TypeScript client version updated${NC}"
+    fi
+    
+    # Go client
+    if [ -f "clients/go/version.go" ]; then
+        sed -i.bak "s/const Version = \".*\"/const Version = \"$VERSION\"/" clients/go/version.go
+        rm clients/go/version.go.bak
+        echo -e "${GREEN}✓ Go client version updated${NC}"
+    fi
+else
+    echo -e "${YELLOW}[DRY RUN] Would update client library versions to $VERSION${NC}"
+fi
+
+# Step 8: Commit changes
+echo -e "\n${BLUE}8. Committing version changes...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    git add Cargo.toml Cargo.lock CHANGELOG.md VERSION
+    
+    # Add client files if they exist
+    [ -f "clients/python/pyproject.toml" ] && git add clients/python/pyproject.toml
+    [ -f "clients/typescript/package.json" ] && git add clients/typescript/package.json clients/typescript/package-lock.json
+    [ -f "clients/go/version.go" ] && git add clients/go/version.go
+    
+    git commit -m "chore: release v$VERSION
+
+- Update version to $VERSION
+- Update CHANGELOG.md
+- Update VERSION file
+- Update client library versions"
+    
+    echo -e "${GREEN}✓ Changes committed${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would commit version changes${NC}"
+fi
+
+# Step 9: Create git tag
+echo -e "\n${BLUE}9. Creating git tag...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    # Extract release notes for tag message
+    TAG_MESSAGE=$(awk '/^## \['"$VERSION"'\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md | sed '/^$/d')
+    
+    git tag -a "v$VERSION" -m "Release v$VERSION
+
+$TAG_MESSAGE"
+    
+    echo -e "${GREEN}✓ Tag v$VERSION created${NC}"
+else
+    echo -e "${YELLOW}[DRY RUN] Would create tag v$VERSION${NC}"
+fi
+
+# Step 10: Push changes
+echo -e "\n${BLUE}10. Pushing to remote...${NC}"
+if [ "$DRY_RUN" = false ]; then
+    echo -e "${YELLOW}Ready to push. This will trigger the release workflow.${NC}"
+    read -p "Push to remote? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        git push origin "$CURRENT_BRANCH"
+        git push origin "v$VERSION"
+        echo -e "${GREEN}✓ Pushed to remote${NC}"
+    else
+        echo -e "${YELLOW}Push cancelled. To push manually:${NC}"
+        echo "  git push origin $CURRENT_BRANCH"
+        echo "  git push origin v$VERSION"
+    fi
+else
+    echo -e "${YELLOW}[DRY RUN] Would push branch and tag v$VERSION${NC}"
+fi
+
+# Summary
+echo -e "\n${GREEN}🎉 Release v$VERSION prepared successfully!${NC}"
+echo "================================================"
+echo
+echo "Next steps:"
+echo "1. Monitor the GitHub Actions release workflow"
+echo "2. Check the GitHub release page once complete"
+echo "3. Verify Docker images are published"
+echo "4. Update documentation if needed"
+echo "5. Announce the release"
+
+if [ "$DRY_RUN" = true ]; then
+    echo -e "\n${YELLOW}This was a dry run. No changes were made.${NC}"
+    echo "Run without --dry-run to perform the actual release."
+fi
