@@ -2,6 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Branching Strategy
+
+This repository uses Git Flow. **Always work on feature branches, never directly on main or develop.**
+
+### Quick Reference
+- **Current branch to work from**: `develop`
+- **Create feature branches**: `git checkout -b feature/your-feature`
+- **Create PRs to**: `develop` branch
+- **Production branch**: `main` (protected, requires reviews)
+
+### Workflow
+```bash
+# Start new work
+git checkout develop
+git pull origin develop
+git checkout -b feature/your-feature
+
+# After making changes
+git add .
+git commit -m "feat: your changes"
+git push -u origin feature/your-feature
+
+# Create PR
+gh pr create --base develop
+```
+
+For more details, see `docs/BRANCHING_STRATEGY.md`.
+
 ## Commands for Development
 
 ### Versioning and Release
