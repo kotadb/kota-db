@@ -185,3 +185,62 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  deploy-docs:
+    name: Deploy Versioned Documentation
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install mkdocs-material
+        pip install mkdocs-minify-plugin
+        pip install mike
+        pip install mkdocs-git-revision-date-localized-plugin
+    
+    - name: Configure Git for Mike
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Fetch gh-pages branch
+      run: |
+        git fetch origin gh-pages --depth=1 || true
+    
+    - name: Deploy versioned documentation
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        
+        # Deploy the version with latest alias
+        mike deploy --push --update-aliases "$VERSION" latest
+        
+        # If this is a stable release (not pre-release), also tag as stable
+        if [[ ! "$VERSION" =~ (alpha|beta|rc) ]]; then
+          mike retitle --push "$VERSION" "$VERSION (stable)"
+          mike alias --push "$VERSION" stable
+        fi
+        
+        # Set latest as default
+        mike set-default --push latest
+    
+    - name: Summary
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        echo "✅ Documentation deployed for version $VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "View at: https://jayminwest.github.io/kota-db/$VERSION/" >> $GITHUB_STEP_SUMMARY

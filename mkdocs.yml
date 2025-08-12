@@ -105,7 +105,8 @@ extra:
       link: https://hub.docker.com/r/kotadb/kotadb
   version:
     provider: mike
-    default: stable
+    default: latest
+    alias: true
   analytics:
     provider: google
     property: !ENV GOOGLE_ANALYTICS_KEY

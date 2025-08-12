@@ -1,0 +1,155 @@
+name: Deploy Versioned Documentation
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g., 0.2.0)'
+        required: false
+        type: string
+      alias:
+        description: 'Alias for this version (e.g., latest, stable)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy-versioned-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install mkdocs-material
+          pip install mkdocs-minify-plugin
+          pip install mike
+          pip install mkdocs-git-revision-date-localized-plugin
+
+      - name: Configure Git for Mike
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]; then
+            # Extract version from tag
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Deploying version $VERSION from tag"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            # Use manually specified version
+            VERSION="${{ github.event.inputs.version }}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Deploying manually specified version $VERSION"
+          else
+            # Fallback to VERSION file
+            VERSION=$(cat VERSION)
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Deploying version $VERSION from VERSION file"
+          fi
+
+      - name: Fetch gh-pages branch
+        run: |
+          git fetch origin gh-pages --depth=1 || true
+
+      - name: Deploy versioned documentation
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          
+          # Deploy the version
+          mike deploy --push --update-aliases "$VERSION" latest
+          
+          # If this is a stable release (not pre-release), also tag as stable
+          if [[ ! "$VERSION" =~ (alpha|beta|rc) ]]; then
+            mike retitle --push "$VERSION" "$VERSION (stable)"
+            mike alias --push "$VERSION" stable
+          fi
+          
+          # Set as default if it's the latest stable version
+          mike set-default --push latest
+
+      - name: Deploy with custom alias
+        if: github.event.inputs.alias != ''
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          ALIAS="${{ github.event.inputs.alias }}"
+          mike alias --push "$VERSION" "$ALIAS"
+
+      - name: List versions
+        run: |
+          mike list
+
+      - name: Create version info JSON
+        run: |
+          # Create a JSON file with version information for the version selector
+          mike list --json > versions.json || echo '[]' > versions.json
+          
+          # If mike doesn't support --json, create it manually
+          if [ ! -s versions.json ] || [ "$(cat versions.json)" == "[]" ]; then
+            echo "Creating versions.json manually..."
+            python3 << 'EOF'
+          import subprocess
+          import json
+          import re
+          
+          result = subprocess.run(['mike', 'list'], capture_output=True, text=True)
+          lines = result.stdout.strip().split('\n')
+          
+          versions = []
+          for line in lines:
+              if line.strip():
+                  # Parse mike list output
+                  match = re.match(r'([^\[]+?)(?:\s*\[([^\]]+)\])?', line.strip())
+                  if match:
+                      version = match.group(1).strip()
+                      aliases = match.group(2).split(',') if match.group(2) else []
+                      aliases = [a.strip() for a in aliases]
+                      versions.append({
+                          'version': version,
+                          'aliases': aliases,
+                          'title': version
+                      })
+          
+          with open('versions.json', 'w') as f:
+              json.dump(versions, f, indent=2)
+          EOF
+          fi
+          
+          cat versions.json
+
+      - name: Summary
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          echo "## 📚 Documentation Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully deployed documentation version **$VERSION**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Versions:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          mike list >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Access Documentation:" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest: https://jayminwest.github.io/kota-db/" >> $GITHUB_STEP_SUMMARY
+          echo "- Version $VERSION: https://jayminwest.github.io/kota-db/$VERSION/" >> $GITHUB_STEP_SUMMARY
