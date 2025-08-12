@@ -5,9 +5,10 @@
 KotaDB provides multiple API layers for different use cases:
 
 1. **Native Rust API** - Direct library usage
-2. **MCP Server API** - JSON-RPC for LLM integration
-3. **REST API** - HTTP endpoints (planned)
-4. **CLI Interface** - Command-line tools
+2. **HTTP REST API** - RESTful endpoints for document operations
+3. **Client Libraries** - Python and TypeScript/JavaScript clients
+4. **MCP Server API** - JSON-RPC for LLM integration
+5. **CLI Interface** - Command-line tools
 
 ## Native Rust API
 
@@ -68,6 +69,141 @@ let mut optimized_index = create_optimized_index_with_defaults(primary_index);
 let pairs = vec![(id1, path1), (id2, path2), /* ... */];
 let result = optimized_index.bulk_insert(pairs)?;
 assert!(result.meets_performance_requirements(10.0)); // 10x speedup
+```
+
+## Client Libraries
+
+### Python Client
+
+The Python client provides a simple, PostgreSQL-level interface for KotaDB operations.
+
+```python
+from kotadb import KotaDB
+
+# Connect to KotaDB
+db = KotaDB("http://localhost:8080")  # or use KOTADB_URL env var
+
+# Insert a document
+doc_id = db.insert({
+    "path": "/notes/meeting.md",
+    "title": "Team Meeting Notes",
+    "content": "Discussed project roadmap...",
+    "tags": ["work", "meeting"]
+})
+
+# Query documents
+results = db.query("project roadmap")
+for result in results.results:
+    print(f"{result.document.title}: {result.score}")
+
+# Get a specific document
+doc = db.get(doc_id)
+
+# Update a document
+db.update(doc_id, {"content": "Updated content..."})
+
+# Delete a document
+db.delete(doc_id)
+
+# Bulk operations
+docs = [
+    {"path": "/doc1.md", "content": "First document"},
+    {"path": "/doc2.md", "content": "Second document"}
+]
+doc_ids = db.bulk_insert(docs)
+```
+
+### TypeScript/JavaScript Client
+
+The TypeScript client provides type-safe access to KotaDB with full async/await support.
+
+```typescript
+import { KotaDB } from 'kotadb-client';
+
+// Connect to KotaDB
+const db = new KotaDB({ url: 'http://localhost:8080' });
+
+// Insert a document
+const docId = await db.insert({
+  path: '/notes/meeting.md',
+  title: 'Team Meeting Notes',
+  content: 'Discussed project roadmap...',
+  tags: ['work', 'meeting']
+});
+
+// Query documents
+const results = await db.query('project roadmap');
+results.results.forEach(result => {
+  console.log(`${result.document.title}: ${result.score}`);
+});
+
+// Get a specific document
+const doc = await db.get(docId);
+
+// Update a document
+await db.update(docId, { content: 'Updated content...' });
+
+// Delete a document
+await db.delete(docId);
+
+// Bulk operations
+const docs = [
+  { path: '/doc1.md', content: 'First document' },
+  { path: '/doc2.md', content: 'Second document' }
+];
+const docIds = await db.bulkInsert(docs);
+```
+
+## HTTP REST API
+
+The HTTP server provides RESTful endpoints for document operations.
+
+### Endpoints
+
+#### POST /documents
+Create a new document.
+
+```bash
+curl -X POST http://localhost:8080/documents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path": "/test.md",
+    "title": "Test Document",
+    "content": "Test content",
+    "tags": ["test"]
+  }'
+```
+
+#### GET /documents/:id
+Retrieve a document by ID.
+
+```bash
+curl http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000
+```
+
+#### PUT /documents/:id
+Update an existing document.
+
+```bash
+curl -X PUT http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Updated content"
+  }'
+```
+
+#### DELETE /documents/:id
+Delete a document.
+
+```bash
+curl -X DELETE http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000
+```
+
+#### GET /search
+Search for documents.
+
+```bash
+curl "http://localhost:8080/search?q=rust+programming&limit=10"
 ```
 
 ## MCP Server API

@@ -119,6 +119,9 @@ KotaDB is designed for applications that require:
 
 ## Latest Updates
 
+!!! success "Client Libraries Now Available"
+    Python and TypeScript/JavaScript client libraries released! PostgreSQL-level ease of use with simple APIs for document operations.
+
 !!! tip "Version 0.1.0 Released"
     Initial release with complete storage engine, B+ tree index, and trigram search capabilities.
 

@@ -193,6 +193,36 @@ cd kota-db
 cargo build --release
 ```
 
+## Client Libraries
+
+### Python Client
+
+```bash
+# Install from PyPI
+pip install kotadb-client
+
+# Or install from source
+git clone https://github.com/jayminwest/kota-db.git
+cd kota-db/clients/python
+pip install -e .
+```
+
+### TypeScript/JavaScript Client
+
+```bash
+# Install from npm
+npm install kotadb-client
+
+# Or using yarn
+yarn add kotadb-client
+
+# Or install from source
+git clone https://github.com/jayminwest/kota-db.git
+cd kota-db/clients/typescript
+npm install
+npm run build
+```
+
 ## Verification
 
 After installation, verify KotaDB is working:

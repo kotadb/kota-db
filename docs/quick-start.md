@@ -75,20 +75,46 @@ curl http://localhost:8080/search?q=Testing
 ### Using Python Client
 
 ```python
-from kotadb import KotaDBClient
+from kotadb import KotaDB
 
 # Connect to KotaDB
-client = KotaDBClient("http://localhost:8080")
+db = KotaDB("http://localhost:8080")
 
 # Insert a document
-client.insert({
+doc_id = db.insert({
     "path": "/python-test.md",
-    "content": "Hello from Python!"
+    "title": "Python Test Document",
+    "content": "Hello from Python!",
+    "tags": ["test", "python"]
 })
 
 # Search documents
-results = client.search("Python")
-print(f"Found {len(results)} documents")
+results = db.query("Python")
+for result in results.results:
+    print(f"Found: {result.document.title} (score: {result.score})")
+```
+
+### Using TypeScript/JavaScript Client
+
+```typescript
+import { KotaDB } from 'kotadb-client';
+
+// Connect to KotaDB
+const db = new KotaDB({ url: 'http://localhost:8080' });
+
+// Insert a document
+const docId = await db.insert({
+  path: '/typescript-test.md',
+  title: 'TypeScript Test Document',
+  content: 'Hello from TypeScript!',
+  tags: ['test', 'typescript']
+});
+
+// Search documents
+const results = await db.query('TypeScript');
+for (const result of results.results) {
+  console.log(`Found: ${result.document.title} (score: ${result.score})`);
+}
 ```
 
 ## 4. What's Next?
