@@ -6,9 +6,10 @@ use crate::contracts::optimization::{
     TreeStructureMetrics,
 };
 use crate::metrics::performance::{PerformanceCollector, PerformanceDashboard};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Optimization metrics collector extending performance metrics
@@ -206,10 +207,7 @@ impl OptimizationMetricsCollector {
         };
 
         // Store metric
-        let mut history = self
-            .bulk_operation_history
-            .write()
-            .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut history = self.bulk_operation_history.write();
         history.push(metric);
 
         // Maintain history size
@@ -287,10 +285,7 @@ impl OptimizationMetricsCollector {
 
     /// Update tree analysis cache
     pub fn update_tree_analysis(&self, metrics: TreeStructureMetrics) {
-        let mut cache = match self.tree_analysis_cache.write() {
-            Ok(c) => c,
-            Err(_) => return, // Lock poisoned, skip update
-        };
+        let mut cache = self.tree_analysis_cache.write();
         *cache = Some(CachedTreeAnalysis {
             metrics,
             timestamp: Instant::now(),
@@ -360,19 +355,7 @@ impl OptimizationMetricsCollector {
 
     /// Generate bulk operation summary
     fn generate_bulk_operation_summary(&self) -> BulkOperationSummary {
-        let history = match self.bulk_operation_history.read() {
-            Ok(h) => h,
-            Err(_) => {
-                // Lock poisoned, return empty summary
-                return BulkOperationSummary {
-                    total_operations: 0,
-                    avg_efficiency_score: 0.0,
-                    avg_speedup_factor: 0.0,
-                    operations_by_type: HashMap::new(),
-                    recent_operations: Vec::new(),
-                };
-            }
-        };
+        let history = self.bulk_operation_history.read();
 
         if history.is_empty() {
             return BulkOperationSummary {
@@ -491,10 +474,7 @@ impl OptimizationMetricsCollector {
 
     /// Get cached tree analysis or None if expired
     fn get_cached_tree_analysis(&self) -> Option<TreeStructureMetrics> {
-        let cache = match self.tree_analysis_cache.read() {
-            Ok(c) => c,
-            Err(_) => return None, // Lock poisoned, no cached data
-        };
+        let cache = self.tree_analysis_cache.read();
         if let Some(ref cached) = *cache {
             if cached.timestamp.elapsed() < cached.ttl {
                 return Some(cached.metrics.clone());
@@ -527,18 +507,7 @@ impl OptimizationMetricsCollector {
 
     /// Generate efficiency trends
     fn generate_efficiency_trends(&self) -> EfficiencyTrends {
-        let history = match self.bulk_operation_history.read() {
-            Ok(h) => h,
-            Err(_) => {
-                // Lock poisoned, return empty trends
-                return EfficiencyTrends {
-                    bulk_efficiency_trend: Vec::new(),
-                    memory_efficiency_trend: Vec::new(),
-                    contention_trend: Vec::new(),
-                    tree_balance_trend: Vec::new(),
-                };
-            }
-        };
+        let history = self.bulk_operation_history.read();
 
         let bulk_efficiency_trend: Vec<_> = history
             .iter()

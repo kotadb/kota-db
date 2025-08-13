@@ -131,6 +131,15 @@ class KotaDB {
             query_time_ms: 0 // Server doesn't provide query time yet
         };
     }
+    /**
+     * Search documents using QueryBuilder for type safety.
+     */
+    async queryWithBuilder(builder) {
+        const params = builder.build();
+        const query = params.q;
+        delete params.q;
+        return this.query(query, params);
+    }
     getContentPreview(doc) {
         const content = Array.isArray(doc.content)
             ? new TextDecoder().decode(new Uint8Array(doc.content))
@@ -152,6 +161,15 @@ class KotaDB {
         return response.data;
     }
     /**
+     * Perform semantic search using QueryBuilder for type safety.
+     */
+    async semanticSearchWithBuilder(builder) {
+        const data = builder.buildForSemantic();
+        const query = data.query;
+        delete data.query;
+        return this.semanticSearch(query, data);
+    }
+    /**
      * Perform hybrid search combining text and semantic search.
      */
     async hybridSearch(query, options = {}) {
@@ -165,6 +183,15 @@ class KotaDB {
             data.offset = options.offset;
         const response = await this.client.post('/search/hybrid', data);
         return response.data;
+    }
+    /**
+     * Perform hybrid search using QueryBuilder for type safety.
+     */
+    async hybridSearchWithBuilder(builder) {
+        const data = builder.buildForHybrid();
+        const query = data.query;
+        delete data.query;
+        return this.hybridSearch(query, data);
     }
     convertContentToString(doc) {
         // Convert byte array content back to string for better UX
@@ -201,6 +228,13 @@ class KotaDB {
         }
         const response = await this.client.post('/documents', processedDocument);
         return response.data.id;
+    }
+    /**
+     * Insert a new document using DocumentBuilder for type safety.
+     */
+    async insertWithBuilder(builder) {
+        const document = builder.build();
+        return this.insert(document);
     }
     /**
      * Update an existing document.

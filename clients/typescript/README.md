@@ -1,6 +1,14 @@
 # KotaDB TypeScript/JavaScript Client
 
-A simple, PostgreSQL-level easy-to-use TypeScript/JavaScript client for KotaDB.
+A simple, PostgreSQL-level easy-to-use TypeScript/JavaScript client for KotaDB with built-in type safety and validation.
+
+## Features
+
+- **Type Safety**: Validated types prevent common errors before they reach the server
+- **Security**: Protection against path injection and other client-side attacks  
+- **Builder Patterns**: Fluent APIs with IntelliSense-friendly construction
+- **Consistency**: Same patterns as Python client for consistent developer experience
+- **Backward Compatible**: All existing code continues to work unchanged
 
 ## Installation
 
@@ -10,7 +18,7 @@ npm install kotadb-client
 
 ## Quick Start
 
-### TypeScript
+### Basic Usage (TypeScript)
 ```typescript
 import { KotaDB } from 'kotadb-client';
 
@@ -44,6 +52,47 @@ const updatedDoc = await db.update(docId, {
 await db.delete(docId);
 ```
 
+### Type-Safe Usage with Builders (Recommended)
+```typescript
+import { 
+  KotaDB, 
+  DocumentBuilder, 
+  QueryBuilder,
+  ValidatedPath,
+  ValidatedTitle 
+} from 'kotadb-client';
+
+const db = new KotaDB({ url: 'http://localhost:8080' });
+
+// Create document with type safety and validation
+const docId = await db.insertWithBuilder(
+  new DocumentBuilder()
+    .path("/notes/meeting.md")      // Validates path safety
+    .title("Team Meeting Notes")    // Ensures non-empty
+    .content("Safe content")        // Validates content
+    .addTag("work")                // Validates tag format
+    .addTag("meeting")
+    .addMetadata("priority", "high")
+);
+
+// Type-safe search queries
+const results = await db.queryWithBuilder(
+  new QueryBuilder()
+    .text("project roadmap")
+    .limit(10)
+    .tagFilter("work")
+    .pathFilter("/notes/*")
+);
+
+// Semantic search with validation
+const semanticResults = await db.semanticSearchWithBuilder(
+  new QueryBuilder()
+    .text("machine learning concepts")
+    .limit(5)
+    .semanticWeight(0.7)  // Validates 0.0-1.0 range
+);
+```
+
 ### JavaScript (CommonJS)
 ```javascript
 const { KotaDB } = require('kotadb-client');
@@ -67,6 +116,119 @@ import { KotaDB } from 'kotadb-client';
 
 const db = new KotaDB({ url: 'http://localhost:8080' });
 const results = await db.query('search term');
+```
+
+## Type Safety and Validation
+
+### Validated Types
+
+The client provides validated types that ensure data integrity and security:
+
+```typescript
+import { 
+  ValidatedPath, 
+  ValidatedDocumentId, 
+  ValidatedTitle,
+  ValidationError 
+} from 'kotadb-client';
+
+// Safe path validation
+try {
+  const path = new ValidatedPath("/notes/meeting.md");
+  console.log(path.asStr()); // "/notes/meeting.md"
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.error("Invalid path:", error.message);
+  }
+}
+
+// Prevents directory traversal attacks
+try {
+  new ValidatedPath("../../../etc/passwd"); // Throws ValidationError
+} catch (error) {
+  console.log("Security threat blocked!"); 
+}
+
+// Document ID validation
+const docId = ValidatedDocumentId.new(); // Generates valid UUID
+const existingId = ValidatedDocumentId.parse("123e4567-e89b-12d3-a456-426614174000");
+
+// Title validation  
+const title = new ValidatedTitle("My Document"); // Ensures non-empty, length limits
+```
+
+### Builder Patterns
+
+Use builders for fluent, validated construction:
+
+```typescript
+import { DocumentBuilder, QueryBuilder, UpdateBuilder } from 'kotadb-client';
+
+// Document builder with validation at each step
+const document = new DocumentBuilder()
+  .path("/documents/report.md")           // Validates path security
+  .title("Quarterly Report")             // Validates non-empty title
+  .content("Report content here...")     // Accepts string or byte array
+  .addTag("business")                    // Validates tag format
+  .addTag("quarterly")  
+  .addMetadata("author", "jane.doe")
+  .addMetadata("department", "finance")
+  .autoId()                             // Generates secure UUID
+  .build();
+
+// Query builder with parameter validation
+const searchParams = new QueryBuilder()
+  .text("quarterly business")            // Validates search query
+  .limit(25)                            // Validates positive numbers
+  .offset(50)                           // Validates non-negative
+  .semanticWeight(0.8)                  // Validates 0.0-1.0 range
+  .tagFilter("business")                // Validates tag format
+  .pathFilter("/documents/*")           // Path pattern filter
+  .build();
+
+// Update builder for safe document modifications
+const updates = new UpdateBuilder()
+  .title("Updated Quarterly Report")     // Validates title
+  .addTag("updated")                    // Validates and merges tags
+  .removeTag("draft")                   // Safe tag removal
+  .addMetadata("revised_by", "john.doe") // Metadata updates
+  .build();
+```
+
+### Security Features
+
+Built-in protection against common attacks:
+
+```typescript
+// Path traversal protection
+try {
+  new DocumentBuilder().path("../../../etc/passwd"); // Blocked
+} catch (error) {
+  console.log("Directory traversal blocked");
+}
+
+// Null byte injection protection  
+try {
+  new DocumentBuilder().path("/file\x00.txt"); // Blocked
+} catch (error) {
+  console.log("Null byte injection blocked");
+}
+
+// Reserved name protection (Windows compatibility)
+try {
+  new DocumentBuilder().path("CON.txt"); // Blocked
+} catch (error) {
+  console.log("Reserved filename blocked");
+}
+
+// Input validation
+try {
+  new QueryBuilder().limit(-1); // Blocked
+  new QueryBuilder().semanticWeight(1.5); // Blocked
+  new DocumentBuilder().addTag("invalid@tag"); // Blocked
+} catch (error) {
+  console.log("Invalid input blocked");
+}
 ```
 
 ## Connection Options
@@ -165,12 +327,19 @@ console.log(`Document count: ${stats.document_count}`);
 ## Error Handling
 
 ```typescript
-import { KotaDBError, NotFoundError, ConnectionError } from 'kotadb-client';
+import { 
+  KotaDBError, 
+  NotFoundError, 
+  ConnectionError, 
+  ValidationError 
+} from 'kotadb-client';
 
 try {
   const doc = await db.get('non-existent-id');
 } catch (error) {
-  if (error instanceof NotFoundError) {
+  if (error instanceof ValidationError) {
+    console.log(`Validation failed: ${error.message}`);
+  } else if (error instanceof NotFoundError) {
     console.log('Document not found');
   } else if (error instanceof ConnectionError) {
     console.log('Failed to connect to database');
@@ -178,6 +347,19 @@ try {
     console.log(`Database error: ${error.message}`);
   } else {
     console.log(`Unexpected error: ${error}`);
+  }
+}
+
+// Builder validation errors
+try {
+  const builder = new DocumentBuilder()
+    .path("../../../etc/passwd")  // Invalid path
+    .title("")                    // Empty title
+    .build();
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.log("Input validation failed:", error.message);
+    // Handle validation error appropriately
   }
 }
 ```

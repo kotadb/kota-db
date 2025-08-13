@@ -20,6 +20,18 @@
 
 export { KotaDB, connect } from './client';
 export * from './types';
+export * from './validated-types';
+export { 
+  validateFilePath,
+  validateDirectoryPath,
+  validateDocumentId,
+  validateTitle,
+  validateTag,
+  validateSearchQuery,
+  validateTimestamp,
+  validateSize
+} from './validation';
+export * from './builders';
 
 // Default export for convenience
 import { KotaDB } from './client';

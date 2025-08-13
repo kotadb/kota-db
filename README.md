@@ -6,6 +6,9 @@
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+[![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
+
 ```
 KotaDB combines document storage, graph relationships, and semantic search
 into a unified system designed for the way humans and AI think together.
@@ -30,6 +33,26 @@ Real-world benchmarks on Apple Silicon:
 
 ## Quick Start
 
+### Python (Recommended for Quick Testing)
+```bash
+# Install client
+pip install kotadb-client
+```
+
+```python
+from kotadb import KotaDB
+
+# Connect and start using immediately
+db = KotaDB("http://localhost:8080")
+doc_id = db.insert({
+    "path": "/notes/meeting.md",
+    "title": "My Note",
+    "content": "Important meeting notes..."
+})
+results = db.query("meeting notes")
+```
+
+### Rust (Building from Source)
 ```bash
 # Clone and build
 git clone https://github.com/jayminwest/kota-db.git
@@ -96,14 +119,15 @@ just bench            # Performance benchmarks
 
 ### Safety
 - **Systematic Testing**: 6-stage risk reduction methodology
-- **Type Safety**: Validated types at compile time
-- **Observability**: Distributed tracing on every operation
-- **Resilience**: Automatic retries with exponential backoff
+- **Type Safety**: Validated types (Rust compile-time, Python/TypeScript runtime)
+- **Observability**: Distributed tracing on every operation (Rust only)
+- **Resilience**: Automatic retries with exponential backoff (all client libraries)
 
 ---
 
-## Code Example
+## Code Examples
 
+### Rust (Full Feature Access)
 ```rust
 use kotadb::{create_file_storage, DocumentBuilder};
 
@@ -124,6 +148,32 @@ async fn main() -> Result<()> {
     
     Ok(())
 }
+```
+
+### Python (Client Library)
+```python
+from kotadb import KotaDB, DocumentBuilder, QueryBuilder, ValidatedPath
+
+# Connect to KotaDB server
+db = KotaDB("http://localhost:8080")
+
+# Type-safe document construction (runtime validation)
+doc_id = db.insert_with_builder(
+    DocumentBuilder()
+    .path(ValidatedPath("/knowledge/python-patterns.md"))
+    .title("Python Design Patterns")
+    .content("# Python Patterns\n\n...")
+    .add_tag("python")
+    .add_tag("patterns")
+)
+
+# Query with builder pattern
+results = db.query_with_builder(
+    QueryBuilder()
+    .text("design patterns")
+    .limit(10)
+    .tag_filter("python")
+)
 ```
 
 ---
@@ -174,31 +224,92 @@ GRAPH {
 
 ## Documentation
 
-[Architecture](docs/ARCHITECTURE.md) • [API Reference](docs/API.md) • [Development Guide](DEV_GUIDE.md) • [Agent Guide](AGENT.md)
+[Architecture](https://jayminwest.github.io/kota-db/stable/architecture/technical_architecture/) • [API Reference](https://jayminwest.github.io/kota-db/stable/api/api_reference/) • [Development Guide](https://jayminwest.github.io/kota-db/stable/development-guides/dev_guide/) • [Agent Guide](AGENT.md)
 
 ---
 
 ## Installation
 
-### As a CLI Tool
+### Client Libraries
+
+#### Python
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
 ```bash
+pip install kotadb-client
+```
+
+#### TypeScript/JavaScript
+```bash
+npm install kotadb-client
+# or
+yarn add kotadb-client
+```
+
+#### Go
+```bash
+go get github.com/jayminwest/kota-db/clients/go
+```
+
+### Server Installation
+
+#### As a CLI Tool
+```bash
+cargo install kotadb
+# or from source:
 cargo install --path .
+
 kotadb serve                    # Start HTTP server
 kotadb insert /path "Title" "Content"  # Insert document
 kotadb search "query"           # Search documents
 ```
 
-### As a Library
+#### As a Rust Library
+[![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
 ```toml
 [dependencies]
+kotadb = "0.2.0"
+# or from git:
 kotadb = { git = "https://github.com/jayminwest/kota-db" }
 ```
 
-### Docker
+#### Docker
 ```bash
+# Using pre-built image (recommended)
+docker pull ghcr.io/jayminwest/kota-db:latest
+docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
+
+# Or build from source
 docker build -t kotadb .
 docker run -p 8080:8080 kotadb serve
 ```
+
+---
+
+## Language Support Matrix
+
+| Feature | Rust | Python | TypeScript | Go |
+|---------|------|--------|------------|-----|
+| **Basic Operations** | | | | |
+| Document CRUD | ✅ | ✅ | ✅ | ✅ |
+| Text Search | ✅ | ✅ | ✅ | ✅ |
+| Semantic Search | ✅ | ✅ | ✅ | 🚧 |
+| Hybrid Search | ✅ | ✅ | ✅ | 🚧 |
+| **Type Safety** | | | | |
+| Validated Types | ✅ | ✅ | 🚧 | ❌ |
+| Builder Patterns | ✅ | ✅ | 🚧 | ❌ |
+| **Advanced Features** | | | | |
+| Query Routing | ✅ | ❌* | ❌* | ❌* |
+| Graph Queries | 🚧 | ❌ | ❌ | ❌ |
+| Direct Storage Access | ✅ | ❌ | ❌ | ❌ |
+| Observability/Tracing | ✅ | ❌ | ❌ | ❌ |
+| **Development** | | | | |
+| Connection Pooling | ✅ | ✅ | ✅ | ✅ |
+| Retry Logic | ✅ | ✅ | ✅ | ✅ |
+| Error Handling | ✅ | ✅ | ✅ | ✅ |
+
+**Legend**: ✅ Complete • 🚧 In Progress • ❌ Not Available
+
+*Query routing happens automatically on the server for client libraries
 
 ---
 

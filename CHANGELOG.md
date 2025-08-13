@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Comprehensive TypeScript client type safety and builder patterns (#93)
+- Comprehensive Python client improvements with validated types and builders (#91)
+
+### Changed
+- Improved client library discoverability and documentation (#90)
+
+### Fixed
+- GitHub Pages documentation deployment issues (#76)
+
 ## [0.2.1] - 2025-08-12
+
+### Added
+- Git Flow branching strategy with branch protection rules (#64)
+- Automated GitHub Pages versioning with Mike (#65)
+- Performance benchmarks in Docker builds
+
+### Changed
+- Replaced std::sync::RwLock with parking_lot::RwLock for 3-5x faster lock operations (#72)
+- Increased bulk operation threshold from 50 to 500 for better batch performance (#72)
+- Added Vec::with_capacity() pre-allocation in hot paths to reduce memory allocations (#72)
+- Optimized CI workflow for better efficiency and reliability
+
+### Fixed
+- Docker build now includes storage_stress benchmark
+- Code coverage job resilience improvements
+- Package publishing workflow robustness
+
+### Security
+- Updated slab crate to resolve security vulnerability
 
 ## [0.2.0] - 2025-08-11
 

@@ -19,11 +19,6 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 concurrency:
   group: "pages"
   cancel-in-progress: false
@@ -31,6 +26,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,23 +56,65 @@ jobs:
             pip install mike
           fi
 
-      - name: Build documentation
+      - name: Configure Git for Mike
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Initialize gh-pages branch if needed
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Check if gh-pages branch exists
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Creating gh-pages branch..."
+            git checkout --orphan gh-pages
+            git rm -rf .
+            echo "# GitHub Pages" > README.md
+            git add README.md
+            git commit -m "Initialize gh-pages branch"
+            git push origin gh-pages
+            git checkout main
+          else
+            git fetch origin gh-pages --depth=1
+          fi
+
+      - name: Deploy versioned documentation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Deploy main branch docs as 'dev' version
+          mike deploy --push --update-aliases dev
+          
+          # Deploy current stable version if VERSION file exists
+          if [ -f VERSION ]; then
+            VERSION=$(cat VERSION)
+            mike deploy --push --update-aliases "$VERSION" latest stable
+            mike set-default --push latest
+          else
+            mike set-default --push dev
+          fi
+          
+          echo "## 📚 Documentation Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ GitHub Pages Configuration Required (One-Time Setup)" >> $GITHUB_STEP_SUMMARY
+          echo "1. Go to [Settings → Pages](https://github.com/jayminwest/kota-db/settings/pages)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Change Source branch from **main** to **gh-pages**" >> $GITHUB_STEP_SUMMARY
+          echo "3. Keep folder as **/ (root)**" >> $GITHUB_STEP_SUMMARY
+          echo "4. Click Save" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Documentation URLs (after configuration):" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest stable: https://jayminwest.github.io/kota-db/" >> $GITHUB_STEP_SUMMARY
+          echo "- Development: https://jayminwest.github.io/kota-db/dev/" >> $GITHUB_STEP_SUMMARY
+          echo "- Version 0.2.0: https://jayminwest.github.io/kota-db/0.2.0/" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build documentation for PR preview
+        if: github.event_name == 'pull_request'
         run: mkdocs build --verbose
 
-      - name: Upload artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload artifact for PR preview
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
+          name: docs-preview
           path: ./site
 
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4

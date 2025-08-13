@@ -353,7 +353,9 @@ fn build_balanced_tree_from_sorted(
     const MAX_KEYS_PER_NODE: usize = 16; // B+ tree order
 
     // Step 1: Build leaf nodes
-    let mut current_level: Vec<Box<BTreeNode>> = Vec::new();
+    // Pre-allocate capacity based on number of leaf nodes needed
+    let num_leaf_nodes = pairs.len().div_ceil(MAX_KEYS_PER_NODE);
+    let mut current_level: Vec<Box<BTreeNode>> = Vec::with_capacity(num_leaf_nodes);
 
     for chunk in pairs.chunks(MAX_KEYS_PER_NODE) {
         let keys: Vec<_> = chunk.iter().map(|(k, _)| *k).collect();
@@ -370,7 +372,9 @@ fn build_balanced_tree_from_sorted(
 
     // Step 2: Build internal levels bottom-up
     while current_level.len() > 1 {
-        let mut next_level: Vec<Box<BTreeNode>> = Vec::new();
+        // Pre-allocate capacity for the next level
+        let num_parent_nodes = current_level.len().div_ceil(MAX_KEYS_PER_NODE + 1);
+        let mut next_level: Vec<Box<BTreeNode>> = Vec::with_capacity(num_parent_nodes);
 
         for chunk in current_level.chunks(MAX_KEYS_PER_NODE + 1) {
             // Internal nodes can have one more child than keys

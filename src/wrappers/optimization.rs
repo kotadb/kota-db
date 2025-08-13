@@ -48,7 +48,7 @@ impl Default for OptimizationConfig {
     fn default() -> Self {
         Self {
             enable_bulk_operations: true,
-            bulk_threshold: 50,
+            bulk_threshold: 500, // Increased from 50 for better bulk performance
             enable_concurrent_optimization: true,
             max_concurrent_readers: 16,
             enable_auto_rebalancing: true,

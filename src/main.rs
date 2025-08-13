@@ -287,10 +287,11 @@ impl Database {
         };
 
         // Retrieve documents from storage
-        let mut documents = Vec::new();
+        let doc_ids_limited: Vec<_> = doc_ids.into_iter().take(limit).collect();
+        let mut documents = Vec::with_capacity(doc_ids_limited.len());
         let storage = self.storage.lock().await;
 
-        for doc_id in doc_ids.into_iter().take(limit) {
+        for doc_id in doc_ids_limited {
             if let Some(doc) = storage.get(&doc_id).await? {
                 documents.push(doc);
             }

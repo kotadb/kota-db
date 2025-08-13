@@ -25,6 +25,7 @@ import {
   NotFoundError,
   ServerError
 } from './types';
+import { DocumentBuilder, QueryBuilder } from './builders';
 
 /**
  * KotaDB client for easy database operations.
@@ -163,6 +164,17 @@ export class KotaDB {
     };
   }
 
+  /**
+   * Search documents using QueryBuilder for type safety.
+   */
+  async queryWithBuilder(builder: QueryBuilder): Promise<QueryResult> {
+    const params = builder.build();
+    const query = params.q;
+    delete params.q;
+
+    return this.query(query, params);
+  }
+
   private getContentPreview(doc: Document): string {
     const content = Array.isArray(doc.content) 
       ? new TextDecoder().decode(new Uint8Array(doc.content))
@@ -184,6 +196,17 @@ export class KotaDB {
   }
 
   /**
+   * Perform semantic search using QueryBuilder for type safety.
+   */
+  async semanticSearchWithBuilder(builder: QueryBuilder): Promise<QueryResult> {
+    const data = builder.buildForSemantic();
+    const query = data.query;
+    delete data.query;
+
+    return this.semanticSearch(query, data);
+  }
+
+  /**
    * Perform hybrid search combining text and semantic search.
    */
   async hybridSearch(query: string, options: HybridSearchOptions = {}): Promise<QueryResult> {
@@ -196,6 +219,17 @@ export class KotaDB {
 
     const response = await this.client.post<QueryResult>('/search/hybrid', data);
     return response.data;
+  }
+
+  /**
+   * Perform hybrid search using QueryBuilder for type safety.
+   */
+  async hybridSearchWithBuilder(builder: QueryBuilder): Promise<QueryResult> {
+    const data = builder.buildForHybrid();
+    const query = data.query;
+    delete data.query;
+
+    return this.hybridSearch(query, data);
   }
 
   private convertContentToString(doc: Document): Document {
@@ -237,6 +271,14 @@ export class KotaDB {
 
     const response = await this.client.post<{ id: string }>('/documents', processedDocument);
     return response.data.id;
+  }
+
+  /**
+   * Insert a new document using DocumentBuilder for type safety.
+   */
+  async insertWithBuilder(builder: DocumentBuilder): Promise<string> {
+    const document = builder.build();
+    return this.insert(document);
   }
 
   /**

@@ -79,7 +79,7 @@ impl TrigramIndex {
             return Vec::new();
         }
 
-        let mut trigrams = Vec::new();
+        let mut trigrams = Vec::with_capacity(chars.len() - 2);
         for i in 0..=(chars.len() - 3) {
             let trigram: String = chars[i..i + 3].iter().collect();
 
@@ -521,7 +521,8 @@ impl Index for TrigramIndex {
         }
 
         // Extract trigrams from all search terms
-        let mut all_query_trigrams = Vec::new();
+        // Estimate ~10 trigrams per search term on average
+        let mut all_query_trigrams = Vec::with_capacity(query.search_terms.len() * 10);
         for search_term in &query.search_terms {
             let term_trigrams = Self::extract_trigrams(search_term.as_str());
             all_query_trigrams.extend(term_trigrams);

@@ -1,6 +1,16 @@
 # KotaDB Python Client
 
-A simple, PostgreSQL-level easy-to-use Python client for KotaDB.
+A simple, PostgreSQL-level easy-to-use Python client for KotaDB with type safety and builder patterns.
+
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+
+## Features
+
+- **Type Safety**: Runtime-validated types (`ValidatedPath`, `ValidatedDocumentId`, etc.)
+- **Builder Patterns**: Fluent APIs for safe document and query construction
+- **Full API Coverage**: Support for all KotaDB operations (CRUD, search, metadata)
+- **Connection Management**: Automatic retries, connection pooling, timeout handling
+- **Multiple Search Types**: Text, semantic, and hybrid search capabilities
 
 ## Installation
 
@@ -40,6 +50,96 @@ updated_doc = db.update(doc_id, {
 
 # Delete a document
 db.delete(doc_id)
+```
+
+## Type Safety & Builder Patterns
+
+### Validated Types
+Prevent errors at runtime with validated types that mirror the Rust implementation:
+
+```python
+from kotadb import ValidatedPath, ValidatedDocumentId, ValidatedTitle
+
+# These will raise ValidationError if invalid
+path = ValidatedPath("/notes/meeting.md")  # Validates: no null bytes, no parent dir refs, etc.
+doc_id = ValidatedDocumentId.parse("123e4567-e89b-12d3-a456-426614174000")
+title = ValidatedTitle("My Document Title")  # Validates: non-empty, length limits
+
+# Use in document operations
+db.insert({
+    "path": path.as_str(),
+    "title": title.as_str(), 
+    "content": "Document content..."
+})
+```
+
+### Document Builder Pattern
+Build documents safely with validation at each step:
+
+```python
+from kotadb import DocumentBuilder
+
+# Fluent API with validation
+doc_id = db.insert_with_builder(
+    DocumentBuilder()
+    .path("/knowledge/python-guide.md")
+    .title("Python Best Practices")
+    .content("# Python Guide\n\nBest practices for Python development...")
+    .add_tag("python")
+    .add_tag("documentation")
+    .add_metadata("author", "user@example.com")
+    .add_metadata("priority", "high")
+)
+```
+
+### Query Builder Pattern
+Build complex queries with type safety:
+
+```python
+from kotadb import QueryBuilder
+
+# Text search with filters
+results = db.query_with_builder(
+    QueryBuilder()
+    .text("machine learning algorithms")
+    .limit(20)
+    .offset(10)
+    .tag_filter("ai")
+    .path_filter("/research/*")
+)
+
+# Semantic search
+results = db.semantic_search_with_builder(
+    QueryBuilder()
+    .text("neural network architectures")
+    .limit(10)
+)
+
+# Hybrid search
+results = db.hybrid_search_with_builder(
+    QueryBuilder()
+    .text("database optimization techniques")
+    .semantic_weight(0.8)  # 80% semantic, 20% text
+    .limit(15)
+)
+```
+
+### Update Builder Pattern
+Safely update documents with fine-grained control:
+
+```python
+from kotadb import UpdateBuilder
+
+# Update with builder pattern
+updated_doc = db.update_with_builder(doc_id,
+    UpdateBuilder()
+    .title("Updated Python Guide")
+    .add_tag("updated")
+    .add_tag("2024")
+    .remove_tag("draft")
+    .add_metadata("last_modified_by", "user123")
+    .add_metadata("version", "2.0")
+)
 ```
 
 ## Connection Options
@@ -163,7 +263,7 @@ db = KotaDB(
 
 ## Data Types
 
-### Document
+### Core Types
 ```python
 @dataclass
 class Document:
@@ -176,24 +276,73 @@ class Document:
     updated_at: datetime
     size: int
     metadata: Optional[Dict[str, Any]]
-```
 
-### SearchResult
-```python
-@dataclass
-class SearchResult:
-    document: Document
-    score: float
-    content_preview: str
-```
-
-### QueryResult
-```python
 @dataclass
 class QueryResult:
-    results: List[SearchResult]
+    results: List[Document]
     total_count: int
-    query_time_ms: int
+    query_time_ms: Optional[int]
+```
+
+### Validated Types
+```python
+class ValidatedPath:
+    """Path with validation for safety (no traversal, null bytes, etc.)"""
+    def __init__(self, path: str) -> None: ...
+    def as_str(self) -> str: ...
+
+class ValidatedDocumentId:
+    """Document ID with UUID validation"""
+    @classmethod
+    def new(cls) -> 'ValidatedDocumentId': ...
+    @classmethod
+    def parse(cls, s: str) -> 'ValidatedDocumentId': ...
+    def as_str(self) -> str: ...
+
+class ValidatedTitle:
+    """Title with length and content validation"""
+    def __init__(self, title: str) -> None: ...
+    def as_str(self) -> str: ...
+
+class ValidatedTimestamp:
+    """Timestamp with range validation"""
+    @classmethod
+    def now(cls) -> 'ValidatedTimestamp': ...
+    def as_secs(self) -> int: ...
+
+class NonZeroSize:
+    """Size value that must be positive"""
+    def __init__(self, size: int) -> None: ...
+    def get(self) -> int: ...
+```
+
+### Builder Types
+```python
+class DocumentBuilder:
+    """Fluent API for safe document construction"""
+    def path(self, path: Union[str, ValidatedPath]) -> 'DocumentBuilder': ...
+    def title(self, title: Union[str, ValidatedTitle]) -> 'DocumentBuilder': ...
+    def content(self, content: Union[str, bytes, List[int]]) -> 'DocumentBuilder': ...
+    def add_tag(self, tag: str) -> 'DocumentBuilder': ...
+    def add_metadata(self, key: str, value: Any) -> 'DocumentBuilder': ...
+    def build(self) -> CreateDocumentRequest: ...
+
+class QueryBuilder:
+    """Fluent API for building search queries"""
+    def text(self, query: str) -> 'QueryBuilder': ...
+    def limit(self, limit: int) -> 'QueryBuilder': ...
+    def offset(self, offset: int) -> 'QueryBuilder': ...
+    def tag_filter(self, tag: str) -> 'QueryBuilder': ...
+    def build(self) -> Dict[str, Any]: ...
+
+class UpdateBuilder:
+    """Fluent API for safe document updates"""
+    def title(self, title: Union[str, ValidatedTitle]) -> 'UpdateBuilder': ...
+    def content(self, content: Union[str, bytes, List[int]]) -> 'UpdateBuilder': ...
+    def add_tag(self, tag: str) -> 'UpdateBuilder': ...
+    def remove_tag(self, tag: str) -> 'UpdateBuilder': ...
+    def add_metadata(self, key: str, value: Any) -> 'UpdateBuilder': ...
+    def build(self) -> Dict[str, Any]: ...
 ```
 
 ## Development

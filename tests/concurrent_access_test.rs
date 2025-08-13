@@ -4,7 +4,8 @@
 use anyhow::Result;
 use kotadb::pure::btree::count_total_keys;
 use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task;
 use uuid::Uuid;
@@ -41,7 +42,7 @@ async fn test_concurrent_reads_linear_scaling() -> Result<()> {
             let handle = task::spawn(async move {
                 for _ in 0..reads_per_thread {
                     let random_key = &keys_subset[fastrand::usize(..keys_subset.len())];
-                    let tree_guard = tree_ref.read().unwrap();
+                    let tree_guard = tree_ref.read();
                     let result = btree::search_in_tree(&tree_guard, random_key);
                     assert!(result.is_some(), "Key should be found in concurrent read");
                 }
@@ -94,7 +95,7 @@ async fn test_concurrent_writes_isolation() -> Result<()> {
 
                 // Acquire write lock and insert
                 {
-                    let mut tree_guard = tree_ref.write().unwrap();
+                    let mut tree_guard = tree_ref.write();
                     *tree_guard = btree::insert_into_tree(tree_guard.clone(), id, path).unwrap();
                 }
 
@@ -118,7 +119,7 @@ async fn test_concurrent_writes_isolation() -> Result<()> {
     }
 
     // Verify all writes succeeded and tree is consistent
-    let final_tree = concurrent_tree.read().unwrap();
+    let final_tree = concurrent_tree.read();
     let tree_size = count_total_keys(&final_tree);
 
     assert_eq!(
@@ -185,7 +186,7 @@ async fn test_mixed_read_write_workload() -> Result<()> {
 
             for _ in 0..operations_per_thread {
                 let random_key = {
-                    let keys_guard = keys_ref.read().unwrap();
+                    let keys_guard = keys_ref.read();
                     if keys_guard.is_empty() {
                         None
                     } else {
@@ -194,7 +195,7 @@ async fn test_mixed_read_write_workload() -> Result<()> {
                 };
 
                 if let Some(key) = random_key {
-                    let tree_guard = tree_ref.read().unwrap();
+                    let tree_guard = tree_ref.read();
                     if btree::search_in_tree(&tree_guard, &key).is_some() {
                         successful_reads += 1;
                     }
@@ -227,14 +228,14 @@ async fn test_mixed_read_write_workload() -> Result<()> {
 
                 // Write operation
                 {
-                    let mut tree_guard = tree_ref.write().unwrap();
+                    let mut tree_guard = tree_ref.write();
                     *tree_guard = btree::insert_into_tree(tree_guard.clone(), id, path).unwrap();
                     successful_writes += 1;
                 }
 
                 // Add key to shared pool for readers
                 {
-                    let mut keys_guard = keys_ref.write().unwrap();
+                    let mut keys_guard = keys_ref.write();
                     keys_guard.push(id);
                 }
 
@@ -263,8 +264,8 @@ async fn test_mixed_read_write_workload() -> Result<()> {
     );
 
     // Verify final tree consistency
-    let final_tree = concurrent_tree.read().unwrap();
-    let final_keys = shared_keys.read().unwrap();
+    let final_tree = concurrent_tree.read();
+    let final_keys = shared_keys.read();
     let tree_size = count_total_keys(&final_tree);
 
     assert_eq!(
@@ -310,14 +311,14 @@ async fn test_deadlock_prevention() -> Result<()> {
                 // Alternate lock acquisition order to test deadlock prevention
                 if thread_id % 2 == 0 {
                     // Even threads: lock tree1 then tree2
-                    let mut guard1 = tree1_ref.write().unwrap();
-                    let mut guard2 = tree2_ref.write().unwrap();
+                    let mut guard1 = tree1_ref.write();
+                    let mut guard2 = tree2_ref.write();
                     *guard1 = btree::insert_into_tree(guard1.clone(), id1, path1).unwrap();
                     *guard2 = btree::insert_into_tree(guard2.clone(), id2, path2).unwrap();
                 } else {
                     // Odd threads: lock tree2 then tree1
-                    let mut guard2 = tree2_ref.write().unwrap();
-                    let mut guard1 = tree1_ref.write().unwrap();
+                    let mut guard2 = tree2_ref.write();
+                    let mut guard1 = tree1_ref.write();
                     *guard2 = btree::insert_into_tree(guard2.clone(), id2, path2).unwrap();
                     *guard1 = btree::insert_into_tree(guard1.clone(), id1, path1).unwrap();
                 }
@@ -344,8 +345,8 @@ async fn test_deadlock_prevention() -> Result<()> {
     }
 
     // Verify both trees have expected number of entries
-    let tree1_size = count_total_keys(&tree1.read().unwrap());
-    let tree2_size = count_total_keys(&tree2.read().unwrap());
+    let tree1_size = count_total_keys(&tree1.read());
+    let tree2_size = count_total_keys(&tree2.read());
 
     assert_eq!(tree1_size, thread_count * operations_per_thread);
     assert_eq!(tree2_size, thread_count * operations_per_thread);
@@ -395,7 +396,7 @@ async fn test_lock_free_read_optimization() -> Result<()> {
 
             for _ in 0..reads_per_thread {
                 let random_key = &keys_ref[fastrand::usize(..keys_ref.len())];
-                let tree_guard = tree_ref.read().unwrap();
+                let tree_guard = tree_ref.read();
 
                 if btree::search_in_tree(&tree_guard, random_key).is_some() {
                     cache_hits += 1;
@@ -468,7 +469,7 @@ async fn test_write_batching_optimization() -> Result<()> {
 
                 // Single lock acquisition for entire batch
                 {
-                    let mut tree_guard = tree_ref.write().unwrap();
+                    let mut tree_guard = tree_ref.write();
                     // In Stage 3, this will use bulk_insert_into_tree for better performance
                     for (id, path) in batch_pairs {
                         *tree_guard =
@@ -495,7 +496,7 @@ async fn test_write_batching_optimization() -> Result<()> {
     println!("Batched writes: {} writes/sec", writes_per_second as u64);
 
     // Verify all writes succeeded
-    let final_tree = concurrent_tree.read().unwrap();
+    let final_tree = concurrent_tree.read();
     let final_size = count_total_keys(&final_tree);
     assert_eq!(
         final_size, total_writes,

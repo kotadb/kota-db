@@ -84,7 +84,7 @@ just release-dry-run 0.2.0
 - [ ] Check binary downloads work
 - [ ] Verify Docker images: `docker pull ghcr.io/jayminwest/kota-db:latest`
 - [ ] Test crates.io package: `cargo install kotadb`
-- [ ] Update documentation site if needed
+- [ ] Update documentation site (see Documentation Deployment section below)
 - [ ] Announce release:
   - [ ] GitHub Discussions
   - [ ] Project Discord/Slack
@@ -154,6 +154,111 @@ If a release needs to be rolled back:
 - Alpha releases: `vX.Y.Z-alpha.N` (e.g., v1.0.0-alpha.1)
 - Release candidates: `vX.Y.Z-rc.N` (e.g., v1.0.0-rc.1)
 
+## Documentation Deployment
+
+KotaDB uses [Mike](https://github.com/jimporter/mike) for versioned documentation on GitHub Pages. Documentation is built with MkDocs and deployed to the `gh-pages` branch.
+
+### Prerequisites
+
+```bash
+# Install required tools
+pip install mkdocs mkdocs-material mike
+```
+
+### Deployment Process
+
+1. **Deploy a new version:**
+   ```bash
+   # Deploy specific version
+   mike deploy 0.2.0 --push
+   
+   # Deploy with alias (e.g., latest)
+   mike deploy 0.2.0 latest --push
+   
+   # Deploy as stable (recommended for production releases)
+   mike deploy 0.2.0 stable --push
+   ```
+
+2. **Set default version:**
+   ```bash
+   # Make a version the default when users visit the root URL
+   mike set-default stable --push
+   ```
+
+3. **List deployed versions:**
+   ```bash
+   mike list
+   ```
+
+4. **Delete a version:**
+   ```bash
+   mike delete 0.1.0 --push
+   ```
+
+### Best Practices
+
+1. **Version Naming:**
+   - Use semantic version numbers (e.g., `0.2.0`, `1.0.0`)
+   - Use `stable` alias for the current stable release
+   - Use `latest` alias for the most recent release (including betas)
+   - Use `dev` for development/unreleased documentation
+
+2. **Release Documentation Updates:**
+   ```bash
+   # When releasing a new stable version
+   mike deploy <version> stable --push --update-aliases
+   
+   # For beta/prerelease versions
+   mike deploy <version>-beta.1 --push
+   ```
+
+3. **Local Testing:**
+   ```bash
+   # Build and serve documentation locally
+   mkdocs serve
+   
+   # Test Mike deployment locally (without pushing)
+   mike deploy <version> --no-push
+   mike serve  # View the versioned site locally
+   ```
+
+### Structure
+
+The `gh-pages` branch should maintain this structure:
+```
+gh-pages/
+├── index.html          # Redirect to default version
+├── versions.json       # Mike version metadata
+├── stable/            # Stable version (alias)
+│   └── [docs]
+├── 0.2.0/             # Specific version
+│   └── [docs]
+└── site/              # Legacy structure (can be removed)
+```
+
+### Troubleshooting
+
+1. **Documentation not updating:**
+   ```bash
+   # Force push to update
+   mike deploy <version> --push --force
+   ```
+
+2. **Broken redirect:**
+   - Ensure `index.html` at root redirects to correct version
+   - Check with: `mike set-default stable --push`
+
+3. **Version selector not working:**
+   - Verify `versions.json` exists in gh-pages root
+   - Check multiple versions are deployed: `mike list`
+
+### GitHub Pages Protection
+
+To prevent accidental commits to the `gh-pages` branch:
+1. Use branch protection rules in GitHub settings
+2. Always use Mike for deployments (never commit directly)
+3. Use the GitHub Action workflow for automated deployments
+
 ## Platform-Specific Notes
 
 ### Docker Images
@@ -211,6 +316,82 @@ Ensure all version references are updated:
 ```bash
 grep -r "0\.1\.0" --include="*.toml" --include="*.json" --include="*.go"
 ```
+
+## Documentation Deployment (GitHub Pages)
+
+KotaDB documentation is hosted on GitHub Pages using Mike for versioning. The site is available at https://jayminwest.github.io/kota-db/
+
+### Structure
+
+The `gh-pages` branch contains:
+- `stable/` - Latest stable documentation version
+- `dev/` - Development documentation (optional)
+- `versions.json` - Version metadata for Mike
+- `index.html` - Redirect to stable version
+
+### Deploying Documentation
+
+1. **Install Mike:**
+   ```bash
+   pip install mike mkdocs-material
+   ```
+
+2. **Deploy a new version:**
+   ```bash
+   # Deploy as latest stable version
+   mike deploy --push --update-aliases 0.2.0 stable
+   
+   # Deploy development version
+   mike deploy --push dev
+   ```
+
+3. **List versions:**
+   ```bash
+   mike list
+   ```
+
+4. **Set default version:**
+   ```bash
+   mike set-default --push stable
+   ```
+
+### Troubleshooting Documentation
+
+If the documentation site is broken:
+
+1. **Check the gh-pages branch structure:**
+   ```bash
+   git checkout gh-pages
+   ls -la
+   # Should have: stable/, versions.json, index.html
+   ```
+
+2. **Redeploy if needed:**
+   ```bash
+   git checkout main
+   mike deploy --push --force stable
+   ```
+
+3. **Clean up unnecessary files:**
+   ```bash
+   git checkout gh-pages
+   # Remove any build artifacts (target/, node_modules/, etc.)
+   git rm -r target/ site/  # if present
+   git commit -m "docs: clean up gh-pages branch"
+   git push origin gh-pages
+   ```
+
+4. **Verify deployment:**
+   - Visit https://jayminwest.github.io/kota-db/
+   - Check that styling and navigation work
+   - Verify all pages load correctly
+
+### Important Notes
+
+- **Never edit gh-pages directly** - Always use Mike to deploy
+- **Don't commit build artifacts** to gh-pages (target/, node_modules/, etc.)
+- **Keep only documentation files** in the gh-pages branch
+- **Use Mike aliases** (stable, dev) instead of version numbers in links
 
 ## Security Considerations
 
