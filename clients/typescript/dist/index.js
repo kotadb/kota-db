@@ -33,11 +33,22 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.connect = exports.KotaDB = void 0;
+exports.validateSize = exports.validateTimestamp = exports.validateSearchQuery = exports.validateTag = exports.validateTitle = exports.validateDocumentId = exports.validateDirectoryPath = exports.validateFilePath = exports.connect = exports.KotaDB = void 0;
 var client_1 = require("./client");
 Object.defineProperty(exports, "KotaDB", { enumerable: true, get: function () { return client_1.KotaDB; } });
 Object.defineProperty(exports, "connect", { enumerable: true, get: function () { return client_1.connect; } });
 __exportStar(require("./types"), exports);
+__exportStar(require("./validated-types"), exports);
+var validation_1 = require("./validation");
+Object.defineProperty(exports, "validateFilePath", { enumerable: true, get: function () { return validation_1.validateFilePath; } });
+Object.defineProperty(exports, "validateDirectoryPath", { enumerable: true, get: function () { return validation_1.validateDirectoryPath; } });
+Object.defineProperty(exports, "validateDocumentId", { enumerable: true, get: function () { return validation_1.validateDocumentId; } });
+Object.defineProperty(exports, "validateTitle", { enumerable: true, get: function () { return validation_1.validateTitle; } });
+Object.defineProperty(exports, "validateTag", { enumerable: true, get: function () { return validation_1.validateTag; } });
+Object.defineProperty(exports, "validateSearchQuery", { enumerable: true, get: function () { return validation_1.validateSearchQuery; } });
+Object.defineProperty(exports, "validateTimestamp", { enumerable: true, get: function () { return validation_1.validateTimestamp; } });
+Object.defineProperty(exports, "validateSize", { enumerable: true, get: function () { return validation_1.validateSize; } });
+__exportStar(require("./builders"), exports);
 // Default export for convenience
 const client_2 = require("./client");
 exports.default = client_2.KotaDB;
