@@ -119,14 +119,15 @@ just bench            # Performance benchmarks
 
 ### Safety
 - **Systematic Testing**: 6-stage risk reduction methodology
-- **Type Safety**: Validated types at compile time
-- **Observability**: Distributed tracing on every operation
-- **Resilience**: Automatic retries with exponential backoff
+- **Type Safety**: Validated types (Rust compile-time, Python/TypeScript runtime)
+- **Observability**: Distributed tracing on every operation (Rust only)
+- **Resilience**: Automatic retries with exponential backoff (all client libraries)
 
 ---
 
-## Code Example
+## Code Examples
 
+### Rust (Full Feature Access)
 ```rust
 use kotadb::{create_file_storage, DocumentBuilder};
 
@@ -147,6 +148,32 @@ async fn main() -> Result<()> {
     
     Ok(())
 }
+```
+
+### Python (Client Library)
+```python
+from kotadb import KotaDB, DocumentBuilder, QueryBuilder, ValidatedPath
+
+# Connect to KotaDB server
+db = KotaDB("http://localhost:8080")
+
+# Type-safe document construction (runtime validation)
+doc_id = db.insert_with_builder(
+    DocumentBuilder()
+    .path(ValidatedPath("/knowledge/python-patterns.md"))
+    .title("Python Design Patterns")
+    .content("# Python Patterns\n\n...")
+    .add_tag("python")
+    .add_tag("patterns")
+)
+
+# Query with builder pattern
+results = db.query_with_builder(
+    QueryBuilder()
+    .text("design patterns")
+    .limit(10)
+    .tag_filter("python")
+)
 ```
 
 ---
@@ -271,6 +298,34 @@ docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
 docker build -t kotadb .
 docker run -p 8080:8080 kotadb serve
 ```
+
+---
+
+## Language Support Matrix
+
+| Feature | Rust | Python | TypeScript | Go |
+|---------|------|--------|------------|-----|
+| **Basic Operations** | | | | |
+| Document CRUD | ✅ | ✅ | ✅ | ✅ |
+| Text Search | ✅ | ✅ | ✅ | ✅ |
+| Semantic Search | ✅ | ✅ | ✅ | 🚧 |
+| Hybrid Search | ✅ | ✅ | ✅ | 🚧 |
+| **Type Safety** | | | | |
+| Validated Types | ✅ | ✅ | 🚧 | ❌ |
+| Builder Patterns | ✅ | ✅ | 🚧 | ❌ |
+| **Advanced Features** | | | | |
+| Query Routing | ✅ | ❌* | ❌* | ❌* |
+| Graph Queries | 🚧 | ❌ | ❌ | ❌ |
+| Direct Storage Access | ✅ | ❌ | ❌ | ❌ |
+| Observability/Tracing | ✅ | ❌ | ❌ | ❌ |
+| **Development** | | | | |
+| Connection Pooling | ✅ | ✅ | ✅ | ✅ |
+| Retry Logic | ✅ | ✅ | ✅ | ✅ |
+| Error Handling | ✅ | ✅ | ✅ | ✅ |
+
+**Legend**: ✅ Complete • 🚧 In Progress • ❌ Not Available
+
+*Query routing happens automatically on the server for client libraries
 
 ---
 

@@ -323,6 +323,128 @@ class KotaDB:
         """Close the client session."""
         self.session.close()
 
+    # Builder pattern methods
+    
+    def insert_with_builder(self, builder) -> str:
+        """
+        Insert a document using DocumentBuilder.
+        
+        Args:
+            builder: DocumentBuilder instance
+            
+        Returns:
+            ID of the created document
+        """
+        from .builders import DocumentBuilder
+        if not isinstance(builder, DocumentBuilder):
+            raise ValidationError("Expected DocumentBuilder instance")
+        
+        document = builder.build()
+        return self.insert(document)
+    
+    def query_with_builder(self, builder) -> QueryResult:
+        """
+        Query documents using QueryBuilder.
+        
+        Args:
+            builder: QueryBuilder instance
+            
+        Returns:
+            QueryResult with matching documents
+        """
+        from .builders import QueryBuilder
+        if not isinstance(builder, QueryBuilder):
+            raise ValidationError("Expected QueryBuilder instance")
+        
+        params = builder.build()
+        query_text = params.pop("q")
+        return self.query(query_text, **params)
+    
+    def semantic_search_with_builder(self, builder) -> QueryResult:
+        """
+        Perform semantic search using QueryBuilder.
+        
+        Args:
+            builder: QueryBuilder instance
+            
+        Returns:
+            QueryResult with semantically similar documents
+        """
+        from .builders import QueryBuilder
+        if not isinstance(builder, QueryBuilder):
+            raise ValidationError("Expected QueryBuilder instance")
+        
+        data = builder.build_for_semantic()
+        query_text = data.pop("query")
+        return self.semantic_search(query_text, **data)
+    
+    def hybrid_search_with_builder(self, builder) -> QueryResult:
+        """
+        Perform hybrid search using QueryBuilder.
+        
+        Args:
+            builder: QueryBuilder instance
+            
+        Returns:
+            QueryResult with hybrid search results
+        """
+        from .builders import QueryBuilder
+        if not isinstance(builder, QueryBuilder):
+            raise ValidationError("Expected QueryBuilder instance")
+        
+        data = builder.build_for_hybrid()
+        query_text = data.pop("query")
+        semantic_weight = data.pop("semantic_weight", 0.7)
+        return self.hybrid_search(query_text, semantic_weight=semantic_weight, **data)
+    
+    def update_with_builder(self, doc_id: str, builder) -> Document:
+        """
+        Update a document using UpdateBuilder.
+        
+        Args:
+            doc_id: Document identifier
+            builder: UpdateBuilder instance
+            
+        Returns:
+            Updated document
+        """
+        from .builders import UpdateBuilder
+        if not isinstance(builder, UpdateBuilder):
+            raise ValidationError("Expected UpdateBuilder instance")
+        
+        updates = builder.build()
+        
+        # Handle special operations
+        if "_tag_operations" in updates:
+            # For now, we'll need to get current document and merge tags
+            # This is a limitation of the current API
+            tag_ops = updates.pop("_tag_operations")
+            current_doc = self.get(doc_id)
+            current_tags = set(current_doc.tags)
+            
+            if "add" in tag_ops:
+                current_tags.update(tag_ops["add"])
+            if "remove" in tag_ops:
+                current_tags.difference_update(tag_ops["remove"])
+            
+            updates["tags"] = list(current_tags)
+        
+        if "_metadata_operations" in updates:
+            # Handle metadata operations
+            meta_ops = updates.pop("_metadata_operations")
+            current_doc = self.get(doc_id)
+            current_metadata = dict(current_doc.metadata) if current_doc.metadata else {}
+            
+            for key, value in meta_ops.items():
+                if value is None:
+                    current_metadata.pop(key, None)  # Remove key
+                else:
+                    current_metadata[key] = value
+            
+            updates["metadata"] = current_metadata
+        
+        return self.update(doc_id, updates)
+
 
 # Convenience function for simple usage
 def connect(url: Optional[str] = None, **kwargs) -> KotaDB:
