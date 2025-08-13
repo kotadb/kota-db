@@ -19,6 +19,9 @@
  */
 export { KotaDB, connect } from './client';
 export * from './types';
+export * from './validated-types';
+export { validateFilePath, validateDirectoryPath, validateDocumentId, validateTitle, validateTag, validateSearchQuery, validateTimestamp, validateSize } from './validation';
+export * from './builders';
 import { KotaDB } from './client';
 export default KotaDB;
 //# sourceMappingURL=index.d.ts.map

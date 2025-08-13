@@ -4,6 +4,7 @@
  * Provides a simple, PostgreSQL-like interface for document operations.
  */
 import { Document, QueryResult, SearchOptions, SemanticSearchOptions, HybridSearchOptions, ConnectionConfig, HealthStatus, DatabaseStats, DocumentInput, DocumentUpdate } from './types';
+import { DocumentBuilder, QueryBuilder } from './builders';
 /**
  * KotaDB client for easy database operations.
  *
@@ -46,15 +47,27 @@ export declare class KotaDB {
      * Search documents using text query.
      */
     query(query: string, options?: SearchOptions): Promise<QueryResult>;
+    /**
+     * Search documents using QueryBuilder for type safety.
+     */
+    queryWithBuilder(builder: QueryBuilder): Promise<QueryResult>;
     private getContentPreview;
     /**
      * Perform semantic search using embeddings.
      */
     semanticSearch(query: string, options?: SemanticSearchOptions): Promise<QueryResult>;
     /**
+     * Perform semantic search using QueryBuilder for type safety.
+     */
+    semanticSearchWithBuilder(builder: QueryBuilder): Promise<QueryResult>;
+    /**
      * Perform hybrid search combining text and semantic search.
      */
     hybridSearch(query: string, options?: HybridSearchOptions): Promise<QueryResult>;
+    /**
+     * Perform hybrid search using QueryBuilder for type safety.
+     */
+    hybridSearchWithBuilder(builder: QueryBuilder): Promise<QueryResult>;
     private convertContentToString;
     /**
      * Get a document by ID.
@@ -64,6 +77,10 @@ export declare class KotaDB {
      * Insert a new document.
      */
     insert(document: DocumentInput): Promise<string>;
+    /**
+     * Insert a new document using DocumentBuilder for type safety.
+     */
+    insertWithBuilder(builder: DocumentBuilder): Promise<string>;
     /**
      * Update an existing document.
      */
