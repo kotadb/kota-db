@@ -44,13 +44,19 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install mkdocs mkdocs-material mike
+          pip install --upgrade pip --no-cache-dir
+          pip install --no-cache-dir mkdocs mkdocs-material mike mkdocs-minify-plugin
       
       - name: Configure Git for Mike
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+      
+      - name: Validate MkDocs configuration
+        run: |
+          echo "Validating MkDocs configuration..."
+          mkdocs build --strict
+          echo "✅ MkDocs configuration is valid"
       
       - name: Determine version and alias
         id: version
@@ -77,30 +83,44 @@ jobs:
       
       - name: Deploy documentation with Mike
         run: |
+          set -e
+          
+          # Check for existing versions
+          if ! mike list > /dev/null 2>&1; then
+            echo "::warning::No existing versions found. This might be the first deployment."
+          fi
+          
           # Deploy the version
           if [ -n "${{ steps.version.outputs.alias }}" ]; then
+            echo "Deploying version ${{ steps.version.outputs.version }} with alias ${{ steps.version.outputs.alias }}"
             mike deploy "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.alias }}" --push --update-aliases
           else
+            echo "Deploying version ${{ steps.version.outputs.version }} without alias"
             mike deploy "${{ steps.version.outputs.version }}" --push
           fi
           
           # Set as default if requested
           if [ "${{ steps.version.outputs.set_default }}" == "true" ]; then
             if [ -n "${{ steps.version.outputs.alias }}" ]; then
+              echo "Setting ${{ steps.version.outputs.alias }} as default version"
               mike set-default "${{ steps.version.outputs.alias }}" --push
             else
+              echo "Setting ${{ steps.version.outputs.version }} as default version"
               mike set-default "${{ steps.version.outputs.version }}" --push
             fi
           fi
       
       - name: List deployed versions
-        run: mike list
+        run: |
+          echo "Currently deployed versions:"
+          mike list --verbose || echo "Failed to list versions"
 
   # Separate job to check gh-pages branch integrity
   check-gh-pages:
     name: Verify gh-pages branch
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/gh-pages'
+    needs: deploy-docs
+    if: always() && needs.deploy-docs.result == 'success'
     
     steps:
       - name: Checkout gh-pages
