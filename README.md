@@ -190,7 +190,7 @@ GRAPH {
 
 ## Documentation
 
-[Architecture](docs/ARCHITECTURE.md) • [API Reference](docs/API.md) • [Development Guide](DEV_GUIDE.md) • [Agent Guide](AGENT.md)
+[Architecture](https://jayminwest.github.io/kota-db/stable/architecture/technical_architecture/) • [API Reference](https://jayminwest.github.io/kota-db/stable/api/api_reference/) • [Development Guide](https://jayminwest.github.io/kota-db/stable/development-guides/dev_guide/) • [Agent Guide](AGENT.md)
 
 ---
 
