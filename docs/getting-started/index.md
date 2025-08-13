@@ -2,17 +2,79 @@
 
 This guide will help you get KotaDB up and running quickly. We'll cover installation, basic configuration, and your first database operations.
 
-## Prerequisites
+## Quick Start (60 Seconds)
 
-Before you begin, ensure you have the following installed:
+### Using Python Client (Easiest)
+
+```bash
+# Install the Python client
+pip install kotadb-client
+```
+
+```python
+from kotadb import KotaDB
+
+# Connect to KotaDB server
+db = KotaDB("http://localhost:8080")
+
+# Insert a document
+doc_id = db.insert({
+    "path": "/notes/quickstart.md",
+    "title": "Quick Start Note",
+    "content": "My first KotaDB document!"
+})
+
+# Search for documents
+results = db.query("first document")
+for result in results.results:
+    print(f"Found: {result.document.title}")
+```
+
+## Installation Options
+
+### Client Libraries
+
+#### Python
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+```bash
+pip install kotadb-client
+```
+
+#### TypeScript/JavaScript
+```bash
+npm install kotadb-client
+# or
+yarn add kotadb-client
+```
+
+#### Go
+```bash
+go get github.com/jayminwest/kota-db/clients/go
+```
+
+### Server Installation
+
+#### Prerequisites
+
+For building from source, ensure you have:
 
 - **Rust** 1.75.0 or later ([Install Rust](https://rustup.rs/))
 - **Git** for cloning the repository
 - **Just** command runner (optional but recommended)
 
-## Quick Installation
+#### Quick Installation
 
-### From Source
+##### Using Docker (Recommended)
+
+```bash
+# Pull the pre-built Docker image
+docker pull ghcr.io/jayminwest/kota-db:latest
+
+# Run KotaDB server
+docker run -p 8080:8080 -v $(pwd)/data:/data ghcr.io/jayminwest/kota-db:latest serve
+```
+
+##### From Source
 
 ```bash
 # Clone the repository
@@ -22,11 +84,14 @@ cd kota-db
 # Build the project
 cargo build --release
 
+# Start the server
+cargo run --bin kotadb -- serve
+
 # Run tests to verify installation
 cargo test --lib
 ```
 
-### Using Just
+##### Using Just
 
 If you have `just` installed:
 
@@ -39,14 +104,14 @@ just test
 just dev
 ```
 
-### Docker Installation
+##### Using Cargo Install
 
 ```bash
-# Pull the Docker image
-docker pull kotadb/kotadb:latest
+# Install from crates.io
+cargo install kotadb
 
-# Run KotaDB container
-docker run -p 8080:8080 -v $(pwd)/data:/data kotadb/kotadb:latest
+# Start the server
+kotadb serve
 ```
 
 ## First Steps

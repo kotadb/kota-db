@@ -317,6 +317,82 @@ Ensure all version references are updated:
 grep -r "0\.1\.0" --include="*.toml" --include="*.json" --include="*.go"
 ```
 
+## Documentation Deployment (GitHub Pages)
+
+KotaDB documentation is hosted on GitHub Pages using Mike for versioning. The site is available at https://jayminwest.github.io/kota-db/
+
+### Structure
+
+The `gh-pages` branch contains:
+- `stable/` - Latest stable documentation version
+- `dev/` - Development documentation (optional)
+- `versions.json` - Version metadata for Mike
+- `index.html` - Redirect to stable version
+
+### Deploying Documentation
+
+1. **Install Mike:**
+   ```bash
+   pip install mike mkdocs-material
+   ```
+
+2. **Deploy a new version:**
+   ```bash
+   # Deploy as latest stable version
+   mike deploy --push --update-aliases 0.2.0 stable
+   
+   # Deploy development version
+   mike deploy --push dev
+   ```
+
+3. **List versions:**
+   ```bash
+   mike list
+   ```
+
+4. **Set default version:**
+   ```bash
+   mike set-default --push stable
+   ```
+
+### Troubleshooting Documentation
+
+If the documentation site is broken:
+
+1. **Check the gh-pages branch structure:**
+   ```bash
+   git checkout gh-pages
+   ls -la
+   # Should have: stable/, versions.json, index.html
+   ```
+
+2. **Redeploy if needed:**
+   ```bash
+   git checkout main
+   mike deploy --push --force stable
+   ```
+
+3. **Clean up unnecessary files:**
+   ```bash
+   git checkout gh-pages
+   # Remove any build artifacts (target/, node_modules/, etc.)
+   git rm -r target/ site/  # if present
+   git commit -m "docs: clean up gh-pages branch"
+   git push origin gh-pages
+   ```
+
+4. **Verify deployment:**
+   - Visit https://jayminwest.github.io/kota-db/
+   - Check that styling and navigation work
+   - Verify all pages load correctly
+
+### Important Notes
+
+- **Never edit gh-pages directly** - Always use Mike to deploy
+- **Don't commit build artifacts** to gh-pages (target/, node_modules/, etc.)
+- **Keep only documentation files** in the gh-pages branch
+- **Use Mike aliases** (stable, dev) instead of version numbers in links
+
 ## Security Considerations
 
 - Never commit sensitive data in releases

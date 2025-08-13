@@ -4,6 +4,20 @@
 
 Welcome to the KotaDB documentation! KotaDB is a high-performance, custom database built entirely in Rust with zero external database dependencies, designed specifically for distributed human-AI cognitive workflows.
 
+## Quick Installation
+
+### Python Client
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+```bash
+pip install kotadb-client
+```
+
+### Server (Docker)
+```bash
+docker pull ghcr.io/jayminwest/kota-db:latest
+docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
+```
+
 <div class="grid cards" markdown>
 
 -   :material-rocket-launch:{ .lg .middle } **Quick Start**

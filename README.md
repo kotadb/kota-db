@@ -6,6 +6,9 @@
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+[![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
+
 ```
 KotaDB combines document storage, graph relationships, and semantic search
 into a unified system designed for the way humans and AI think together.
@@ -30,6 +33,26 @@ Real-world benchmarks on Apple Silicon:
 
 ## Quick Start
 
+### Python (Recommended for Quick Testing)
+```bash
+# Install client
+pip install kotadb-client
+```
+
+```python
+from kotadb import KotaDB
+
+# Connect and start using immediately
+db = KotaDB("http://localhost:8080")
+doc_id = db.insert({
+    "path": "/notes/meeting.md",
+    "title": "My Note",
+    "content": "Important meeting notes..."
+})
+results = db.query("meeting notes")
+```
+
+### Rust (Building from Source)
 ```bash
 # Clone and build
 git clone https://github.com/jayminwest/kota-db.git
@@ -196,22 +219,55 @@ GRAPH {
 
 ## Installation
 
-### As a CLI Tool
+### Client Libraries
+
+#### Python
+[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
 ```bash
+pip install kotadb-client
+```
+
+#### TypeScript/JavaScript
+```bash
+npm install kotadb-client
+# or
+yarn add kotadb-client
+```
+
+#### Go
+```bash
+go get github.com/jayminwest/kota-db/clients/go
+```
+
+### Server Installation
+
+#### As a CLI Tool
+```bash
+cargo install kotadb
+# or from source:
 cargo install --path .
+
 kotadb serve                    # Start HTTP server
 kotadb insert /path "Title" "Content"  # Insert document
 kotadb search "query"           # Search documents
 ```
 
-### As a Library
+#### As a Rust Library
+[![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
 ```toml
 [dependencies]
+kotadb = "0.2.0"
+# or from git:
 kotadb = { git = "https://github.com/jayminwest/kota-db" }
 ```
 
-### Docker
+#### Docker
 ```bash
+# Using pre-built image (recommended)
+docker pull ghcr.io/jayminwest/kota-db:latest
+docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
+
+# Or build from source
 docker build -t kotadb .
 docker run -p 8080:8080 kotadb serve
 ```
