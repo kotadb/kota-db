@@ -185,7 +185,7 @@ pub fn calculate_complexity_factor(sizes: &[usize], times: &[Duration]) -> Growt
     };
 
     // Calculate average growth factor
-    let mut growth_factors = Vec::new();
+    let mut growth_factors = Vec::with_capacity(sizes.len() - 1);
     for i in 1..sizes.len() {
         let size_ratio = sizes[i] as f64 / sizes[i - 1] as f64;
         let time_ratio = times[i].as_nanos() as f64 / times[i - 1].as_nanos() as f64;

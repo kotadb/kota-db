@@ -3,9 +3,10 @@
 
 use crate::contracts::performance::{ComplexityClass, PerformanceMeasurement};
 use crate::pure::performance::{GrowthAnalysis, PerformanceStats};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Performance metrics collector
@@ -155,9 +156,7 @@ impl PerformanceCollector {
 
     /// Record a performance measurement
     pub fn record_measurement(&self, measurement: PerformanceMeasurement) {
-        let Ok(mut measurements) = self.measurements.write() else {
-            return; // Skip recording if lock is poisoned
-        };
+        let mut measurements = self.measurements.write();
 
         // Cleanup old measurements
         let cutoff = chrono::Utc::now()
@@ -185,26 +184,7 @@ impl PerformanceCollector {
 
     /// Generate current performance dashboard
     pub fn generate_dashboard(&self) -> PerformanceDashboard {
-        let measurements = match self.measurements.read() {
-            Ok(m) => m,
-            Err(_) => {
-                // Return empty dashboard if lock is poisoned
-                return PerformanceDashboard {
-                    timestamp: chrono::Utc::now().into(),
-                    operations: HashMap::new(),
-                    system_metrics: SystemMetrics {
-                        total_operations: 0,
-                        operations_per_second: 0.0,
-                        avg_response_time: Duration::ZERO,
-                        p95_response_time: Duration::ZERO,
-                        p99_response_time: Duration::ZERO,
-                        memory_efficiency: 0.0,
-                        active_operations: 0,
-                    },
-                    alerts: Vec::new(),
-                };
-            }
-        };
+        let measurements = self.measurements.read();
 
         // Group measurements by operation
         let mut operation_groups: HashMap<String, Vec<&PerformanceMeasurement>> = HashMap::new();
@@ -397,10 +377,7 @@ impl PerformanceCollector {
 
     /// Get measurements for a specific operation
     pub fn get_operation_measurements(&self, operation: &str) -> Vec<PerformanceMeasurement> {
-        let measurements = match self.measurements.read() {
-            Ok(m) => m,
-            Err(_) => return Vec::new(), // Return empty if lock is poisoned
-        };
+        let measurements = self.measurements.read();
         measurements
             .iter()
             .filter(|m| m.operation == operation)
