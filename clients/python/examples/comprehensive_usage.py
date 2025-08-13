@@ -6,24 +6,25 @@ This example demonstrates both traditional and new builder pattern approaches,
 showcasing the full capabilities of the Python client library.
 """
 
+import time
+
 from kotadb import (
-    KotaDB,
+    ClientValidationError,
     DocumentBuilder,
+    KotaDB,
     QueryBuilder,
     UpdateBuilder,
     ValidatedPath,
     ValidatedTitle,
-    ClientValidationError,
 )
 from kotadb.exceptions import KotaDBError, NotFoundError
-import time
 
 
 def traditional_approach(db):
     """Demonstrate traditional dictionary-based approach."""
     print("📝 Traditional Approach (Dictionary-based)")
     print("=" * 50)
-    
+
     # Insert documents using dictionaries
     docs = [
         {
@@ -31,17 +32,17 @@ def traditional_approach(db):
             "title": "Python Programming Guide",
             "content": "Python is a high-level programming language known for its simplicity and readability. It's widely used in web development, data science, and automation.",
             "tags": ["python", "programming", "guide"],
-            "metadata": {"author": "python-expert", "difficulty": "beginner"}
+            "metadata": {"author": "python-expert", "difficulty": "beginner"},
         },
         {
-            "path": "/traditional/web-frameworks.md", 
+            "path": "/traditional/web-frameworks.md",
             "title": "Python Web Frameworks Comparison",
             "content": "Comparing popular Python web frameworks: Django, Flask, FastAPI. Each has its strengths for different use cases.",
             "tags": ["python", "web", "frameworks", "comparison"],
-            "metadata": {"author": "web-dev", "difficulty": "intermediate"}
-        }
+            "metadata": {"author": "web-dev", "difficulty": "intermediate"},
+        },
     ]
-    
+
     doc_ids = []
     for doc in docs:
         try:
@@ -50,7 +51,7 @@ def traditional_approach(db):
             print(f"✅ Inserted: {doc['title']} (ID: {doc_id})")
         except KotaDBError as e:
             print(f"❌ Failed to insert {doc['title']}: {e}")
-    
+
     return doc_ids
 
 
@@ -58,16 +59,18 @@ def builder_approach(db):
     """Demonstrate new builder pattern approach with type safety."""
     print("\n🏗️  Builder Pattern Approach (Type-safe)")
     print("=" * 50)
-    
+
     doc_ids = []
-    
+
     # Document 1: Using builder with validated types
     try:
         doc_id = db.insert_with_builder(
             DocumentBuilder()
             .path(ValidatedPath("/builders/rust-systems.md"))
             .title(ValidatedTitle("Rust Systems Programming"))
-            .content("Rust provides memory safety without garbage collection, making it ideal for systems programming. Zero-cost abstractions and fearless concurrency are key features.")
+            .content(
+                "Rust provides memory safety without garbage collection, making it ideal for systems programming. Zero-cost abstractions and fearless concurrency are key features."
+            )
             .add_tag("rust")
             .add_tag("systems")
             .add_tag("programming")
@@ -79,14 +82,16 @@ def builder_approach(db):
         print(f"✅ Inserted with builder: Rust Systems Programming (ID: {doc_id})")
     except (KotaDBError, ClientValidationError) as e:
         print(f"❌ Failed to insert with builder: {e}")
-    
+
     # Document 2: Using builder with auto-generated ID
     try:
         doc_id = db.insert_with_builder(
             DocumentBuilder()
             .path("/builders/database-design.md")
             .title("Modern Database Design Patterns")
-            .content("Exploring modern database design patterns including event sourcing, CQRS, and microservices data patterns.")
+            .content(
+                "Exploring modern database design patterns including event sourcing, CQRS, and microservices data patterns."
+            )
             .add_tag("database")
             .add_tag("design")
             .add_tag("patterns")
@@ -99,7 +104,7 @@ def builder_approach(db):
         print(f"✅ Inserted with builder: Database Design (ID: {doc_id})")
     except (KotaDBError, ClientValidationError) as e:
         print(f"❌ Failed to insert with builder: {e}")
-    
+
     return doc_ids
 
 
@@ -107,7 +112,7 @@ def demonstrate_search_patterns(db):
     """Demonstrate different search approaches."""
     print("\n🔍 Search Pattern Demonstrations")
     print("=" * 50)
-    
+
     # Traditional search
     print("\n📋 Traditional Search:")
     try:
@@ -117,22 +122,19 @@ def demonstrate_search_patterns(db):
             print(f"  - {doc.title} (tags: {', '.join(doc.tags)})")
     except KotaDBError as e:
         print(f"❌ Traditional search failed: {e}")
-    
+
     # Builder-based search
     print("\n🔧 Builder-based Search:")
     try:
         results = db.query_with_builder(
-            QueryBuilder()
-            .text("programming language")
-            .limit(3)
-            .tag_filter("programming")
+            QueryBuilder().text("programming language").limit(3).tag_filter("programming")
         )
         print(f"Found {results.total_count} results with builder:")
         for doc in results.results:
             print(f"  - {doc.title} (path: {doc.path})")
     except (KotaDBError, ClientValidationError) as e:
         print(f"❌ Builder search failed: {e}")
-    
+
     # Advanced query with multiple filters
     print("\n🎯 Advanced Query with Filters:")
     try:
@@ -150,21 +152,19 @@ def demonstrate_search_patterns(db):
             print(f"  - {doc.title} (difficulty: {difficulty})")
     except (KotaDBError, ClientValidationError) as e:
         print(f"❌ Advanced search failed: {e}")
-    
+
     # Semantic search (if available)
     print("\n🧠 Semantic Search:")
     try:
         results = db.semantic_search_with_builder(
-            QueryBuilder()
-            .text("memory management and performance optimization")
-            .limit(5)
+            QueryBuilder().text("memory management and performance optimization").limit(5)
         )
         print(f"Found {results.total_count} semantic results:")
         for doc in results.results:
             print(f"  - {doc.title}")
     except Exception as e:
         print(f"ℹ️  Semantic search not available: {e}")
-    
+
     # Hybrid search (if available)
     print("\n🔄 Hybrid Search:")
     try:
@@ -185,36 +185,42 @@ def demonstrate_update_patterns(db, doc_ids):
     """Demonstrate different update approaches."""
     print("\n✏️  Update Pattern Demonstrations")
     print("=" * 50)
-    
+
     if not doc_ids:
         print("No documents available for update demonstration")
         return
-    
+
     doc_id = doc_ids[0]
-    
+
     # Traditional update
     print("\n📝 Traditional Update:")
     try:
-        updated_doc = db.update(doc_id, {
-            "content": "Updated content using traditional approach. Added new information about best practices.",
-            "tags": ["python", "programming", "guide", "updated"]
-        })
+        updated_doc = db.update(
+            doc_id,
+            {
+                "content": "Updated content using traditional approach. Added new information about best practices.",
+                "tags": ["python", "programming", "guide", "updated"],
+            },
+        )
         print(f"✅ Updated traditionally: {updated_doc.title}")
     except KotaDBError as e:
         print(f"❌ Traditional update failed: {e}")
-    
+
     # Builder-based update
     print("\n🔧 Builder-based Update:")
     try:
-        updated_doc = db.update_with_builder(doc_id,
+        updated_doc = db.update_with_builder(
+            doc_id,
             UpdateBuilder()
             .title("Updated: Python Programming Guide")
-            .content("Updated content using builder pattern. This provides type safety and validation.")
+            .content(
+                "Updated content using builder pattern. This provides type safety and validation."
+            )
             .add_tag("builder-updated")
             .add_tag("type-safe")
             .remove_tag("guide")  # Remove old tag
             .add_metadata("last_updated", str(int(time.time())))
-            .add_metadata("update_method", "builder_pattern")
+            .add_metadata("update_method", "builder_pattern"),
         )
         print(f"✅ Updated with builder: {updated_doc.title}")
         print(f"   New tags: {updated_doc.tags}")
@@ -226,39 +232,39 @@ def demonstrate_error_handling():
     """Demonstrate proper error handling with validated types."""
     print("\n⚠️  Error Handling Demonstrations")
     print("=" * 50)
-    
+
     # Path validation errors
     print("\n🚫 Path Validation Errors:")
     dangerous_paths = [
         "../../../etc/passwd",  # Directory traversal
-        "/path/with\x00null",   # Null bytes
-        "",                     # Empty path
-        "CON.txt",             # Reserved name (Windows)
-        "x" * 5000,            # Too long
+        "/path/with\x00null",  # Null bytes
+        "",  # Empty path
+        "CON.txt",  # Reserved name (Windows)
+        "x" * 5000,  # Too long
     ]
-    
+
     for path in dangerous_paths:
         try:
             ValidatedPath(path)
             print(f"❌ Should have failed: {path}")
         except ClientValidationError as e:
             print(f"✅ Correctly blocked: {path[:50]}... - {e}")
-    
+
     # Title validation errors
     print("\n📝 Title Validation Errors:")
     bad_titles = [
-        "",           # Empty
-        "   ",        # Only whitespace
-        "x" * 2000,   # Too long
+        "",  # Empty
+        "   ",  # Only whitespace
+        "x" * 2000,  # Too long
     ]
-    
+
     for title in bad_titles:
         try:
             ValidatedTitle(title)
             print(f"❌ Should have failed: {title[:20]}...")
         except ClientValidationError as e:
             print(f"✅ Correctly blocked title - {e}")
-    
+
     # Builder validation errors
     print("\n🏗️  Builder Validation Errors:")
     try:
@@ -266,7 +272,7 @@ def demonstrate_error_handling():
         print("❌ Should have failed: missing required fields")
     except ClientValidationError as e:
         print(f"✅ Correctly blocked incomplete builder - {e}")
-    
+
     try:
         QueryBuilder().build()  # Missing query text
         print("❌ Should have failed: missing query text")
@@ -280,38 +286,38 @@ def main():
     print("=" * 70)
     print("This demo shows both traditional and new builder pattern approaches")
     print()
-    
+
     # Connect to database
     try:
         db = KotaDB("http://localhost:8080")
         print("✅ Connected to KotaDB")
-        
+
         # Check health
         health = db.health()
         print(f"Database status: {health.get('status', 'unknown')}")
         print()
-        
+
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
         print("Make sure KotaDB server is running on localhost:8080")
         return
-    
+
     try:
         # Demonstrate different approaches
         traditional_docs = traditional_approach(db)
         builder_docs = builder_approach(db)
-        
+
         all_doc_ids = traditional_docs + builder_docs
-        
+
         # Demonstrate search patterns
         demonstrate_search_patterns(db)
-        
+
         # Demonstrate update patterns
         demonstrate_update_patterns(db, all_doc_ids)
-        
+
         # Demonstrate error handling
         demonstrate_error_handling()
-        
+
         # Show database statistics
         print("\n📊 Database Statistics")
         print("=" * 50)
@@ -321,7 +327,7 @@ def main():
             print(f"Total size: {stats.get('total_size_bytes', 'unknown')} bytes")
         except Exception as e:
             print(f"Stats not available: {e}")
-        
+
         # Clean up test documents
         print("\n🗑️  Cleaning up test documents...")
         for doc_id in all_doc_ids:
@@ -330,11 +336,11 @@ def main():
                 print(f"✅ Deleted: {doc_id}")
             except NotFoundError:
                 print(f"⚠️  Already deleted: {doc_id}")
-        
+
         print("\n🎉 Comprehensive demo completed successfully!")
         print("The Python client now provides type safety and builder patterns")
         print("equivalent to the Rust implementation's compile-time guarantees.")
-        
+
     except KotaDBError as e:
         print(f"❌ Database error: {e}")
     except Exception as e:

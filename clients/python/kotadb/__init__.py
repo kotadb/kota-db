@@ -11,37 +11,37 @@ Example usage:
     doc_id = db.insert({"title": "My Note", "content": "...", "tags": ["work"]})
 """
 
+from .builders import DocumentBuilder, QueryBuilder, UpdateBuilder
 from .client import KotaDB
 from .exceptions import ConnectionError, KotaDBError, ValidationError
 from .types import Document, QueryResult, SearchResult
 from .validated_types import (
-    ValidatedPath,
+    NonZeroSize,
     ValidatedDirectoryPath,
     ValidatedDocumentId,
-    ValidatedTitle,
-    NonZeroSize,
+    ValidatedPath,
     ValidatedTimestamp,
+    ValidatedTitle,
 )
 from .validation import ValidationError as ClientValidationError
-from .builders import DocumentBuilder, QueryBuilder, UpdateBuilder
 
 __version__ = "0.2.0"
 __all__ = [
+    "ClientValidationError",
     "ConnectionError",
     "Document",
+    "DocumentBuilder",
     "KotaDB",
     "KotaDBError",
+    "NonZeroSize",
+    "QueryBuilder",
     "QueryResult",
     "SearchResult",
-    "ValidationError",
-    "ClientValidationError",
-    "ValidatedPath",
-    "ValidatedDirectoryPath", 
-    "ValidatedDocumentId",
-    "ValidatedTitle",
-    "NonZeroSize",
-    "ValidatedTimestamp",
-    "DocumentBuilder",
-    "QueryBuilder",
     "UpdateBuilder",
+    "ValidatedDirectoryPath",
+    "ValidatedDocumentId",
+    "ValidatedPath",
+    "ValidatedTimestamp",
+    "ValidatedTitle",
+    "ValidationError",
 ]
