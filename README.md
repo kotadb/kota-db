@@ -176,6 +176,32 @@ results = db.query_with_builder(
 )
 ```
 
+### TypeScript (Client Library)
+```typescript
+import { KotaDB, DocumentBuilder, QueryBuilder, ValidatedPath } from 'kotadb-client';
+
+// Connect to KotaDB server
+const db = new KotaDB({ url: 'http://localhost:8080' });
+
+// Type-safe document construction (runtime validation)
+const docId = await db.insertWithBuilder(
+  new DocumentBuilder()
+    .path("/knowledge/typescript-patterns.md")
+    .title("TypeScript Design Patterns")
+    .content("# TypeScript Patterns\n\n...")
+    .addTag("typescript")
+    .addTag("patterns")
+);
+
+// Query with builder pattern and full IntelliSense support
+const results = await db.queryWithBuilder(
+  new QueryBuilder()
+    .text("design patterns")
+    .limit(10)
+    .tagFilter("typescript")
+);
+```
+
 ---
 
 ## Query Language
@@ -267,7 +293,7 @@ kotadb search "query"           # Search documents
 [![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
 ```toml
 [dependencies]
-kotadb = "0.2.0"
+kotadb = "0.3.0"
 # or from git:
 kotadb = { git = "https://github.com/jayminwest/kota-db" }
 ```
@@ -295,8 +321,8 @@ docker run -p 8080:8080 kotadb serve
 | Semantic Search | ✅ | ✅ | ✅ | 🚧 |
 | Hybrid Search | ✅ | ✅ | ✅ | 🚧 |
 | **Type Safety** | | | | |
-| Validated Types | ✅ | ✅ | 🚧 | ❌ |
-| Builder Patterns | ✅ | ✅ | 🚧 | ❌ |
+| Validated Types | ✅ | ✅ | ✅ | ❌ |
+| Builder Patterns | ✅ | ✅ | ✅ | ❌ |
 | **Advanced Features** | | | | |
 | Query Routing | ✅ | ❌* | ❌* | ❌* |
 | Graph Queries | 🚧 | ❌ | ❌ | ❌ |
