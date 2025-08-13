@@ -171,7 +171,8 @@ if [ "$DRY_RUN" = false ]; then
     
     # Add client files if they exist
     [ -f "clients/python/pyproject.toml" ] && git add clients/python/pyproject.toml
-    [ -f "clients/typescript/package.json" ] && git add clients/typescript/package.json clients/typescript/package-lock.json
+    [ -f "clients/typescript/package.json" ] && git add clients/typescript/package.json
+    [ -f "clients/typescript/package-lock.json" ] && git add clients/typescript/package-lock.json
     [ -f "clients/go/version.go" ] && git add clients/go/version.go
     
     git commit -m "chore: release v$VERSION
