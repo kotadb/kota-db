@@ -284,7 +284,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kotadb-client = "0.1.0"
+kotadb-client = "0.3.0"
 ```
 
 ## Configuration

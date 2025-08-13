@@ -6,10 +6,18 @@ Welcome to the KotaDB documentation! KotaDB is a high-performance, custom databa
 
 ## Quick Installation
 
-### Python Client
+### Python Client (with Type Safety)
 [![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
 ```bash
 pip install kotadb-client
+```
+
+### TypeScript/JavaScript Client (with Type Safety)
+[![npm version](https://img.shields.io/npm/v/kotadb-client.svg)](https://www.npmjs.com/package/kotadb-client)
+```bash
+npm install kotadb-client
+# or
+yarn add kotadb-client
 ```
 
 ### Server (Docker)
@@ -133,14 +141,14 @@ KotaDB is designed for applications that require:
 
 ## Latest Updates
 
-!!! success "Client Libraries Now Available"
-    Python and TypeScript/JavaScript client libraries released! PostgreSQL-level ease of use with simple APIs for document operations.
+!!! success "Version 0.3.0 Released - Production-Ready Type Safety"
+    **Major release** with comprehensive TypeScript and Python client type safety! Features validated types, builder patterns, and security protection against path injection attacks. **164 TypeScript tests** and **84 Python tests** ensure production reliability.
 
-!!! tip "Version 0.1.0 Released"
-    Initial release with complete storage engine, B+ tree index, and trigram search capabilities.
+!!! tip "TypeScript Client - Complete Type Safety"
+    Full runtime validation with `ValidatedPath`, `ValidatedDocumentId`, builder patterns (`DocumentBuilder`, `QueryBuilder`), and comprehensive security validation. Zero breaking changes with backward compatibility.
 
-!!! info "MCP Server Available"
-    Model Context Protocol server now available for LLM integration.
+!!! info "Python Client - Enhanced with Builders"
+    Advanced builder patterns and validated types bring the Python client to feature parity with Rust. Includes `UpdateBuilder`, comprehensive error handling, and 79.54% test coverage.
 
 ## License
 
