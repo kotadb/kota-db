@@ -1,0 +1,184 @@
+name: Deploy Documentation
+
+on:
+  # Manual trigger with version input
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g., 0.2.0, stable, latest)'
+        required: true
+        type: string
+      alias:
+        description: 'Alias for this version (optional, e.g., stable, latest)'
+        required: false
+        type: string
+      set_default:
+        description: 'Set this version as default'
+        required: false
+        type: boolean
+        default: false
+
+  # Automatic deployment on release
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  deploy-docs:
+    name: Deploy Documentation to GitHub Pages
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for Mike
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip --no-cache-dir
+          pip install --no-cache-dir mkdocs mkdocs-material mike mkdocs-minify-plugin
+      
+      - name: Configure Git for Mike
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+      
+      - name: Validate MkDocs configuration
+        run: |
+          echo "Validating MkDocs configuration..."
+          mkdocs build --strict
+          echo "✅ MkDocs configuration is valid"
+      
+      - name: Determine version and alias
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            # Extract version from tag (remove 'v' prefix if present)
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            
+            # Determine alias based on prerelease status
+            if [ "${{ github.event.release.prerelease }}" == "true" ]; then
+              echo "alias=" >> $GITHUB_OUTPUT
+            else
+              echo "alias=stable" >> $GITHUB_OUTPUT
+              echo "set_default=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Use workflow dispatch inputs
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "alias=${{ inputs.alias }}" >> $GITHUB_OUTPUT
+            echo "set_default=${{ inputs.set_default }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Deploy documentation with Mike
+        run: |
+          set -e
+          
+          # Check for existing versions
+          if ! mike list > /dev/null 2>&1; then
+            echo "::warning::No existing versions found. This might be the first deployment."
+          fi
+          
+          # Deploy the version
+          if [ -n "${{ steps.version.outputs.alias }}" ]; then
+            echo "Deploying version ${{ steps.version.outputs.version }} with alias ${{ steps.version.outputs.alias }}"
+            mike deploy "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.alias }}" --push --update-aliases
+          else
+            echo "Deploying version ${{ steps.version.outputs.version }} without alias"
+            mike deploy "${{ steps.version.outputs.version }}" --push
+          fi
+          
+          # Set as default if requested
+          if [ "${{ steps.version.outputs.set_default }}" == "true" ]; then
+            if [ -n "${{ steps.version.outputs.alias }}" ]; then
+              echo "Setting ${{ steps.version.outputs.alias }} as default version"
+              mike set-default "${{ steps.version.outputs.alias }}" --push
+            else
+              echo "Setting ${{ steps.version.outputs.version }} as default version"
+              mike set-default "${{ steps.version.outputs.version }}" --push
+            fi
+          fi
+      
+      - name: List deployed versions
+        run: |
+          echo "Currently deployed versions:"
+          mike list --verbose || echo "Failed to list versions"
+
+  # Separate job to check gh-pages branch integrity
+  check-gh-pages:
+    name: Verify gh-pages branch
+    runs-on: ubuntu-latest
+    needs: deploy-docs
+    if: always() && needs.deploy-docs.result == 'success'
+    
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+      
+      - name: Check for unwanted files
+        run: |
+          # List of patterns that should NOT be in gh-pages
+          UNWANTED_PATTERNS=(
+            "node_modules"
+            "target"
+            "*.rs"
+            "Cargo.toml"
+            "Cargo.lock"
+            "src/"
+            "tests/"
+            ".git"
+            "*.pyc"
+            "__pycache__"
+          )
+          
+          FOUND_UNWANTED=false
+          for pattern in "${UNWANTED_PATTERNS[@]}"; do
+            if find . -name "$pattern" -o -path "*/$pattern" | grep -q .; then
+              echo "❌ Found unwanted files matching pattern: $pattern"
+              find . -name "$pattern" -o -path "*/$pattern"
+              FOUND_UNWANTED=true
+            fi
+          done
+          
+          if [ "$FOUND_UNWANTED" = true ]; then
+            echo "::error::gh-pages branch contains unwanted files. Only documentation should be present."
+            exit 1
+          fi
+          
+          echo "✅ gh-pages branch is clean"
+      
+      - name: Verify Mike structure
+        run: |
+          # Check for required Mike files
+          REQUIRED_FILES=(
+            "index.html"
+            "versions.json"
+          )
+          
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::warning::Missing required file: $file"
+            else
+              echo "✅ Found: $file"
+            fi
+          done
+          
+          # Check that index.html contains redirect
+          if grep -q "window.location.href" index.html; then
+            echo "✅ index.html contains redirect"
+          else
+            echo "::warning::index.html may not contain proper redirect"
+          fi
