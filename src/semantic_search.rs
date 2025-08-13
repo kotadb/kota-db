@@ -129,8 +129,9 @@ impl SemanticSearchEngine {
         };
 
         // Retrieve full documents and combine with scores
-        let mut results = Vec::new();
-        for (doc_id, score) in filtered_docs.into_iter().take(k) {
+        let filtered_limited: Vec<_> = filtered_docs.into_iter().take(k).collect();
+        let mut results = Vec::with_capacity(filtered_limited.len());
+        for (doc_id, score) in filtered_limited {
             if let Some(document) = self.storage.get(&doc_id).await? {
                 results.push(ScoredDocument {
                     document,
@@ -156,8 +157,9 @@ impl SemanticSearchEngine {
 
         // TODO: Add text search integration with trigram index
         // For now, just return semantic results with adjusted scores
-        let mut hybrid_results = Vec::new();
-        for mut result in semantic_results.into_iter().take(k) {
+        let semantic_limited: Vec<_> = semantic_results.into_iter().take(k).collect();
+        let mut hybrid_results = Vec::with_capacity(semantic_limited.len());
+        for mut result in semantic_limited {
             // Apply semantic weight to score
             result.semantic_score *= semantic_weight;
             hybrid_results.push(result);
