@@ -160,6 +160,82 @@ jobs:
     - name: Publish to crates.io
       run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
 
+  publish-python:
+    name: Publish Python Package to PyPI
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: "!contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+        
+    - name: Update version
+      working-directory: ./clients/python
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        echo "Publishing Python package version: $VERSION"
+        sed -i "s/version=\"[^\"]*\"/version=\"$VERSION\"/" setup.py
+        sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" pyproject.toml
+        
+    - name: Build package
+      working-directory: ./clients/python
+      run: python -m build
+      
+    - name: Publish to PyPI
+      working-directory: ./clients/python
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: twine upload dist/*
+
+  publish-typescript:
+    name: Publish TypeScript Package to npm
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: "!contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        registry-url: 'https://registry.npmjs.org'
+        
+    - name: Update version
+      working-directory: ./clients/typescript
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        echo "Publishing TypeScript package version: $VERSION"
+        npm version $VERSION --no-git-tag-version
+        
+    - name: Install dependencies
+      working-directory: ./clients/typescript
+      run: npm ci
+      
+    - name: Build package
+      working-directory: ./clients/typescript
+      run: npm run build
+      
+    - name: Publish to npm
+      working-directory: ./clients/typescript
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: npm publish
+
   docker-release:
     name: Release Docker Image
     needs: create-release
