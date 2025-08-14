@@ -22,9 +22,7 @@ server_version = "0.2.0"
 
 # Tool Categories
 enable_document_tools = true
-enable_search_tools = true  # Re-enabled after fixing compilation issues
-enable_analytics_tools = false  # Currently disabled
-enable_graph_tools = false  # Currently disabled
+enable_search_tools = true
 
 [logging]
 level = "debug"
