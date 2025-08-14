@@ -8,6 +8,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   create-release:
     name: Create Release
@@ -50,15 +54,23 @@ jobs:
     
     - name: Create Release
       id: create_release
-      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: KotaDB v${{ steps.get_version.outputs.version }}
-        body_path: ./release_notes.md
-        draft: false
-        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        PRERELEASE=""
+        if echo "$VERSION" | grep -qE "(alpha|beta|rc)"; then
+          PRERELEASE="--prerelease"
+        fi
+        
+        gh release create "v${VERSION}" \
+          --title "KotaDB v${VERSION}" \
+          --notes-file release_notes.md \
+          $PRERELEASE
+        
+        # Get the upload URL for artifacts
+        UPLOAD_URL=$(gh api repos/${{ github.repository }}/releases/tags/v${VERSION} --jq '.upload_url' | sed 's/{.*}//')
+        echo "upload_url=${UPLOAD_URL}" >> $GITHUB_OUTPUT
 
   build-binaries:
     name: Build Binaries

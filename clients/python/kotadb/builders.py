@@ -15,7 +15,7 @@ from .validated_types import (
     ValidatedPath,
     ValidatedTitle,
 )
-from .validation import ValidationError, validate_tag
+from .validation import ValidationError, validate_search_query, validate_tag
 
 
 class DocumentBuilder:
@@ -301,8 +301,6 @@ class QueryBuilder:
         Raises:
             ValidationError: If query is invalid
         """
-        from .validation import validate_search_query
-
         validate_search_query(query)
         self._query_text = query
         return self
@@ -320,10 +318,11 @@ class QueryBuilder:
         Raises:
             ValidationError: If limit is invalid
         """
+        MAX_LIMIT = 10000
         if limit <= 0:
             raise ValidationError("Limit must be positive")
-        if limit > 10000:
-            raise ValidationError("Limit too large (max 10000)")
+        if limit > MAX_LIMIT:
+            raise ValidationError(f"Limit too large (max {MAX_LIMIT})")
         self._limit = limit
         return self
 
@@ -620,8 +619,7 @@ class UpdateBuilder:
         updates = dict(self._updates)
 
         # Handle tag updates
-        if self._tags_to_add or self._tags_to_remove:
-            if "tags" not in updates:
+        if (self._tags_to_add or self._tags_to_remove) and "tags" not in updates:
                 # Need current tags to modify them
                 # This will require the caller to handle merging
                 tag_ops = {}
