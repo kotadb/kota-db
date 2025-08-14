@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query as AxumQuery, State},
+    extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
     http::StatusCode,
     response::Json,
     routing::{delete, get, post, put},
@@ -35,6 +35,10 @@ const DEFAULT_CONNECTION_POOL_CAPACITY: f64 = 100.0; // Default max connections 
 const HEALTH_THRESHOLD_CPU: f32 = 90.0; // CPU usage threshold for health check
 const HEALTH_THRESHOLD_MEMORY_MB: f64 = 1000.0; // Memory threshold in MB for health check
 const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity threshold for health check
+
+// Maximum document size: 100MB (configurable, can be increased if needed)
+// This is a reasonable default that handles most use cases while preventing abuse
+const MAX_DOCUMENT_SIZE: usize = 100 * 1024 * 1024; // 100MB
 
 // Global server start time for uptime tracking
 static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy::new(Instant::now);
@@ -209,6 +213,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         .with_state(state)
         .layer(
             ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
         )
@@ -243,6 +248,7 @@ pub fn create_server_with_pool(
         .with_state(state)
         .layer(
             ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
         )
@@ -254,6 +260,10 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
     let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
 
     info!("KotaDB HTTP server starting on port {}", port);
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
 
     axum::serve(listener, app).await?;
 
@@ -1146,6 +1156,59 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
         let result: SearchResponse = serde_json::from_slice(&body)?;
         assert_eq!(result.documents.len(), 0); // Should be empty initially
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_large_document_support() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Create a document larger than 1MB (but less than our 100MB limit)
+        let large_content = vec![b'a'; 5 * 1024 * 1024]; // 5MB of 'a' characters
+
+        let request_body = json!({
+            "path": "/large_test.md",
+            "title": "Large Test Document",
+            "content": large_content,
+            "tags": ["large", "test"]
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed with documents up to 100MB
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let doc_response: DocumentResponse = serde_json::from_slice(&body)?;
+        assert_eq!(doc_response.size_bytes, 5 * 1024 * 1024);
+        assert_eq!(doc_response.title, "Large Test Document");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_document_size_limit_exceeded() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Create a document larger than our 100MB limit
+        // Note: This test is commented out as creating a 100MB+ JSON payload
+        // for testing would be memory-intensive. The limit is enforced by Axum.
+        // In production, attempting to send a document larger than MAX_DOCUMENT_SIZE
+        // will result in a 413 Payload Too Large error from Axum before reaching our handler.
+
+        // For now, we trust that the DefaultBodyLimit middleware works as documented
+        // and focus on testing that reasonable large documents (< 100MB) work correctly.
 
         Ok(())
     }

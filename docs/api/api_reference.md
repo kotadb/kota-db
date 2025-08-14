@@ -435,6 +435,25 @@ api_key_required = false
 rate_limit_per_minute = 1000
 ```
 
+## Constraints and Limitations
+
+### Document Size Limits
+- **Maximum document size**: 100MB
+- **Maximum path length**: 4,096 characters
+- **Maximum title length**: 1,024 characters
+- **Maximum tag length**: 256 characters per tag
+- **Maximum tags per document**: 100
+
+### Search Limitations
+- **Maximum query length**: 1,024 characters
+- **Trigram indexing**: Applied to first 1MB of document content
+- **Default result limit**: 50 documents (configurable)
+
+### Performance Considerations
+- Documents larger than 10MB may experience slower indexing
+- Bulk operations are recommended for inserting more than 100 documents
+- Connection pool size defaults to 100 concurrent connections
+
 ## Performance Characteristics
 
 | Operation | Latency Target | Throughput | Notes |
