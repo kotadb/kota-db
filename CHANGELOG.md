@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-08-14
+
+### Added
+- Comprehensive getting started guide and examples documentation (#111)
+- Recovery and preservation of all Claude agent configurations
+
+### Changed
+- Client library improvements including linting standards and test coverage (#87, #94, #97, #100)
+- Dropped Python 3.8 support in CI/CD pipeline
+
+### Fixed
+- Python client CI/CD to run all unit tests properly
+- Python client version mismatch between local and PyPI (#87)
+- TypeScript package publish failures in CI due to test server requirement (#100)
+- Release workflow and MkDocs validation issues (#98, #99)
+- Various CI/CD pipeline issues affecting v0.3.0 release
+
+### Documentation
+- Updated README to properly reflect v0.3.0 TypeScript/Python type safety features
+- Improved documentation for v0.3.0 release features
+
 ## [0.3.0] - 2025-08-13
 
 ### Added
