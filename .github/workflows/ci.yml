@@ -238,7 +238,10 @@ jobs:
     
     - name: Install MCP package dependencies
       working-directory: kotadb-mcp-package
-      run: npm ci
+      run: |
+        # Remove postinstall script temporarily for CI
+        npm pkg delete scripts.postinstall
+        npm ci
     
     - name: Build MCP package
       working-directory: kotadb-mcp-package
