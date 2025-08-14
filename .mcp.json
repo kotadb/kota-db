@@ -1,20 +1,13 @@
 {
   "mcpServers": {
     "kotadb": {
-      "command": "cargo",
+      "command": "node",
       "args": [
-        "run",
-        "--features",
-        "mcp-server",
-        "--bin",
-        "mcp_server_stdio",
-        "--",
-        "--config",
-        "kotadb-mcp-dev.toml"
+        "kotadb-mcp-package/dist/index.js"
       ],
       "cwd": "/Users/jayminwest/Projects/kota-db",
       "env": {
-        "RUST_LOG": "info"
+        "KOTADB_DATA_DIR": "./kotadb-data"
       }
     }
   }

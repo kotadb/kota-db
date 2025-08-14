@@ -8,340 +8,10 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { spawn } from 'child_process';
-import { promisify } from 'util';
-import { exec } from 'child_process';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import * as os from 'os';
 import { z } from 'zod';
+import { KotaDBStorage, Document, SearchResult } from './kotadb-storage.js';
 
-const execAsync = promisify(exec);
-
-// KotaDB binary interface
-class KotaDBClient {
-  private binaryPath: string;
-  private dataDir: string;
-
-  constructor(dataDir?: string) {
-    this.dataDir = dataDir || path.join(process.env.HOME || process.cwd(), '.kotadb', 'data');
-    this.binaryPath = this.findKotaDBBinary();
-  }
-
-  private findKotaDBBinary(): string {
-    // Try different locations for the KotaDB binary
-    const possiblePaths = [
-      'kotadb',
-      './kotadb',
-      '../target/release/kotadb',
-      '../target/debug/kotadb',
-      path.join(process.env.HOME || '', '.cargo', 'bin', 'kotadb'),
-    ];
-
-    // For now, assume the binary is in PATH or return the first option
-    // TODO: Actually check each path for existence
-    return 'kotadb';
-  }
-
-  private validatePath(inputPath: string): string {
-    // Basic path validation to prevent command injection
-    if (!inputPath || inputPath.trim() === '') {
-      throw new Error('Path cannot be empty');
-    }
-    
-    // Remove dangerous characters
-    const sanitized = inputPath.replace(/[;&|`$(){}\[\]]/g, '');
-    
-    // Ensure it's a reasonable path
-    if (sanitized !== inputPath) {
-      throw new Error('Path contains invalid characters');
-    }
-    
-    // Ensure it starts with / for absolute paths or is relative
-    if (sanitized.includes('..')) {
-      throw new Error('Path cannot contain .. for security reasons');
-    }
-    
-    return sanitized;
-  }
-
-  async ensureBinary(): Promise<void> {
-    try {
-      await execAsync(`${this.binaryPath} --version`);
-    } catch (error) {
-      throw new Error(
-        `KotaDB binary not found at ${this.binaryPath}. Please ensure KotaDB is installed or provide the correct path.`
-      );
-    }
-  }
-
-  async runCommand(args: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(this.binaryPath, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          KOTADB_DATA_DIR: this.dataDir,
-        },
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve(stdout);
-        } else {
-          reject(new Error(`KotaDB command failed with code ${code}: ${stderr}`));
-        }
-      });
-
-      child.on('error', (error) => {
-        reject(new Error(`Failed to spawn KotaDB process: ${error.message}`));
-      });
-    });
-  }
-
-  // Document operations
-  async createDocument(params: {
-    path: string;
-    title?: string;
-    content: string;
-    tags?: string[];
-  }): Promise<any> {
-    try {
-      // Validate and sanitize the path
-      const validatedPath = this.validatePath(params.path);
-      
-      // Create temporary file for content
-      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kotadb-'));
-      const tempFile = path.join(tempDir, 'document.md');
-      
-      try {
-        // Write content to temporary file
-        await fs.writeFile(tempFile, params.content, 'utf8');
-        
-        // Build command arguments
-        const args = ['add', validatedPath, '--file', tempFile];
-        
-        if (params.title) {
-          // Sanitize title to prevent injection
-          const sanitizedTitle = params.title.replace(/[;&|`$()]/g, '');
-          args.push('--title', sanitizedTitle);
-        }
-        
-        if (params.tags && params.tags.length > 0) {
-          // Sanitize tags
-          const sanitizedTags = params.tags
-            .map(tag => tag.replace(/[;&|`$(),]/g, ''))
-            .filter(tag => tag.length > 0);
-          if (sanitizedTags.length > 0) {
-            args.push('--tags', sanitizedTags.join(','));
-          }
-        }
-        
-        const result = await this.runCommand(args);
-        
-        // Parse the result if it's JSON, otherwise return as text
-        let parsedResult;
-        try {
-          parsedResult = JSON.parse(result);
-        } catch {
-          parsedResult = { success: true, message: result.trim() };
-        }
-        
-        return parsedResult;
-        
-      } finally {
-        // Clean up temporary file and directory
-        try {
-          await fs.unlink(tempFile);
-          await fs.rmdir(tempDir);
-        } catch (cleanupError) {
-          console.warn('Failed to clean up temp file:', cleanupError);
-        }
-      }
-    } catch (error) {
-      throw new Error(`Document creation failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async searchDocuments(query: string, limit?: number): Promise<any> {
-    try {
-      // Sanitize query to prevent command injection
-      if (!query || query.trim() === '') {
-        throw new Error('Query cannot be empty');
-      }
-      
-      const sanitizedQuery = query.replace(/[;&|`$()]/g, '');
-      const args = ['search', sanitizedQuery];
-      
-      if (limit && limit > 0) {
-        const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 1000); // Limit between 1-1000
-        args.push('--limit', safeLimit.toString());
-      }
-      
-      const result = await this.runCommand(args);
-      
-      // Try to parse as JSON, fallback to text if not JSON
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(result);
-      } catch {
-        // If not JSON, wrap the text result
-        parsedResult = {
-          results: result.trim().split('\n').filter(line => line.trim() !== ''),
-          query: sanitizedQuery,
-          limit: limit || 10
-        };
-      }
-      
-      return parsedResult;
-    } catch (error) {
-      throw new Error(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async getStats(): Promise<any> {
-    try {
-      const result = await this.runCommand(['stats']);
-      
-      // Try to parse as JSON, fallback to text
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(result);
-      } catch {
-        parsedResult = {
-          stats: result.trim(),
-          timestamp: new Date().toISOString()
-        };
-      }
-      
-      return parsedResult;
-    } catch (error) {
-      throw new Error(`Failed to get stats: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  // Additional document operations to match Rust MCP server
-  async getDocument(docId: string): Promise<any> {
-    try {
-      const validatedId = this.validatePath(docId);
-      const result = await this.runCommand(['get', validatedId]);
-      
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(result);
-      } catch {
-        parsedResult = {
-          id: validatedId,
-          content: result.trim()
-        };
-      }
-      
-      return parsedResult;
-    } catch (error) {
-      throw new Error(`Failed to get document: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async updateDocument(docId: string, content: string): Promise<any> {
-    try {
-      const validatedId = this.validatePath(docId);
-      
-      // Create temporary file for new content
-      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kotadb-update-'));
-      const tempFile = path.join(tempDir, 'update.md');
-      
-      try {
-        await fs.writeFile(tempFile, content, 'utf8');
-        const result = await this.runCommand(['update', validatedId, '--file', tempFile]);
-        
-        let parsedResult;
-        try {
-          parsedResult = JSON.parse(result);
-        } catch {
-          parsedResult = { success: true, message: result.trim() };
-        }
-        
-        return parsedResult;
-        
-      } finally {
-        try {
-          await fs.unlink(tempFile);
-          await fs.rmdir(tempDir);
-        } catch (cleanupError) {
-          console.warn('Failed to clean up temp file:', cleanupError);
-        }
-      }
-    } catch (error) {
-      throw new Error(`Failed to update document: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async deleteDocument(docId: string): Promise<any> {
-    try {
-      const validatedId = this.validatePath(docId);
-      const result = await this.runCommand(['delete', validatedId]);
-      
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(result);
-      } catch {
-        parsedResult = { success: true, message: result.trim() };
-      }
-      
-      return parsedResult;
-    } catch (error) {
-      throw new Error(`Failed to delete document: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async listDocuments(limit?: number, offset?: number): Promise<any> {
-    try {
-      const args = ['list'];
-      
-      if (limit && limit > 0) {
-        const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 1000);
-        args.push('--limit', safeLimit.toString());
-      }
-      
-      if (offset && offset >= 0) {
-        args.push('--offset', Math.floor(offset).toString());
-      }
-      
-      const result = await this.runCommand(args);
-      
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(result);
-      } catch {
-        // Parse line-based output into structured format
-        const lines = result.trim().split('\n').filter(line => line.trim() !== '');
-        parsedResult = {
-          documents: lines.map(line => ({ path: line.trim() })),
-          total: lines.length,
-          limit: limit || 100,
-          offset: offset || 0
-        };
-      }
-      
-      return parsedResult;
-    } catch (error) {
-      throw new Error(`Failed to list documents: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-}
-
-// Define tool schemas
+// Tool schemas
 const DocumentCreateSchema = z.object({
   path: z.string().describe('Unique path identifier for the document'),
   title: z.string().optional().describe('Optional title for the document'),
@@ -350,16 +20,16 @@ const DocumentCreateSchema = z.object({
 });
 
 const DocumentGetSchema = z.object({
-  id: z.string().describe('Document ID or path to retrieve'),
+  id: z.string().describe('Document ID to retrieve'),
 });
 
 const DocumentUpdateSchema = z.object({
-  id: z.string().describe('Document ID or path to update'),
+  id: z.string().describe('Document ID to update'),
   content: z.string().describe('New content for the document'),
 });
 
 const DocumentDeleteSchema = z.object({
-  id: z.string().describe('Document ID or path to delete'),
+  id: z.string().describe('Document ID to delete'),
 });
 
 const DocumentListSchema = z.object({
@@ -372,239 +42,356 @@ const SearchSchema = z.object({
   limit: z.number().optional().default(10).describe('Maximum number of results'),
 });
 
-const server = new Server(
-  {
-    name: 'kotadb-mcp',
-    version: '0.1.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
-  }
-);
+class KotaDBMCPServer {
+  private server: Server;
+  private storage: KotaDBStorage;
 
-// Initialize KotaDB client
-const kotadb = new KotaDBClient(process.env.KOTADB_DATA_DIR);
-
-// Tool definitions
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
+  constructor() {
+    this.server = new Server(
       {
-        name: 'kotadb_document_create',
-        description: 'Create a new document in KotaDB with content, title, and tags',
-        inputSchema: DocumentCreateSchema,
+        name: 'kotadb-mcp',
+        version: '0.1.0',
       },
       {
-        name: 'kotadb_document_get',
-        description: 'Retrieve a document by its ID or path',
-        inputSchema: DocumentGetSchema,
-      },
-      {
-        name: 'kotadb_document_update',
-        description: 'Update the content of an existing document',
-        inputSchema: DocumentUpdateSchema,
-      },
-      {
-        name: 'kotadb_document_delete',
-        description: 'Delete a document by its ID or path',
-        inputSchema: DocumentDeleteSchema,
-      },
-      {
-        name: 'kotadb_document_list',
-        description: 'List all documents with optional pagination',
-        inputSchema: DocumentListSchema,
-      },
-      {
-        name: 'kotadb_search',
-        description: 'Search documents in KotaDB using natural language queries',
-        inputSchema: SearchSchema,
-      },
-      {
-        name: 'kotadb_stats',
-        description: 'Get database statistics and information',
-        inputSchema: z.object({}),
-      },
-    ],
-  };
-});
-
-// Tool handlers
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  try {
-    switch (request.params.name) {
-      case 'kotadb_document_create': {
-        const args = DocumentCreateSchema.parse(request.params.arguments);
-        const result = await kotadb.createDocument(args);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_document_get': {
-        const args = DocumentGetSchema.parse(request.params.arguments);
-        const result = await kotadb.getDocument(args.id);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_document_update': {
-        const args = DocumentUpdateSchema.parse(request.params.arguments);
-        const result = await kotadb.updateDocument(args.id, args.content);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_document_delete': {
-        const args = DocumentDeleteSchema.parse(request.params.arguments);
-        const result = await kotadb.deleteDocument(args.id);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_document_list': {
-        const args = DocumentListSchema.parse(request.params.arguments);
-        const result = await kotadb.listDocuments(args.limit, args.offset);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_search': {
-        const args = SearchSchema.parse(request.params.arguments);
-        const result = await kotadb.searchDocuments(args.query, args.limit);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'kotadb_stats': {
-        const result = await kotadb.getStats();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      default:
-        throw new Error(`Unknown tool: ${request.params.name}`);
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({ error: errorMessage }, null, 2),
+        capabilities: {
+          tools: {},
+          resources: {},
         },
-      ],
-      isError: true,
-    };
+      }
+    );
+
+    this.storage = new KotaDBStorage(process.env.KOTADB_DATA_DIR);
+    this.setupHandlers();
   }
-});
 
-// Resource handlers (for browsing documents)
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  return {
-    resources: [
-      {
-        uri: 'kotadb://documents',
-        name: 'All Documents',
-        description: 'Browse all documents in KotaDB',
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const uri = request.params.uri;
-  
-  if (uri === 'kotadb://documents') {
-    try {
-      const documents = await kotadb.listDocuments(100, 0);
+  private setupHandlers() {
+    // Tool definitions
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
-        contents: [
+        tools: [
           {
-            uri: uri,
-            mimeType: 'application/json',
-            text: JSON.stringify(documents, null, 2),
+            name: 'kotadb_document_create',
+            description: 'Create a new document in KotaDB with content, title, and tags',
+            inputSchema: DocumentCreateSchema,
+          },
+          {
+            name: 'kotadb_document_get',
+            description: 'Retrieve a document by its ID',
+            inputSchema: DocumentGetSchema,
+          },
+          {
+            name: 'kotadb_document_update',
+            description: 'Update the content of an existing document',
+            inputSchema: DocumentUpdateSchema,
+          },
+          {
+            name: 'kotadb_document_delete',
+            description: 'Delete a document by its ID',
+            inputSchema: DocumentDeleteSchema,
+          },
+          {
+            name: 'kotadb_document_list',
+            description: 'List all documents with optional pagination',
+            inputSchema: DocumentListSchema,
+          },
+          {
+            name: 'kotadb_search',
+            description: 'Search documents in KotaDB using text queries',
+            inputSchema: SearchSchema,
+          },
+          {
+            name: 'kotadb_stats',
+            description: 'Get database statistics and information',
+            inputSchema: z.object({}),
           },
         ],
       };
+    });
+
+    // Tool handlers
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      try {
+        switch (request.params.name) {
+          case 'kotadb_document_create': {
+            const args = DocumentCreateSchema.parse(request.params.arguments);
+            const document = await this.storage.createDocument(args);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    document: {
+                      id: document.id,
+                      path: document.path,
+                      title: document.title,
+                      created_at: document.createdAt,
+                    },
+                    message: `Document created successfully at ${document.path}`,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_document_get': {
+            const args = DocumentGetSchema.parse(request.params.arguments);
+            const document = await this.storage.getDocument(args.id);
+            
+            if (!document) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      success: false,
+                      error: `Document with ID ${args.id} not found`,
+                    }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    document,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_document_update': {
+            const args = DocumentUpdateSchema.parse(request.params.arguments);
+            const document = await this.storage.updateDocument(args.id, args.content);
+            
+            if (!document) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      success: false,
+                      error: `Document with ID ${args.id} not found`,
+                    }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    document: {
+                      id: document.id,
+                      path: document.path,
+                      title: document.title,
+                      updated_at: document.updatedAt,
+                    },
+                    message: 'Document updated successfully',
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_document_delete': {
+            const args = DocumentDeleteSchema.parse(request.params.arguments);
+            const deleted = await this.storage.deleteDocument(args.id);
+            
+            if (!deleted) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      success: false,
+                      error: `Document with ID ${args.id} not found`,
+                    }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    message: `Document ${args.id} deleted successfully`,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_document_list': {
+            const args = DocumentListSchema.parse(request.params.arguments);
+            const result = await this.storage.listDocuments(args.limit, args.offset);
+            
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    documents: result.documents.map(doc => ({
+                      id: doc.id,
+                      path: doc.path,
+                      title: doc.title,
+                      tags: doc.tags,
+                      created_at: doc.createdAt,
+                      updated_at: doc.updatedAt,
+                    })),
+                    total: result.total,
+                    limit: args.limit,
+                    offset: args.offset,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_search': {
+            const args = SearchSchema.parse(request.params.arguments);
+            const results = await this.storage.searchDocuments(args.query, args.limit);
+            
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    query: args.query,
+                    results: results,
+                    total_results: results.length,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'kotadb_stats': {
+            const stats = await this.storage.getStats();
+            
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    stats,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          default:
+            throw new Error(`Unknown tool: ${request.params.name}`);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: errorMessage,
+              }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    });
+
+    // Resource handlers
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      return {
+        resources: [
+          {
+            uri: 'kotadb://documents',
+            name: 'All Documents',
+            description: 'Browse all documents in KotaDB',
+            mimeType: 'application/json',
+          },
+        ],
+      };
+    });
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const uri = request.params.uri;
+      
+      if (uri === 'kotadb://documents') {
+        const { documents, total } = await this.storage.listDocuments();
+        return {
+          contents: [
+            {
+              uri: uri,
+              mimeType: 'application/json',
+              text: JSON.stringify({
+                documents: documents.map(doc => ({
+                  id: doc.id,
+                  path: doc.path,
+                  title: doc.title,
+                  tags: doc.tags,
+                  created_at: doc.createdAt,
+                  updated_at: doc.updatedAt,
+                })),
+                total,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+      
+      throw new Error(`Unknown resource: ${uri}`);
+    });
+  }
+
+  async start() {
+    try {
+      await this.storage.initialize();
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      console.error('KotaDB MCP server running on stdio - 7 tools available');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to read resource: ${errorMessage}`);
+      console.error('Failed to start KotaDB MCP server:', errorMessage);
+      process.exit(1);
     }
-  }
-  
-  throw new Error(`Unknown resource: ${uri}`);
-});
-
-async function main() {
-  try {
-    // Ensure KotaDB binary is available
-    await kotadb.ensureBinary();
-    
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    
-    console.error('KotaDB MCP server running on stdio - 7 tools available');
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Failed to start KotaDB MCP server:', errorMessage);
-    process.exit(1);
   }
 }
 
 // Handle graceful shutdown
-process.on('SIGINT', async () => {
-  await server.close();
+process.on('SIGINT', () => {
+  console.error('KotaDB MCP server shutting down...');
   process.exit(0);
 });
 
+process.on('SIGTERM', () => {
+  console.error('KotaDB MCP server shutting down...');
+  process.exit(0);
+});
+
+// Start the server
 if (require.main === module) {
-  main().catch((error) => {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error:', errorMessage);
+  const server = new KotaDBMCPServer();
+  server.start().catch((error) => {
+    console.error('Error starting server:', error);
     process.exit(1);
   });
 }
