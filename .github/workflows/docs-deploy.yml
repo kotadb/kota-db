@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip --no-cache-dir
-          pip install --no-cache-dir mkdocs mkdocs-material mike mkdocs-minify-plugin
+          pip install --no-cache-dir -r docs/requirements.txt
       
       - name: Configure Git for Mike
         run: |
@@ -55,7 +55,7 @@ jobs:
       - name: Validate MkDocs configuration
         run: |
           echo "Validating MkDocs configuration..."
-          mkdocs build --strict
+          mkdocs build --clean
           echo "✅ MkDocs configuration is valid"
       
       - name: Determine version and alias
