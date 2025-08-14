@@ -33,27 +33,35 @@ For more details, see `docs/BRANCHING_STRATEGY.md`.
 ## Commands for Development
 
 ### Versioning and Release
-```bash
-# Check current version
-just version
 
-# Preview next release
+**🚨 IMPORTANT: Always perform releases from the `develop` branch!**
+
+```bash
+# STEP 1: Switch to develop branch
+git checkout develop
+git pull origin develop
+
+# STEP 2: Check current version and preview release
+just version                # Current version
 just release-preview        # Shows unreleased changes and recent commits
 
-# Quick release commands (automatic version bump)
+# STEP 3: Run release command (FROM DEVELOP BRANCH)
 just release-patch          # Bump patch: 0.1.0 -> 0.1.1
 just release-minor          # Bump minor: 0.1.0 -> 0.2.0
 just release-major          # Bump major: 0.1.0 -> 1.0.0
 just release-beta           # Beta release: 0.1.0 -> 0.1.0-beta.1
 
-# Release specific version
+# Or release specific version
 just release 0.2.0          # Full release process
 
-# Test release process
-just release-dry-run 0.2.0  # Dry run without changes
+# STEP 4: After release, merge main back to develop
+git fetch origin main
+git merge origin/main -m "chore: sync version updates from v[VERSION] release"
+git push origin develop
 
-# Update changelog
-just changelog-update       # Add new unreleased section
+# Other commands
+just release-dry-run 0.2.0  # Test without making changes
+just changelog-update       # Add new unreleased section after release
 ```
 
 The release process automatically:
@@ -61,7 +69,8 @@ The release process automatically:
 - Updates version in Cargo.toml, VERSION, CHANGELOG.md
 - Updates client library versions
 - Creates git tag with changelog
-- Triggers GitHub Actions for binaries, Docker images, and crates.io
+- Pushes to main branch
+- Triggers GitHub Actions for binaries, Docker images, crates.io, PyPI, and npm
 
 ### Build and Run
 ```bash

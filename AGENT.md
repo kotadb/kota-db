@@ -341,6 +341,23 @@ Every PR triggers:
 
 KotaDB follows **Semantic Versioning** (MAJOR.MINOR.PATCH) with comprehensive release automation.
 
+#### 🚨 CRITICAL: Release from develop branch
+**ALWAYS perform releases from the `develop` branch, never from `main`:**
+```bash
+# 1. Ensure you're on develop and up to date
+git checkout develop
+git pull origin develop
+
+# 2. Run the release command
+just release-patch  # or release-minor, release-major
+
+# 3. After release completes, the changes will be on main
+# 4. Merge main back to develop to sync version numbers
+git fetch origin main
+git merge origin/main -m "chore: merge version updates from release"
+git push origin develop
+```
+
 #### Quick Release Commands
 ```bash
 # Check current version
@@ -349,13 +366,13 @@ just version                 # Shows current version from Cargo.toml
 # Preview what's in next release
 just release-preview         # Shows unreleased changes and recent commits
 
-# Automatic version bump releases
+# Automatic version bump releases (RUN FROM DEVELOP)
 just release-patch           # 0.1.0 -> 0.1.1 (bug fixes)
 just release-minor           # 0.1.0 -> 0.2.0 (new features)
 just release-major           # 0.1.0 -> 1.0.0 (breaking changes)
 just release-beta            # 0.1.0 -> 0.1.0-beta.1 (prerelease)
 
-# Release specific version
+# Release specific version (RUN FROM DEVELOP)
 just release 0.2.0           # Full automated release process
 
 # Test the release process
