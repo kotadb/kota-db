@@ -5,9 +5,15 @@ Mirrors the Rust validation patterns to provide consistent validation
 across all client libraries.
 """
 
-import os
 import re
 import uuid
+from pathlib import Path
+
+# Constants for validation limits
+MAX_TITLE_LENGTH = 1024
+MAX_TAG_LENGTH = 128
+MAX_QUERY_LENGTH = 1024
+YEAR_3000_TIMESTAMP = 32503680000
 
 
 class ValidationError(Exception):
@@ -73,17 +79,18 @@ def validate_file_path(path: str) -> None:
             raise ValidationError("Parent directory references (..) not allowed")
 
     # Check for reserved names (Windows compatibility)
-    filename = os.path.basename(path)
+    path_obj = Path(path)
+    filename = path_obj.name
     if filename:
-        stem = os.path.splitext(filename)[0].upper()
+        stem = path_obj.stem.upper()
         if stem in RESERVED_NAMES:
             raise ValidationError(f"Reserved filename: {filename}")
 
     # Validate UTF-8 encoding
     try:
         path.encode("utf-8")
-    except UnicodeEncodeError:
-        raise ValidationError("Path is not valid UTF-8")
+    except UnicodeEncodeError as e:
+        raise ValidationError("Path is not valid UTF-8") from e
 
 
 def validate_directory_path(path: str) -> None:
@@ -99,7 +106,7 @@ def validate_directory_path(path: str) -> None:
     validate_file_path(path)
 
     # Ensure it's not a file with extension
-    if "." in os.path.basename(path):
+    if "." in Path(path).name:
         raise ValidationError("Directory path should not have file extension")
 
 
@@ -121,7 +128,7 @@ def validate_document_id(doc_id: str) -> None:
         if parsed_uuid == uuid.UUID("00000000-0000-0000-0000-000000000000"):
             raise ValidationError("Document ID cannot be nil UUID")
     except ValueError as e:
-        raise ValidationError(f"Invalid UUID format: {e}")
+        raise ValidationError(f"Invalid UUID format: {e}") from e
 
 
 def validate_title(title: str) -> None:
@@ -137,8 +144,8 @@ def validate_title(title: str) -> None:
     if not title or not title.strip():
         raise ValidationError("Title cannot be empty")
 
-    if len(title.strip()) > 1024:
-        raise ValidationError("Title exceeds maximum length of 1024 characters")
+    if len(title.strip()) > MAX_TITLE_LENGTH:
+        raise ValidationError(f"Title exceeds maximum length of {MAX_TITLE_LENGTH} characters")
 
 
 def validate_tag(tag: str) -> None:
@@ -154,8 +161,8 @@ def validate_tag(tag: str) -> None:
     if not tag or not tag.strip():
         raise ValidationError("Tag cannot be empty")
 
-    if len(tag) > 128:
-        raise ValidationError("Tag too long (max 128 chars)")
+    if len(tag) > MAX_TAG_LENGTH:
+        raise ValidationError(f"Tag too long (max {MAX_TAG_LENGTH} chars)")
 
     # Check for valid characters (alphanumeric, dash, underscore, space)
     if not re.match(r"^[a-zA-Z0-9\-_ ]+$", tag):
@@ -175,8 +182,8 @@ def validate_search_query(query: str) -> None:
     if not query or not query.strip():
         raise ValidationError("Search query cannot be empty")
 
-    if len(query) > 1024:
-        raise ValidationError("Search query too long (max 1024 chars)")
+    if len(query) > MAX_QUERY_LENGTH:
+        raise ValidationError(f"Search query too long (max {MAX_QUERY_LENGTH} chars)")
 
 
 def validate_timestamp(timestamp: int) -> None:
@@ -193,8 +200,7 @@ def validate_timestamp(timestamp: int) -> None:
         raise ValidationError("Timestamp must be positive")
 
     # Check not too far in future (year 3000)
-    YEAR_3000 = 32503680000
-    if timestamp >= YEAR_3000:
+    if timestamp >= YEAR_3000_TIMESTAMP:
         raise ValidationError("Timestamp too far in future")
 
 

@@ -20,15 +20,19 @@ const TEST_SERVER_URL = process.env.KOTADB_TEST_URL || `http://localhost:${TEST_
 const INVALID_SERVER_URL = 'http://localhost:9999'; // Non-existent server for error testing
 
 describe('KotaDB TypeScript Client', () => {
-  let db: KotaDB;
+  let db: KotaDB | null = null;
+  let serverAvailable = false;
 
   beforeAll(async () => {
     // Test server availability
     try {
       db = new KotaDB({ url: TEST_SERVER_URL });
       await db.testConnection();
+      serverAvailable = true;
     } catch (error) {
-      console.warn(`Test server not available at ${TEST_SERVER_URL}. Some tests will be skipped.`);
+      console.warn(`Test server not available at ${TEST_SERVER_URL}. Integration tests will be skipped.`);
+      serverAvailable = false;
+      db = null;
     }
   });
 
@@ -77,24 +81,33 @@ describe('KotaDB TypeScript Client', () => {
 
   describe('Health and Status', () => {
     test('should check health status', async () => {
-      if (!db) return; // Skip if server not available
+      if (!serverAvailable) {
+        console.log('Skipping health check test - server not available');
+        return;
+      }
 
-      const health = await db.health();
+      const health = await db!.health();
       expect(health).toHaveProperty('status');
     });
 
     test('should test connection explicitly', async () => {
-      if (!db) return;
+      if (!serverAvailable) {
+        console.log('Skipping connection test - server not available');
+        return;
+      }
 
-      const health = await db.testConnection();
+      const health = await db!.testConnection();
       expect(health).toHaveProperty('status');
     });
 
     test('should get database statistics', async () => {
-      if (!db) return;
+      if (!serverAvailable) {
+        console.log('Skipping stats test - server not available');
+        return;
+      }
 
       try {
-        const stats = await db.stats();
+        const stats = await db!.stats();
         expect(stats).toHaveProperty('document_count');
       } catch (error) {
         // Stats endpoint might not be implemented - that's ok
