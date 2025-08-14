@@ -1,242 +1,280 @@
-# KotaDB MCP Server
+# kotadb-mcp
 
 [![npm version](https://badge.fury.io/js/kotadb-mcp.svg)](https://badge.fury.io/js/kotadb-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Model Context Protocol (MCP) server that enables Claude Desktop to interact with your KotaDB database. Search, create, and manage documents using natural language through Claude.
+**Model Context Protocol server for KotaDB - Enable Claude Desktop to search and manage your documents**
 
-## 🚀 Quick Start
-
-### 30-Second Setup
+## Quick Start (30 seconds)
 
 ```bash
 # Install globally
 npm install -g kotadb-mcp
 
-# Auto-configure Claude Desktop
-kotadb-mcp-setup
-
-# That's it! Restart Claude Desktop and start using KotaDB
+# Configure Claude Desktop (see Configuration section)
+# Then use in Claude Desktop immediately!
 ```
 
-### Usage in Claude Desktop
+## Features
 
-Once configured, you can interact with your KotaDB through Claude:
+✅ **7 MCP Tools**: Complete document management (CRUD + search + stats)  
+✅ **Zero Setup**: No Rust compilation or binary dependencies required  
+✅ **Fast & Lightweight**: In-memory storage with file persistence  
+✅ **Claude Desktop Ready**: Official MCP SDK with STDIO transport  
+✅ **Cross-Platform**: Works on macOS, Linux, and Windows  
 
-- **"Search my KotaDB for rust programming concepts"**
-- **"Create a document about AI safety in my KotaDB"**
-- **"Show me statistics about my knowledge base"**
-- **"Find documents related to machine learning"**
+## Architecture Decision
 
-## 📋 Prerequisites
+### Standalone TypeScript Implementation
 
-- **Node.js 18+**
-- **KotaDB binary** installed and available in PATH
-- **Claude Desktop** (for GUI usage)
+This package provides a **self-contained MCP server** that doesn't require the full KotaDB Rust binary. Here's why:
 
-## 🛠 Installation
+#### ✅ **Pros (Why We Chose This)**
+- **🚀 Instant Setup**: No 10+ minute Rust compilation
+- **📦 Easy Distribution**: Standard npm package workflow  
+- **🔧 Zero Dependencies**: No external binaries to manage
+- **🌐 Universal Access**: Works for non-developers immediately
+- **⚡ Fast Startup**: Sub-second initialization
 
-### Global Installation (Recommended)
+#### ⚠️ **Trade-offs (What You're Missing)**
+- **Advanced Indexing**: No trigram or vector search indices (simple text matching instead)
+- **Scalability**: Designed for personal use (hundreds of documents, not millions)
+- **Storage Format**: Independent from main KotaDB database files
+- **Performance**: JavaScript vs Rust performance characteristics
+
+#### 🎯 **When to Use Each**
+
+| Use Case | This Package | Full KotaDB Rust |
+|----------|-------------|------------------|
+| **Personal Knowledge Base** | ✅ Perfect | Overkill |
+| **Claude Desktop Integration** | ✅ Ideal | Complex setup |
+| **Quick Prototyping** | ✅ Great | Too heavy |
+| **Enterprise/Production** | Consider Rust | ✅ Recommended |
+| **Advanced Search Features** | Basic only | ✅ Full-featured |
+| **Large Document Collections** | < 1000 docs | ✅ Unlimited |
+
+## Installation & Setup
+
+### Option 1: Global Installation (Recommended)
 
 ```bash
 npm install -g kotadb-mcp
 ```
 
-### Local Installation
+### Option 2: Local Development
 
 ```bash
-npm install kotadb-mcp
+git clone https://github.com/jayminwest/kota-db.git
+cd kota-db/kotadb-mcp-package
+npm install && npm run build
 ```
 
-## ⚙️ Configuration
+## Claude Desktop Configuration
 
-### Automatic Setup
+### Step 1: Locate Configuration File
 
-The easiest way to configure Claude Desktop:
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+**Linux**: `~/.config/claude-desktop/config.json`
 
-```bash
-# Use default data directory (~/.kotadb/data)
-kotadb-mcp-setup
-
-# Use custom data directory
-kotadb-mcp-setup --data-dir /path/to/your/kotadb/data
-```
-
-### Manual Setup
-
-Add this to your Claude Desktop config file (`~/.config/claude-desktop/config.json` on Linux, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+### Step 2: Add KotaDB MCP Server
 
 ```json
 {
   "mcpServers": {
     "kotadb": {
       "command": "npx",
-      "args": ["kotadb-mcp"],
+      "args": ["-y", "kotadb-mcp"],
       "env": {
-        "KOTADB_DATA_DIR": "/path/to/your/kotadb/data"
+        "KOTADB_DATA_DIR": "~/Documents/kotadb-data"
       }
     }
   }
 }
 ```
 
-### Configuration Management
+### Step 3: Restart Claude Desktop
 
-```bash
-# Check current configuration
-kotadb-mcp-setup status
+Completely quit and restart Claude Desktop to load the new MCP server.
 
-# Remove KotaDB from Claude Desktop
-kotadb-mcp-setup remove
+## Available Tools
 
-# Reconfigure with different data directory
-kotadb-mcp-setup --data-dir /new/path/to/data
+### Document Management
+- **`kotadb_document_create`** - Create documents with content, title, and tags
+- **`kotadb_document_get`** - Retrieve documents by ID
+- **`kotadb_document_update`** - Update document content  
+- **`kotadb_document_delete`** - Delete documents
+- **`kotadb_document_list`** - List all documents (with pagination)
+
+### Search & Discovery  
+- **`kotadb_search`** - Full-text search with relevance scoring
+- **`kotadb_stats`** - Database statistics and information
+
+### Tool Name Differences from Full KotaDB Rust Implementation
+
+The TypeScript MCP package uses consistent `kotadb_` prefixes to clearly distinguish it from the full Rust implementation:
+
+| This Package (TypeScript) | Full KotaDB Rust | Functionality |
+|---------------------------|------------------|---------------|
+| `kotadb_document_create` | `document_create` | Create new documents |
+| `kotadb_document_get` | `document_get` | Retrieve documents by ID |
+| `kotadb_document_update` | `document_update` | Update document content |
+| `kotadb_document_delete` | `document_delete` | Delete documents |
+| `kotadb_document_list` | `document_list` | List all documents |
+| `kotadb_search` | `search` | Full-text search |
+| `kotadb_stats` | `stats` | Database statistics |
+
+**Why Different Names?**
+- **Clear Origin**: Easy to identify which implementation provided the tool
+- **Avoid Conflicts**: Prevents namespace collisions if both are installed
+- **User Clarity**: Makes it obvious in Claude Desktop which database system is being used
+- **Development Safety**: Reduces confusion during development and debugging
+
+The functionality is intentionally similar to maintain consistency, but the implementation approaches differ significantly (self-contained TypeScript vs Rust binary integration).
+
+## Usage Examples
+
+### Creating Documents
+```typescript
+// In Claude Desktop, you can say:
+"Create a document about TypeScript best practices with some examples"
+
+// This uses kotadb_document_create internally
 ```
 
-## 🔧 Environment Variables
+### Searching Content
+```typescript  
+// In Claude Desktop:
+"Search my documents for anything about testing"
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `KOTADB_DATA_DIR` | Path to KotaDB data directory | `~/.kotadb/data` |
+// Uses kotadb_search with intelligent relevance scoring
+```
 
-## 🛠 Available Tools
+### Managing Knowledge
+```typescript
+// In Claude Desktop:
+"Show me all my documents and then update the one about React hooks"
 
-The MCP server provides these tools to Claude:
+// Combines kotadb_document_list and kotadb_document_update
+```
 
-### `kotadb_search`
-Search documents using natural language queries.
+## Data Storage
 
-**Parameters:**
-- `query` (string): Search query text
-- `limit` (number, optional): Maximum results (default: 10)
+### File Structure
+```
+~/Documents/kotadb-data/          # Your data directory
+├── index.json                   # Document metadata index
+├── doc-uuid-1.md               # Individual markdown files
+├── doc-uuid-2.md               # Auto-generated from content
+└── doc-uuid-3.md               # Human-readable format
+```
 
-### `kotadb_create_document`
-Create a new document in KotaDB.
+### Backup & Migration
+```bash
+# Backup your data
+cp -r ~/Documents/kotadb-data ~/Backups/kotadb-backup-$(date +%Y%m%d)
 
-**Parameters:**
-- `path` (string): Unique document path
-- `title` (string, optional): Document title
-- `content` (string): Document content
-- `tags` (array, optional): Document tags
+# Migrate to new machine
+scp -r ~/Documents/kotadb-data user@newmachine:~/Documents/
+```
 
-### `kotadb_stats`
-Get database statistics and information.
+## Development
 
-**Parameters:** None
-
-## 📚 Resources
-
-The server also exposes resources for browsing:
-
-- `kotadb://documents` - Browse all documents in the database
-
-## 🏗 Development
-
-### Setup Development Environment
-
+### Building from Source
 ```bash
 git clone https://github.com/jayminwest/kota-db.git
 cd kota-db/kotadb-mcp-package
 npm install
-```
-
-### Build
-
-```bash
 npm run build
-```
-
-### Development Mode
-
-```bash
-npm run dev
-```
-
-### Testing
-
-```bash
 npm test
 ```
 
-## 🐛 Troubleshooting
-
-### "KotaDB binary not found"
-
-Make sure KotaDB is installed and available in your PATH:
-
+### Running Tests
 ```bash
-# Check if KotaDB is installed
-kotadb --version
-
-# If not installed, install from source or binary release
-# See: https://github.com/jayminwest/kota-db#installation
+npm test              # Run all tests
+npm run test:watch    # Watch mode  
+npm run test:coverage # Coverage report
 ```
 
-### "Claude Desktop not connecting"
-
-1. Check your configuration:
-   ```bash
-   kotadb-mcp-setup status
-   ```
-
-2. Verify the data directory exists and is accessible:
-   ```bash
-   ls -la ~/.kotadb/data
-   ```
-
-3. Restart Claude Desktop completely
-
-4. Check Claude Desktop logs for MCP connection errors
-
-### "Permission denied" errors
-
-Make sure the KotaDB data directory is writable:
-
+### Local Development
 ```bash
-chmod -R 755 ~/.kotadb
+npm run dev           # Start in development mode
+npm run build         # Build for production
 ```
 
-## 🤝 Contributing
+## API Reference
 
-We welcome contributions! Please see our [Contributing Guide](https://github.com/jayminwest/kota-db/blob/main/CONTRIBUTING.md).
+### Search Functionality
 
-### Development Workflow
+```typescript
+interface SearchResult {
+  id: string;
+  path: string; 
+  title: string;
+  content_preview: string; // First 200 chars with query highlighting
+  score: number;          // Relevance score (higher = more relevant)
+}
+```
+
+### Document Model
+
+```typescript
+interface Document {
+  id: string;           // UUID
+  path: string;         // Unique document path  
+  title: string;        // Display title
+  content: string;      // Full markdown content
+  tags: string[];       // Categorization tags
+  createdAt: string;    // ISO timestamp
+  updatedAt: string;    // ISO timestamp  
+}
+```
+
+## Troubleshooting
+
+### "Module not found" errors
+```bash
+# Ensure global installation
+npm install -g kotadb-mcp
+
+# Or use full path in config
+{
+  "command": "/usr/local/bin/node",
+  "args": ["/usr/local/lib/node_modules/kotadb-mcp/dist/index.js"]
+}
+```
+
+### "Connection closed" errors on Windows
+```json
+{
+  "command": "cmd",
+  "args": ["/c", "npx", "-y", "kotadb-mcp"]
+}
+```
+
+### Performance Issues
+- Keep document collections under 1000 documents
+- Use specific search terms for better performance
+- Consider the full KotaDB Rust implementation for larger datasets
+
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Add tests if applicable
-5. Run tests: `npm test`
-6. Commit changes: `git commit -m 'Add amazing feature'`
-7. Push to branch: `git push origin feature/amazing-feature`
-8. Open a Pull Request
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`  
+5. Open a Pull Request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](../LICENSE) file for details.
 
-## 🔗 Related Projects
+## Related Projects
 
-- [KotaDB](https://github.com/jayminwest/kota-db) - The main KotaDB database
-- [Model Context Protocol](https://github.com/modelcontextprotocol) - The MCP specification
-- [Claude Desktop](https://claude.ai/download) - AI assistant with MCP support
-
-## 📞 Support
-
-- **Documentation**: [KotaDB Docs](https://github.com/jayminwest/kota-db/docs)
-- **Issues**: [GitHub Issues](https://github.com/jayminwest/kota-db/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jayminwest/kota-db/discussions)
-
-## 🚀 Roadmap
-
-- [ ] Enhanced search capabilities (semantic, hybrid)
-- [ ] Document browsing and editing
-- [ ] Real-time synchronization
-- [ ] Graph traversal tools
-- [ ] Advanced analytics
-- [ ] Multi-database support
-- [ ] Binary download automation
+- **[KotaDB](https://github.com/jayminwest/kota-db)** - Full Rust implementation with advanced features
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** - Official MCP specification
+- **[Claude Desktop](https://claude.ai/desktop)** - AI assistant with MCP support
 
 ---
 
-**Made with ❤️ by the KotaDB team**
+**Made with ❤️ by the KotaDB Team**

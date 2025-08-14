@@ -32,8 +32,10 @@
     "dev": "ts-node src/index.ts",
     "setup-claude": "ts-node src/setup.ts",
     "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "postinstall": "node dist/install-binary.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
