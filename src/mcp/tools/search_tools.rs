@@ -256,7 +256,12 @@ impl SearchTools {
             response.query_time_ms
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "results": response.results,
+            "total": response.total_count,
+            "query_time_ms": response.query_time_ms
+        }))
     }
 
     async fn semantic_search(&self, request: SemanticSearchRequest) -> Result<serde_json::Value> {
@@ -304,7 +309,12 @@ impl SearchTools {
             response.query_time_ms
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "results": response.results,
+            "total": response.total_count,
+            "query_time_ms": response.query_time_ms
+        }))
     }
 
     async fn hybrid_search(&self, request: HybridSearchRequest) -> Result<serde_json::Value> {
@@ -366,7 +376,12 @@ impl SearchTools {
             response.query_time_ms
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "results": response.results,
+            "total": response.total_count,
+            "query_time_ms": response.query_time_ms
+        }))
     }
 
     async fn find_similar(&self, request: FindSimilarRequest) -> Result<serde_json::Value> {
@@ -420,7 +435,12 @@ impl SearchTools {
             response.query_time_ms
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "results": response.results,
+            "total": response.total_count,
+            "query_time_ms": response.query_time_ms
+        }))
     }
 
     /// Create a content preview from document bytes

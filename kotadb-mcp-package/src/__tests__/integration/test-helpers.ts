@@ -224,7 +224,7 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async createDocument(doc: TestDocument): Promise<any> {
-    const result = await this.callTool('kotadb_document_create', doc);
+    const result = await this.callTool('kotadb://document_create', doc);
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Create failed: ${content.error}`);
@@ -233,7 +233,7 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async getDocument(id: string): Promise<any> {
-    const result = await this.callTool('kotadb_document_get', { id });
+    const result = await this.callTool('kotadb://document_get', { id });
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Get failed: ${content.error}`);
@@ -242,7 +242,7 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async updateDocument(id: string, newContent: string): Promise<any> {
-    const result = await this.callTool('kotadb_document_update', { 
+    const result = await this.callTool('kotadb://document_update', { 
       id, 
       content: newContent 
     });
@@ -254,13 +254,13 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async deleteDocument(id: string): Promise<boolean> {
-    const result = await this.callTool('kotadb_document_delete', { id });
+    const result = await this.callTool('kotadb://document_delete', { id });
     const content = JSON.parse(result.content[0].text);
     return content.success;
   }
 
   async searchDocuments(query: string, limit: number = 10): Promise<any[]> {
-    const result = await this.callTool('kotadb_search', { query, limit });
+    const result = await this.callTool('kotadb://text_search', { query, limit });
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Search failed: ${content.error}`);
@@ -269,7 +269,7 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async listDocuments(limit: number = 50, offset: number = 0): Promise<any> {
-    const result = await this.callTool('kotadb_document_list', { limit, offset });
+    const result = await this.callTool('kotadb://document_list', { limit, offset });
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`List failed: ${content.error}`);
@@ -278,7 +278,7 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async getStats(): Promise<any> {
-    const result = await this.callTool('kotadb_stats', {});
+    const result = await this.callTool('kotadb://stats', {});
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Stats failed: ${content.error}`);
