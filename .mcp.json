@@ -1,11 +1,18 @@
 {
   "mcpServers": {
     "kotadb": {
-      "command": "sh",
+      "command": "cargo",
       "args": [
-        "-c",
-        "exec docker run --rm -i ghcr.io/jayminwest/kotadb:mcp-latest"
+        "run",
+        "--features",
+        "mcp-server",
+        "--bin",
+        "mcp_server_stdio",
+        "--",
+        "--config",
+        "kotadb-mcp-dev.toml"
       ],
+      "cwd": "/Users/jayminwest/Projects/kota-db",
       "env": {
         "RUST_LOG": "info"
       }

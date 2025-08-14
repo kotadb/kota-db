@@ -85,10 +85,15 @@ fn main() -> Result<()> {
 
     // Load configuration
     let config_path = matches.get_one::<String>("config").unwrap();
+    tracing::info!("Loading configuration from: {}", config_path);
 
-    // Create a Tokio runtime
-    let rt = tokio::runtime::Runtime::new()?;
     let mut config = load_config(config_path)?;
+
+    tracing::info!(
+        "Loaded config - host: {}, port: {}",
+        config.server.host,
+        config.server.port
+    );
 
     // Override with command line arguments
     if let Some(data_dir) = matches.get_one::<String>("data-dir") {
@@ -122,28 +127,36 @@ fn main() -> Result<()> {
     // Create data directory if it doesn't exist
     std::fs::create_dir_all(&config.database.data_dir)?;
 
-    // Run the async server operations within the runtime
-    rt.block_on(async {
-        // Initialize and start the MCP server
-        let server = init_mcp_server(config).await?;
+    // Create a new runtime and run the server
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async { run_server(config).await })?;
 
-        tracing::info!("MCP server initialization complete");
+    Ok(())
+}
 
-        // Start the server and get a handle
-        let server_handle = server.start().await?;
+/// Run the MCP server with the given configuration
+#[cfg(feature = "mcp-server")]
+async fn run_server(config: MCPConfig) -> Result<()> {
+    // Initialize and start the MCP server
+    let server = init_mcp_server(config).await?;
 
-        // Handle graceful shutdown without blocking
-        tokio::select! {
-            _ = setup_shutdown_handler() => {
-                tracing::info!("Received shutdown signal, closing server");
-                server_handle.close();
-            }
+    tracing::info!("MCP server initialization complete");
+
+    // Start the server and get a handle
+    let server_handle = server.start().await?;
+
+    tracing::info!("MCP server started, listening for connections");
+
+    // Handle graceful shutdown
+    tokio::select! {
+        _ = setup_shutdown_handler() => {
+            tracing::info!("Received shutdown signal, closing server");
         }
+    }
 
-        tracing::info!("MCP server stopped gracefully");
-        Ok::<(), anyhow::Error>(())
-    })?;
-
+    // Don't call server_handle.close() here as it causes runtime panic
+    // The server will be cleaned up when the runtime drops
+    tracing::info!("MCP server shutdown initiated");
     Ok(())
 }
 
