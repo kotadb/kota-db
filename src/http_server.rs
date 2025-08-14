@@ -41,6 +41,9 @@ const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity thre
 // This is a reasonable default that handles most use cases while preventing abuse
 const MAX_DOCUMENT_SIZE: usize = 100 * 1024 * 1024; // 100MB
 
+// Maximum items allowed in bulk validation requests to prevent abuse
+const MAX_BULK_VALIDATION_ITEMS: usize = 100;
+
 // Global server start time for uptime tracking
 static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy::new(Instant::now);
 
@@ -977,160 +980,270 @@ async fn hybrid_search(
 
 /// Validate a path
 async fn validate_path(Json(request): Json<ValidatePathRequest>) -> Json<ValidationResponse> {
-    match path::validate_file_path(&request.path) {
-        Ok(_) => Json(ValidationResponse {
-            valid: true,
-            error: None,
-        }),
-        Err(e) => Json(ValidationResponse {
-            valid: false,
-            error: Some(e.to_string()),
-        }),
-    }
+    let result = with_trace_id("validate_path", async move {
+        match path::validate_file_path(&request.path) {
+            Ok(_) => Ok(ValidationResponse {
+                valid: true,
+                error: None,
+            }),
+            Err(e) => Ok(ValidationResponse {
+                valid: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| ValidationResponse {
+        valid: false,
+        error: Some("Internal validation error".to_string()),
+    }))
 }
 
 /// Validate a document ID
 async fn validate_document_id(
     Json(request): Json<ValidateDocumentIdRequest>,
 ) -> Json<ValidationResponse> {
-    // First check UUID format
-    match Uuid::parse_str(&request.id) {
-        Ok(uuid) => {
-            // Then check with ValidatedDocumentId validation
-            match ValidatedDocumentId::from_uuid(uuid) {
-                Ok(_) => Json(ValidationResponse {
-                    valid: true,
-                    error: None,
-                }),
-                Err(e) => Json(ValidationResponse {
-                    valid: false,
-                    error: Some(e.to_string()),
-                }),
+    let result = with_trace_id("validate_document_id", async move {
+        // First check UUID format
+        match Uuid::parse_str(&request.id) {
+            Ok(uuid) => {
+                // Then check with ValidatedDocumentId validation
+                match ValidatedDocumentId::from_uuid(uuid) {
+                    Ok(_) => Ok(ValidationResponse {
+                        valid: true,
+                        error: None,
+                    }),
+                    Err(e) => Ok(ValidationResponse {
+                        valid: false,
+                        error: Some(e.to_string()),
+                    }),
+                }
             }
+            Err(e) => Ok(ValidationResponse {
+                valid: false,
+                error: Some(format!("Invalid UUID format: {}", e)),
+            }),
         }
-        Err(e) => Json(ValidationResponse {
-            valid: false,
-            error: Some(format!("Invalid UUID format: {}", e)),
-        }),
-    }
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| ValidationResponse {
+        valid: false,
+        error: Some("Internal validation error".to_string()),
+    }))
 }
 
 /// Validate a title
 async fn validate_title(Json(request): Json<ValidateTitleRequest>) -> Json<ValidationResponse> {
-    match ValidatedTitle::new(&request.title) {
-        Ok(_) => Json(ValidationResponse {
-            valid: true,
-            error: None,
-        }),
-        Err(e) => Json(ValidationResponse {
-            valid: false,
-            error: Some(e.to_string()),
-        }),
-    }
+    let result = with_trace_id("validate_title", async move {
+        match ValidatedTitle::new(&request.title) {
+            Ok(_) => Ok(ValidationResponse {
+                valid: true,
+                error: None,
+            }),
+            Err(e) => Ok(ValidationResponse {
+                valid: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| ValidationResponse {
+        valid: false,
+        error: Some("Internal validation error".to_string()),
+    }))
 }
 
 /// Validate a tag
 async fn validate_tag(Json(request): Json<ValidateTagRequest>) -> Json<ValidationResponse> {
-    match index::validate_tag(&request.tag) {
-        Ok(_) => Json(ValidationResponse {
-            valid: true,
-            error: None,
-        }),
-        Err(e) => Json(ValidationResponse {
-            valid: false,
-            error: Some(e.to_string()),
-        }),
-    }
+    let result = with_trace_id("validate_tag", async move {
+        match index::validate_tag(&request.tag) {
+            Ok(_) => Ok(ValidationResponse {
+                valid: true,
+                error: None,
+            }),
+            Err(e) => Ok(ValidationResponse {
+                valid: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| ValidationResponse {
+        valid: false,
+        error: Some("Internal validation error".to_string()),
+    }))
 }
 
 /// Bulk validation endpoint
 async fn validate_bulk(Json(request): Json<BulkValidationRequest>) -> Json<BulkValidationResponse> {
-    let mut response = BulkValidationResponse {
-        paths: None,
+    let result = with_trace_id("validate_bulk", async move {
+        let mut response = BulkValidationResponse {
+            paths: None,
+            document_ids: None,
+            titles: None,
+            tags: None,
+        };
+
+        // Check request limits to prevent abuse
+        let total_items = request.paths.as_ref().map(|p| p.len()).unwrap_or(0)
+            + request.document_ids.as_ref().map(|d| d.len()).unwrap_or(0)
+            + request.titles.as_ref().map(|t| t.len()).unwrap_or(0)
+            + request.tags.as_ref().map(|t| t.len()).unwrap_or(0);
+
+        if total_items > MAX_BULK_VALIDATION_ITEMS {
+            return Ok(BulkValidationResponse {
+                paths: Some(vec![ValidationResponse {
+                    valid: false,
+                    error: Some(format!(
+                        "Too many items in bulk request: {} (max: {})",
+                        total_items, MAX_BULK_VALIDATION_ITEMS
+                    )),
+                }]),
+                document_ids: None,
+                titles: None,
+                tags: None,
+            });
+        }
+
+        // Validate paths if provided
+        if let Some(paths) = request.paths {
+            if paths.len() > MAX_BULK_VALIDATION_ITEMS {
+                response.paths = Some(vec![ValidationResponse {
+                    valid: false,
+                    error: Some(format!(
+                        "Too many paths: {} (max: {})",
+                        paths.len(),
+                        MAX_BULK_VALIDATION_ITEMS
+                    )),
+                }]);
+            } else {
+                let path_results: Vec<ValidationResponse> = paths
+                    .iter()
+                    .map(|path| match path::validate_file_path(path) {
+                        Ok(_) => ValidationResponse {
+                            valid: true,
+                            error: None,
+                        },
+                        Err(e) => ValidationResponse {
+                            valid: false,
+                            error: Some(e.to_string()),
+                        },
+                    })
+                    .collect();
+                response.paths = Some(path_results);
+            }
+        }
+
+        // Validate document IDs if provided
+        if let Some(document_ids) = request.document_ids {
+            if document_ids.len() > MAX_BULK_VALIDATION_ITEMS {
+                response.document_ids = Some(vec![ValidationResponse {
+                    valid: false,
+                    error: Some(format!(
+                        "Too many document IDs: {} (max: {})",
+                        document_ids.len(),
+                        MAX_BULK_VALIDATION_ITEMS
+                    )),
+                }]);
+            } else {
+                let id_results: Vec<ValidationResponse> = document_ids
+                    .iter()
+                    .map(|id| match Uuid::parse_str(id) {
+                        Ok(uuid) => match ValidatedDocumentId::from_uuid(uuid) {
+                            Ok(_) => ValidationResponse {
+                                valid: true,
+                                error: None,
+                            },
+                            Err(e) => ValidationResponse {
+                                valid: false,
+                                error: Some(e.to_string()),
+                            },
+                        },
+                        Err(e) => ValidationResponse {
+                            valid: false,
+                            error: Some(format!("Invalid UUID format: {}", e)),
+                        },
+                    })
+                    .collect();
+                response.document_ids = Some(id_results);
+            }
+        }
+
+        // Validate titles if provided
+        if let Some(titles) = request.titles {
+            if titles.len() > MAX_BULK_VALIDATION_ITEMS {
+                response.titles = Some(vec![ValidationResponse {
+                    valid: false,
+                    error: Some(format!(
+                        "Too many titles: {} (max: {})",
+                        titles.len(),
+                        MAX_BULK_VALIDATION_ITEMS
+                    )),
+                }]);
+            } else {
+                let title_results: Vec<ValidationResponse> = titles
+                    .iter()
+                    .map(|title| match ValidatedTitle::new(title) {
+                        Ok(_) => ValidationResponse {
+                            valid: true,
+                            error: None,
+                        },
+                        Err(e) => ValidationResponse {
+                            valid: false,
+                            error: Some(e.to_string()),
+                        },
+                    })
+                    .collect();
+                response.titles = Some(title_results);
+            }
+        }
+
+        // Validate tags if provided
+        if let Some(tags) = request.tags {
+            if tags.len() > MAX_BULK_VALIDATION_ITEMS {
+                response.tags = Some(vec![ValidationResponse {
+                    valid: false,
+                    error: Some(format!(
+                        "Too many tags: {} (max: {})",
+                        tags.len(),
+                        MAX_BULK_VALIDATION_ITEMS
+                    )),
+                }]);
+            } else {
+                let tag_results: Vec<ValidationResponse> = tags
+                    .iter()
+                    .map(|tag| match index::validate_tag(tag) {
+                        Ok(_) => ValidationResponse {
+                            valid: true,
+                            error: None,
+                        },
+                        Err(e) => ValidationResponse {
+                            valid: false,
+                            error: Some(e.to_string()),
+                        },
+                    })
+                    .collect();
+                response.tags = Some(tag_results);
+            }
+        }
+
+        Ok(response)
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| BulkValidationResponse {
+        paths: Some(vec![ValidationResponse {
+            valid: false,
+            error: Some("Internal validation error".to_string()),
+        }]),
         document_ids: None,
         titles: None,
         tags: None,
-    };
-
-    // Validate paths if provided
-    if let Some(paths) = request.paths {
-        let path_results: Vec<ValidationResponse> = paths
-            .iter()
-            .map(|path| match path::validate_file_path(path) {
-                Ok(_) => ValidationResponse {
-                    valid: true,
-                    error: None,
-                },
-                Err(e) => ValidationResponse {
-                    valid: false,
-                    error: Some(e.to_string()),
-                },
-            })
-            .collect();
-        response.paths = Some(path_results);
-    }
-
-    // Validate document IDs if provided
-    if let Some(document_ids) = request.document_ids {
-        let id_results: Vec<ValidationResponse> = document_ids
-            .iter()
-            .map(|id| match Uuid::parse_str(id) {
-                Ok(uuid) => match ValidatedDocumentId::from_uuid(uuid) {
-                    Ok(_) => ValidationResponse {
-                        valid: true,
-                        error: None,
-                    },
-                    Err(e) => ValidationResponse {
-                        valid: false,
-                        error: Some(e.to_string()),
-                    },
-                },
-                Err(e) => ValidationResponse {
-                    valid: false,
-                    error: Some(format!("Invalid UUID format: {}", e)),
-                },
-            })
-            .collect();
-        response.document_ids = Some(id_results);
-    }
-
-    // Validate titles if provided
-    if let Some(titles) = request.titles {
-        let title_results: Vec<ValidationResponse> = titles
-            .iter()
-            .map(|title| match ValidatedTitle::new(title) {
-                Ok(_) => ValidationResponse {
-                    valid: true,
-                    error: None,
-                },
-                Err(e) => ValidationResponse {
-                    valid: false,
-                    error: Some(e.to_string()),
-                },
-            })
-            .collect();
-        response.titles = Some(title_results);
-    }
-
-    // Validate tags if provided
-    if let Some(tags) = request.tags {
-        let tag_results: Vec<ValidationResponse> = tags
-            .iter()
-            .map(|tag| match index::validate_tag(tag) {
-                Ok(_) => ValidationResponse {
-                    valid: true,
-                    error: None,
-                },
-                Err(e) => ValidationResponse {
-                    valid: false,
-                    error: Some(e.to_string()),
-                },
-            })
-            .collect();
-        response.tags = Some(tag_results);
-    }
-
-    Json(response)
+    }))
 }
 
 #[cfg(test)]
@@ -1656,6 +1769,42 @@ mod tests {
         assert_eq!(id_results.len(), 2);
         assert!(id_results[0].valid); // valid UUID
         assert!(!id_results[1].valid); // invalid-uuid
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_bulk_request_limits() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Create a request with too many items
+        let too_many_paths: Vec<String> = (0..150).map(|i| format!("/path_{}.md", i)).collect();
+        let request_body = json!({
+            "paths": too_many_paths
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/bulk")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let bulk_response: BulkValidationResponse = serde_json::from_slice(&body)?;
+
+        // Should get an error response about too many items
+        assert!(bulk_response.paths.is_some());
+        let path_results = bulk_response.paths.unwrap();
+        assert_eq!(path_results.len(), 1);
+        assert!(!path_results[0].valid);
+        assert!(path_results[0].error.as_ref().unwrap().contains("Too many"));
 
         Ok(())
     }
