@@ -5,7 +5,6 @@
 pub mod config;
 pub mod resources;
 pub mod server;
-pub mod server_minimal;
 pub mod tools;
 pub mod types;
 

@@ -142,8 +142,8 @@ path = "src/bin/mcp_server.rs"
 required-features = ["mcp-server"]
 
 [[bin]]
-name = "mcp_server_minimal"
-path = "src/bin/mcp_server_minimal.rs"
+name = "mcp_server_stdio"
+path = "src/bin/mcp_server_stdio.rs"
 required-features = ["mcp-server"]
 
 
