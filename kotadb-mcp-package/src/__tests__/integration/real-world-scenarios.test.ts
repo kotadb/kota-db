@@ -147,7 +147,7 @@ describe('Real-World MCP Integration Scenarios', () => {
       
       // Verify deletion
       const finalList = await client.listDocuments();
-      const finalIds = finalList.documents.map(doc => doc.id);
+      const finalIds = finalList.documents.map((doc: any) => doc.id);
       expect(finalIds).not.toContain(docs[2].id);
     });
 

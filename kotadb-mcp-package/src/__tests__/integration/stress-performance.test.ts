@@ -379,8 +379,8 @@ describe('MCP Stress Testing and Performance', () => {
       const results = await Promise.all(shortTimeoutPromises);
       
       // Some might timeout, but system should remain stable
-      const timeouts = results.filter(r => r.timeout);
-      const successes = results.filter(r => !r.timeout);
+      const timeouts = results.filter((r: any) => r.timeout);
+      const successes = results.filter((r: any) => !r.timeout);
       
       console.log(`Timeout test: ${successes.length} succeeded, ${timeouts.length} timed out`);
       

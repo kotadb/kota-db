@@ -60,7 +60,7 @@ describe('MCP Protocol Compliance', () => {
         fail('Expected error for unknown method');
       } catch (error) {
         expect(error).toBeDefined();
-        expect(error.message).toContain('MCP Error');
+        expect((error as Error).message).toContain('MCP Error');
       }
     });
   });
@@ -146,7 +146,7 @@ describe('MCP Protocol Compliance', () => {
         fail('Expected error for invalid resource URI');
       } catch (error) {
         expect(error).toBeDefined();
-        expect(error.message).toContain('MCP Error');
+        expect((error as Error).message).toContain('MCP Error');
       }
     });
   });
@@ -242,7 +242,7 @@ describe('MCP Protocol Compliance', () => {
         fail('Expected error for invalid method');
       } catch (error) {
         expect(error).toBeDefined();
-        expect(error.message).toContain('MCP Error');
+        expect((error as Error).message).toContain('MCP Error');
       }
     });
 
@@ -256,7 +256,7 @@ describe('MCP Protocol Compliance', () => {
         validateMCPResponse(response);
       } catch (error) {
         // Timeout is acceptable behavior
-        expect(error.message).toContain('timeout');
+        expect((error as Error).message).toContain('timeout');
       }
     });
 
