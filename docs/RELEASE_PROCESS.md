@@ -42,7 +42,7 @@ just release-dry-run 0.2.0
 - [ ] Run security audit: `cargo audit`
 - [ ] Update CHANGELOG.md with all changes
 - [ ] Review and update documentation
-- [ ] Test all client libraries (Python, TypeScript, Go, Rust)
+- [ ] Test all client libraries (Python, TypeScript, Rust)
 - [ ] Run full test suite: `just ci`
 - [ ] Verify Docker build: `just docker-build`
 

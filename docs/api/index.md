@@ -19,6 +19,6 @@ KotaDB offers client libraries in multiple languages:
 - **Rust**: Native library (this crate)
 - **Python**: Full-featured Python client
 - **TypeScript**: TypeScript client with full type safety
-- **Go**: Go client library
+- **Go**: Go client library (🚧 Work in Progress - see [#114](https://github.com/jayminwest/kota-db/issues/114))
 
 For specific client library documentation, see the respective client documentation.

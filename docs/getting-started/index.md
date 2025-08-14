@@ -47,9 +47,11 @@ npm install kotadb-client
 yarn add kotadb-client
 ```
 
-#### Go
+#### Go (Coming Soon)
 ```bash
-go get github.com/jayminwest/kota-db/clients/go
+# Go client is currently under development
+# See https://github.com/jayminwest/kota-db/issues/114
+# Will be available at: github.com/jayminwest/kota-db/clients/go
 ```
 
 ### Server Installation
