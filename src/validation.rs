@@ -167,9 +167,8 @@ pub mod document {
         // Validate path
         path::validate_file_path(doc.path.as_str())?;
 
-        // Check size
-        ctx.clone()
-            .validate(doc.size > 0, "Document size must be positive")?;
+        // Size validation (empty content is allowed)
+        // Note: doc.size is usize so it can't be negative, removed size > 0 check to allow empty content
 
         ctx.clone().validate(
             doc.size < 100 * 1024 * 1024, // 100MB limit
@@ -424,9 +423,9 @@ mod tests {
         // Should fail with duplicate ID
         assert!(document::validate_for_insert(&valid_doc, &existing_ids).is_err());
 
-        // Invalid documents
+        // Invalid documents (test with size exceeding limit)
         let mut invalid = valid_doc.clone();
-        invalid.size = 0;
+        invalid.size = 200 * 1024 * 1024; // 200MB, exceeds 100MB limit
         assert!(
             document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
         );
@@ -437,6 +436,28 @@ mod tests {
         assert!(
             document::validate_for_insert(&invalid, &std::collections::HashSet::new()).is_err()
         );
+    }
+
+    #[test]
+    fn test_empty_content_validation() {
+        let existing_ids = std::collections::HashSet::new();
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid");
+
+        // Document with empty content should be valid
+        let empty_content_doc = Document {
+            id: doc_id,
+            path: ValidatedPath::new("/test/empty.md").expect("Test path should be valid"),
+            title: ValidatedTitle::new("Empty Document").expect("Test title should be valid"),
+            content: vec![], // Empty content
+            tags: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            size: 0, // Size of empty content
+            embedding: None,
+        };
+
+        // Should validate successfully (empty content is allowed)
+        assert!(document::validate_for_insert(&empty_content_doc, &existing_ids).is_ok());
     }
 
     #[test]
