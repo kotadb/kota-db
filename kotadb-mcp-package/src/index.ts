@@ -12,6 +12,8 @@ import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs/promises';
+import * as os from 'os';
 import { z } from 'zod';
 
 const execAsync = promisify(exec);
@@ -37,7 +39,30 @@ class KotaDBClient {
     ];
 
     // For now, assume the binary is in PATH or return the first option
+    // TODO: Actually check each path for existence
     return 'kotadb';
+  }
+
+  private validatePath(inputPath: string): string {
+    // Basic path validation to prevent command injection
+    if (!inputPath || inputPath.trim() === '') {
+      throw new Error('Path cannot be empty');
+    }
+    
+    // Remove dangerous characters
+    const sanitized = inputPath.replace(/[;&|`$(){}\[\]]/g, '');
+    
+    // Ensure it's a reasonable path
+    if (sanitized !== inputPath) {
+      throw new Error('Path contains invalid characters');
+    }
+    
+    // Ensure it starts with / for absolute paths or is relative
+    if (sanitized.includes('..')) {
+      throw new Error('Path cannot contain .. for security reasons');
+    }
+    
+    return sanitized;
   }
 
   async ensureBinary(): Promise<void> {
@@ -92,34 +117,227 @@ class KotaDBClient {
     content: string;
     tags?: string[];
   }): Promise<any> {
-    // For now, use the CLI interface - in the future we could use the MCP server directly
-    const args = ['add', params.path];
-    if (params.title) {
-      args.push('--title', params.title);
+    try {
+      // Validate and sanitize the path
+      const validatedPath = this.validatePath(params.path);
+      
+      // Create temporary file for content
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kotadb-'));
+      const tempFile = path.join(tempDir, 'document.md');
+      
+      try {
+        // Write content to temporary file
+        await fs.writeFile(tempFile, params.content, 'utf8');
+        
+        // Build command arguments
+        const args = ['add', validatedPath, '--file', tempFile];
+        
+        if (params.title) {
+          // Sanitize title to prevent injection
+          const sanitizedTitle = params.title.replace(/[;&|`$()]/g, '');
+          args.push('--title', sanitizedTitle);
+        }
+        
+        if (params.tags && params.tags.length > 0) {
+          // Sanitize tags
+          const sanitizedTags = params.tags
+            .map(tag => tag.replace(/[;&|`$(),]/g, ''))
+            .filter(tag => tag.length > 0);
+          if (sanitizedTags.length > 0) {
+            args.push('--tags', sanitizedTags.join(','));
+          }
+        }
+        
+        const result = await this.runCommand(args);
+        
+        // Parse the result if it's JSON, otherwise return as text
+        let parsedResult;
+        try {
+          parsedResult = JSON.parse(result);
+        } catch {
+          parsedResult = { success: true, message: result.trim() };
+        }
+        
+        return parsedResult;
+        
+      } finally {
+        // Clean up temporary file and directory
+        try {
+          await fs.unlink(tempFile);
+          await fs.rmdir(tempDir);
+        } catch (cleanupError) {
+          console.warn('Failed to clean up temp file:', cleanupError);
+        }
+      }
+    } catch (error) {
+      throw new Error(`Document creation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (params.tags && params.tags.length > 0) {
-      args.push('--tags', params.tags.join(','));
-    }
-
-    // Write content to temporary file and pass path
-    // This is a simplified implementation - real implementation would handle this better
-    const result = await this.runCommand(args);
-    return { success: true, message: result };
   }
 
   async searchDocuments(query: string, limit?: number): Promise<any> {
-    const args = ['search', query];
-    if (limit) {
-      args.push('--limit', limit.toString());
+    try {
+      // Sanitize query to prevent command injection
+      if (!query || query.trim() === '') {
+        throw new Error('Query cannot be empty');
+      }
+      
+      const sanitizedQuery = query.replace(/[;&|`$()]/g, '');
+      const args = ['search', sanitizedQuery];
+      
+      if (limit && limit > 0) {
+        const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 1000); // Limit between 1-1000
+        args.push('--limit', safeLimit.toString());
+      }
+      
+      const result = await this.runCommand(args);
+      
+      // Try to parse as JSON, fallback to text if not JSON
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch {
+        // If not JSON, wrap the text result
+        parsedResult = {
+          results: result.trim().split('\n').filter(line => line.trim() !== ''),
+          query: sanitizedQuery,
+          limit: limit || 10
+        };
+      }
+      
+      return parsedResult;
+    } catch (error) {
+      throw new Error(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    const result = await this.runCommand(args);
-    return { results: result };
   }
 
   async getStats(): Promise<any> {
-    const result = await this.runCommand(['stats']);
-    return { stats: result };
+    try {
+      const result = await this.runCommand(['stats']);
+      
+      // Try to parse as JSON, fallback to text
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch {
+        parsedResult = {
+          stats: result.trim(),
+          timestamp: new Date().toISOString()
+        };
+      }
+      
+      return parsedResult;
+    } catch (error) {
+      throw new Error(`Failed to get stats: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // Additional document operations to match Rust MCP server
+  async getDocument(docId: string): Promise<any> {
+    try {
+      const validatedId = this.validatePath(docId);
+      const result = await this.runCommand(['get', validatedId]);
+      
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch {
+        parsedResult = {
+          id: validatedId,
+          content: result.trim()
+        };
+      }
+      
+      return parsedResult;
+    } catch (error) {
+      throw new Error(`Failed to get document: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async updateDocument(docId: string, content: string): Promise<any> {
+    try {
+      const validatedId = this.validatePath(docId);
+      
+      // Create temporary file for new content
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kotadb-update-'));
+      const tempFile = path.join(tempDir, 'update.md');
+      
+      try {
+        await fs.writeFile(tempFile, content, 'utf8');
+        const result = await this.runCommand(['update', validatedId, '--file', tempFile]);
+        
+        let parsedResult;
+        try {
+          parsedResult = JSON.parse(result);
+        } catch {
+          parsedResult = { success: true, message: result.trim() };
+        }
+        
+        return parsedResult;
+        
+      } finally {
+        try {
+          await fs.unlink(tempFile);
+          await fs.rmdir(tempDir);
+        } catch (cleanupError) {
+          console.warn('Failed to clean up temp file:', cleanupError);
+        }
+      }
+    } catch (error) {
+      throw new Error(`Failed to update document: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async deleteDocument(docId: string): Promise<any> {
+    try {
+      const validatedId = this.validatePath(docId);
+      const result = await this.runCommand(['delete', validatedId]);
+      
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch {
+        parsedResult = { success: true, message: result.trim() };
+      }
+      
+      return parsedResult;
+    } catch (error) {
+      throw new Error(`Failed to delete document: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async listDocuments(limit?: number, offset?: number): Promise<any> {
+    try {
+      const args = ['list'];
+      
+      if (limit && limit > 0) {
+        const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 1000);
+        args.push('--limit', safeLimit.toString());
+      }
+      
+      if (offset && offset >= 0) {
+        args.push('--offset', Math.floor(offset).toString());
+      }
+      
+      const result = await this.runCommand(args);
+      
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch {
+        // Parse line-based output into structured format
+        const lines = result.trim().split('\n').filter(line => line.trim() !== '');
+        parsedResult = {
+          documents: lines.map(line => ({ path: line.trim() })),
+          total: lines.length,
+          limit: limit || 100,
+          offset: offset || 0
+        };
+      }
+      
+      return parsedResult;
+    } catch (error) {
+      throw new Error(`Failed to list documents: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 
@@ -129,6 +347,24 @@ const DocumentCreateSchema = z.object({
   title: z.string().optional().describe('Optional title for the document'),
   content: z.string().describe('The main content of the document'),
   tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
+});
+
+const DocumentGetSchema = z.object({
+  id: z.string().describe('Document ID or path to retrieve'),
+});
+
+const DocumentUpdateSchema = z.object({
+  id: z.string().describe('Document ID or path to update'),
+  content: z.string().describe('New content for the document'),
+});
+
+const DocumentDeleteSchema = z.object({
+  id: z.string().describe('Document ID or path to delete'),
+});
+
+const DocumentListSchema = z.object({
+  limit: z.number().optional().default(100).describe('Maximum number of documents to return'),
+  offset: z.number().optional().default(0).describe('Number of documents to skip'),
 });
 
 const SearchSchema = z.object({
@@ -157,14 +393,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
+        name: 'kotadb_document_create',
+        description: 'Create a new document in KotaDB with content, title, and tags',
+        inputSchema: DocumentCreateSchema,
+      },
+      {
+        name: 'kotadb_document_get',
+        description: 'Retrieve a document by its ID or path',
+        inputSchema: DocumentGetSchema,
+      },
+      {
+        name: 'kotadb_document_update',
+        description: 'Update the content of an existing document',
+        inputSchema: DocumentUpdateSchema,
+      },
+      {
+        name: 'kotadb_document_delete',
+        description: 'Delete a document by its ID or path',
+        inputSchema: DocumentDeleteSchema,
+      },
+      {
+        name: 'kotadb_document_list',
+        description: 'List all documents with optional pagination',
+        inputSchema: DocumentListSchema,
+      },
+      {
         name: 'kotadb_search',
         description: 'Search documents in KotaDB using natural language queries',
         inputSchema: SearchSchema,
-      },
-      {
-        name: 'kotadb_create_document',
-        description: 'Create a new document in KotaDB',
-        inputSchema: DocumentCreateSchema,
       },
       {
         name: 'kotadb_stats',
@@ -179,9 +435,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (request.params.name) {
-      case 'kotadb_search': {
-        const args = SearchSchema.parse(request.params.arguments);
-        const result = await kotadb.searchDocuments(args.query, args.limit);
+      case 'kotadb_document_create': {
+        const args = DocumentCreateSchema.parse(request.params.arguments);
+        const result = await kotadb.createDocument(args);
         return {
           content: [
             {
@@ -192,9 +448,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'kotadb_create_document': {
-        const args = DocumentCreateSchema.parse(request.params.arguments);
-        const result = await kotadb.createDocument(args);
+      case 'kotadb_document_get': {
+        const args = DocumentGetSchema.parse(request.params.arguments);
+        const result = await kotadb.getDocument(args.id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kotadb_document_update': {
+        const args = DocumentUpdateSchema.parse(request.params.arguments);
+        const result = await kotadb.updateDocument(args.id, args.content);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kotadb_document_delete': {
+        const args = DocumentDeleteSchema.parse(request.params.arguments);
+        const result = await kotadb.deleteDocument(args.id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kotadb_document_list': {
+        const args = DocumentListSchema.parse(request.params.arguments);
+        const result = await kotadb.listDocuments(args.limit, args.offset);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kotadb_search': {
+        const args = SearchSchema.parse(request.params.arguments);
+        const result = await kotadb.searchDocuments(args.query, args.limit);
         return {
           content: [
             {
@@ -221,7 +529,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${request.params.name}`);
     }
   } catch (error) {
-    throw new Error(`Tool execution failed: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: errorMessage }, null, 2),
+        },
+      ],
+      isError: true,
+    };
   }
 });
 
@@ -243,18 +560,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   
   if (uri === 'kotadb://documents') {
     try {
-      const stats = await kotadb.getStats();
+      const documents = await kotadb.listDocuments(100, 0);
       return {
         contents: [
           {
             uri: uri,
             mimeType: 'application/json',
-            text: JSON.stringify(stats, null, 2),
+            text: JSON.stringify(documents, null, 2),
           },
         ],
       };
     } catch (error) {
-      throw new Error(`Failed to read resource: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read resource: ${errorMessage}`);
     }
   }
   
@@ -269,9 +587,10 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     
-    console.error('KotaDB MCP server running on stdio');
+    console.error('KotaDB MCP server running on stdio - 7 tools available');
   } catch (error) {
-    console.error('Failed to start KotaDB MCP server:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Failed to start KotaDB MCP server:', errorMessage);
     process.exit(1);
   }
 }
@@ -284,7 +603,8 @@ process.on('SIGINT', async () => {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error('Error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Error:', errorMessage);
     process.exit(1);
   });
 }

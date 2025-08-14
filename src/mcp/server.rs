@@ -126,7 +126,11 @@ impl MCPServer {
             .await?;
             let semantic_engine = Arc::new(Mutex::new(semantic_engine));
 
-            let search_tools = Arc::new(SearchTools::new(trigram_index, semantic_engine));
+            let search_tools = Arc::new(SearchTools::new(
+                trigram_index,
+                semantic_engine,
+                storage.clone(),
+            ));
             tool_registry = tool_registry.with_search_tools(search_tools);
         }
 

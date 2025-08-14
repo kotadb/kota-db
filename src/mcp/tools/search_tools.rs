@@ -1,4 +1,4 @@
-use crate::contracts::{Index, Query};
+use crate::contracts::{Index, Query, Storage};
 use crate::mcp::tools::MCPToolHandler;
 use crate::mcp::types::*;
 use crate::semantic_search::{ScoredDocument, SemanticSearchEngine};
@@ -13,16 +13,19 @@ use tokio::sync::Mutex;
 pub struct SearchTools {
     trigram_index: Arc<Mutex<dyn Index>>,
     semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
+    storage: Arc<Mutex<dyn Storage>>,
 }
 
 impl SearchTools {
     pub fn new(
         trigram_index: Arc<Mutex<dyn Index>>,
         semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
+        storage: Arc<Mutex<dyn Storage>>,
     ) -> Self {
         Self {
             trigram_index,
             semantic_engine,
+            storage,
         }
     }
 }
@@ -198,19 +201,46 @@ impl SearchTools {
         // Apply pagination (the index might not support it directly)
         let paginated_ids: Vec<_> = doc_ids.into_iter().skip(offset).take(limit).collect();
 
-        // Convert to search results (simplified - in real implementation we'd fetch full documents)
-        let results: Vec<SearchResult> = paginated_ids
-            .into_iter()
-            .enumerate()
-            .map(|(idx, doc_id)| SearchResult {
-                id: doc_id.as_uuid().to_string(),
-                path: format!("/document/{}", doc_id.as_uuid()),
-                title: Some(format!("Document {}", idx + 1)),
-                content_preview: format!("Content preview matching '{}'", request.query),
-                score: (100.0 - (idx as f32 * 5.0)).max(0.0), // Calculated relevance score
-                metadata: HashMap::new(),
-            })
-            .collect();
+        // Fetch actual documents from storage
+        let mut results = Vec::new();
+        let storage = self.storage.clone();
+        let storage_guard = storage.lock().await;
+
+        for (idx, doc_id) in paginated_ids.into_iter().enumerate() {
+            match storage_guard.get(&doc_id).await {
+                Ok(Some(document)) => {
+                    let content_preview = Self::create_content_preview(&document.content, 200);
+                    // Simple relevance scoring based on query match (in real implementation, use proper scoring)
+                    let score = (100.0 - (idx as f32 * 5.0)).max(0.0);
+
+                    results.push(SearchResult {
+                        id: doc_id.as_uuid().to_string(),
+                        path: document.path.to_string(),
+                        title: Some(document.title.to_string()),
+                        content_preview,
+                        score,
+                        metadata: HashMap::new(),
+                    });
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        "Document {} not found in storage during text search",
+                        doc_id.as_uuid()
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Error fetching document {} during text search: {}",
+                        doc_id.as_uuid(),
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        drop(storage_guard);
 
         let total_count = results.len(); // In real implementation, this would be total before pagination
         let response = SearchResponse {
