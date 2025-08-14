@@ -84,6 +84,9 @@ kota-db-data/
 # Claude agent configurations (temporary/local)
 .claude/agents/*.md
 
+# MCP client configuration (user-specific)
+.mcp.json
+
 # Test artifacts
 /test-results/
 /test-output/

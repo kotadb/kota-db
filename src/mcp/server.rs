@@ -90,13 +90,49 @@ impl MCPServer {
             tool_registry = tool_registry.with_document_tools(document_tools);
         }
 
-        // Search tools disabled due to compilation issues - can be re-enabled later
-        // TODO: Fix search tools implementation
-        // if config.mcp.enable_search_tools {
-        //     use crate::mcp::tools::search_tools::SearchTools;
-        //     let search_tools = Arc::new(SearchTools::new(storage.clone()));
-        //     tool_registry = tool_registry.with_search_tools(search_tools);
-        // }
+        if config.mcp.enable_search_tools {
+            use crate::mcp::tools::search_tools::SearchTools;
+            use crate::{
+                create_trigram_index, embeddings::EmbeddingConfig,
+                semantic_search::SemanticSearchEngine,
+            };
+            use std::path::Path;
+
+            // Create trigram index for text search
+            let trigram_index_path = Path::new(&config.database.data_dir).join("trigram_index");
+            std::fs::create_dir_all(&trigram_index_path)?;
+            let trigram_index =
+                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+            let trigram_index: Arc<Mutex<dyn crate::contracts::Index>> =
+                Arc::new(Mutex::new(trigram_index));
+
+            // Create semantic search engine
+            let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
+            std::fs::create_dir_all(&vector_index_path)?;
+            let embedding_config = EmbeddingConfig::default();
+
+            // Create a storage instance for semantic search (needs owned storage)
+            let semantic_storage = create_mcp_storage(
+                &config.database.data_dir,
+                Some(config.database.max_cache_size),
+            )
+            .await?;
+
+            let semantic_engine = SemanticSearchEngine::new(
+                Box::new(semantic_storage),
+                vector_index_path.to_str().unwrap(),
+                embedding_config,
+            )
+            .await?;
+            let semantic_engine = Arc::new(Mutex::new(semantic_engine));
+
+            let search_tools = Arc::new(SearchTools::new(
+                trigram_index,
+                semantic_engine,
+                storage.clone(),
+            ));
+            tool_registry = tool_registry.with_search_tools(search_tools);
+        }
 
         // TODO: Re-enable analytics tools after fixing HealthCheck trait compatibility
         // if config.mcp.enable_analytics_tools {
@@ -217,9 +253,10 @@ impl MCPRpc for MCPServerImpl {
         let tool_registry = self.tool_registry.clone();
         let method = name.to_string();
 
-        let rt = tokio::runtime::Handle::current();
-        let result =
-            rt.block_on(async { tool_registry.handle_tool_call(&method, arguments).await });
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async { tool_registry.handle_tool_call(&method, arguments).await })
+        });
 
         match result {
             Ok(response) => {

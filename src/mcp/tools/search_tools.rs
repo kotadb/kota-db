@@ -1,11 +1,8 @@
-use crate::contracts::{Index, Query};
+use crate::contracts::{Index, Query, Storage};
 use crate::mcp::tools::MCPToolHandler;
 use crate::mcp::types::*;
 use crate::semantic_search::{ScoredDocument, SemanticSearchEngine};
-use crate::trigram_index::TrigramIndex;
 use crate::types::*;
-use crate::validation::*;
-use crate::wrappers::*;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,16 +13,19 @@ use tokio::sync::Mutex;
 pub struct SearchTools {
     trigram_index: Arc<Mutex<dyn Index>>,
     semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
+    storage: Arc<Mutex<dyn Storage>>,
 }
 
 impl SearchTools {
     pub fn new(
         trigram_index: Arc<Mutex<dyn Index>>,
         semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
+        storage: Arc<Mutex<dyn Storage>>,
     ) -> Self {
         Self {
             trigram_index,
             semantic_engine,
+            storage,
         }
     }
 }
@@ -190,12 +190,7 @@ impl SearchTools {
         let offset = request.offset.unwrap_or(0);
 
         // Create search query using the contracts
-        let query = Query::new(
-            Some(request.query.clone()),
-            None,
-            None,
-            limit,
-        )?;
+        let query = Query::new(Some(request.query.clone()), None, None, limit)?;
 
         // Perform search using trigram index
         let index = self.trigram_index.clone();
@@ -206,19 +201,46 @@ impl SearchTools {
         // Apply pagination (the index might not support it directly)
         let paginated_ids: Vec<_> = doc_ids.into_iter().skip(offset).take(limit).collect();
 
-        // Convert to search results (simplified - in real implementation we'd fetch full documents)
-        let results: Vec<SearchResult> = paginated_ids
-            .into_iter()
-            .enumerate()
-            .map(|(idx, doc_id)| SearchResult {
-                id: doc_id.as_uuid().to_string(),
-                path: format!("/document/{}", doc_id.as_uuid()),
-                title: Some(format!("Document {}", idx + 1)),
-                content_preview: format!("Content preview matching '{}'", request.query),
-                score: (100.0 - (idx as f32 * 5.0)).max(0.0), // Calculated relevance score
-                metadata: HashMap::new(),
-            })
-            .collect();
+        // Fetch actual documents from storage
+        let mut results = Vec::new();
+        let storage = self.storage.clone();
+        let storage_guard = storage.lock().await;
+
+        for (idx, doc_id) in paginated_ids.into_iter().enumerate() {
+            match storage_guard.get(&doc_id).await {
+                Ok(Some(document)) => {
+                    let content_preview = Self::create_content_preview(&document.content, 200);
+                    // Simple relevance scoring based on query match (in real implementation, use proper scoring)
+                    let score = (100.0 - (idx as f32 * 5.0)).max(0.0);
+
+                    results.push(SearchResult {
+                        id: doc_id.as_uuid().to_string(),
+                        path: document.path.to_string(),
+                        title: Some(document.title.to_string()),
+                        content_preview,
+                        score,
+                        metadata: HashMap::new(),
+                    });
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        "Document {} not found in storage during text search",
+                        doc_id.as_uuid()
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Error fetching document {} during text search: {}",
+                        doc_id.as_uuid(),
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        drop(storage_guard);
 
         let total_count = results.len(); // In real implementation, this would be total before pagination
         let response = SearchResponse {
@@ -328,9 +350,10 @@ impl SearchTools {
             })
             .collect();
 
+        let total_count = results.len();
         let response = SearchResponse {
             results,
-            total_count: results.len(),
+            total_count,
             query_time_ms: start_time.elapsed().as_millis() as u64,
         };
 
@@ -383,9 +406,10 @@ impl SearchTools {
             })
             .collect();
 
+        let total_count = results.len();
         let response = SearchResponse {
             results,
-            total_count: results.len(),
+            total_count,
             query_time_ms: start_time.elapsed().as_millis() as u64,
         };
 
@@ -434,32 +458,9 @@ struct FindSimilarRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::wrappers::create_test_trigram_index;
-    use tempfile::TempDir;
-
     // NOTE: Search tools tests disabled pending real semantic engine implementation
     // Per AGENT.md - no mocking allowed, need real implementations
-    /*
-    #[tokio::test]
-    async fn test_search_tools_creation() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("trigram");
 
-        // Create a real trigram index using test helpers
-        let trigram_index = create_test_trigram_index(index_path.to_str().unwrap()).await?;
-        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
-
-        // Real semantic engine would be created here
-        let semantic_engine = Arc::new(Mutex::new(create_real_semantic_engine().await?));
-
-        let _search_tools = SearchTools::new(trigram_index, semantic_engine);
-        Ok(())
-    }
-
-    async fn create_real_semantic_engine() -> Result<SemanticSearchEngine> {
-        // Real implementation would go here - no mocking allowed per AGENT.md
-        todo!("Implement real semantic engine")
-    }
-    */
+    // Tests would go here when semantic search engine is fully implemented
+    // For now, the functionality is tested through integration tests
 }
