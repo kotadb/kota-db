@@ -219,7 +219,10 @@ impl DocumentTools {
             start_time.elapsed().as_millis()
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "document": response
+        }))
     }
 
     async fn get_document(&self, request: DocumentGetRequest) -> Result<serde_json::Value> {
@@ -257,7 +260,10 @@ impl DocumentTools {
             start_time.elapsed().as_millis()
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "document": response
+        }))
     }
 
     async fn update_document(&self, request: DocumentUpdateRequest) -> Result<serde_json::Value> {
@@ -303,6 +309,11 @@ impl DocumentTools {
 
         let response = DocumentUpdateResponse {
             id: document.id.to_string(),
+            path: document.path.to_string(),
+            title: document.title.to_string(),
+            content: String::from_utf8_lossy(&document.content).to_string(),
+            tags: document.tags.iter().map(|tag| tag.to_string()).collect(),
+            created_at: document.created_at,
             updated_at: document.updated_at,
         };
 
@@ -312,7 +323,10 @@ impl DocumentTools {
             start_time.elapsed().as_millis()
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "document": response
+        }))
     }
 
     async fn delete_document(&self, request: DocumentDeleteRequest) -> Result<serde_json::Value> {
@@ -338,7 +352,10 @@ impl DocumentTools {
             start_time.elapsed().as_millis()
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": response.deleted,
+            "id": response.id
+        }))
     }
 
     async fn list_documents(&self, request: DocumentListRequest) -> Result<serde_json::Value> {
@@ -400,7 +417,13 @@ impl DocumentTools {
             start_time.elapsed().as_millis()
         );
 
-        Ok(serde_json::to_value(response)?)
+        Ok(serde_json::json!({
+            "success": true,
+            "documents": response.documents,
+            "total": response.total_count,
+            "offset": response.offset,
+            "limit": response.limit
+        }))
     }
 }
 
@@ -418,6 +441,11 @@ struct DocumentUpdateRequest {
 #[derive(Debug, Clone, serde::Serialize)]
 struct DocumentUpdateResponse {
     id: String,
+    path: String,
+    title: String,
+    content: String,
+    tags: Vec<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 

@@ -192,6 +192,8 @@ export class MCPTestClient extends EventEmitter {
         this.pendingRequests.delete(id);
         reject(new Error(`Request timeout: ${method}`));
       }, timeoutMs);
+      // Ensure timer doesn't keep the process alive
+      timeout.unref();
 
       this.pendingRequests.set(id, { resolve, reject, timeout });
 
@@ -229,7 +231,12 @@ export class MCPTestClient extends EventEmitter {
     if (!content.success) {
       throw new Error(`Create failed: ${content.error}`);
     }
-    return content.document;
+    // Map snake_case to camelCase for consistency
+    return {
+      ...content.document,
+      createdAt: content.document.created_at,
+      updatedAt: content.document.updated_at,
+    };
   }
 
   async getDocument(id: string): Promise<any> {
@@ -238,7 +245,12 @@ export class MCPTestClient extends EventEmitter {
     if (!content.success) {
       throw new Error(`Get failed: ${content.error}`);
     }
-    return content.document;
+    // Map snake_case to camelCase for consistency
+    return {
+      ...content.document,
+      createdAt: content.document.created_at || content.document.createdAt,
+      updatedAt: content.document.updated_at || content.document.updatedAt,
+    };
   }
 
   async updateDocument(id: string, newContent: string): Promise<any> {
@@ -250,7 +262,12 @@ export class MCPTestClient extends EventEmitter {
     if (!content.success) {
       throw new Error(`Update failed: ${content.error}`);
     }
-    return content.document;
+    // Map snake_case to camelCase for consistency
+    return {
+      ...content.document,
+      createdAt: content.document.created_at,
+      updatedAt: content.document.updated_at,
+    };
   }
 
   async deleteDocument(id: string): Promise<boolean> {

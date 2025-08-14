@@ -72,37 +72,85 @@ class KotaDBMCPServer {
           {
             name: 'kotadb_document_create',
             description: 'Create a new document in KotaDB with content, title, and tags',
-            inputSchema: DocumentCreateSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Unique path identifier for the document' },
+                title: { type: 'string', description: 'Optional title for the document' },
+                content: { type: 'string', description: 'The main content of the document' },
+                tags: { 
+                  type: 'array', 
+                  items: { type: 'string' },
+                  description: 'Optional tags for categorization'
+                },
+              },
+              required: ['path', 'content'],
+            },
           },
           {
             name: 'kotadb_document_get',
             description: 'Retrieve a document by its ID',
-            inputSchema: DocumentGetSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Document ID to retrieve' },
+              },
+              required: ['id'],
+            },
           },
           {
             name: 'kotadb_document_update',
             description: 'Update the content of an existing document',
-            inputSchema: DocumentUpdateSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Document ID to update' },
+                content: { type: 'string', description: 'New content for the document' },
+              },
+              required: ['id', 'content'],
+            },
           },
           {
             name: 'kotadb_document_delete',
             description: 'Delete a document by its ID',
-            inputSchema: DocumentDeleteSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Document ID to delete' },
+              },
+              required: ['id'],
+            },
           },
           {
             name: 'kotadb_document_list',
             description: 'List all documents with optional pagination',
-            inputSchema: DocumentListSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                limit: { type: 'number', description: 'Maximum number of documents to return' },
+                offset: { type: 'number', description: 'Number of documents to skip' },
+              },
+            },
           },
           {
             name: 'kotadb_search',
             description: 'Search documents in KotaDB using text queries',
-            inputSchema: SearchSchema,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Search query text' },
+                limit: { type: 'number', description: 'Maximum number of results' },
+              },
+              required: ['query'],
+            },
           },
           {
             name: 'kotadb_stats',
             description: 'Get database statistics and information',
-            inputSchema: z.object({}),
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
           },
         ],
       };
@@ -125,7 +173,10 @@ class KotaDBMCPServer {
                       id: document.id,
                       path: document.path,
                       title: document.title,
+                      content: document.content,
+                      tags: document.tags,
                       created_at: document.createdAt,
+                      updated_at: document.updatedAt,
                     },
                     message: `Document created successfully at ${document.path}`,
                   }, null, 2),
@@ -195,6 +246,9 @@ class KotaDBMCPServer {
                       id: document.id,
                       path: document.path,
                       title: document.title,
+                      content: document.content,
+                      tags: document.tags,
+                      created_at: document.createdAt,
                       updated_at: document.updatedAt,
                     },
                     message: 'Document updated successfully',

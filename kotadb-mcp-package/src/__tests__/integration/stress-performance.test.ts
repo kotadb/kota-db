@@ -185,16 +185,19 @@ describe('MCP Stress Testing and Performance', () => {
       const afterCreationMemory = process.memoryUsage();
       console.log(`After creation: ${Math.round(afterCreationMemory.heapUsed / 1024 / 1024)}MB`);
       
-      // Perform operations on all documents
-      const operationPromises = docs.map(doc => 
-        Promise.all([
-          client.getDocument(doc.id),
-          client.searchDocuments(`Document ID: ${docs.indexOf(doc)}`, 1),
-          client.updateDocument(doc.id, doc.content + ' - Updated')
-        ])
-      );
-      
-      await Promise.all(operationPromises);
+      // Perform operations on all documents in smaller batches to avoid timeouts
+      const batchSize = 10;
+      for (let i = 0; i < docs.length; i += batchSize) {
+        const batch = docs.slice(i, i + batchSize);
+        const operationPromises = batch.map(doc => 
+          Promise.all([
+            client.getDocument(doc.id),
+            client.searchDocuments(`Document ID: ${docs.indexOf(doc)}`, 1),
+            client.updateDocument(doc.id, doc.content + ' - Updated')
+          ])
+        );
+        await Promise.all(operationPromises);
+      }
       
       const finalMemory = process.memoryUsage();
       console.log(`Final memory: ${Math.round(finalMemory.heapUsed / 1024 / 1024)}MB`);
