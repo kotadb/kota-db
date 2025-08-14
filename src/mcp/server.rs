@@ -134,20 +134,6 @@ impl MCPServer {
             tool_registry = tool_registry.with_search_tools(search_tools);
         }
 
-        // TODO: Re-enable analytics tools after fixing HealthCheck trait compatibility
-        // if config.mcp.enable_analytics_tools {
-        //     use crate::mcp::tools::analytics_tools::AnalyticsTools;
-        //     let analytics_tools = Arc::new(AnalyticsTools::new(storage.clone()));
-        //     tool_registry = tool_registry.with_analytics_tools(analytics_tools);
-        // }
-
-        // TODO: Re-enable graph tools after fixing Document type conversion
-        // if config.mcp.enable_graph_tools {
-        //     use crate::mcp::tools::graph_tools::GraphTools;
-        //     let graph_tools = Arc::new(GraphTools::new(storage.clone()));
-        //     tool_registry = tool_registry.with_graph_tools(graph_tools);
-        // }
-
         Ok(Self {
             config,
             tool_registry: Arc::new(tool_registry),

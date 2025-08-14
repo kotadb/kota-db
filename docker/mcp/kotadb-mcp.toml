@@ -23,8 +23,6 @@ server_version = "0.2.0"
 # Tool Categories
 enable_document_tools = true
 enable_search_tools = true
-enable_analytics_tools = true
-enable_graph_tools = true
 
 [logging]
 level = "info"

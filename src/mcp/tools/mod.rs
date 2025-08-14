@@ -1,11 +1,9 @@
-pub mod analytics_tools;
 /// MCP Tools Implementation
 ///
 /// This module contains the actual tool implementations that expose
 /// KotaDB functionality through the Model Context Protocol.
 pub mod document_tools;
-pub mod graph_tools;
-pub mod search_tools; // Re-enabled to fix compilation issues
+pub mod search_tools;
 
 use crate::mcp::types::*;
 use anyhow::Result;
@@ -25,9 +23,7 @@ pub trait MCPToolHandler {
 /// Main tool registry that coordinates all MCP tools
 pub struct MCPToolRegistry {
     pub document_tools: Option<Arc<document_tools::DocumentTools>>,
-    pub search_tools: Option<Arc<search_tools::SearchTools>>, // Re-enabled
-                                                              // pub analytics_tools: Option<Arc<analytics_tools::AnalyticsTools>>,
-                                                              // pub graph_tools: Option<Arc<graph_tools::GraphTools>>,
+    pub search_tools: Option<Arc<search_tools::SearchTools>>,
 }
 
 impl Default for MCPToolRegistry {
@@ -40,9 +36,7 @@ impl MCPToolRegistry {
     pub fn new() -> Self {
         Self {
             document_tools: None,
-            search_tools: None, // Re-enabled
-                                // analytics_tools: None,
-                                // graph_tools: None,
+            search_tools: None,
         }
     }
 
@@ -58,18 +52,6 @@ impl MCPToolRegistry {
         self
     }
 
-    // /// Register analytics tools
-    // pub fn with_analytics_tools(mut self, tools: Arc<analytics_tools::AnalyticsTools>) -> Self {
-    //     self.analytics_tools = Some(tools);
-    //     self
-    // }
-
-    // /// Register graph tools
-    // pub fn with_graph_tools(mut self, tools: Arc<graph_tools::GraphTools>) -> Self {
-    //     self.graph_tools = Some(tools);
-    //     self
-    // }
-
     /// Get all available tool definitions
     pub fn get_all_tool_definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = Vec::new();
@@ -80,12 +62,6 @@ impl MCPToolRegistry {
         if let Some(tools) = &self.search_tools {
             definitions.extend(tools.get_tool_definitions());
         }
-        // if let Some(tools) = &self.analytics_tools {
-        //     definitions.extend(tools.get_tool_definitions());
-        // }
-        // if let Some(tools) = &self.graph_tools {
-        //     definitions.extend(tools.get_tool_definitions());
-        // }
 
         definitions
     }
@@ -118,20 +94,6 @@ impl MCPToolRegistry {
                     Err(anyhow::anyhow!("Search tools not enabled"))
                 }
             }
-            // m if m.starts_with("kotadb://analytics_") || m.starts_with("kotadb://health_check") => {
-            //     if let Some(tools) = &self.analytics_tools {
-            //         tools.handle_call(method, params).await
-            //     } else {
-            //         Err(anyhow::anyhow!("Analytics tools not enabled"))
-            //     }
-            // }
-            // m if m.starts_with("kotadb://graph_") => {
-            //     if let Some(tools) = &self.graph_tools {
-            //         tools.handle_call(method, params).await
-            //     } else {
-            //         Err(anyhow::anyhow!("Graph tools not enabled"))
-            //     }
-            // }
             _ => Err(anyhow::anyhow!("Unknown method: {}", method)),
         }
     }
