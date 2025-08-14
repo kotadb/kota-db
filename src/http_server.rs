@@ -24,7 +24,8 @@ use crate::{
     contracts::connection_pool::ConnectionPool,
     contracts::{Document, Storage},
     observability::with_trace_id,
-    types::ValidatedDocumentId,
+    types::{ValidatedDocumentId, ValidatedTitle},
+    validation::{index, path},
 };
 
 // Constants for default resource statistics
@@ -166,6 +167,55 @@ pub struct HybridSearchRequest {
     pub limit: Option<u32>,
 }
 
+/// Validation request for path validation
+#[derive(Debug, Deserialize)]
+pub struct ValidatePathRequest {
+    pub path: String,
+}
+
+/// Validation request for document ID validation
+#[derive(Debug, Deserialize)]
+pub struct ValidateDocumentIdRequest {
+    pub id: String,
+}
+
+/// Validation request for title validation
+#[derive(Debug, Deserialize)]
+pub struct ValidateTitleRequest {
+    pub title: String,
+}
+
+/// Validation request for tag validation
+#[derive(Debug, Deserialize)]
+pub struct ValidateTagRequest {
+    pub tag: String,
+}
+
+/// Bulk validation request for multiple fields
+#[derive(Debug, Deserialize)]
+pub struct BulkValidationRequest {
+    pub paths: Option<Vec<String>>,
+    pub document_ids: Option<Vec<String>>,
+    pub titles: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Validation response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidationResponse {
+    pub valid: bool,
+    pub error: Option<String>,
+}
+
+/// Bulk validation response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BulkValidationResponse {
+    pub paths: Option<Vec<ValidationResponse>>,
+    pub document_ids: Option<Vec<ValidationResponse>>,
+    pub titles: Option<Vec<ValidationResponse>>,
+    pub tags: Option<Vec<ValidationResponse>>,
+}
+
 impl From<Document> for DocumentResponse {
     fn from(doc: Document) -> Self {
         Self {
@@ -210,6 +260,12 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -245,6 +301,12 @@ pub fn create_server_with_pool(
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -913,6 +975,164 @@ async fn hybrid_search(
     Ok(response)
 }
 
+/// Validate a path
+async fn validate_path(Json(request): Json<ValidatePathRequest>) -> Json<ValidationResponse> {
+    match path::validate_file_path(&request.path) {
+        Ok(_) => Json(ValidationResponse {
+            valid: true,
+            error: None,
+        }),
+        Err(e) => Json(ValidationResponse {
+            valid: false,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Validate a document ID
+async fn validate_document_id(
+    Json(request): Json<ValidateDocumentIdRequest>,
+) -> Json<ValidationResponse> {
+    // First check UUID format
+    match Uuid::parse_str(&request.id) {
+        Ok(uuid) => {
+            // Then check with ValidatedDocumentId validation
+            match ValidatedDocumentId::from_uuid(uuid) {
+                Ok(_) => Json(ValidationResponse {
+                    valid: true,
+                    error: None,
+                }),
+                Err(e) => Json(ValidationResponse {
+                    valid: false,
+                    error: Some(e.to_string()),
+                }),
+            }
+        }
+        Err(e) => Json(ValidationResponse {
+            valid: false,
+            error: Some(format!("Invalid UUID format: {}", e)),
+        }),
+    }
+}
+
+/// Validate a title
+async fn validate_title(Json(request): Json<ValidateTitleRequest>) -> Json<ValidationResponse> {
+    match ValidatedTitle::new(&request.title) {
+        Ok(_) => Json(ValidationResponse {
+            valid: true,
+            error: None,
+        }),
+        Err(e) => Json(ValidationResponse {
+            valid: false,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Validate a tag
+async fn validate_tag(Json(request): Json<ValidateTagRequest>) -> Json<ValidationResponse> {
+    match index::validate_tag(&request.tag) {
+        Ok(_) => Json(ValidationResponse {
+            valid: true,
+            error: None,
+        }),
+        Err(e) => Json(ValidationResponse {
+            valid: false,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Bulk validation endpoint
+async fn validate_bulk(Json(request): Json<BulkValidationRequest>) -> Json<BulkValidationResponse> {
+    let mut response = BulkValidationResponse {
+        paths: None,
+        document_ids: None,
+        titles: None,
+        tags: None,
+    };
+
+    // Validate paths if provided
+    if let Some(paths) = request.paths {
+        let path_results: Vec<ValidationResponse> = paths
+            .iter()
+            .map(|path| match path::validate_file_path(path) {
+                Ok(_) => ValidationResponse {
+                    valid: true,
+                    error: None,
+                },
+                Err(e) => ValidationResponse {
+                    valid: false,
+                    error: Some(e.to_string()),
+                },
+            })
+            .collect();
+        response.paths = Some(path_results);
+    }
+
+    // Validate document IDs if provided
+    if let Some(document_ids) = request.document_ids {
+        let id_results: Vec<ValidationResponse> = document_ids
+            .iter()
+            .map(|id| match Uuid::parse_str(id) {
+                Ok(uuid) => match ValidatedDocumentId::from_uuid(uuid) {
+                    Ok(_) => ValidationResponse {
+                        valid: true,
+                        error: None,
+                    },
+                    Err(e) => ValidationResponse {
+                        valid: false,
+                        error: Some(e.to_string()),
+                    },
+                },
+                Err(e) => ValidationResponse {
+                    valid: false,
+                    error: Some(format!("Invalid UUID format: {}", e)),
+                },
+            })
+            .collect();
+        response.document_ids = Some(id_results);
+    }
+
+    // Validate titles if provided
+    if let Some(titles) = request.titles {
+        let title_results: Vec<ValidationResponse> = titles
+            .iter()
+            .map(|title| match ValidatedTitle::new(title) {
+                Ok(_) => ValidationResponse {
+                    valid: true,
+                    error: None,
+                },
+                Err(e) => ValidationResponse {
+                    valid: false,
+                    error: Some(e.to_string()),
+                },
+            })
+            .collect();
+        response.titles = Some(title_results);
+    }
+
+    // Validate tags if provided
+    if let Some(tags) = request.tags {
+        let tag_results: Vec<ValidationResponse> = tags
+            .iter()
+            .map(|tag| match index::validate_tag(tag) {
+                Ok(_) => ValidationResponse {
+                    valid: true,
+                    error: None,
+                },
+                Err(e) => ValidationResponse {
+                    valid: false,
+                    error: Some(e.to_string()),
+                },
+            })
+            .collect();
+        response.tags = Some(tag_results);
+    }
+
+    Json(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,6 +1429,233 @@ mod tests {
 
         // For now, we trust that the DefaultBodyLimit middleware works as documented
         // and focus on testing that reasonable large documents (< 100MB) work correctly.
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test valid path
+        let request_body = json!({
+            "path": "/test/document.md"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/path")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(validation_response.valid);
+        assert!(validation_response.error.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_endpoint_invalid() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test invalid path (contains parent directory reference)
+        let request_body = json!({
+            "path": "../../../etc/passwd"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/path")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(!validation_response.valid);
+        assert!(validation_response.error.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_document_id_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test valid document ID
+        let valid_uuid = Uuid::new_v4();
+        let request_body = json!({
+            "id": valid_uuid.to_string()
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/document-id")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(validation_response.valid);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_document_id_endpoint_invalid() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test invalid document ID
+        let request_body = json!({
+            "id": "not-a-valid-uuid"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/document-id")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(!validation_response.valid);
+        assert!(validation_response.error.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_title_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test valid title
+        let request_body = json!({
+            "title": "Valid Document Title"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/title")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(validation_response.valid);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_tag_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test valid tag
+        let request_body = json!({
+            "tag": "rust-programming"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/tag")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let validation_response: ValidationResponse = serde_json::from_slice(&body)?;
+        assert!(validation_response.valid);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_bulk_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Test bulk validation with mixed valid/invalid data
+        let request_body = json!({
+            "paths": ["/valid/path.md", "../invalid/path"],
+            "document_ids": [Uuid::new_v4().to_string(), "invalid-uuid"],
+            "titles": ["Valid Title", ""],
+            "tags": ["valid-tag", "invalid@tag"]
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate/bulk")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let bulk_response: BulkValidationResponse = serde_json::from_slice(&body)?;
+
+        // Check that we got responses for all fields
+        assert!(bulk_response.paths.is_some());
+        assert!(bulk_response.document_ids.is_some());
+        assert!(bulk_response.titles.is_some());
+        assert!(bulk_response.tags.is_some());
+
+        // Check path validations
+        let path_results = bulk_response.paths.unwrap();
+        assert_eq!(path_results.len(), 2);
+        assert!(path_results[0].valid); // /valid/path.md
+        assert!(!path_results[1].valid); // ../invalid/path
+
+        // Check document ID validations
+        let id_results = bulk_response.document_ids.unwrap();
+        assert_eq!(id_results.len(), 2);
+        assert!(id_results[0].valid); // valid UUID
+        assert!(!id_results[1].valid); // invalid-uuid
 
         Ok(())
     }
