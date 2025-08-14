@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { program } from 'commander';
+
+interface ClaudeConfig {
+  mcpServers?: {
+    [key: string]: {
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    };
+  };
+}
+
+function getClaudeConfigPath(): string {
+  const platform = os.platform();
+  const homeDir = os.homedir();
+
+  switch (platform) {
+    case 'darwin': // macOS
+      return path.join(homeDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+    case 'win32': // Windows
+      return path.join(homeDir, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json');
+    case 'linux': // Linux
+      return path.join(homeDir, '.config', 'claude', 'claude_desktop_config.json');
+    default:
+      throw new Error(`Unsupported platform: ${platform}`);
+  }
+}
+
+function loadClaudeConfig(configPath: string): ClaudeConfig {
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      return JSON.parse(content);
+    }
+  } catch (error) {
+    console.warn(`Warning: Could not read existing Claude config: ${error}`);
+  }
+  return {};
+}
+
+function saveClaudeConfig(configPath: string, config: ClaudeConfig): void {
+  // Ensure directory exists
+  const dir = path.dirname(configPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+function setupKotaDBMCP(dataDir?: string): void {
+  try {
+    const configPath = getClaudeConfigPath();
+    console.log(`Configuring Claude Desktop at: ${configPath}`);
+
+    // Load existing config
+    const config = loadClaudeConfig(configPath);
+
+    // Initialize mcpServers if it doesn't exist
+    if (!config.mcpServers) {
+      config.mcpServers = {};
+    }
+
+    // Determine data directory
+    const kotadbDataDir = dataDir || path.join(os.homedir(), '.kotadb', 'data');
+
+    // Add KotaDB MCP server configuration
+    config.mcpServers.kotadb = {
+      command: 'npx',
+      args: ['kotadb-mcp'],
+      env: {
+        KOTADB_DATA_DIR: kotadbDataDir,
+      },
+    };
+
+    // Save updated config
+    saveClaudeConfig(configPath, config);
+
+    console.log('✅ Successfully configured KotaDB MCP server for Claude Desktop');
+    console.log(`📁 Data directory: ${kotadbDataDir}`);
+    console.log('');
+    console.log('Next steps:');
+    console.log('1. Restart Claude Desktop');
+    console.log('2. Try asking: "Search my KotaDB for rust programming concepts"');
+    console.log('3. Or: "Create a document about AI safety in my KotaDB"');
+    console.log('');
+    console.log('🔧 To change the data directory, run:');
+    console.log(`   kotadb-mcp-setup --data-dir /path/to/your/kotadb/data`);
+
+  } catch (error) {
+    console.error('❌ Setup failed:', error);
+    process.exit(1);
+  }
+}
+
+function removeKotaDBMCP(): void {
+  try {
+    const configPath = getClaudeConfigPath();
+    console.log(`Removing KotaDB from Claude Desktop config: ${configPath}`);
+
+    // Load existing config
+    const config = loadClaudeConfig(configPath);
+
+    // Remove KotaDB MCP server
+    if (config.mcpServers && config.mcpServers.kotadb) {
+      delete config.mcpServers.kotadb;
+      
+      // Remove mcpServers entirely if it's empty
+      if (Object.keys(config.mcpServers).length === 0) {
+        delete config.mcpServers;
+      }
+
+      // Save updated config
+      saveClaudeConfig(configPath, config);
+      console.log('✅ Successfully removed KotaDB MCP server from Claude Desktop');
+    } else {
+      console.log('ℹ️  KotaDB MCP server was not configured');
+    }
+
+  } catch (error) {
+    console.error('❌ Removal failed:', error);
+    process.exit(1);
+  }
+}
+
+function showStatus(): void {
+  try {
+    const configPath = getClaudeConfigPath();
+    console.log(`Claude Desktop config: ${configPath}`);
+
+    const config = loadClaudeConfig(configPath);
+    
+    if (config.mcpServers && config.mcpServers.kotadb) {
+      console.log('✅ KotaDB MCP server is configured');
+      console.log('Configuration:');
+      console.log(JSON.stringify(config.mcpServers.kotadb, null, 2));
+    } else {
+      console.log('❌ KotaDB MCP server is not configured');
+      console.log('Run `kotadb-mcp-setup` to configure it');
+    }
+
+  } catch (error) {
+    console.error('❌ Status check failed:', error);
+    process.exit(1);
+  }
+}
+
+program
+  .name('kotadb-mcp-setup')
+  .description('Setup KotaDB MCP server for Claude Desktop')
+  .version('0.1.0');
+
+program
+  .command('setup', { isDefault: true })
+  .description('Configure KotaDB MCP server for Claude Desktop')
+  .option('-d, --data-dir <path>', 'KotaDB data directory')
+  .action((options) => {
+    setupKotaDBMCP(options.dataDir);
+  });
+
+program
+  .command('remove')
+  .description('Remove KotaDB MCP server from Claude Desktop')
+  .action(() => {
+    removeKotaDBMCP();
+  });
+
+program
+  .command('status')
+  .description('Show current configuration status')
+  .action(() => {
+    showStatus();
+  });
+
+// If no command is provided, run setup by default
+if (process.argv.length === 2) {
+  setupKotaDBMCP();
+} else {
+  program.parse();
+}

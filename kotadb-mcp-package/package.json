@@ -1,0 +1,55 @@
+{
+  "name": "kotadb-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for KotaDB - Enable Claude Desktop to search and manage your KotaDB documents",
+  "keywords": ["kotadb", "mcp", "claude", "ai", "database", "search", "knowledge-management"],
+  "author": "KotaDB Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jayminwest/kota-db.git",
+    "directory": "kotadb-mcp-package"
+  },
+  "bugs": {
+    "url": "https://github.com/jayminwest/kota-db/issues"
+  },
+  "homepage": "https://github.com/jayminwest/kota-db#readme",
+  "main": "dist/index.js",
+  "bin": {
+    "kotadb-mcp": "dist/index.js",
+    "kotadb-mcp-setup": "dist/setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "setup-claude": "ts-node src/setup.ts",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "commander": "^12.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "kotadb-binary": "^0.3.0"
+  },
+  "optionalDependencies": {
+    "kotadb-binary": "^0.3.0"
+  }
+}

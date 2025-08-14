@@ -2,10 +2,7 @@ use crate::contracts::{Index, Query};
 use crate::mcp::tools::MCPToolHandler;
 use crate::mcp::types::*;
 use crate::semantic_search::{ScoredDocument, SemanticSearchEngine};
-use crate::trigram_index::TrigramIndex;
 use crate::types::*;
-use crate::validation::*;
-use crate::wrappers::*;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -190,12 +187,7 @@ impl SearchTools {
         let offset = request.offset.unwrap_or(0);
 
         // Create search query using the contracts
-        let query = Query::new(
-            Some(request.query.clone()),
-            None,
-            None,
-            limit,
-        )?;
+        let query = Query::new(Some(request.query.clone()), None, None, limit)?;
 
         // Perform search using trigram index
         let index = self.trigram_index.clone();
@@ -328,9 +320,10 @@ impl SearchTools {
             })
             .collect();
 
+        let total_count = results.len();
         let response = SearchResponse {
             results,
-            total_count: results.len(),
+            total_count,
             query_time_ms: start_time.elapsed().as_millis() as u64,
         };
 
@@ -383,9 +376,10 @@ impl SearchTools {
             })
             .collect();
 
+        let total_count = results.len();
         let response = SearchResponse {
             results,
-            total_count: results.len(),
+            total_count,
             query_time_ms: start_time.elapsed().as_millis() as u64,
         };
 
@@ -434,32 +428,9 @@ struct FindSimilarRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::wrappers::create_test_trigram_index;
-    use tempfile::TempDir;
-
     // NOTE: Search tools tests disabled pending real semantic engine implementation
     // Per AGENT.md - no mocking allowed, need real implementations
-    /*
-    #[tokio::test]
-    async fn test_search_tools_creation() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("trigram");
 
-        // Create a real trigram index using test helpers
-        let trigram_index = create_test_trigram_index(index_path.to_str().unwrap()).await?;
-        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
-
-        // Real semantic engine would be created here
-        let semantic_engine = Arc::new(Mutex::new(create_real_semantic_engine().await?));
-
-        let _search_tools = SearchTools::new(trigram_index, semantic_engine);
-        Ok(())
-    }
-
-    async fn create_real_semantic_engine() -> Result<SemanticSearchEngine> {
-        // Real implementation would go here - no mocking allowed per AGENT.md
-        todo!("Implement real semantic engine")
-    }
-    */
+    // Tests would go here when semantic search engine is fully implemented
+    // For now, the functionality is tested through integration tests
 }
