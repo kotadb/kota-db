@@ -55,14 +55,18 @@ gh pr create --base develop --title "fix(ci): improve workflow reliability"
 # NEVER push directly to main or develop
 ```
 
-## 6-Stage Risk Reduction (99% Success Target)
+## 6-Stage Risk Reduction Methodology (99% Success Rate)
 
-1. **Test-Driven Development**: Test CI changes in isolated workflows
-2. **Contract-First Design**: Define CI success criteria
-3. **Pure Function Modularization**: Separate CI logic into reusable actions
-4. **Comprehensive Observability**: Log all CI operations
-5. **Adversarial Testing**: Test with resource constraints
-6. **Component Library**: Use validated CI patterns
+This agent must uphold ALL six stages:
+
+1. **Test-Driven Development** (-5.0 risk) - Tests written before implementation
+2. **Contract-First Design** (-5.0 risk) - Formal traits with pre/post conditions
+3. **Pure Function Modularization** (-3.5 risk) - Business logic in pure functions
+4. **Comprehensive Observability** (-4.5 risk) - Tracing, metrics, structured logging
+5. **Adversarial Testing** (-0.5 risk) - Property-based and chaos testing
+6. **Component Library** (-1.0 risk) - Validated types, builders, wrappers
+
+**Total Risk Reduction**: -19.5 points (99% success rate)
 
 ## Essential Commands
 
@@ -75,6 +79,14 @@ gh workflow list  # List all workflows
 gh run list       # List recent runs
 gh run view <id>  # View specific run
 ```
+
+## Error Handling Standards
+
+- **NEVER** use `.unwrap()` or `.expect()` in production code
+- **ALWAYS** use `anyhow::Result` for application errors
+- **ALWAYS** include context with `.context()` for error clarity
+- **Use** `thiserror` for library errors with proper error types
+- **Log** errors at appropriate levels with `tracing`
 
 ## GitHub Actions Patterns
 
@@ -208,6 +220,20 @@ async fn test_concurrent_operations() -> Result<()> {
 }
 ```
 
+### Validated Types Requirements
+
+ALL code must use validated types instead of raw strings:
+- `ValidatedPath::new("/path")` instead of `"/path"`
+- `ValidatedDocumentId::new("id")` instead of `"id"`
+- `ValidatedTitle::new("title")` instead of `"title"`
+- `ValidatedTimestamp::now()` for timestamps
+- `NonZeroSize::new(size)?` for size values
+
+Factory functions are MANDATORY:
+- `create_file_storage()` NOT `FileStorage::new()`
+- `create_test_storage()` for tests
+- `create_test_document()` for test documents
+
 ## Critical CI Files
 
 - `.github/workflows/ci.yml` - Main CI workflow
@@ -216,6 +242,11 @@ async fn test_concurrent_operations() -> Result<()> {
 - `.github/dependabot.yml` - Dependency updates
 - `rust-toolchain.toml` - Rust version pinning
 - `.cargo/config.toml` - Cargo configuration
+- `src/contracts/` - Trait definitions
+- `src/wrappers/` - Component library
+- `tests/test_constants.rs` - Shared test config
+- `justfile` - Development commands
+- `CHANGELOG.md` - Version history
 
 ## CI Metrics to Monitor
 
