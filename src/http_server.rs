@@ -31,6 +31,7 @@ use crate::{
 const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
 const DEFAULT_MEMORY_USAGE_MB: f64 = 32.0; // 32MB in megabytes
 const DEFAULT_CPU_USAGE_PERCENT: f32 = 5.0; // 5% baseline CPU usage
+const DEFAULT_CONNECTION_POOL_CAPACITY: f64 = 100.0; // Default max connections if not specified
 const HEALTH_THRESHOLD_CPU: f32 = 90.0; // CPU usage threshold for health check
 const HEALTH_THRESHOLD_MEMORY_MB: f64 = 1000.0; // Memory threshold in MB for health check
 const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity threshold for health check
@@ -186,7 +187,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
-        .route("/documents", get(list_documents))
+        .route("/documents", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
@@ -220,7 +221,7 @@ pub fn create_server_with_pool(
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
-        .route("/documents", get(list_documents))
+        .route("/documents", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
@@ -657,9 +658,11 @@ async fn get_performance_stats(
     if let Some(pool) = &state.connection_pool {
         match pool.lock().await.get_stats().await {
             Ok(stats) => {
-                // Calculate requests per second (simplified - would need time window in real implementation)
+                // Calculate approximate requests per second
+                // NOTE: This is a rough approximation based on average latency
+                // For accurate RPS, implement proper request counting with time windows
                 let requests_per_second = if stats.avg_latency_ms > 0.0 {
-                    1000.0 / stats.avg_latency_ms // Very rough estimate
+                    1000.0 / stats.avg_latency_ms
                 } else {
                     0.0
                 };
@@ -703,7 +706,7 @@ async fn get_resource_stats(
                 // Determine system health based on various factors
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
-                    && (stats.active_connections as f64 / 100.0)
+                    && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
                         < HEALTH_THRESHOLD_CONNECTION_RATIO;
 
                 Ok(Json(ResourceStatsResponse {
@@ -767,7 +770,7 @@ async fn get_aggregated_stats(
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
-                    && (stats.active_connections as f64 / 100.0)
+                    && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
                         < HEALTH_THRESHOLD_CONNECTION_RATIO;
 
                 let resources = ResourceStatsResponse {
@@ -830,15 +833,6 @@ async fn get_aggregated_stats(
         performance,
         resources,
     }))
-}
-
-/// List all documents (for Python client compatibility)
-async fn list_documents(
-    State(state): State<AppState>,
-    AxumQuery(params): AxumQuery<SearchParams>,
-) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Directly call search_documents - it already handles None case properly
-    search_documents(State(state), AxumQuery(params)).await
 }
 
 /// Semantic search (for Python client compatibility)
