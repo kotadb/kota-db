@@ -36,13 +36,17 @@ class Document:
 
         if isinstance(created_at, (int, float)):
             created_at = datetime.fromtimestamp(created_at)
-        else:
+        elif created_at is not None:
             created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            created_at = datetime.now()
 
         if isinstance(updated_at, (int, float)):
             updated_at = datetime.fromtimestamp(updated_at)
-        else:
+        elif updated_at is not None:
             updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        else:
+            updated_at = datetime.now()
 
         return cls(
             id=data["id"],

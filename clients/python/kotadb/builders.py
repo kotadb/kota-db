@@ -318,11 +318,11 @@ class QueryBuilder:
         Raises:
             ValidationError: If limit is invalid
         """
-        MAX_LIMIT = 10000
+        max_limit = 10000
         if limit <= 0:
             raise ValidationError("Limit must be positive")
-        if limit > MAX_LIMIT:
-            raise ValidationError(f"Limit too large (max {MAX_LIMIT})")
+        if limit > max_limit:
+            raise ValidationError(f"Limit too large (max {max_limit})")
         self._limit = limit
         return self
 
@@ -620,14 +620,14 @@ class UpdateBuilder:
 
         # Handle tag updates
         if (self._tags_to_add or self._tags_to_remove) and "tags" not in updates:
-                # Need current tags to modify them
-                # This will require the caller to handle merging
-                tag_ops = {}
-                if self._tags_to_add:
-                    tag_ops["add"] = self._tags_to_add
-                if self._tags_to_remove:
-                    tag_ops["remove"] = self._tags_to_remove
-                updates["_tag_operations"] = tag_ops
+            # Need current tags to modify them
+            # This will require the caller to handle merging
+            tag_ops = {}
+            if self._tags_to_add:
+                tag_ops["add"] = self._tags_to_add
+            if self._tags_to_remove:
+                tag_ops["remove"] = self._tags_to_remove
+            updates["_tag_operations"] = tag_ops
 
         # Handle metadata updates
         if self._metadata_updates:

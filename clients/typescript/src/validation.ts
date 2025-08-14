@@ -65,8 +65,8 @@ export function validateFilePath(path: string): void {
   // Check for reserved names (Windows compatibility)
   const filename = path.split(/[/\\]/).pop();
   if (filename) {
-    const stem = filename.split('.')[0].toUpperCase();
-    if (RESERVED_NAMES.has(stem)) {
+    const stem = filename.split('.')[0]?.toUpperCase();
+    if (stem && RESERVED_NAMES.has(stem)) {
       throw new ValidationError(`Reserved filename: ${filename}`);
     }
   }

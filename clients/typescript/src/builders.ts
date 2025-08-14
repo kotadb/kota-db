@@ -181,13 +181,21 @@ export class DocumentBuilder {
       throw new ValidationError('Document content is required');
     }
 
-    return {
+    const request: CreateDocumentRequest = {
       path: this._path.asStr(),
       title: this._title.asStr(),
       content: this._content,
-      tags: this._tags.length > 0 ? this._tags : undefined,
-      metadata: Object.keys(this._metadata).length > 0 ? this._metadata : undefined,
     };
+    
+    if (this._tags.length > 0) {
+      request.tags = this._tags;
+    }
+    
+    if (Object.keys(this._metadata).length > 0) {
+      request.metadata = this._metadata;
+    }
+    
+    return request;
   }
 
   /**
