@@ -2,7 +2,48 @@
 
 This directory contains comprehensive real-world examples demonstrating KotaDB's capabilities for different use cases. Each example shows how to use KotaDB's production-ready Stage 6 component library with realistic data and scenarios.
 
+**New: Complete Application Examples** - Production-ready applications showing real-world integration patterns.
+
 ## Available Examples
+
+## 🌐 Complete Application Examples
+
+### [Flask Web App](flask-web-app/) - Production Web Application
+**Complete web application with REST API and UI**
+
+- **Features**: Document CRUD, full-text search, RESTful API, web interface
+- **Tech Stack**: Flask, KotaDB Python client, HTML/CSS/JS
+- **Use Case**: Document management system with web interface
+- **Run**: `cd flask-web-app && pip install -r requirements.txt && python app.py`
+- **Access**: http://localhost:5000
+
+Perfect for understanding how to integrate KotaDB into web applications.
+
+### [Note-Taking App](note-taking-app/) - Advanced Document Management  
+**Sophisticated note organization with hierarchical folders**
+
+- **Features**: Hierarchical folders, advanced search, auto-tagging, export, statistics
+- **Tech Stack**: Flask, KotaDB Python client, advanced UI
+- **Use Case**: Personal knowledge management, note organization
+- **Run**: `cd note-taking-app && pip install -r requirements.txt && python note_app.py`  
+- **Access**: http://localhost:5001
+
+Demonstrates advanced KotaDB features like complex queries and metadata management.
+
+### [RAG Pipeline](rag-pipeline/) - AI-Powered Question Answering
+**Complete retrieval-augmented generation system**
+
+- **Features**: Document ingestion, vector embeddings, semantic search, AI Q&A
+- **Tech Stack**: Python, OpenAI API, scikit-learn, KotaDB client
+- **Use Case**: Knowledge base for AI applications, chatbots, research assistants
+- **Setup**: `export OPENAI_API_KEY=your_key` (optional - has fallbacks)
+- **Run**: `cd rag-pipeline && pip install -r requirements.txt && python rag_demo.py`
+
+Shows how to build production-ready RAG systems with KotaDB as the vector database.
+
+---
+
+## 🦀 Rust Core Examples
 
 ### 1. Personal Knowledge Base (`01_personal_knowledge_base.rs`)
 

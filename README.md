@@ -6,8 +6,87 @@
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
+## 🚀 Quick Start - Choose Your Language
+
+<div align="center">
+
+### Python
 [![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
+[![Python Downloads](https://img.shields.io/pypi/dm/kotadb-client)](https://pypi.org/project/kotadb-client/)
+
+```bash
+pip install kotadb-client
+```
+
+### TypeScript/JavaScript  
+[![npm version](https://badge.fury.io/js/kotadb-client.svg)](https://www.npmjs.com/package/kotadb-client)
+[![npm downloads](https://img.shields.io/npm/dm/kotadb-client)](https://www.npmjs.com/package/kotadb-client)
+
+```bash
+npm install kotadb-client
+```
+
+### Rust
 [![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
+[![Crates.io Downloads](https://img.shields.io/crates/d/kotadb)](https://crates.io/crates/kotadb)
+
+```bash
+cargo add kotadb
+```
+
+### Go (Beta)
+[![Go Reference](https://pkg.go.dev/badge/github.com/jayminwest/kota-db/clients/go.svg)](https://pkg.go.dev/github.com/jayminwest/kota-db/clients/go)
+
+```bash
+go get github.com/jayminwest/kota-db/clients/go
+```
+
+</div>
+
+---
+
+## ⚡ 60-Second Quick Start
+
+**Get from zero to first query in under 60 seconds:**
+
+### Option 1: Docker (Easiest)
+```bash
+# One command to start everything
+docker-compose -f docker-compose.quickstart.yml up -d
+
+# Run Python demo (shows all features)
+docker-compose -f docker-compose.quickstart.yml --profile demo up python-demo
+```
+
+### Option 2: Shell Script (Local Install)
+```bash
+# One-liner installation and demo
+curl -sSL https://raw.githubusercontent.com/jayminwest/kota-db/main/quickstart/install.sh | bash
+```
+
+### Option 3: Manual Setup
+```bash
+# Start server
+docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
+
+# Install client and try it
+pip install kotadb-client
+python -c "
+from kotadb import KotaDB, DocumentBuilder
+db = KotaDB('http://localhost:8080')
+doc_id = db.insert_with_builder(
+    DocumentBuilder()
+    .path('/hello.md')
+    .title('Hello KotaDB!')
+    .content('My first document')
+)
+print(f'Created document: {doc_id}')
+results = db.query('hello')
+print(f'Found {len(results.get(\"documents\", []))} documents')
+"
+```
+
+**🎉 That's it! You're now running KotaDB with type-safe client libraries.**
 
 ```
 KotaDB combines document storage, graph relationships, and semantic search
@@ -31,52 +110,81 @@ Real-world benchmarks on Apple Silicon:
 
 ---
 
-## Quick Start
+## 🎯 Complete Examples
 
-### Python (Recommended for Quick Testing)
+**Production-ready applications demonstrating real-world usage:**
+
+### 🌐 [Flask Web App](examples/flask-web-app/)
+Complete web application with REST API and UI
 ```bash
-# Install client
-pip install kotadb-client
+cd examples/flask-web-app && pip install -r requirements.txt && python app.py
+# Visit http://localhost:5000
 ```
 
-```python
-from kotadb import KotaDB
+### 📝 [Note-Taking App](examples/note-taking-app/) 
+Advanced document management with folders and tags
+```bash
+cd examples/note-taking-app && pip install -r requirements.txt && python note_app.py
+# Visit http://localhost:5001  
+```
 
-# Connect and start using immediately
+### 🧠 [RAG Pipeline](examples/rag-pipeline/)
+AI-powered question answering with document retrieval
+```bash
+cd examples/rag-pipeline && pip install -r requirements.txt && python rag_demo.py
+# Requires OPENAI_API_KEY for best results
+```
+
+### ⚡ Quick Examples
+```bash
+# Python type-safe usage
+from kotadb import KotaDB, DocumentBuilder, ValidatedPath
+
 db = KotaDB("http://localhost:8080")
-doc_id = db.insert({
-    "path": "/notes/meeting.md",
-    "title": "My Note",
-    "content": "Important meeting notes..."
-})
-results = db.query("meeting notes")
+doc_id = db.insert_with_builder(
+    DocumentBuilder()
+    .path(ValidatedPath("/notes/meeting.md"))
+    .title("Team Meeting")
+    .content("Discussion about project timeline...")
+    .add_tag("meeting")
+    .add_tag("important")
+)
+
+# Advanced search with filters
+from kotadb import QueryBuilder
+results = db.query_with_builder(
+    QueryBuilder()
+    .text("project timeline") 
+    .tag_filter("meeting")
+    .limit(10)
+)
 ```
 
-### Rust (Building from Source)
+### 🦀 Rust (Full Feature Access)
 ```bash
 # Clone and build
 git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-cargo build
+cd kota-db && cargo build --release
 
-# Start HTTP server
+# Start server
 cargo run --bin kotadb -- serve
 
-# CLI examples
-cargo run --bin kotadb -- insert /test/doc "My Document" "Document content"
-cargo run --bin kotadb -- search "rust"     # Full-text search
-cargo run --bin kotadb -- search "*"        # Wildcard search
-cargo run --bin kotadb -- stats            # Database statistics
+# CLI operations  
+cargo run --bin kotadb -- insert /docs/rust.md "Rust Guide" "Ownership concepts..."
+cargo run --bin kotadb -- search "ownership"  # Full-text search
+cargo run --bin kotadb -- search "*"          # List all documents  
+cargo run --bin kotadb -- stats              # Database statistics
 ```
 
 <details>
 <summary><strong>Development Commands</strong></summary>
 
 ```bash
-just dev              # Start with auto-reload
-just test             # Run all tests
-just check            # Format, lint, test
+just dev              # Auto-reload development server
+just test             # Run comprehensive test suite
+just check            # Format, lint, and test everything
 just bench            # Performance benchmarks
+just release-preview  # Preview next release
 ```
 
 </details>
