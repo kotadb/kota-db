@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::{net::TcpListener, sync::Mutex};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -25,6 +26,17 @@ use crate::{
     observability::with_trace_id,
     types::ValidatedDocumentId,
 };
+
+// Constants for default resource statistics
+const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
+const DEFAULT_MEMORY_USAGE_MB: f64 = 32.0; // 32MB in megabytes
+const DEFAULT_CPU_USAGE_PERCENT: f32 = 5.0; // 5% baseline CPU usage
+const HEALTH_THRESHOLD_CPU: f32 = 90.0; // CPU usage threshold for health check
+const HEALTH_THRESHOLD_MEMORY_MB: f64 = 1000.0; // Memory threshold in MB for health check
+const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity threshold for health check
+
+// Global server start time for uptime tracking
+static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy::new(Instant::now);
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -243,10 +255,12 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
 /// Health check endpoint
 async fn health_check() -> Json<HealthResponse> {
+    let uptime_seconds = SERVER_START_TIME.elapsed().as_secs();
+
     Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 0, // TODO: Implement actual uptime tracking
+        uptime_seconds,
     })
 }
 
@@ -687,9 +701,10 @@ async fn get_resource_stats(
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
 
                 // Determine system health based on various factors
-                let system_healthy = stats.cpu_usage_percent < 90.0
-                    && memory_mb < 1000.0 // Under 1GB
-                    && (stats.active_connections as f64 / 100.0) < 0.95; // Under 95% capacity
+                let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
+                    && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
+                    && (stats.active_connections as f64 / 100.0)
+                        < HEALTH_THRESHOLD_CONNECTION_RATIO;
 
                 Ok(Json(ResourceStatsResponse {
                     memory_usage_bytes: stats.memory_usage_bytes,
@@ -712,9 +727,9 @@ async fn get_resource_stats(
     } else {
         // No connection pool configured - return basic system stats
         Ok(Json(ResourceStatsResponse {
-            memory_usage_bytes: 32 * 1024 * 1024, // 32MB baseline
-            memory_usage_mb: 32.0,
-            cpu_usage_percent: 5.0, // Low baseline
+            memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+            memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+            cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
             system_healthy: true,
         }))
     }
@@ -724,34 +739,90 @@ async fn get_resource_stats(
 async fn get_aggregated_stats(
     State(state): State<AppState>,
 ) -> Result<Json<AggregatedStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Get all stats
-    let connections = match get_connection_stats(State(state.clone())).await {
-        Ok(Json(stats)) => stats,
-        Err(_) => ConnectionStatsResponse {
-            active_connections: 0,
-            total_connections: 0,
-            rejected_connections: 0,
-            rate_limited_requests: 0,
-        },
-    };
+    // Directly gather stats without calling other endpoints for better performance
+    let (connections, performance, resources) = if let Some(pool) = &state.connection_pool {
+        match pool.lock().await.get_stats().await {
+            Ok(stats) => {
+                // Connection stats
+                let connections = ConnectionStatsResponse {
+                    active_connections: stats.active_connections,
+                    total_connections: stats.total_connections,
+                    rejected_connections: stats.rejected_connections,
+                    rate_limited_requests: stats.rate_limited_requests,
+                };
 
-    let performance = match get_performance_stats(State(state.clone())).await {
-        Ok(Json(stats)) => stats,
-        Err(_) => PerformanceStatsResponse {
-            avg_latency_ms: 0.0,
-            total_requests: 0,
-            requests_per_second: 0.0,
-        },
-    };
+                // Performance stats
+                let requests_per_second = if stats.avg_latency_ms > 0.0 {
+                    1000.0 / stats.avg_latency_ms
+                } else {
+                    0.0
+                };
+                let performance = PerformanceStatsResponse {
+                    avg_latency_ms: stats.avg_latency_ms,
+                    total_requests: stats.total_connections,
+                    requests_per_second,
+                };
 
-    let resources = match get_resource_stats(State(state.clone())).await {
-        Ok(Json(stats)) => stats,
-        Err(_) => ResourceStatsResponse {
-            memory_usage_bytes: 0,
-            memory_usage_mb: 0.0,
-            cpu_usage_percent: 0.0,
-            system_healthy: true,
-        },
+                // Resource stats
+                let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
+                let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
+                    && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
+                    && (stats.active_connections as f64 / 100.0)
+                        < HEALTH_THRESHOLD_CONNECTION_RATIO;
+
+                let resources = ResourceStatsResponse {
+                    memory_usage_bytes: stats.memory_usage_bytes,
+                    memory_usage_mb: memory_mb,
+                    cpu_usage_percent: stats.cpu_usage_percent,
+                    system_healthy,
+                };
+
+                (connections, performance, resources)
+            }
+            Err(_) => {
+                // Return default stats if error occurs
+                (
+                    ConnectionStatsResponse {
+                        active_connections: 0,
+                        total_connections: 0,
+                        rejected_connections: 0,
+                        rate_limited_requests: 0,
+                    },
+                    PerformanceStatsResponse {
+                        avg_latency_ms: 0.0,
+                        total_requests: 0,
+                        requests_per_second: 0.0,
+                    },
+                    ResourceStatsResponse {
+                        memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+                        memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+                        cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
+                        system_healthy: true,
+                    },
+                )
+            }
+        }
+    } else {
+        // No connection pool configured - return default stats
+        (
+            ConnectionStatsResponse {
+                active_connections: 0,
+                total_connections: 0,
+                rejected_connections: 0,
+                rate_limited_requests: 0,
+            },
+            PerformanceStatsResponse {
+                avg_latency_ms: 0.0,
+                total_requests: 0,
+                requests_per_second: 0.0,
+            },
+            ResourceStatsResponse {
+                memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+                memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+                cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
+                system_healthy: true,
+            },
+        )
     };
 
     Ok(Json(AggregatedStatsResponse {
@@ -766,11 +837,7 @@ async fn list_documents(
     State(state): State<AppState>,
     AxumQuery(params): AxumQuery<SearchParams>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Reuse search_documents logic with empty query
-    let mut params = params;
-    if params.q.is_none() {
-        params.q = Some(String::new());
-    }
+    // Directly call search_documents - it already handles None case properly
     search_documents(State(state), AxumQuery(params)).await
 }
 
