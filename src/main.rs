@@ -6,9 +6,10 @@ use kotadb::{
     init_logging, start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder,
     Storage, ValidatedDocumentId, ValidatedPath,
 };
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Parser)]
 #[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
@@ -96,6 +97,8 @@ struct Database {
     storage: Arc<Mutex<Box<dyn Storage>>>,
     primary_index: Arc<Mutex<Box<dyn Index>>>,
     trigram_index: Arc<Mutex<Box<dyn Index>>>,
+    // Cache for path -> document ID lookups (built lazily)
+    path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
 }
 
 impl Database {
@@ -132,11 +135,31 @@ impl Database {
         )
         .await?;
 
-        Ok(Self {
+        let db = Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
             primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
             trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
-        })
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        // Build the path cache on startup
+        db.rebuild_path_cache().await?;
+
+        Ok(db)
+    }
+
+    /// Rebuild the path cache from current storage
+    async fn rebuild_path_cache(&self) -> Result<()> {
+        let mut cache = self.path_cache.write().await;
+        cache.clear();
+
+        // Get all documents to build the cache
+        let all_docs = self.storage.lock().await.list_all().await?;
+        for doc in all_docs {
+            cache.insert(doc.path.to_string(), doc.id);
+        }
+
+        Ok(())
     }
 
     async fn insert(
@@ -174,6 +197,9 @@ impl Database {
             trigram_guard.insert(doc_id, doc_path).await?;
         }
 
+        // Update path cache
+        self.path_cache.write().await.insert(path, doc_id);
+
         // Flush all to ensure persistence
         self.storage.lock().await.flush().await?;
         self.primary_index.lock().await.flush().await?;
@@ -183,17 +209,15 @@ impl Database {
     }
 
     async fn get_by_path(&self, path: &str) -> Result<Option<Document>> {
-        // Get all documents and find the one with matching path
-        // This is a simple approach that works for now
-        let all_docs = self.storage.lock().await.list_all().await?;
+        // O(1) lookup using the path cache
+        let cache = self.path_cache.read().await;
 
-        for doc in all_docs {
-            if doc.path.as_str() == path {
-                return Ok(Some(doc));
-            }
+        if let Some(doc_id) = cache.get(path) {
+            // Found in cache, get the document
+            self.storage.lock().await.get(doc_id).await
+        } else {
+            Ok(None)
         }
-
-        Ok(None)
     }
 
     async fn update_by_path(
@@ -237,9 +261,9 @@ impl Database {
         // Update storage
         storage.update(updated_doc.clone()).await?;
 
-        // Update indices if path changed
-        if let Some(path) = new_path {
-            let new_validated_path = ValidatedPath::new(path)?;
+        // Update indices and cache if path changed
+        if let Some(ref new_path_str) = new_path {
+            let new_validated_path = ValidatedPath::new(new_path_str)?;
             self.primary_index
                 .lock()
                 .await
@@ -250,16 +274,24 @@ impl Database {
                 .await
                 .update(doc_id, new_validated_path)
                 .await?;
+
+            // Update cache: remove old path, add new path
+            let mut cache = self.path_cache.write().await;
+            cache.retain(|_, id| *id != doc_id);
+            cache.insert(new_path_str.clone(), doc_id);
         }
 
         Ok(())
     }
 
     async fn delete_by_path(&self, path: &str) -> Result<bool> {
-        // First find the document by path
-        if let Some(doc) = self.get_by_path(path).await? {
-            let doc_id = doc.id;
+        // First find the document by path using cache
+        let doc_id = {
+            let cache = self.path_cache.read().await;
+            cache.get(path).copied()
+        };
 
+        if let Some(doc_id) = doc_id {
             // Delete from storage
             let deleted = self.storage.lock().await.delete(&doc_id).await?;
 
@@ -267,6 +299,9 @@ impl Database {
                 // Delete from both indices
                 self.primary_index.lock().await.delete(&doc_id).await?;
                 self.trigram_index.lock().await.delete(&doc_id).await?;
+
+                // Remove from cache
+                self.path_cache.write().await.remove(path);
             }
 
             Ok(deleted)
