@@ -1,0 +1,25 @@
+# Developer Guide
+
+This section contains guides for developers working with KotaDB.
+
+## Development Resources
+
+- [Developer Guide](../development-guides/dev_guide.md) - Main development guide
+- [Agent Context](../development-guides/agent_context.md) - AI agent development context
+- [CLI Usage](../development-guides/cli_usage.md) - Command-line interface usage
+- [Standalone Usage](../development-guides/standalone.md) - Standalone deployment
+- [MCP Integration Plan](../development-guides/mcp_integration_plan.md) - MCP integration details
+- [Migration Notes](../development-guides/migration_notes.md) - Migration and upgrade guides
+
+## Contributing
+
+KotaDB welcomes contributions! Please see the [Contributing Guide](../contributing.md) for details on:
+
+- Setting up your development environment
+- Running tests and quality checks
+- Submitting pull requests
+- Following coding standards
+
+## Architecture
+
+For understanding KotaDB's architecture, see the [Architecture](../architecture/index.md) section.

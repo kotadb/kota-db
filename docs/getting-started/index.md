@@ -202,8 +202,7 @@ let docs_in_folder = storage.search("/docs/*").await?;
 
 Now that you have KotaDB running, explore:
 
-- [Configuration Options](configuration.md) - Detailed configuration guide
-- [Basic Operations](basic-operations.md) - CRUD operations and queries
+- [Installation Guide](../installation.md) - Detailed installation guide
 - [API Reference](../api/index.md) - Complete API documentation
 - [Architecture Overview](../architecture/index.md) - Understanding KotaDB internals
 
@@ -211,10 +210,9 @@ Now that you have KotaDB running, explore:
 
 If you encounter issues:
 
-1. Check the [Troubleshooting Guide](../operations/troubleshooting.md)
-2. Search [GitHub Issues](https://github.com/jayminwest/kota-db/issues)
-3. Ask in [GitHub Discussions](https://github.com/jayminwest/kota-db/discussions)
-4. Review the [FAQ](../reference/faq.md)
+1. Search [GitHub Issues](https://github.com/jayminwest/kota-db/issues)
+2. Ask in [GitHub Discussions](https://github.com/jayminwest/kota-db/discussions)
+3. Review the [Contributing Guide](../contributing.md) for development help
 
 ## Example Projects
 

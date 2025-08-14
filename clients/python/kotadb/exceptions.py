@@ -30,7 +30,9 @@ class NotFoundError(KotaDBError):
 class ServerError(KotaDBError):
     """Raised when the server returns an error response."""
 
-    def __init__(self, message, status_code=None, response_body=None):
+    def __init__(
+        self, message: str, status_code: int | None = None, response_body: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.response_body = response_body
