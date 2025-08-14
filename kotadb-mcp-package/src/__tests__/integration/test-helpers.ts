@@ -192,6 +192,8 @@ export class MCPTestClient extends EventEmitter {
         this.pendingRequests.delete(id);
         reject(new Error(`Request timeout: ${method}`));
       }, timeoutMs);
+      // Ensure timer doesn't keep the process alive
+      timeout.unref();
 
       this.pendingRequests.set(id, { resolve, reject, timeout });
 
