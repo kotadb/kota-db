@@ -32,10 +32,13 @@
     "dev": "ts-node src/index.ts",
     "setup-claude": "ts-node src/setup.ts",
     "test": "jest",
+    "test:unit": "jest src/__tests__ --testPathIgnorePatterns=integration",
+    "test:integration": "jest src/__tests__/integration",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:all": "npm run test:unit && npm run test:integration",
     "postinstall": "node dist/install-binary.js",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm run test:all"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",

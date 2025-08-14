@@ -25,7 +25,7 @@ describe('KotaDB MCP Server', () => {
   const startServer = (): Promise<ChildProcess> => {
     return new Promise((resolve, reject) => {
       const serverPath = path.join(__dirname, '..', '..', 'dist', 'index.js');
-      const process = spawn('node', [serverPath], {
+      const serverProcess = spawn('node', [serverPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
@@ -35,20 +35,20 @@ describe('KotaDB MCP Server', () => {
 
       let initialized = false;
 
-      process.stderr?.on('data', (data) => {
+      serverProcess.stderr?.on('data', (data: Buffer) => {
         const output = data.toString();
         if (output.includes('7 tools available') && !initialized) {
           initialized = true;
-          resolve(process);
+          resolve(serverProcess);
         }
       });
 
-      process.on('error', reject);
+      serverProcess.on('error', reject);
       
       // Timeout after 5 seconds
       setTimeout(() => {
         if (!initialized) {
-          process.kill();
+          serverProcess.kill();
           reject(new Error('Server startup timeout'));
         }
       }, 5000);

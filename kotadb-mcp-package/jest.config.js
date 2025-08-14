@@ -30,6 +30,11 @@ module.exports = {
     },
   },
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
-  testTimeout: 15000, // 15 seconds for MCP server tests
+  testTimeout: 30000, // 30 seconds for comprehensive integration tests
   moduleFileExtensions: ['ts', 'js', 'json'],
+  // Run tests in bands for better stability with integration tests
+  maxConcurrency: 2,
+  // Global setup and teardown for integration tests
+  // globalSetup: '<rootDir>/src/__tests__/global-setup.ts',
+  // globalTeardown: '<rootDir>/src/__tests__/global-teardown.ts',
 };
