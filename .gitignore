@@ -81,6 +81,9 @@ node_modules/
 kota-db-data/
 *.kotadb
 
+# Claude agent configurations (temporary/local)
+.claude/agents/*.md
+
 # Test artifacts
 /test-results/
 /test-output/
@@ -123,6 +126,7 @@ MANIFEST
 .hypothesis/
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 .mypy_cache/

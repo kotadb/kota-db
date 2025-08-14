@@ -1,4 +1,0 @@
-# file: /Users/jayminwest/Projects/kota-db/clients/python/kotadb/client.py
-# hypothesis_version: 6.137.1
-
-[0.7, 200, 400, 404, 429, 500, 502, 503, 504, '/', '/documents', '/documents/search', '/health', '/search/hybrid', '/search/semantic', '/stats', 'DELETE', 'GET', 'HEAD', 'KOTADB_URL', 'OPTIONS', 'POST', 'PUT', 'Resource not found', 'TRACE', 'content', 'documents', 'error', 'http://', 'https://', 'id', 'kotadb://', 'limit', 'metadata', 'offset', 'path', 'q', 'query', 'semantic_weight', 'tags', 'title']

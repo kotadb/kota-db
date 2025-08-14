@@ -1,0 +1,20 @@
+{
+  "name": "kotadb-quickstart-demo",
+  "version": "1.0.0",
+  "description": "KotaDB TypeScript/JavaScript quick start demo",
+  "main": "typescript-demo.ts",
+  "scripts": {
+    "demo": "ts-node typescript-demo.ts"
+  },
+  "dependencies": {
+    "kotadb-client": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
