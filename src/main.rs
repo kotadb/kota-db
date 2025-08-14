@@ -41,19 +41,19 @@ enum Commands {
         content: Option<String>,
     },
 
-    /// Get a document by ID
+    /// Get a document by path
     Get {
-        /// Document ID (UUID format)
-        id: String,
+        /// Path of the document (e.g., /docs/readme.md)
+        path: String,
     },
 
     /// Update an existing document
     Update {
-        /// Document ID to update
-        id: String,
+        /// Path of the document to update
+        path: String,
         /// New path (optional)
-        #[arg(short, long)]
-        path: Option<String>,
+        #[arg(short = 'n', long)]
+        new_path: Option<String>,
         /// New title (optional)
         #[arg(short, long)]
         title: Option<String>,
@@ -62,10 +62,10 @@ enum Commands {
         content: Option<String>,
     },
 
-    /// Delete a document by ID
+    /// Delete a document by path
     Delete {
-        /// Document ID to delete
-        id: String,
+        /// Path of the document to delete
+        path: String,
     },
 
     /// Search for documents
@@ -182,20 +182,34 @@ impl Database {
         Ok(doc_id)
     }
 
-    async fn get(&self, id: &str) -> Result<Option<Document>> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+    async fn get_by_path(&self, path: &str) -> Result<Option<Document>> {
+        // Get all documents and find the one with matching path
+        // This is a simple approach that works for now
+        let all_docs = self.storage.lock().await.list_all().await?;
 
-        self.storage.lock().await.get(&doc_id).await
+        for doc in all_docs {
+            if doc.path.as_str() == path {
+                return Ok(Some(doc));
+            }
+        }
+
+        Ok(None)
     }
 
-    async fn update(
+    async fn update_by_path(
         &self,
-        id: &str,
+        path: &str,
         new_path: Option<String>,
         new_title: Option<String>,
         new_content: Option<String>,
     ) -> Result<()> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+        // First find the document by path
+        let doc = self
+            .get_by_path(path)
+            .await?
+            .context("Document not found")?;
+
+        let doc_id = doc.id;
 
         // Get existing document
         let mut storage = self.storage.lock().await;
@@ -215,9 +229,10 @@ impl Database {
         };
         builder = builder.content(content);
 
-        // Build and set the same ID
+        // Build and set the same ID and created_at
         let mut updated_doc = builder.build()?;
         updated_doc.id = doc_id;
+        updated_doc.created_at = existing.created_at;
 
         // Update storage
         storage.update(updated_doc.clone()).await?;
@@ -240,19 +255,24 @@ impl Database {
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<bool> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+    async fn delete_by_path(&self, path: &str) -> Result<bool> {
+        // First find the document by path
+        if let Some(doc) = self.get_by_path(path).await? {
+            let doc_id = doc.id;
 
-        // Delete from storage
-        let deleted = self.storage.lock().await.delete(&doc_id).await?;
+            // Delete from storage
+            let deleted = self.storage.lock().await.delete(&doc_id).await?;
 
-        if deleted {
-            // Delete from both indices
-            self.primary_index.lock().await.delete(&doc_id).await?;
-            self.trigram_index.lock().await.delete(&doc_id).await?;
+            if deleted {
+                // Delete from both indices
+                self.primary_index.lock().await.delete(&doc_id).await?;
+                self.trigram_index.lock().await.delete(&doc_id).await?;
+            }
+
+            Ok(deleted)
+        } else {
+            Ok(false)
         }
-
-        Ok(deleted)
     }
 
     async fn search(
@@ -379,7 +399,7 @@ async fn main() -> Result<()> {
                 println!("   Title: {title}");
             }
 
-            Commands::Get { id } => match db.get(&id).await? {
+            Commands::Get { path } => match db.get_by_path(&path).await? {
                 Some(doc) => {
                     println!("📄 Document found:");
                     println!("   ID: {}", doc.id.as_uuid());
@@ -397,8 +417,8 @@ async fn main() -> Result<()> {
             },
 
             Commands::Update {
-                id,
                 path,
+                new_path,
                 title,
                 content,
             } => {
@@ -412,12 +432,12 @@ async fn main() -> Result<()> {
                     content
                 };
 
-                db.update(&id, path, title, content).await?;
+                db.update_by_path(&path, new_path, title, content).await?;
                 println!("✅ Document updated successfully!");
             }
 
-            Commands::Delete { id } => {
-                let deleted = db.delete(&id).await?;
+            Commands::Delete { path } => {
+                let deleted = db.delete_by_path(&path).await?;
                 if deleted {
                     println!("✅ Document deleted successfully!");
                 } else {
