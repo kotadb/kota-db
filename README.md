@@ -427,10 +427,10 @@ docker run -p 8080:8080 kotadb serve
 | Feature | Rust | Python | TypeScript | Go |
 |---------|------|--------|------------|-----|
 | **Basic Operations** | | | | |
-| Document CRUD | ✅ | ✅ | ✅ | ✅ |
-| Text Search | ✅ | ✅ | ✅ | ✅ |
-| Semantic Search | ✅ | ✅ | ✅ | 🚧 |
-| Hybrid Search | ✅ | ✅ | ✅ | 🚧 |
+| Document CRUD | ✅ | ✅ | ✅ | ❌ |
+| Text Search | ✅ | ✅ | ✅ | ❌ |
+| Semantic Search | ✅ | ✅ | ✅ | ❌ |
+| Hybrid Search | ✅ | ✅ | ✅ | ❌ |
 | **Type Safety** | | | | |
 | Validated Types | ✅ | ✅ | ✅ | ❌ |
 | Builder Patterns | ✅ | ✅ | ✅ | ❌ |
@@ -440,9 +440,9 @@ docker run -p 8080:8080 kotadb serve
 | Direct Storage Access | ✅ | ❌ | ❌ | ❌ |
 | Observability/Tracing | ✅ | ❌ | ❌ | ❌ |
 | **Development** | | | | |
-| Connection Pooling | ✅ | ✅ | ✅ | ✅ |
-| Retry Logic | ✅ | ✅ | ✅ | ✅ |
-| Error Handling | ✅ | ✅ | ✅ | ✅ |
+| Connection Pooling | ✅ | ✅ | ✅ | ❌ |
+| Retry Logic | ✅ | ✅ | ✅ | ❌ |
+| Error Handling | ✅ | ✅ | ✅ | ❌ |
 
 **Legend**: ✅ Complete • 🚧 In Progress • ❌ Not Available
 

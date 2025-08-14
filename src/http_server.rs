@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::{net::TcpListener, sync::Mutex};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -25,6 +26,18 @@ use crate::{
     observability::with_trace_id,
     types::ValidatedDocumentId,
 };
+
+// Constants for default resource statistics
+const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
+const DEFAULT_MEMORY_USAGE_MB: f64 = 32.0; // 32MB in megabytes
+const DEFAULT_CPU_USAGE_PERCENT: f32 = 5.0; // 5% baseline CPU usage
+const DEFAULT_CONNECTION_POOL_CAPACITY: f64 = 100.0; // Default max connections if not specified
+const HEALTH_THRESHOLD_CPU: f32 = 90.0; // CPU usage threshold for health check
+const HEALTH_THRESHOLD_MEMORY_MB: f64 = 1000.0; // Memory threshold in MB for health check
+const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity threshold for health check
+
+// Global server start time for uptime tracking
+static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy::new(Instant::now);
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -52,7 +65,7 @@ pub struct UpdateDocumentRequest {
 }
 
 /// Response for document operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DocumentResponse {
     pub id: Uuid,
     pub path: String,
@@ -67,10 +80,12 @@ pub struct DocumentResponse {
 }
 
 /// Response for search operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub documents: Vec<DocumentResponse>,
     pub total_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_type: Option<String>, // Indicates the type of search performed (text, semantic, hybrid)
 }
 
 /// Query parameters for search
@@ -123,6 +138,30 @@ pub struct ResourceStatsResponse {
     pub system_healthy: bool,
 }
 
+/// Aggregated stats response combining all statistics
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AggregatedStatsResponse {
+    pub connections: ConnectionStatsResponse,
+    pub performance: PerformanceStatsResponse,
+    pub resources: ResourceStatsResponse,
+}
+
+/// Semantic search request
+#[derive(Debug, Deserialize)]
+pub struct SemanticSearchRequest {
+    pub query: String,
+    pub limit: Option<u32>,
+    pub threshold: Option<f32>,
+}
+
+/// Hybrid search request
+#[derive(Debug, Deserialize)]
+pub struct HybridSearchRequest {
+    pub query: String,
+    pub semantic_weight: Option<f32>,
+    pub limit: Option<u32>,
+}
+
 impl From<Document> for DocumentResponse {
     fn from(doc: Document) -> Self {
         Self {
@@ -135,7 +174,11 @@ impl From<Document> for DocumentResponse {
             tags: doc.tags.iter().map(|t| t.as_str().to_string()).collect(),
             created_at: doc.created_at.timestamp(),
             modified_at: doc.updated_at.timestamp(),
-            word_count: doc.content.iter().filter(|&&b| b == b' ').count() as u32 + 1,
+            // Calculate word count from UTF-8 content
+            word_count: {
+                let text = String::from_utf8_lossy(&doc.content);
+                text.split_whitespace().count() as u32
+            },
         }
     }
 }
@@ -150,11 +193,16 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
+        .route("/documents", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
         .route("/documents/search", get(search_documents))
+        // New search endpoints for client compatibility
+        .route("/search/semantic", post(semantic_search))
+        .route("/search/hybrid", post(hybrid_search))
         // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
@@ -179,11 +227,16 @@ pub fn create_server_with_pool(
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
+        .route("/documents", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
         .route("/documents/search", get(search_documents))
+        // New search endpoints for client compatibility
+        .route("/search/semantic", post(semantic_search))
+        .route("/search/hybrid", post(hybrid_search))
         // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
@@ -209,10 +262,12 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
 /// Health check endpoint
 async fn health_check() -> Json<HealthResponse> {
+    let uptime_seconds = SERVER_START_TIME.elapsed().as_secs();
+
     Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 0, // TODO: Implement actual uptime tracking
+        uptime_seconds,
     })
 }
 
@@ -549,6 +604,7 @@ async fn search_documents(
         Ok(SearchResponse {
             documents,
             total_count,
+            search_type: Some("text".to_string()),
         })
     })
     .await;
@@ -609,9 +665,11 @@ async fn get_performance_stats(
     if let Some(pool) = &state.connection_pool {
         match pool.lock().await.get_stats().await {
             Ok(stats) => {
-                // Calculate requests per second (simplified - would need time window in real implementation)
+                // Calculate approximate requests per second
+                // NOTE: This is a rough approximation based on average latency
+                // For accurate RPS, implement proper request counting with time windows
                 let requests_per_second = if stats.avg_latency_ms > 0.0 {
-                    1000.0 / stats.avg_latency_ms // Very rough estimate
+                    1000.0 / stats.avg_latency_ms
                 } else {
                     0.0
                 };
@@ -653,9 +711,12 @@ async fn get_resource_stats(
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
 
                 // Determine system health based on various factors
-                let system_healthy = stats.cpu_usage_percent < 90.0
-                    && memory_mb < 1000.0 // Under 1GB
-                    && (stats.active_connections as f64 / 100.0) < 0.95; // Under 95% capacity
+                // Note: Using default capacity as actual capacity is not exposed in stats
+                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
+                    && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
+                    && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
+                        < HEALTH_THRESHOLD_CONNECTION_RATIO;
 
                 Ok(Json(ResourceStatsResponse {
                     memory_usage_bytes: stats.memory_usage_bytes,
@@ -678,12 +739,168 @@ async fn get_resource_stats(
     } else {
         // No connection pool configured - return basic system stats
         Ok(Json(ResourceStatsResponse {
-            memory_usage_bytes: 32 * 1024 * 1024, // 32MB baseline
-            memory_usage_mb: 32.0,
-            cpu_usage_percent: 5.0, // Low baseline
+            memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+            memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+            cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
             system_healthy: true,
         }))
     }
+}
+
+/// Get aggregated statistics (for Python client compatibility)
+async fn get_aggregated_stats(
+    State(state): State<AppState>,
+) -> Result<Json<AggregatedStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Directly gather stats without calling other endpoints for better performance
+    let (connections, performance, resources) = if let Some(pool) = &state.connection_pool {
+        match pool.lock().await.get_stats().await {
+            Ok(stats) => {
+                // Connection stats
+                let connections = ConnectionStatsResponse {
+                    active_connections: stats.active_connections,
+                    total_connections: stats.total_connections,
+                    rejected_connections: stats.rejected_connections,
+                    rate_limited_requests: stats.rate_limited_requests,
+                };
+
+                // Performance stats
+                let requests_per_second = if stats.avg_latency_ms > 0.0 {
+                    1000.0 / stats.avg_latency_ms
+                } else {
+                    0.0
+                };
+                let performance = PerformanceStatsResponse {
+                    avg_latency_ms: stats.avg_latency_ms,
+                    total_requests: stats.total_connections,
+                    requests_per_second,
+                };
+
+                // Resource stats
+                let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
+                // Note: Using default capacity as actual capacity is not exposed in stats
+                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
+                    && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
+                    && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
+                        < HEALTH_THRESHOLD_CONNECTION_RATIO;
+
+                let resources = ResourceStatsResponse {
+                    memory_usage_bytes: stats.memory_usage_bytes,
+                    memory_usage_mb: memory_mb,
+                    cpu_usage_percent: stats.cpu_usage_percent,
+                    system_healthy,
+                };
+
+                (connections, performance, resources)
+            }
+            Err(_) => {
+                // Return default stats if error occurs
+                (
+                    ConnectionStatsResponse {
+                        active_connections: 0,
+                        total_connections: 0,
+                        rejected_connections: 0,
+                        rate_limited_requests: 0,
+                    },
+                    PerformanceStatsResponse {
+                        avg_latency_ms: 0.0,
+                        total_requests: 0,
+                        requests_per_second: 0.0,
+                    },
+                    ResourceStatsResponse {
+                        memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+                        memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+                        cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
+                        system_healthy: true,
+                    },
+                )
+            }
+        }
+    } else {
+        // No connection pool configured - return default stats
+        (
+            ConnectionStatsResponse {
+                active_connections: 0,
+                total_connections: 0,
+                rejected_connections: 0,
+                rate_limited_requests: 0,
+            },
+            PerformanceStatsResponse {
+                avg_latency_ms: 0.0,
+                total_requests: 0,
+                requests_per_second: 0.0,
+            },
+            ResourceStatsResponse {
+                memory_usage_bytes: DEFAULT_MEMORY_USAGE_BYTES,
+                memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
+                cpu_usage_percent: DEFAULT_CPU_USAGE_PERCENT,
+                system_healthy: true,
+            },
+        )
+    };
+
+    Ok(Json(AggregatedStatsResponse {
+        connections,
+        performance,
+        resources,
+    }))
+}
+
+/// Semantic search (for Python client compatibility)
+async fn semantic_search(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticSearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!("Semantic search requested for query: {}", request.query);
+
+    // For now, forward to regular text search as semantic search requires embeddings setup
+    // When embeddings are configured, this will use the SemanticSearchEngine
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+    };
+
+    // Note: To enable actual semantic search, initialize SemanticSearchEngine with:
+    // - EmbeddingConfig (OpenAI, Ollama, or SentenceTransformers)
+    // - VectorIndex path
+    // Then use engine.semantic_search(query, k, threshold)
+
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate semantic (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("semantic_fallback".to_string());
+    Ok(response)
+}
+
+/// Hybrid search (for Python client compatibility)
+async fn hybrid_search(
+    State(state): State<AppState>,
+    Json(request): Json<HybridSearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!(
+        "Hybrid search requested for query: {} with semantic weight: {:?}",
+        request.query, request.semantic_weight
+    );
+
+    // For now, forward to regular text search
+    // When semantic search is enabled, this will use SemanticSearchEngine::hybrid_search
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+    };
+
+    // Note: To enable actual hybrid search, use:
+    // engine.hybrid_search(query, k, semantic_weight, text_weight)
+
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate hybrid (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("hybrid_fallback".to_string());
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -839,6 +1056,96 @@ mod tests {
         let stats: ResourceStatsResponse = serde_json::from_slice(&body)?;
         assert!(stats.system_healthy);
         assert!(stats.memory_usage_mb > 0.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_aggregated_stats_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(Request::builder().uri("/stats").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let stats: AggregatedStatsResponse = serde_json::from_slice(&body)?;
+        assert_eq!(stats.connections.active_connections, 0);
+        assert_eq!(stats.performance.total_requests, 0);
+        assert!(stats.resources.system_healthy);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_semantic_search_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let request_body = json!({
+            "query": "test query",
+            "limit": 10,
+            "threshold": 0.8
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search/semantic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_search_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let request_body = json!({
+            "query": "test query",
+            "semantic_weight": 0.7,
+            "limit": 10
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search/hybrid")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(Request::builder().uri("/documents").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let result: SearchResponse = serde_json::from_slice(&body)?;
+        assert_eq!(result.documents.len(), 0); // Should be empty initially
 
         Ok(())
     }
