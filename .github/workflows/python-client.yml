@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        python-version: ['3.9', '3.10', '3.11', '3.12']
     
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +103,7 @@ jobs:
           pip install -e ".[test]"
       
       - name: Run unit tests
-        run: pytest tests/test_client.py tests/test_property.py -v --cov=kotadb --cov-report=xml --cov-fail-under=40
+        run: pytest tests/test_client.py tests/test_property.py tests/test_builders.py tests/test_validated_types.py -v --cov=kotadb --cov-report=xml --cov-fail-under=70
       
       - name: Start KotaDB server
         working-directory: .
