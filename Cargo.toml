@@ -1,6 +1,6 @@
 [package]
 name = "kotadb"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 authors = ["KotaDB Contributors"]
 description = "A custom database for distributed human-AI cognition"

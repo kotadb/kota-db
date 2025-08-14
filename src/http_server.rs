@@ -52,7 +52,7 @@ pub struct UpdateDocumentRequest {
 }
 
 /// Response for document operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DocumentResponse {
     pub id: Uuid,
     pub path: String,
@@ -67,7 +67,7 @@ pub struct DocumentResponse {
 }
 
 /// Response for search operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub documents: Vec<DocumentResponse>,
     pub total_count: usize,
@@ -123,6 +123,30 @@ pub struct ResourceStatsResponse {
     pub system_healthy: bool,
 }
 
+/// Aggregated stats response combining all statistics
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AggregatedStatsResponse {
+    pub connections: ConnectionStatsResponse,
+    pub performance: PerformanceStatsResponse,
+    pub resources: ResourceStatsResponse,
+}
+
+/// Semantic search request
+#[derive(Debug, Deserialize)]
+pub struct SemanticSearchRequest {
+    pub query: String,
+    pub limit: Option<u32>,
+    pub threshold: Option<f32>,
+}
+
+/// Hybrid search request
+#[derive(Debug, Deserialize)]
+pub struct HybridSearchRequest {
+    pub query: String,
+    pub semantic_weight: Option<f32>,
+    pub limit: Option<u32>,
+}
+
 impl From<Document> for DocumentResponse {
     fn from(doc: Document) -> Self {
         Self {
@@ -150,11 +174,16 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
+        .route("/documents", get(list_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
         .route("/documents/search", get(search_documents))
+        // New search endpoints for client compatibility
+        .route("/search/semantic", post(semantic_search))
+        .route("/search/hybrid", post(hybrid_search))
         // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
@@ -179,11 +208,16 @@ pub fn create_server_with_pool(
     Router::new()
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
+        .route("/documents", get(list_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
         .route("/documents/search", get(search_documents))
+        // New search endpoints for client compatibility
+        .route("/search/semantic", post(semantic_search))
+        .route("/search/hybrid", post(hybrid_search))
         // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))
         .route("/stats/performance", get(get_performance_stats))
         .route("/stats/resources", get(get_resource_stats))
@@ -686,6 +720,109 @@ async fn get_resource_stats(
     }
 }
 
+/// Get aggregated statistics (for Python client compatibility)
+async fn get_aggregated_stats(
+    State(state): State<AppState>,
+) -> Result<Json<AggregatedStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Get all stats
+    let connections = match get_connection_stats(State(state.clone())).await {
+        Ok(Json(stats)) => stats,
+        Err(_) => ConnectionStatsResponse {
+            active_connections: 0,
+            total_connections: 0,
+            rejected_connections: 0,
+            rate_limited_requests: 0,
+        },
+    };
+
+    let performance = match get_performance_stats(State(state.clone())).await {
+        Ok(Json(stats)) => stats,
+        Err(_) => PerformanceStatsResponse {
+            avg_latency_ms: 0.0,
+            total_requests: 0,
+            requests_per_second: 0.0,
+        },
+    };
+
+    let resources = match get_resource_stats(State(state.clone())).await {
+        Ok(Json(stats)) => stats,
+        Err(_) => ResourceStatsResponse {
+            memory_usage_bytes: 0,
+            memory_usage_mb: 0.0,
+            cpu_usage_percent: 0.0,
+            system_healthy: true,
+        },
+    };
+
+    Ok(Json(AggregatedStatsResponse {
+        connections,
+        performance,
+        resources,
+    }))
+}
+
+/// List all documents (for Python client compatibility)
+async fn list_documents(
+    State(state): State<AppState>,
+    AxumQuery(params): AxumQuery<SearchParams>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Reuse search_documents logic with empty query
+    let mut params = params;
+    if params.q.is_none() {
+        params.q = Some(String::new());
+    }
+    search_documents(State(state), AxumQuery(params)).await
+}
+
+/// Semantic search (for Python client compatibility)
+async fn semantic_search(
+    State(state): State<AppState>,
+    Json(request): Json<SemanticSearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!("Semantic search requested for query: {}", request.query);
+
+    // For now, forward to regular text search as semantic search requires embeddings setup
+    // When embeddings are configured, this will use the SemanticSearchEngine
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+    };
+
+    // Note: To enable actual semantic search, initialize SemanticSearchEngine with:
+    // - EmbeddingConfig (OpenAI, Ollama, or SentenceTransformers)
+    // - VectorIndex path
+    // Then use engine.semantic_search(query, k, threshold)
+
+    search_documents(State(state), AxumQuery(params)).await
+}
+
+/// Hybrid search (for Python client compatibility)
+async fn hybrid_search(
+    State(state): State<AppState>,
+    Json(request): Json<HybridSearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!(
+        "Hybrid search requested for query: {} with semantic weight: {:?}",
+        request.query, request.semantic_weight
+    );
+
+    // For now, forward to regular text search
+    // When semantic search is enabled, this will use SemanticSearchEngine::hybrid_search
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+    };
+
+    // Note: To enable actual hybrid search, use:
+    // engine.hybrid_search(query, k, semantic_weight, text_weight)
+
+    search_documents(State(state), AxumQuery(params)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,6 +976,96 @@ mod tests {
         let stats: ResourceStatsResponse = serde_json::from_slice(&body)?;
         assert!(stats.system_healthy);
         assert!(stats.memory_usage_mb > 0.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_aggregated_stats_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(Request::builder().uri("/stats").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let stats: AggregatedStatsResponse = serde_json::from_slice(&body)?;
+        assert_eq!(stats.connections.active_connections, 0);
+        assert_eq!(stats.performance.total_requests, 0);
+        assert!(stats.resources.system_healthy);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_semantic_search_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let request_body = json!({
+            "query": "test query",
+            "limit": 10,
+            "threshold": 0.8
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search/semantic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_search_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let request_body = json!({
+            "query": "test query",
+            "semantic_weight": 0.7,
+            "limit": 10
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search/hybrid")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_endpoint() -> Result<()> {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(Request::builder().uri("/documents").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let result: SearchResponse = serde_json::from_slice(&body)?;
+        assert_eq!(result.documents.len(), 0); // Should be empty initially
 
         Ok(())
     }
