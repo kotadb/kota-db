@@ -1,15 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="0; url=stable/index.html">
-    <title>KotaDB Documentation</title>
-    <script type="text/javascript">
-        window.location.href = "stable/index.html";
-    </script>
+  <meta charset="utf-8">
+  <title>Redirecting</title>
+  <noscript>
+    <meta http-equiv="refresh" content="1; url=latest/" />
+  </noscript>
+  <script>
+    window.location.replace(
+      "latest/" + window.location.search + window.location.hash
+    );
+  </script>
 </head>
 <body>
-    <p>Redirecting to KotaDB documentation...</p>
-    <p>If you are not redirected automatically, <a href="stable/index.html">click here</a>.</p>
+  Redirecting to <a href="latest/">latest/</a>...
 </body>
 </html>
