@@ -84,6 +84,8 @@ pub struct DocumentResponse {
 pub struct SearchResponse {
     pub documents: Vec<DocumentResponse>,
     pub total_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_type: Option<String>, // Indicates the type of search performed (text, semantic, hybrid)
 }
 
 /// Query parameters for search
@@ -172,7 +174,11 @@ impl From<Document> for DocumentResponse {
             tags: doc.tags.iter().map(|t| t.as_str().to_string()).collect(),
             created_at: doc.created_at.timestamp(),
             modified_at: doc.updated_at.timestamp(),
-            word_count: doc.content.iter().filter(|&&b| b == b' ').count() as u32 + 1,
+            // Calculate word count from UTF-8 content
+            word_count: {
+                let text = String::from_utf8_lossy(&doc.content);
+                text.split_whitespace().count() as u32
+            },
         }
     }
 }
@@ -598,6 +604,7 @@ async fn search_documents(
         Ok(SearchResponse {
             documents,
             total_count,
+            search_type: Some("text".to_string()),
         })
     })
     .await;
@@ -704,6 +711,8 @@ async fn get_resource_stats(
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
 
                 // Determine system health based on various factors
+                // Note: Using default capacity as actual capacity is not exposed in stats
+                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
@@ -768,6 +777,8 @@ async fn get_aggregated_stats(
 
                 // Resource stats
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
+                // Note: Using default capacity as actual capacity is not exposed in stats
+                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
@@ -856,7 +867,11 @@ async fn semantic_search(
     // - VectorIndex path
     // Then use engine.semantic_search(query, k, threshold)
 
-    search_documents(State(state), AxumQuery(params)).await
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate semantic (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("semantic_fallback".to_string());
+    Ok(response)
 }
 
 /// Hybrid search (for Python client compatibility)
@@ -881,7 +896,11 @@ async fn hybrid_search(
     // Note: To enable actual hybrid search, use:
     // engine.hybrid_search(query, k, semantic_weight, text_weight)
 
-    search_documents(State(state), AxumQuery(params)).await
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate hybrid (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("hybrid_fallback".to_string());
+    Ok(response)
 }
 
 #[cfg(test)]
