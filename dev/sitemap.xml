@@ -2,122 +2,138 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/BRANCHING_STRATEGY/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/CI_STATUS/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/RELEASE_PROCESS/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/VERSIONING/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/contributing/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/installation/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/quick-start/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/dev/api/</loc>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/api/api/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/api/api_reference/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/api/quick_reference/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/dev/architecture/</loc>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/architecture/data_model_specification/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/architecture/filestorage_implementation/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/architecture/query_language_design/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/architecture/stage6_component_library/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/architecture/technical_architecture/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/completion-reports/btree_deletion_complete/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/completion-reports/performance_report/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/completion-reports/phase_2_optimization_complete/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/completion-reports/stage_2_primary_index_completion/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/dev/developer/</loc>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/agent_context/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/cli_usage/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/dev_guide/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/mcp_integration_plan/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/migration_notes/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/development-guides/standalone/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/getting-started/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/dev/getting-started/getting-started-60-seconds/</loc>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/planning/implementation_plan/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/planning/mvp_specification/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/dev/planning/planning_overview/</loc>
-         <lastmod>2025-08-13</lastmod>
+         <lastmod>2025-08-14</lastmod>
     </url>
 </urlset>
