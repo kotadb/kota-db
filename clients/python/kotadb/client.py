@@ -12,6 +12,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .builders import DocumentBuilder, QueryBuilder, UpdateBuilder
 from .exceptions import ConnectionError, NotFoundError, ServerError, ValidationError
 from .types import CreateDocumentRequest, Document, DocumentDict, QueryResult
 
@@ -335,8 +336,6 @@ class KotaDB:
         Returns:
             ID of the created document
         """
-        from .builders import DocumentBuilder
-
         if not isinstance(builder, DocumentBuilder):
             raise ValidationError("Expected DocumentBuilder instance")
 
@@ -353,8 +352,6 @@ class KotaDB:
         Returns:
             QueryResult with matching documents
         """
-        from .builders import QueryBuilder
-
         if not isinstance(builder, QueryBuilder):
             raise ValidationError("Expected QueryBuilder instance")
 
@@ -372,8 +369,6 @@ class KotaDB:
         Returns:
             QueryResult with semantically similar documents
         """
-        from .builders import QueryBuilder
-
         if not isinstance(builder, QueryBuilder):
             raise ValidationError("Expected QueryBuilder instance")
 
@@ -391,8 +386,6 @@ class KotaDB:
         Returns:
             QueryResult with hybrid search results
         """
-        from .builders import QueryBuilder
-
         if not isinstance(builder, QueryBuilder):
             raise ValidationError("Expected QueryBuilder instance")
 
@@ -412,8 +405,6 @@ class KotaDB:
         Returns:
             Updated document
         """
-        from .builders import UpdateBuilder
-
         if not isinstance(builder, UpdateBuilder):
             raise ValidationError("Expected UpdateBuilder instance")
 
