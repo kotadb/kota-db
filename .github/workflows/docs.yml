@@ -88,7 +88,21 @@ jobs:
           # Deploy current stable version if VERSION file exists
           if [ -f VERSION ]; then
             VERSION=$(cat VERSION)
-            mike deploy --push --update-aliases "$VERSION" latest stable
+            echo "Deploying version: $VERSION"
+            
+            # Deploy or update version documentation
+            if mike list 2>/dev/null | grep -q "^$VERSION"; then
+              echo "Version $VERSION already exists, redeploying"
+              mike deploy --push --update-aliases "$VERSION"
+            else
+              echo "Deploying new version $VERSION"
+              mike deploy --push "$VERSION"
+            fi
+            
+            # Handle aliases separately to avoid conflicts
+            echo "Setting up aliases for $VERSION"
+            mike alias "$VERSION" latest --push || echo "Latest alias already exists"
+            mike alias "$VERSION" stable --push || echo "Stable alias already exists"
             mike set-default --push latest
           else
             mike set-default --push dev
