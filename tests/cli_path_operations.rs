@@ -7,7 +7,14 @@ use tempfile::TempDir;
 
 /// Helper to run CLI commands
 fn run_cli_command(db_path: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new("./target/debug/kotadb")
+    // Use release binary in CI, debug otherwise
+    let binary_path = if std::env::var("CI").is_ok() {
+        "./target/release/kotadb"
+    } else {
+        "./target/debug/kotadb"
+    };
+
+    let output = Command::new(binary_path)
         .arg("--db-path")
         .arg(db_path)
         .args(args)
