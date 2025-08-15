@@ -262,6 +262,25 @@ jobs:
         RUST_LOG: error
         CI: true
 
+  # Integration tests summary - required by branch protection
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [integration-core, integration-index, integration-stress, integration-system]
+    if: always()
+    timeout-minutes: 1
+    steps:
+    - name: Check integration test results
+      run: |
+        if [[ "${{ needs.integration-core.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-index.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-stress.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-system.result }}" == "failure" ]]; then
+          echo "One or more integration test suites failed"
+          exit 1
+        fi
+        echo "All integration test suites passed successfully!"
+
   # Performance tests - quick smoke test only for PRs
   performance:
     name: Performance Tests
