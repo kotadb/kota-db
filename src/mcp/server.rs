@@ -346,6 +346,8 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let mut config = MCPConfig::default();
         config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+        // Disable search tools for this test to avoid embedding model requirements
+        config.mcp.enable_search_tools = false;
 
         let server = MCPServer::new(config).await?;
         assert!(server.uptime_seconds() < 1); // Should be very fresh
@@ -357,6 +359,8 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let mut config = MCPConfig::default();
         config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+        // Disable search tools for this test to avoid embedding model requirements
+        config.mcp.enable_search_tools = false;
 
         let server = MCPServer::new(config).await?;
         let tools = server.tool_registry.get_all_tool_definitions();
