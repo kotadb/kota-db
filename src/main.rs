@@ -373,6 +373,12 @@ impl Database {
         let total_size: usize = all_docs.iter().map(|d| d.size).sum();
         Ok((doc_count, total_size))
     }
+
+    /// Flush any buffered writes to ensure durability
+    async fn flush(&self) -> Result<()> {
+        self.storage.lock().await.flush().await?;
+        Ok(())
+    }
 }
 
 #[tokio::main]
@@ -435,6 +441,8 @@ async fn main() -> Result<()> {
                 };
 
                 let doc_id = db.insert(path.clone(), title.clone(), content).await?;
+                // Ensure the write is persisted before exiting
+                db.flush().await?;
                 println!("✅ Document inserted successfully!");
                 println!("   ID: {}", doc_id.as_uuid());
                 println!("   Path: {path}");
@@ -475,12 +483,16 @@ async fn main() -> Result<()> {
                 };
 
                 db.update_by_path(&path, new_path, title, content).await?;
+                // Ensure the write is persisted before exiting
+                db.flush().await?;
                 println!("✅ Document updated successfully!");
             }
 
             Commands::Delete { path } => {
                 let deleted = db.delete_by_path(&path).await?;
+                // Ensure the deletion is persisted before exiting
                 if deleted {
+                    db.flush().await?;
                     println!("✅ Document deleted successfully!");
                 } else {
                     println!("❌ Document not found");

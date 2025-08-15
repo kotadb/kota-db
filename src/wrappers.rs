@@ -2,6 +2,7 @@
 // This module provides high-level wrappers that automatically apply best practices
 // like tracing, validation, retries, and caching.
 
+pub mod buffered_storage;
 pub mod optimization;
 
 use anyhow::{Context, Result};
@@ -13,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use self::buffered_storage::BufferedStorage;
 use crate::contracts::{Document, Index, Query, Storage};
 use crate::observability::*;
 use crate::types::{ValidatedDocumentId, ValidatedPath};
@@ -974,16 +976,18 @@ impl Drop for SafeTransaction {
 }
 */
 
-/// Compose multiple wrappers together
+/// Compose multiple wrappers together with buffering for improved write performance
 pub type FullyWrappedStorage<S> =
-    TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<S>>>>;
+    TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<BufferedStorage<S>>>>>;
 
-/// Helper to create a fully wrapped storage
+/// Helper to create a fully wrapped storage with write buffering
 pub async fn create_wrapped_storage<S: Storage>(
     inner: S,
     cache_capacity: usize,
 ) -> FullyWrappedStorage<S> {
-    let cached = CachedStorage::new(inner, cache_capacity);
+    // Add buffering layer for improved write performance
+    let buffered = BufferedStorage::new(inner);
+    let cached = CachedStorage::new(buffered, cache_capacity);
     let retryable = RetryableStorage::new(cached);
     let validated = ValidatedStorage::new(retryable);
 
