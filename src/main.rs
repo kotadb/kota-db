@@ -33,7 +33,7 @@ enum Commands {
 
     /// Insert a new document
     Insert {
-        /// Path of the document (e.g., /docs/readme.md)
+        /// Path of the document (e.g., docs/readme.md)
         path: String,
         /// Title of the document
         title: String,
@@ -44,7 +44,7 @@ enum Commands {
 
     /// Get a document by path
     Get {
-        /// Path of the document (e.g., /docs/readme.md)
+        /// Path of the document (e.g., docs/readme.md)
         path: String,
     },
 

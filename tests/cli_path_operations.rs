@@ -32,17 +32,17 @@ fn test_cli_insert_and_get_by_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert a document
+    // Insert a document with relative path
     let output = run_cli_command(
         db_path,
-        &["insert", "/test/doc.md", "Test Doc", "Test content"],
+        &["insert", "test/doc.md", "Test Doc", "Test content"],
     )?;
     assert!(output.contains("Document inserted successfully"));
 
     // Get the document by path
-    let output = run_cli_command(db_path, &["get", "/test/doc.md"])?;
+    let output = run_cli_command(db_path, &["get", "test/doc.md"])?;
     assert!(output.contains("Document found"));
-    assert!(output.contains("/test/doc.md"));
+    assert!(output.contains("test/doc.md"));
     assert!(output.contains("Test Doc"));
     assert!(output.contains("Test content"));
 
@@ -54,10 +54,10 @@ fn test_cli_update_by_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert a document
+    // Insert a document with relative path
     run_cli_command(
         db_path,
-        &["insert", "/test/doc.md", "Original", "Original content"],
+        &["insert", "test/doc.md", "Original", "Original content"],
     )?;
 
     // Update the document by path
@@ -65,7 +65,7 @@ fn test_cli_update_by_path() -> Result<()> {
         db_path,
         &[
             "update",
-            "/test/doc.md",
+            "test/doc.md",
             "--title",
             "Updated",
             "--content",
@@ -84,7 +84,7 @@ fn test_cli_update_by_path() -> Result<()> {
     );
 
     // Verify the update
-    let output = run_cli_command(db_path, &["get", "/test/doc.md"])?;
+    let output = run_cli_command(db_path, &["get", "test/doc.md"])?;
     assert!(output.contains("Updated"));
     assert!(output.contains("Updated content"));
     assert!(!output.contains("Original"));
@@ -97,18 +97,18 @@ fn test_cli_delete_by_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert a document
+    // Insert a document with relative path
     run_cli_command(
         db_path,
-        &["insert", "/test/doc.md", "To Delete", "Delete me"],
+        &["insert", "test/doc.md", "To Delete", "Delete me"],
     )?;
 
     // Delete the document by path
-    let output = run_cli_command(db_path, &["delete", "/test/doc.md"])?;
+    let output = run_cli_command(db_path, &["delete", "test/doc.md"])?;
     assert!(output.contains("Document deleted successfully"));
 
     // Verify deletion
-    let output = run_cli_command(db_path, &["get", "/test/doc.md"])?;
+    let output = run_cli_command(db_path, &["get", "test/doc.md"])?;
     assert!(output.contains("Document not found"));
 
     Ok(())
@@ -119,20 +119,20 @@ fn test_cli_path_not_found() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Try to get non-existent document
-    let output = run_cli_command(db_path, &["get", "/nonexistent.md"])?;
+    // Try to get non-existent document with relative path
+    let output = run_cli_command(db_path, &["get", "nonexistent.md"])?;
     assert!(output.contains("Document not found"));
 
-    // Try to update non-existent document
-    let output = run_cli_command(db_path, &["update", "/nonexistent.md", "--title", "New"])?;
+    // Try to update non-existent document with relative path
+    let output = run_cli_command(db_path, &["update", "nonexistent.md", "--title", "New"])?;
     assert!(
         output.contains("not found") || output.contains("Error"),
         "Output: {}",
         output
     );
 
-    // Try to delete non-existent document
-    let output = run_cli_command(db_path, &["delete", "/nonexistent.md"])?;
+    // Try to delete non-existent document with relative path
+    let output = run_cli_command(db_path, &["delete", "nonexistent.md"])?;
     assert!(output.contains("Document not found"));
 
     Ok(())
@@ -143,13 +143,13 @@ fn test_cli_update_path_change() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert a document
-    run_cli_command(db_path, &["insert", "/old/path.md", "Test", "Content"])?;
+    // Insert a document with relative path
+    run_cli_command(db_path, &["insert", "old/path.md", "Test", "Content"])?;
 
     // Update with new path
     let output = run_cli_command(
         db_path,
-        &["update", "/old/path.md", "--new-path", "/new/path.md"],
+        &["update", "old/path.md", "--new-path", "new/path.md"],
     )?;
 
     // Debug output if test fails
@@ -163,13 +163,13 @@ fn test_cli_update_path_change() -> Result<()> {
     );
 
     // Old path should not exist
-    let output = run_cli_command(db_path, &["get", "/old/path.md"])?;
+    let output = run_cli_command(db_path, &["get", "old/path.md"])?;
     assert!(output.contains("Document not found"));
 
     // New path should exist
-    let output = run_cli_command(db_path, &["get", "/new/path.md"])?;
+    let output = run_cli_command(db_path, &["get", "new/path.md"])?;
     assert!(output.contains("Document found"));
-    assert!(output.contains("/new/path.md"));
+    assert!(output.contains("new/path.md"));
 
     Ok(())
 }
@@ -179,11 +179,11 @@ fn test_cli_multiple_documents_with_paths() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert multiple documents
+    // Insert multiple documents with relative paths
     let paths = vec![
-        ("/docs/readme.md", "README", "Read me first"),
-        ("/docs/guide.md", "Guide", "User guide"),
-        ("/notes/todo.md", "TODO", "Task list"),
+        ("docs/readme.md", "README", "Read me first"),
+        ("docs/guide.md", "Guide", "User guide"),
+        ("notes/todo.md", "TODO", "Task list"),
     ];
 
     for (path, title, content) in &paths {
@@ -214,9 +214,9 @@ fn test_path_cache_performance() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_str().unwrap();
 
-    // Insert 100 documents
+    // Insert 100 documents with relative paths
     for i in 0..100 {
-        let path = format!("/test/doc{}.md", i);
+        let path = format!("test/doc{}.md", i);
         let title = format!("Document {}", i);
         let content = format!("Content for document {}", i);
         run_cli_command(db_path, &["insert", &path, &title, &content])?;
@@ -224,7 +224,7 @@ fn test_path_cache_performance() -> Result<()> {
 
     // Time a get operation (should be fast with cache)
     let start = std::time::Instant::now();
-    let output = run_cli_command(db_path, &["get", "/test/doc50.md"])?;
+    let output = run_cli_command(db_path, &["get", "test/doc50.md"])?;
     let duration = start.elapsed();
 
     assert!(output.contains("Document found"));
