@@ -257,6 +257,13 @@ impl Database {
         let mut updated_doc = builder.build()?;
         updated_doc.id = doc_id;
         updated_doc.created_at = existing.created_at;
+        
+        // Ensure updated_at is newer than the existing one
+        // In case of rapid updates, add a small increment to ensure it's different
+        if updated_doc.updated_at <= existing.updated_at {
+            use chrono::Duration;
+            updated_doc.updated_at = existing.updated_at + Duration::milliseconds(1);
+        }
 
         // Update storage
         storage.update(updated_doc.clone()).await?;
