@@ -167,12 +167,80 @@ jobs:
       run: cargo audit
       continue-on-error: true  # Don't fail on advisories
 
-  # Integration tests - can run in parallel
-  integration:
-    name: Integration Tests
+  # Core integration tests - storage, validation, builders
+  integration-core:
+    name: Integration Tests (Core)
     runs-on: ubuntu-latest
-    # Remove build dependency - compile with cache instead
-    timeout-minutes: 10
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build"
+    
+    - name: Run core integration tests
+      run: cargo test --test 'file_storage*' --test 'builder*' --test 'validated_types*' --test 'data_integrity*' --test 'unicode_handling*' --test 'storage_index*' --release --features bench -- --test-threads=2 --nocapture
+      env:
+        RUST_LOG: error
+        CI: true
+
+  # Index and search integration tests
+  integration-index:
+    name: Integration Tests (Index)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build"
+    
+    - name: Run index integration tests
+      run: cargo test --test 'primary_index*' --test 'btree*' --test 'test_btree*' --test 'query_routing*' --test 'bulk_operations*' --release --features bench -- --test-threads=2 --nocapture
+      env:
+        RUST_LOG: error
+        CI: true
+
+  # Stress and performance tests
+  integration-stress:
+    name: Integration Tests (Stress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build"
+    
+    - name: Run stress integration tests
+      run: cargo test --test '*stress*' --test '*performance*' --test 'concurrent_access*' --test 'index_stress*' --test 'chaos*' --test 'adversarial*' --test 'complexity_comparison*' --release --features bench -- --test-threads=2 --nocapture
+      env:
+        RUST_LOG: error
+        CI: true
+
+  # System and CLI integration tests
+  integration-system:
+    name: Integration Tests (System)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -188,8 +256,8 @@ jobs:
     - name: Build release binary for CLI tests
       run: cargo build --release --bin kotadb
     
-    - name: Run integration tests
-      run: cargo test --test '*' --release --features bench -- --test-threads=2 --nocapture
+    - name: Run system integration tests
+      run: cargo test --test 'cli_path*' --test 'http_server*' --test 'observability*' --test 'production_configuration*' --test 'system_resilience*' --release --features bench -- --test-threads=2 --nocapture
       env:
         RUST_LOG: error
         CI: true
