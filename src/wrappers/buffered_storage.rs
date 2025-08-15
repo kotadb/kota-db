@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
@@ -19,6 +20,8 @@ use crate::types::ValidatedDocumentId;
 pub struct BufferConfig {
     /// Maximum number of writes to buffer before flushing
     pub max_buffer_size: usize,
+    /// Maximum memory (in bytes) to use for buffering before flushing
+    pub max_buffer_memory: usize,
     /// Maximum time to wait before flushing buffered writes
     pub flush_interval: Duration,
     /// Whether to use write-ahead logging for durability
@@ -29,6 +32,7 @@ impl Default for BufferConfig {
     fn default() -> Self {
         Self {
             max_buffer_size: 100,                      // Batch up to 100 writes
+            max_buffer_memory: 10 * 1024 * 1024,       // 10MB max buffer memory
             flush_interval: Duration::from_millis(50), // Flush every 50ms max
             use_wal: true,                             // Use WAL for durability
         }
@@ -48,9 +52,13 @@ pub struct BufferedStorage<S: Storage> {
     inner: S,
     config: BufferConfig,
     write_buffer: Arc<Mutex<VecDeque<BufferedOperation>>>,
+    buffer_memory: Arc<AtomicUsize>,
     last_flush: Arc<RwLock<Instant>>,
     flush_count: Arc<Mutex<u64>>,
     buffered_writes: Arc<Mutex<u64>>,
+    shutdown: Arc<AtomicBool>,
+    needs_flush: Arc<AtomicBool>,
+    flush_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl<S: Storage> BufferedStorage<S> {
@@ -61,54 +69,65 @@ impl<S: Storage> BufferedStorage<S> {
 
     /// Create a new buffered storage wrapper with custom configuration
     pub fn with_config(inner: S, config: BufferConfig) -> Self {
-        let storage = Self {
-            inner,
-            config,
-            write_buffer: Arc::new(Mutex::new(VecDeque::new())),
-            last_flush: Arc::new(RwLock::new(Instant::now())),
-            flush_count: Arc::new(Mutex::new(0)),
-            buffered_writes: Arc::new(Mutex::new(0)),
-        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let needs_flush = Arc::new(AtomicBool::new(false));
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let buffer_memory = Arc::new(AtomicUsize::new(0));
+        let last_flush = Arc::new(RwLock::new(Instant::now()));
 
-        // Start background flush task
-        storage.start_flush_timer();
-        storage
-    }
+        // Start background flush task if not in test mode
+        let flush_handle = if !cfg!(test) && !config.flush_interval.is_zero() {
+            let shutdown_clone = Arc::clone(&shutdown);
+            let needs_flush_clone = Arc::clone(&needs_flush);
+            let last_flush_clone = Arc::clone(&last_flush);
+            let interval = config.flush_interval;
 
-    /// Start a background task that periodically flushes the buffer
-    fn start_flush_timer(&self) {
-        // Skip timer in tests or when interval is zero
-        if self.config.flush_interval.is_zero() || cfg!(test) {
-            return;
-        }
+            Some(tokio::spawn(async move {
+                let mut interval_timer = time::interval(interval);
 
-        let buffer = Arc::clone(&self.write_buffer);
-        let interval = self.config.flush_interval;
-        let last_flush = Arc::clone(&self.last_flush);
+                loop {
+                    interval_timer.tick().await;
 
-        tokio::spawn(async move {
-            let mut interval_timer = time::interval(interval);
-            loop {
-                interval_timer.tick().await;
+                    // Check if shutdown requested
+                    if shutdown_clone.load(Ordering::Relaxed) {
+                        debug!("Flush timer shutting down");
+                        break;
+                    }
 
-                // Check if we need to flush
-                let elapsed = last_flush.read().await.elapsed();
-                if elapsed >= interval {
-                    let buffer_size = buffer.lock().await.len();
-                    if buffer_size > 0 {
-                        debug!("Timer-triggered flush of {} operations", buffer_size);
-                        // Note: Actual flush is handled by the flush_buffer method
+                    // Check if enough time has passed since last flush
+                    let elapsed = last_flush_clone.read().await.elapsed();
+                    if elapsed >= interval {
+                        // Signal that a flush is needed
+                        needs_flush_clone.store(true, Ordering::Relaxed);
                     }
                 }
-            }
-        });
+            }))
+        } else {
+            None
+        };
+
+        Self {
+            inner,
+            config,
+            write_buffer: buffer,
+            buffer_memory,
+            last_flush,
+            flush_count: Arc::new(Mutex::new(0)),
+            buffered_writes: Arc::new(Mutex::new(0)),
+            shutdown,
+            needs_flush,
+            flush_handle,
+        }
     }
 
     /// Flush all buffered operations to the underlying storage
     async fn flush_buffer(&mut self) -> Result<()> {
         let operations: Vec<BufferedOperation> = {
             let mut buffer = self.write_buffer.lock().await;
-            buffer.drain(..).collect()
+            let ops = buffer.drain(..).collect();
+            // Reset memory counter
+            self.buffer_memory.store(0, Ordering::Relaxed);
+            ops
         };
 
         if operations.is_empty() {
@@ -175,13 +194,37 @@ impl<S: Storage> BufferedStorage<S> {
         Ok(())
     }
 
-    /// Check if buffer should be flushed based on size or time
+    /// Check if buffer should be flushed based on size, memory, or time
     async fn should_flush(&self) -> bool {
         let buffer_size = self.write_buffer.lock().await.len();
+        let buffer_memory = self.buffer_memory.load(Ordering::Relaxed);
         let time_since_flush = self.last_flush.read().await.elapsed();
 
         buffer_size >= self.config.max_buffer_size
+            || buffer_memory >= self.config.max_buffer_memory
             || (buffer_size > 0 && time_since_flush >= self.config.flush_interval)
+    }
+
+    /// Check for flush signals from the background timer
+    async fn check_and_flush_if_needed(&mut self) -> Result<()> {
+        // Check if timer has signaled a flush is needed
+        if self.needs_flush.load(Ordering::Relaxed) {
+            // Reset the flag
+            self.needs_flush.store(false, Ordering::Relaxed);
+
+            // Flush if we have data
+            if !self.write_buffer.lock().await.is_empty() {
+                debug!("Timer-triggered flush");
+                self.flush_buffer().await?;
+            }
+        }
+
+        // Also check other flush conditions
+        if self.should_flush().await {
+            self.flush_buffer().await?;
+        }
+
+        Ok(())
     }
 
     /// Get statistics about the buffer
@@ -206,17 +249,21 @@ impl<S: Storage> Storage for BufferedStorage<S> {
     }
 
     async fn insert(&mut self, doc: Document) -> Result<()> {
+        // Calculate document size
+        let doc_size = doc.content.len() + doc.path.as_str().len() + doc.title.as_str().len();
+
         // Add to buffer
         {
             let mut buffer = self.write_buffer.lock().await;
             buffer.push_back(BufferedOperation::Insert(doc));
             *self.buffered_writes.lock().await += 1;
+
+            // Update memory counter
+            self.buffer_memory.fetch_add(doc_size, Ordering::Relaxed);
         }
 
-        // Check if we should flush
-        if self.should_flush().await {
-            self.flush_buffer().await?;
-        }
+        // Check for timer-triggered flush and other conditions
+        self.check_and_flush_if_needed().await?;
 
         Ok(())
     }
@@ -247,17 +294,21 @@ impl<S: Storage> Storage for BufferedStorage<S> {
     }
 
     async fn update(&mut self, doc: Document) -> Result<()> {
+        // Calculate document size
+        let doc_size = doc.content.len() + doc.path.as_str().len() + doc.title.as_str().len();
+
         // Add to buffer
         {
             let mut buffer = self.write_buffer.lock().await;
             buffer.push_back(BufferedOperation::Update(doc));
             *self.buffered_writes.lock().await += 1;
+
+            // Update memory counter
+            self.buffer_memory.fetch_add(doc_size, Ordering::Relaxed);
         }
 
-        // Check if we should flush
-        if self.should_flush().await {
-            self.flush_buffer().await?;
-        }
+        // Check for timer-triggered flush and other conditions
+        self.check_and_flush_if_needed().await?;
 
         Ok(())
     }
@@ -302,6 +353,16 @@ impl<S: Storage> Storage for BufferedStorage<S> {
     }
 
     async fn close(mut self) -> Result<()> {
+        // Signal shutdown to background task
+        self.shutdown.store(true, Ordering::Relaxed);
+
+        // Stop the flush timer if it exists
+        if let Some(handle) = self.flush_handle.take() {
+            handle.abort();
+            // Wait for it to finish (with timeout)
+            let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        }
+
         // Flush any remaining buffered operations
         self.flush_buffer().await?;
 
@@ -325,6 +386,7 @@ mod tests {
             storage,
             BufferConfig {
                 max_buffer_size: 5,
+                max_buffer_memory: 1024 * 1024, // 1MB
                 flush_interval: Duration::from_millis(100),
                 use_wal: true,
             },
