@@ -114,7 +114,17 @@ jobs:
     
     - name: Install musl-tools (Linux musl)
       if: matrix.target == 'x86_64-unknown-linux-musl'
-      run: sudo apt-get update && sudo apt-get install -y musl-tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools pkg-config libssl-dev
+        # Set up environment for musl compilation
+        echo "CC=musl-gcc" >> $GITHUB_ENV
+        echo "AR=ar" >> $GITHUB_ENV
+        echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> $GITHUB_ENV
+        # Use vendored OpenSSL to avoid linking issues
+        echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+        echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+        echo "OPENSSL_INCLUDE_DIR=/usr/include/openssl" >> $GITHUB_ENV
     
     - name: Build binary
       run: cargo build --release --target ${{ matrix.target }} --bin kotadb
@@ -219,8 +229,16 @@ jobs:
       working-directory: ./clients/typescript
       run: |
         VERSION="${{ needs.create-release.outputs.version }}"
-        echo "Publishing TypeScript package version: $VERSION"
-        npm version $VERSION --no-git-tag-version
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "Current version: $CURRENT_VERSION"
+        echo "Target version: $VERSION"
+        
+        if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+          echo "Updating version from $CURRENT_VERSION to $VERSION"
+          npm version $VERSION --no-git-tag-version
+        else
+          echo "Version already set to $VERSION, skipping update"
+        fi
         
     - name: Install dependencies
       working-directory: ./clients/typescript
@@ -290,6 +308,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -309,25 +328,49 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
     
-    - name: Fetch gh-pages branch
+    - name: Ensure gh-pages branch exists
       run: |
-        git fetch origin gh-pages --depth=1 || true
+        # Check if gh-pages exists on remote
+        if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+          echo "Creating gh-pages branch"
+          git checkout --orphan gh-pages
+          git reset --hard
+          git commit --allow-empty -m "Initialize gh-pages branch"
+          git push origin gh-pages
+          git checkout main
+        fi
+        
+        # Fetch the gh-pages branch
+        git fetch origin gh-pages:gh-pages --force
     
     - name: Deploy versioned documentation
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         VERSION="${{ needs.create-release.outputs.version }}"
         
-        # Deploy the version with latest alias
-        mike deploy --push --update-aliases "$VERSION" latest
+        # Set up Mike to use the gh-pages branch
+        export GIT_COMMITTER_NAME="github-actions[bot]"
+        export GIT_COMMITTER_EMAIL="github-actions[bot]@users.noreply.github.com"
+        
+        # Check if this is the first deployment
+        if ! git show-ref --verify --quiet refs/heads/gh-pages || [ -z "$(git ls-tree -r gh-pages --name-only 2>/dev/null)" ]; then
+          echo "First deployment detected"
+          # For first deployment, don't use --update-aliases
+          mike deploy --push --branch gh-pages "$VERSION" latest
+        else
+          # Deploy the version with latest alias
+          mike deploy --push --update-aliases --branch gh-pages "$VERSION" latest
+        fi
         
         # If this is a stable release (not pre-release), also tag as stable
         if [[ ! "$VERSION" =~ (alpha|beta|rc) ]]; then
-          mike retitle --push "$VERSION" "$VERSION (stable)"
-          mike alias --push "$VERSION" stable
+          mike retitle --push --branch gh-pages "$VERSION" "$VERSION (stable)"
+          mike alias --push --branch gh-pages "$VERSION" stable
         fi
         
         # Set latest as default
-        mike set-default --push latest
+        mike set-default --push --branch gh-pages latest
     
     - name: Summary
       run: |

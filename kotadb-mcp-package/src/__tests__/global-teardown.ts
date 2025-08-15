@@ -1,0 +1,8 @@
+export default async function globalTeardown(): Promise<void> {
+  console.log('Cleaning up MCP integration test environment...');
+  
+  // Global cleanup tasks can go here
+  // For now, individual test cleanup is sufficient
+  
+  console.log('MCP integration test environment cleanup complete');
+}

@@ -50,8 +50,7 @@ async fn test_high_load_concurrent_operations() -> Result<()> {
             // Mixed read/write workload per user
             for op_num in 0..operations_per_user {
                 let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                let path =
-                    ValidatedPath::new(format!("/load_test/user_{user_id}/doc_{op_num}.md"))?;
+                let path = ValidatedPath::new(format!("load_test/user_{user_id}/doc_{op_num}.md"))?;
                 let title = ValidatedTitle::new(format!("Load Test Doc U{user_id} O{op_num}"))?;
 
                 let content = format!(
@@ -207,7 +206,7 @@ async fn test_memory_pressure_handling() -> Result<()> {
 
     for i in 0..large_doc_count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/memory_test/large_doc_{i:04}.md"))?;
+        let path = ValidatedPath::new(format!("memory_test/large_doc_{i:04}.md"))?;
         let title = ValidatedTitle::new(format!("Large Memory Test Doc {i}"))?;
 
         // Create large content to pressure memory
@@ -347,7 +346,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
 
     while total_size < max_test_size {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/disk_test/doc_{doc_count:06}.md"))?;
+        let path = ValidatedPath::new(format!("disk_test/doc_{doc_count:06}.md"))?;
         let title = ValidatedTitle::new(format!("Disk Test Doc {doc_count}"))?;
 
         // Variable size content
@@ -473,7 +472,7 @@ async fn test_disk_space_exhaustion_handling() -> Result<()> {
 
     // Test that new insertions work after cleanup
     let recovery_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let recovery_path = ValidatedPath::new("/disk_test/recovery_test.md")?;
+    let recovery_path = ValidatedPath::new("disk_test/recovery_test.md")?;
     let recovery_title = ValidatedTitle::new("Recovery Test Document")?;
     let recovery_content = "Recovery test after disk cleanup.".as_bytes().to_vec();
 
@@ -666,7 +665,7 @@ async fn test_graceful_degradation() -> Result<()> {
 // Helper function to create test documents
 fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/{test_type}/doc_{index:04}.md"))?;
+    let path = ValidatedPath::new(format!("{test_type}/doc_{index:04}.md"))?;
     let title = ValidatedTitle::new(format!("{test_type} Test Document {index}"))?;
 
     let content =

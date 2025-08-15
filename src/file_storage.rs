@@ -13,9 +13,7 @@ use uuid::Uuid;
 use crate::contracts::{Document, Storage};
 use crate::types::{ValidatedDocumentId, ValidatedPath, ValidatedTag, ValidatedTitle};
 use crate::validation;
-use crate::wrappers::{
-    create_wrapped_storage, CachedStorage, RetryableStorage, TracedStorage, ValidatedStorage,
-};
+use crate::wrappers::create_wrapped_storage;
 use chrono::{DateTime, Utc};
 
 /// Simple file-based storage implementation
@@ -192,8 +190,8 @@ impl Storage for FileStorage {
     where
         Self: Sized,
     {
-        // Validate path using existing Stage 2 validation
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let db_path = PathBuf::from(path);
         let storage = Self {
@@ -516,11 +514,11 @@ impl<'de> serde::Deserialize<'de> for DocumentMetadata {
 pub async fn create_file_storage(
     path: &str,
     cache_capacity: Option<usize>,
-) -> Result<TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<FileStorage>>>>> {
+) -> Result<impl Storage> {
     // Create base FileStorage
     let base_storage = FileStorage::open(path).await?;
 
-    // Apply Stage 6 wrapper composition
+    // Apply Stage 6 wrapper composition including buffering
     let wrapped = create_wrapped_storage(base_storage, cache_capacity.unwrap_or(1000)).await;
 
     Ok(wrapped)

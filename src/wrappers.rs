@@ -2,6 +2,7 @@
 // This module provides high-level wrappers that automatically apply best practices
 // like tracing, validation, retries, and caching.
 
+pub mod buffered_storage;
 pub mod optimization;
 
 use anyhow::{Context, Result};
@@ -13,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use self::buffered_storage::BufferedStorage;
 use crate::contracts::{Document, Index, Query, Storage};
 use crate::observability::*;
 use crate::types::{ValidatedDocumentId, ValidatedPath};
@@ -275,8 +277,8 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
     where
         Self: Sized,
     {
-        // Validate path before opening
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let inner = S::open(path).await?;
         Ok(Self::new(inner))
@@ -974,16 +976,18 @@ impl Drop for SafeTransaction {
 }
 */
 
-/// Compose multiple wrappers together
+/// Compose multiple wrappers together with buffering for improved write performance
 pub type FullyWrappedStorage<S> =
-    TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<S>>>>;
+    TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<BufferedStorage<S>>>>>;
 
-/// Helper to create a fully wrapped storage
+/// Helper to create a fully wrapped storage with write buffering
 pub async fn create_wrapped_storage<S: Storage>(
     inner: S,
     cache_capacity: usize,
 ) -> FullyWrappedStorage<S> {
-    let cached = CachedStorage::new(inner, cache_capacity);
+    // Add buffering layer for improved write performance
+    let buffered = BufferedStorage::new(inner);
+    let cached = CachedStorage::new(buffered, cache_capacity);
     let retryable = RetryableStorage::new(cached);
     let validated = ValidatedStorage::new(retryable);
 
@@ -1056,14 +1060,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_traced_storage() {
-        let storage = MockStorage::open("/test")
+        let storage = MockStorage::open("test")
             .await
             .expect("Mock storage should open");
         let mut traced = TracedStorage::new(storage);
 
         let doc = Document::new(
             ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
-            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedPath::new("test.md").expect("Test path should be valid"),
             ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],
@@ -1084,14 +1088,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_cached_storage() {
-        let storage = MockStorage::open("/test")
+        let storage = MockStorage::open("test")
             .await
             .expect("Mock storage should open");
         let cached = CachedStorage::new(storage, 10);
 
         let doc = Document::new(
             ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
-            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedPath::new("test.md").expect("Test path should be valid"),
             ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],

@@ -55,10 +55,38 @@ When communicating about tests, always verify that:
 
 ### When Problems Are Found
 - Create issues immediately for any problems discovered
-- Use: `gh issue create --title "[Clear problem description]" --body "[Detailed explanation with reproduction steps]"`
+- **ALWAYS check existing labels first**: `gh label list --limit 100`
+- **Create new labels if needed**: `gh label create "new-label" --description "Description" --color "hex-color"`
+- Use: `gh issue create --title "[Clear problem description]" --body "[Detailed explanation with reproduction steps]" --label "appropriate,labels"`
 - Label issues appropriately (bug, security, performance, etc.)
 - Link to related issues or PRs
 - Assign to appropriate team members if known
+
+### Label Management Protocol
+**ALWAYS follow this workflow when creating issues:**
+
+1. **Check existing labels**: `gh label list --search "keyword"` or `gh label list --limit 100`
+2. **Create missing labels**: Use standardized naming and colors:
+   ```bash
+   # Component labels (blue tones)
+   gh label create "storage" --description "Storage layer issues" --color "1d76db"
+   gh label create "index" --description "Indexing system issues" --color "0366d6"
+   gh label create "mcp" --description "Model Context Protocol issues" --color "6f42c1"
+   
+   # Type labels (varied colors)
+   gh label create "bug" --description "Something isn't working" --color "d73a49"
+   gh label create "enhancement" --description "New feature or improvement" --color "84b6eb"
+   gh label create "security" --description "Security-related issues" --color "d73a4a"
+   gh label create "performance" --description "Performance optimization" --color "0052cc"
+   
+   # Priority labels (red spectrum)
+   gh label create "priority-critical" --description "Critical priority" --color "b60205"
+   gh label create "priority-high" --description "High priority" --color "d93f0b"
+   gh label create "priority-medium" --description "Medium priority" --color "fbca04"
+   gh label create "priority-low" --description "Low priority" --color "0e8a16"
+   ```
+3. **Apply appropriate labels**: Use multiple labels for better categorization
+4. **Maintain label consistency**: Follow established naming patterns
 
 ## Communication Standards
 
@@ -359,10 +387,54 @@ gh pr list --author @me
 gh issue edit <number> --add-assignee <username>
 gh pr edit <number> --add-assignee <username>
 
-# Link related items
+# Link related items and manage labels
 gh issue edit <number> --add-label "blocked"
 gh issue comment <number> --body "Blocked by #<other-issue>"
+
+# Label management during coordination
+gh label list --search "priority"     # Find priority labels
+gh issue edit <number> --add-label "priority-high,needs-review"
+gh issue edit <number> --remove-label "in-progress"  # Update status
 ```
+
+### Standard KotaDB Label Schema
+**Always use these standardized labels for consistency:**
+
+#### Component Labels (Blue Spectrum)
+- `storage` (#1d76db) - Storage layer issues
+- `index` (#0366d6) - Indexing system issues  
+- `primary-index` (#0052cc) - B+ tree index
+- `trigram-index` (#005cc5) - Full-text search
+- `vector-index` (#1e6091) - Semantic search
+- `mcp` (#6f42c1) - Model Context Protocol
+- `embedding` (#0e8a16) - Embedding generation
+
+#### Type Labels (Varied Colors)
+- `bug` (#d73a49) - Something isn't working
+- `enhancement` (#84b6eb) - New feature or improvement
+- `feature` (#0075ca) - Major new functionality
+- `refactor` (#fef2c0) - Code restructuring
+- `documentation` (#0075ca) - Documentation improvements
+- `test` (#d4c5f9) - Testing improvements
+- `security` (#d73a4a) - Security-related issues
+- `performance` (#0052cc) - Performance optimization
+
+#### Priority Labels (Red to Green Spectrum)
+- `priority-critical` (#b60205) - Critical/blocking issues
+- `priority-high` (#d93f0b) - High priority
+- `priority-medium` (#fbca04) - Medium priority  
+- `priority-low` (#0e8a16) - Low priority
+
+#### Status Labels (Gray to Green)
+- `needs-investigation` (#6c757d) - Requires analysis
+- `blocked` (#d73a49) - Blocked by external factors
+- `in-progress` (#fbca04) - Currently being worked on
+- `ready-for-review` (#0e8a16) - Ready for code review
+
+#### Effort Labels (Size indicators)
+- `effort-small` (#c2e0c6) - < 1 day effort
+- `effort-medium` (#ffd33d) - 1-3 days effort  
+- `effort-large` (#f85149) - > 3 days effort
 
 ## Context Management Strategy
 
@@ -390,12 +462,16 @@ Before completing any GitHub interaction:
 
 ## Best Practices
 
+- **Check labels first**: Always run `gh label list --limit 100` before creating issues
+- **Create missing labels**: Maintain the standard KotaDB label schema with consistent colors
+- **Use multiple labels**: Combine component, type, priority, and status labels for better categorization
 - Link everything: issues to PRs, commits to issues, related issues to each other
 - Use GitHub's reference syntax (#123, GH-123) for automatic linking
 - Tag relevant team members with @mentions when their input is needed
 - Use labels consistently to improve discoverability
 - Keep discussions focused - create new issues rather than scope creep
 - Close the loop: always comment when work is complete or handed off
+- **Update labels as work progresses**: Remove `needs-investigation`, add `in-progress`, then `ready-for-review`
 
 ## Quality Checks
 

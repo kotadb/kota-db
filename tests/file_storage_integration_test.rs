@@ -14,7 +14,7 @@ async fn test_file_storage_basic_operations() -> Result<()> {
 
     // Create test document
     let doc = DocumentBuilder::new()
-        .path("/test/document.md")?
+        .path("test/document.md")?
         .title("Test Document")?
         .content(b"This is a test document with some content for testing.")
         .build()?;
@@ -65,13 +65,13 @@ async fn test_file_storage_multiple_documents() -> Result<()> {
 
     // Create multiple documents
     let doc1 = DocumentBuilder::new()
-        .path("/test/doc1.md")?
+        .path("test/doc1.md")?
         .title("Document 1")?
         .content(b"Content for document 1")
         .build()?;
 
     let doc2 = DocumentBuilder::new()
-        .path("/test/doc2.md")?
+        .path("test/doc2.md")?
         .title("Document 2")?
         .content(b"Content for document 2")
         .build()?;
@@ -98,7 +98,7 @@ async fn test_file_storage_persistence() -> Result<()> {
     let db_path = temp_dir.path().to_str().unwrap();
 
     let doc = DocumentBuilder::new()
-        .path("/test/persistent.md")?
+        .path("test/persistent.md")?
         .title("Persistent Document")?
         .content(b"This document should persist across storage instances")
         .build()?;

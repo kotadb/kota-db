@@ -10,6 +10,7 @@ use std::time::Duration;
 
 /// Fluent builder for creating Documents
 pub struct DocumentBuilder {
+    id: Option<ValidatedDocumentId>,
     path: Option<ValidatedPath>,
     title: Option<ValidatedTitle>,
     content: Option<Vec<u8>>,
@@ -22,6 +23,7 @@ impl DocumentBuilder {
     /// Create a new document builder
     pub fn new() -> Self {
         Self {
+            id: None,
             path: None,
             title: None,
             content: None,
@@ -29,6 +31,20 @@ impl DocumentBuilder {
             word_count: None,
             timestamps: None,
         }
+    }
+
+    /// Set the document ID
+    /// If not specified, a new UUID will be generated automatically
+    pub fn id(mut self, id: ValidatedDocumentId) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Set the document ID from a UUID
+    /// If not specified, a new UUID will be generated automatically
+    pub fn id_from_uuid(mut self, uuid: uuid::Uuid) -> Result<Self> {
+        self.id = Some(ValidatedDocumentId::from_uuid(uuid)?);
+        Ok(self)
     }
 
     /// Set the document path
@@ -95,8 +111,11 @@ impl DocumentBuilder {
         // Use provided timestamps or create new ones
         let timestamps = self.timestamps.unwrap_or_else(TimestampPair::now);
 
+        // Use provided ID or generate new one
+        let document_id = self.id.unwrap_or_default();
+
         Ok(Document::new(
-            ValidatedDocumentId::new(),
+            document_id,
             path,
             title,
             content,
@@ -475,7 +494,7 @@ mod tests {
     #[test]
     fn test_document_builder() {
         let doc = DocumentBuilder::new()
-            .path("/test/doc.md")
+            .path("test/doc.md")
             .expect("Valid path should not fail")
             .title("Test Document")
             .expect("Valid title should not fail")
@@ -484,9 +503,87 @@ mod tests {
 
         assert!(doc.is_ok());
         let doc = doc.expect("Document build should succeed");
-        assert_eq!(doc.path.as_str(), "/test/doc.md");
+        assert_eq!(doc.path.as_str(), "test/doc.md");
         assert_eq!(doc.title.as_str(), "Test Document");
         assert_eq!(doc.size, 13);
+    }
+
+    #[test]
+    fn test_document_builder_with_custom_id() {
+        use uuid::Uuid;
+
+        // Create a specific UUID to test with
+        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let custom_id = ValidatedDocumentId::from_uuid(custom_uuid).unwrap();
+
+        let doc = DocumentBuilder::new()
+            .id(custom_id)
+            .path("test/doc.md")
+            .expect("Valid path should not fail")
+            .title("Test Document")
+            .expect("Valid title should not fail")
+            .content(b"Hello, world!")
+            .build();
+
+        assert!(doc.is_ok());
+        let doc = doc.expect("Document build should succeed");
+
+        // Verify the document uses the specified ID, not a generated one
+        assert_eq!(doc.id.as_uuid(), custom_uuid);
+        assert_eq!(doc.path.as_str(), "test/doc.md");
+        assert_eq!(doc.title.as_str(), "Test Document");
+    }
+
+    #[test]
+    fn test_document_builder_generates_id_when_not_specified() {
+        let doc1 = DocumentBuilder::new()
+            .path("test/doc1.md")
+            .expect("Valid path should not fail")
+            .title("Test Document 1")
+            .expect("Valid title should not fail")
+            .content(b"Content 1")
+            .build()
+            .expect("Document build should succeed");
+
+        let doc2 = DocumentBuilder::new()
+            .path("test/doc2.md")
+            .expect("Valid path should not fail")
+            .title("Test Document 2")
+            .expect("Valid title should not fail")
+            .content(b"Content 2")
+            .build()
+            .expect("Document build should succeed");
+
+        // Verify different documents get different generated IDs
+        assert_ne!(doc1.id.as_uuid(), doc2.id.as_uuid());
+
+        // Verify IDs are valid UUIDs (not nil)
+        assert_ne!(doc1.id.as_uuid(), uuid::Uuid::nil());
+        assert_ne!(doc2.id.as_uuid(), uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn test_document_builder_id_from_uuid() {
+        use uuid::Uuid;
+
+        // Create a specific UUID to test with
+        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+        let doc = DocumentBuilder::new()
+            .id_from_uuid(custom_uuid)
+            .expect("Valid UUID should not fail")
+            .path("test/doc.md")
+            .expect("Valid path should not fail")
+            .title("Test Document")
+            .expect("Valid title should not fail")
+            .content(b"Hello, world!")
+            .build();
+
+        assert!(doc.is_ok());
+        let doc = doc.expect("Document build should succeed");
+
+        // Verify the document uses the specified UUID
+        assert_eq!(doc.id.as_uuid(), custom_uuid);
     }
 
     #[test]
@@ -513,7 +610,7 @@ mod tests {
     #[test]
     fn test_storage_config_builder() {
         let config = StorageConfigBuilder::new()
-            .path("/data/kotadb")
+            .path("data/kotadb")
             .expect("Valid path should not fail")
             .cache_size(200 * 1024 * 1024)
             .compression(true)
@@ -521,7 +618,7 @@ mod tests {
 
         assert!(config.is_ok());
         let config = config.expect("Config build should succeed");
-        assert_eq!(config.path.as_str(), "/data/kotadb");
+        assert_eq!(config.path.as_str(), "data/kotadb");
         assert_eq!(config.cache_size, Some(200 * 1024 * 1024));
         assert!(config.compression_enabled);
     }

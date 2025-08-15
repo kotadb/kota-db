@@ -12,7 +12,7 @@ fn main() {
     // Test 1: Simple deletion
     println!("Test 1: Simple deletion");
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-    let path = ValidatedPath::new("/test/delete_me.md").unwrap();
+    let path = ValidatedPath::new("test/delete_me.md").unwrap();
 
     let mut tree = btree::create_empty_tree();
     tree = btree::insert_into_tree(tree, doc_id, path).unwrap();
@@ -34,7 +34,7 @@ fn main() {
 
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/test/doc{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("test/doc{i}.md")).unwrap();
         tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
@@ -67,7 +67,7 @@ fn main() {
         .collect();
 
     for (i, key) in large_keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/test/large{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("test/large{i}.md")).unwrap();
         tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 

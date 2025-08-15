@@ -1,5 +1,5 @@
-// Phase 2B Concurrent Stress Testing - Advanced Multi-threaded Stress Tests
-// Beyond 100 concurrent user baseline - tests 200+ concurrent operations with advanced patterns
+// Concurrent Stress Testing - Advanced Multi-threaded Stress Tests
+// Tests high concurrency scenarios with 200+ concurrent operations and advanced patterns
 
 use anyhow::Result;
 use kotadb::*;
@@ -13,29 +13,33 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 mod test_constants;
+use test_constants::concurrency::{
+    get_concurrent_operations, get_operations_per_task, get_pool_capacity,
+};
 use test_constants::performance::SLOW_OPERATION_THRESHOLD;
 
 // Minimum conflict resolution rate for valid tests
 const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
 
-/// Phase 2B - Enhanced Multi-threaded Stress Testing (200+ concurrent operations)
+/// Enhanced Multi-threaded Stress Testing with high concurrency
 #[tokio::test]
-async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
+async fn test_enhanced_concurrent_stress() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let storage_path = temp_dir.path().join("phase2b_storage");
-    let index_path = temp_dir.path().join("phase2b_index");
+    let storage_path = temp_dir.path().join("concurrent_stress_storage");
+    let index_path = temp_dir.path().join("concurrent_stress_index");
 
-    // Scale beyond current 100 user baseline to 250 concurrent operations
-    let concurrent_operations = 250;
-    let operations_per_task = 30;
+    // Use CI-aware configuration for concurrent operations
+    let concurrent_operations = get_concurrent_operations();
+    let operations_per_task = get_operations_per_task();
+    let pool_capacity = get_pool_capacity();
 
-    // Create shared system with enhanced capacity for Phase 2B
+    // Create shared system with enhanced capacity for stress testing
     let storage = Arc::new(tokio::sync::Mutex::new(
-        create_file_storage(&storage_path.to_string_lossy(), Some(20000)).await?,
+        create_file_storage(&storage_path.to_string_lossy(), Some(pool_capacity)).await?,
     ));
     let index = Arc::new(tokio::sync::Mutex::new({
         let primary_index =
-            create_primary_index(&index_path.to_string_lossy(), Some(20000)).await?;
+            create_primary_index(&index_path.to_string_lossy(), Some(pool_capacity)).await?;
         create_optimized_index_with_defaults(primary_index)
     }));
 
@@ -43,7 +47,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
     let metrics = Arc::new(ConcurrencyMetrics::new());
     let mut handles = Vec::new();
 
-    println!("🚀 Phase 2B: Starting enhanced stress test with {concurrent_operations} concurrent operations");
+    println!("🚀 Starting enhanced stress test with {concurrent_operations} concurrent operations");
 
     let start = Instant::now();
 
@@ -292,7 +296,7 @@ async fn test_phase2b_enhanced_concurrent_stress() -> Result<()> {
 
 /// Advanced Lock Contention Analysis Test
 #[tokio::test]
-async fn test_phase2b_lock_contention_analysis() -> Result<()> {
+async fn test_lock_contention_analysis() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("lock_analysis_storage");
 
@@ -365,7 +369,7 @@ async fn test_phase2b_lock_contention_analysis() -> Result<()> {
                         // Create test document
                         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                         let path =
-                            ValidatedPath::new(format!("/lock_test/t{thread_id}_op{op_id}.md"))?;
+                            ValidatedPath::new(format!("lock_test/t{thread_id}_op{op_id}.md"))?;
                         let title =
                             ValidatedTitle::new(format!("Lock Test T{thread_id} O{op_id}"))?;
                         let content = format!(
@@ -475,7 +479,7 @@ async fn test_phase2b_lock_contention_analysis() -> Result<()> {
 
 /// Comprehensive Race Condition Detection Test
 #[tokio::test]
-async fn test_phase2b_race_condition_detection() -> Result<()> {
+async fn test_race_condition_detection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("race_detection_storage");
 
@@ -655,7 +659,7 @@ async fn test_phase2b_race_condition_detection() -> Result<()> {
 
 /// Concurrent Index Operations Test
 #[tokio::test]
-async fn test_phase2b_concurrent_index_operations() -> Result<()> {
+async fn test_concurrent_index_operations() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("concurrent_index_storage");
     let primary_index_path = temp_dir.path().join("concurrent_primary_index");
@@ -1183,7 +1187,7 @@ async fn execute_write_operation(
     metrics.lock_acquisitions.fetch_add(1, Ordering::Relaxed);
 
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
+    let path = ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
     let title = ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
     let content = format!(
         "Phase 2B enhanced concurrent stress test content for pattern {pattern_id} operation {op_num}. \
@@ -1332,7 +1336,7 @@ fn analyze_lock_contention(
 
 async fn create_race_test_document(index: usize, version: u32, modifier: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/race_test/shared_doc_{index:03}.md"))?;
+    let path = ValidatedPath::new(format!("race_test/shared_doc_{index:03}.md"))?;
     let title = ValidatedTitle::new(format!("Shared Race Test Doc {index} v{version}"))?;
     let content = format!(
         "Race test document {index} version {version} modified by {modifier}.\n\
@@ -1490,7 +1494,7 @@ async fn validate_data_consistency(
 async fn create_index_test_document(indexer_id: usize, op_num: usize) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
     let path = ValidatedPath::new(format!(
-        "/index_test/indexer_{indexer_id}/doc_{op_num:04}.md"
+        "index_test/indexer_{indexer_id}/doc_{op_num:04}.md"
     ))?;
     let title = ValidatedTitle::new(format!("Index Test I{indexer_id} D{op_num}"))?;
 

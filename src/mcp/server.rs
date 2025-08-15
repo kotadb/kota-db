@@ -106,7 +106,7 @@ impl MCPServer {
             let trigram_index: Arc<Mutex<dyn crate::contracts::Index>> =
                 Arc::new(Mutex::new(trigram_index));
 
-            // Create semantic search engine
+            // Create semantic search engine with trigram support for hybrid search
             let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
@@ -118,10 +118,15 @@ impl MCPServer {
             )
             .await?;
 
-            let semantic_engine = SemanticSearchEngine::new(
+            // Create a trigram index for the semantic engine's hybrid search
+            let trigram_index_for_semantic =
+                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+
+            let semantic_engine = SemanticSearchEngine::new_with_trigram(
                 Box::new(semantic_storage),
                 vector_index_path.to_str().unwrap(),
                 embedding_config,
+                Box::new(trigram_index_for_semantic),
             )
             .await?;
             let semantic_engine = Arc::new(Mutex::new(semantic_engine));
@@ -133,20 +138,6 @@ impl MCPServer {
             ));
             tool_registry = tool_registry.with_search_tools(search_tools);
         }
-
-        // TODO: Re-enable analytics tools after fixing HealthCheck trait compatibility
-        // if config.mcp.enable_analytics_tools {
-        //     use crate::mcp::tools::analytics_tools::AnalyticsTools;
-        //     let analytics_tools = Arc::new(AnalyticsTools::new(storage.clone()));
-        //     tool_registry = tool_registry.with_analytics_tools(analytics_tools);
-        // }
-
-        // TODO: Re-enable graph tools after fixing Document type conversion
-        // if config.mcp.enable_graph_tools {
-        //     use crate::mcp::tools::graph_tools::GraphTools;
-        //     let graph_tools = Arc::new(GraphTools::new(storage.clone()));
-        //     tool_registry = tool_registry.with_graph_tools(graph_tools);
-        // }
 
         Ok(Self {
             config,
@@ -360,6 +351,8 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let mut config = MCPConfig::default();
         config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+        // Disable search tools for this test to avoid embedding model requirements
+        config.mcp.enable_search_tools = false;
 
         let server = MCPServer::new(config).await?;
         assert!(server.uptime_seconds() < 1); // Should be very fresh
@@ -371,6 +364,8 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let mut config = MCPConfig::default();
         config.database.data_dir = temp_dir.path().to_string_lossy().to_string();
+        // Disable search tools for this test to avoid embedding model requirements
+        config.mcp.enable_search_tools = false;
 
         let server = MCPServer::new(config).await?;
         let tools = server.tool_registry.get_all_tool_definitions();

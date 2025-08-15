@@ -18,7 +18,7 @@ fn test_btree_insertion_performance() -> anyhow::Result<()> {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(format!("/perf/doc_{i}.md")).unwrap())
+            .map(|i| ValidatedPath::new(format!("perf/doc_{i}.md")).unwrap())
             .collect();
 
         // Time insertion
@@ -73,7 +73,7 @@ fn test_btree_search_performance() -> anyhow::Result<()> {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/perf/doc_{i}.md"))?;
+            let path = ValidatedPath::new(format!("perf/doc_{i}.md"))?;
             tree = btree::insert_into_tree(tree, *key, path)?;
         }
 
@@ -145,7 +145,7 @@ fn test_btree_vs_linear_performance() -> anyhow::Result<()> {
     // Build B+ tree
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/perf/doc_{i}.md"))?;
+        let path = ValidatedPath::new(format!("perf/doc_{i}.md"))?;
         tree = btree::insert_into_tree(tree, *key, path)?;
     }
 

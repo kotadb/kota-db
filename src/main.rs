@@ -6,9 +6,10 @@ use kotadb::{
     init_logging, start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder,
     Storage, ValidatedDocumentId, ValidatedPath,
 };
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Parser)]
 #[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
@@ -32,7 +33,7 @@ enum Commands {
 
     /// Insert a new document
     Insert {
-        /// Path of the document (e.g., /docs/readme.md)
+        /// Path of the document (e.g., docs/readme.md)
         path: String,
         /// Title of the document
         title: String,
@@ -41,19 +42,19 @@ enum Commands {
         content: Option<String>,
     },
 
-    /// Get a document by ID
+    /// Get a document by path
     Get {
-        /// Document ID (UUID format)
-        id: String,
+        /// Path of the document (e.g., docs/readme.md)
+        path: String,
     },
 
     /// Update an existing document
     Update {
-        /// Document ID to update
-        id: String,
+        /// Path of the document to update
+        path: String,
         /// New path (optional)
-        #[arg(short, long)]
-        path: Option<String>,
+        #[arg(short = 'n', long)]
+        new_path: Option<String>,
         /// New title (optional)
         #[arg(short, long)]
         title: Option<String>,
@@ -62,10 +63,10 @@ enum Commands {
         content: Option<String>,
     },
 
-    /// Delete a document by ID
+    /// Delete a document by path
     Delete {
-        /// Document ID to delete
-        id: String,
+        /// Path of the document to delete
+        path: String,
     },
 
     /// Search for documents
@@ -96,6 +97,8 @@ struct Database {
     storage: Arc<Mutex<Box<dyn Storage>>>,
     primary_index: Arc<Mutex<Box<dyn Index>>>,
     trigram_index: Arc<Mutex<Box<dyn Index>>>,
+    // Cache for path -> document ID lookups (built lazily)
+    path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
 }
 
 impl Database {
@@ -132,11 +135,31 @@ impl Database {
         )
         .await?;
 
-        Ok(Self {
+        let db = Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
             primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
             trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
-        })
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        // Build the path cache on startup
+        db.rebuild_path_cache().await?;
+
+        Ok(db)
+    }
+
+    /// Rebuild the path cache from current storage
+    async fn rebuild_path_cache(&self) -> Result<()> {
+        let mut cache = self.path_cache.write().await;
+        cache.clear();
+
+        // Get all documents to build the cache
+        let all_docs = self.storage.lock().await.list_all().await?;
+        for doc in all_docs {
+            cache.insert(doc.path.to_string(), doc.id);
+        }
+
+        Ok(())
     }
 
     async fn insert(
@@ -174,6 +197,9 @@ impl Database {
             trigram_guard.insert(doc_id, doc_path).await?;
         }
 
+        // Update path cache
+        self.path_cache.write().await.insert(path, doc_id);
+
         // Flush all to ensure persistence
         self.storage.lock().await.flush().await?;
         self.primary_index.lock().await.flush().await?;
@@ -182,20 +208,32 @@ impl Database {
         Ok(doc_id)
     }
 
-    async fn get(&self, id: &str) -> Result<Option<Document>> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+    async fn get_by_path(&self, path: &str) -> Result<Option<Document>> {
+        // O(1) lookup using the path cache
+        let cache = self.path_cache.read().await;
 
-        self.storage.lock().await.get(&doc_id).await
+        if let Some(doc_id) = cache.get(path) {
+            // Found in cache, get the document
+            self.storage.lock().await.get(doc_id).await
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn update(
+    async fn update_by_path(
         &self,
-        id: &str,
+        path: &str,
         new_path: Option<String>,
         new_title: Option<String>,
         new_content: Option<String>,
     ) -> Result<()> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+        // First find the document by path
+        let doc = self
+            .get_by_path(path)
+            .await?
+            .context("Document not found")?;
+
+        let doc_id = doc.id;
 
         // Get existing document
         let mut storage = self.storage.lock().await;
@@ -215,16 +253,24 @@ impl Database {
         };
         builder = builder.content(content);
 
-        // Build and set the same ID
+        // Build and set the same ID and created_at
         let mut updated_doc = builder.build()?;
         updated_doc.id = doc_id;
+        updated_doc.created_at = existing.created_at;
+
+        // Ensure updated_at is newer than the existing one
+        // In case of rapid updates, add a small increment to ensure it's different
+        if updated_doc.updated_at <= existing.updated_at {
+            use chrono::Duration;
+            updated_doc.updated_at = existing.updated_at + Duration::milliseconds(1);
+        }
 
         // Update storage
         storage.update(updated_doc.clone()).await?;
 
-        // Update indices if path changed
-        if let Some(path) = new_path {
-            let new_validated_path = ValidatedPath::new(path)?;
+        // Update indices and cache if path changed
+        if let Some(ref new_path_str) = new_path {
+            let new_validated_path = ValidatedPath::new(new_path_str)?;
             self.primary_index
                 .lock()
                 .await
@@ -235,24 +281,40 @@ impl Database {
                 .await
                 .update(doc_id, new_validated_path)
                 .await?;
+
+            // Update cache: remove old path, add new path
+            let mut cache = self.path_cache.write().await;
+            cache.retain(|_, id| *id != doc_id);
+            cache.insert(new_path_str.clone(), doc_id);
         }
 
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<bool> {
-        let doc_id = ValidatedDocumentId::parse(id).context("Invalid document ID format")?;
+    async fn delete_by_path(&self, path: &str) -> Result<bool> {
+        // First find the document by path using cache
+        let doc_id = {
+            let cache = self.path_cache.read().await;
+            cache.get(path).copied()
+        };
 
-        // Delete from storage
-        let deleted = self.storage.lock().await.delete(&doc_id).await?;
+        if let Some(doc_id) = doc_id {
+            // Delete from storage
+            let deleted = self.storage.lock().await.delete(&doc_id).await?;
 
-        if deleted {
-            // Delete from both indices
-            self.primary_index.lock().await.delete(&doc_id).await?;
-            self.trigram_index.lock().await.delete(&doc_id).await?;
+            if deleted {
+                // Delete from both indices
+                self.primary_index.lock().await.delete(&doc_id).await?;
+                self.trigram_index.lock().await.delete(&doc_id).await?;
+
+                // Remove from cache
+                self.path_cache.write().await.remove(path);
+            }
+
+            Ok(deleted)
+        } else {
+            Ok(false)
         }
-
-        Ok(deleted)
     }
 
     async fn search(
@@ -310,6 +372,12 @@ impl Database {
         let doc_count = all_docs.len();
         let total_size: usize = all_docs.iter().map(|d| d.size).sum();
         Ok((doc_count, total_size))
+    }
+
+    /// Flush any buffered writes to ensure durability
+    async fn flush(&self) -> Result<()> {
+        self.storage.lock().await.flush().await?;
+        Ok(())
     }
 }
 
@@ -373,13 +441,15 @@ async fn main() -> Result<()> {
                 };
 
                 let doc_id = db.insert(path.clone(), title.clone(), content).await?;
+                // Ensure the write is persisted before exiting
+                db.flush().await?;
                 println!("✅ Document inserted successfully!");
                 println!("   ID: {}", doc_id.as_uuid());
                 println!("   Path: {path}");
                 println!("   Title: {title}");
             }
 
-            Commands::Get { id } => match db.get(&id).await? {
+            Commands::Get { path } => match db.get_by_path(&path).await? {
                 Some(doc) => {
                     println!("📄 Document found:");
                     println!("   ID: {}", doc.id.as_uuid());
@@ -397,8 +467,8 @@ async fn main() -> Result<()> {
             },
 
             Commands::Update {
-                id,
                 path,
+                new_path,
                 title,
                 content,
             } => {
@@ -412,13 +482,17 @@ async fn main() -> Result<()> {
                     content
                 };
 
-                db.update(&id, path, title, content).await?;
+                db.update_by_path(&path, new_path, title, content).await?;
+                // Ensure the write is persisted before exiting
+                db.flush().await?;
                 println!("✅ Document updated successfully!");
             }
 
-            Commands::Delete { id } => {
-                let deleted = db.delete(&id).await?;
+            Commands::Delete { path } => {
+                let deleted = db.delete_by_path(&path).await?;
+                // Ensure the deletion is persisted before exiting
                 if deleted {
+                    db.flush().await?;
                     println!("✅ Document deleted successfully!");
                 } else {
                     println!("❌ Document not found");

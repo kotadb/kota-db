@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_validated_path() {
         // Valid paths
-        assert!(ValidatedPath::new("/test/file.md").is_ok());
+        assert!(ValidatedPath::new("test/file.md").is_ok());
         assert!(ValidatedPath::new("relative/path.txt").is_ok());
 
         // Invalid paths
@@ -522,7 +522,7 @@ mod tests {
 
         // Create draft
         let draft = TypedDocument::<Draft>::new(
-            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedPath::new("test.md").expect("Test path should be valid"),
             [0u8; 32],
             NonZeroSize::new(1024).expect("Test size should be valid"),
             ValidatedTitle::new("Test").expect("Test title should be valid"),

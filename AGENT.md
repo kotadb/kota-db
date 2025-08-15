@@ -17,8 +17,14 @@ gh api repos/:owner/:repo/commits/<sha>/comments --method POST --field body="[Ag
 # ALWAYS comment on PRs extensively
 gh pr comment <pr-number> --body "Code review complete. Found [details]. Suggestions: [list]"
 
-# Create issues for any problems found
-gh issue create --title "[Agent] Found issue: [description]" --body "[Detailed description with context]"
+# ALWAYS check available labels before creating issues
+gh label list --limit 100  # Review existing labels first
+
+# Create new labels if needed before making issues
+gh label create "new-label" --description "Label description" --color "E99695"
+
+# Create issues with appropriate labels
+gh issue create --title "[Agent] Found issue: [description]" --body "[Detailed description with context]" --label "bug,priority-high"
 ```
 
 ### 2. Agent Handoff Protocol
@@ -45,6 +51,34 @@ EVERY agent action must be accompanied by:
 - **Comments on commits** - For explaining why changes were made
 
 **❌ AVOID creating .md files in root directory** unless absolutely necessary for project structure (like README.md, CONTRIBUTING.md). Use GitHub's native documentation features instead.
+
+### 4a. Label Management Protocol
+**ALWAYS check and manage labels appropriately:**
+
+```bash
+# Check existing labels before creating issues
+gh label list --search "bug"        # Search for specific label types
+gh label list --limit 100           # List all labels (increase limit if needed)
+
+# Create new labels when appropriate
+gh label create "enhancement" --description "New feature or improvement" --color "84b6eb"
+gh label create "security" --description "Security-related issues" --color "d73a4a"
+gh label create "performance" --description "Performance optimization" --color "0052cc"
+gh label create "documentation" --description "Documentation improvements" --color "0075ca"
+
+# Apply labels when creating issues
+gh issue create --title "Fix memory leak" --body "Details..." --label "bug,priority-high,performance"
+
+# Add labels to existing issues
+gh issue edit 123 --add-label "security,critical"
+```
+
+**Standard Label Categories:**
+- **Type**: `bug`, `enhancement`, `feature`, `documentation`
+- **Priority**: `priority-critical`, `priority-high`, `priority-medium`, `priority-low`
+- **Status**: `in-progress`, `blocked`, `needs-review`, `ready-to-merge`
+- **Component**: `storage`, `index`, `mcp`, `testing`, `ci-cd`
+- **Effort**: `effort-small`, `effort-medium`, `effort-large`
 
 ### 5. Efficient Agent Operations
 **Use subagents liberally to optimize context usage:**

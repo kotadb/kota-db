@@ -760,7 +760,7 @@ fn create_test_documents(count: usize, test_type: &str) -> Result<Vec<Document>>
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/{test_type}/integrity_test_{i:04}.md"))?;
+        let path = ValidatedPath::new(format!("{test_type}/integrity_test_{i:04}.md"))?;
         let title = ValidatedTitle::new(format!("{test_type} Integrity Test Document {i}"))?;
 
         let content = format!(

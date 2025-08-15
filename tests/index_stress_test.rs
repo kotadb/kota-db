@@ -43,7 +43,7 @@ fn generate_test_documents(
         let topic = topics[i % topics.len()];
 
         // Create realistic paths that would contain the topic content
-        let path = ValidatedPath::new(format!("/{topic}/guide_{i}_{avg_size}bytes.md"))?;
+        let path = ValidatedPath::new(format!("{topic}/guide_{i}_{avg_size}bytes.md"))?;
         documents.push((id, path));
     }
 
@@ -64,7 +64,7 @@ async fn test_btree_stress_50k_entries() -> Result<()> {
 
     for i in 0..test_size {
         keys.push(ValidatedDocumentId::from_uuid(Uuid::new_v4())?);
-        paths.push(ValidatedPath::new(format!("/stress/50k/doc_{i}.md"))?);
+        paths.push(ValidatedPath::new(format!("stress/50k/doc_{i}.md"))?);
     }
 
     // Test insertion performance
@@ -128,7 +128,7 @@ async fn test_btree_stress_100k_entries() -> Result<()> {
 
     for i in 0..test_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/stress/100k/doc_{i}.md"))?;
+        let path = ValidatedPath::new(format!("stress/100k/doc_{i}.md"))?;
         test_pairs.push((id, path));
     }
 
@@ -471,7 +471,7 @@ async fn test_realistic_workload_simulation() -> Result<()> {
             7..=8 => {
                 // 20% inserts - new documents
                 let new_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                let new_path = ValidatedPath::new(format!("/new/workload_doc_{i}.md"))?;
+                let new_path = ValidatedPath::new(format!("new/workload_doc_{i}.md"))?;
                 index.insert(new_id, new_path.clone()).await?;
                 documents.push((new_id, new_path));
                 inserts += 1;

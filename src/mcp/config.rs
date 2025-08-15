@@ -38,8 +38,6 @@ pub struct MCPProtocolConfig {
     pub server_version: String,
     pub enable_document_tools: bool,
     pub enable_search_tools: bool,
-    pub enable_analytics_tools: bool,
-    pub enable_graph_tools: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -94,8 +92,6 @@ impl Default for MCPConfig {
                 server_version: "0.2.0".to_string(),
                 enable_document_tools: true,
                 enable_search_tools: true,
-                enable_analytics_tools: true,
-                enable_graph_tools: true,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

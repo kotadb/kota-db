@@ -30,6 +30,35 @@ gh pr create --base develop
 
 For more details, see `docs/BRANCHING_STRATEGY.md`.
 
+## GitHub Issue Management
+
+### Label Management Protocol
+Before creating issues, always check existing labels and create new ones if needed:
+
+```bash
+# Check what labels are available
+gh label list --limit 100
+
+# Search for specific label types
+gh label list --search "bug"
+gh label list --search "performance"
+
+# Create new labels when needed
+gh label create "database" --description "Database-related issues" --color "1d76db"
+gh label create "embedding" --description "Embedding and vector search issues" --color "0e8a16"
+gh label create "mcp-server" --description "MCP server related issues" --color "6f42c1"
+
+# Create issues with appropriate labels
+gh issue create --title "Issue title" --body "Description" --label "bug,storage,priority-high"
+```
+
+### Standard Label Categories for KotaDB
+- **Component**: `storage`, `index`, `mcp`, `embedding`, `vector-search`, `trigram`, `primary-index`
+- **Type**: `bug`, `enhancement`, `feature`, `refactor`, `documentation`, `test`  
+- **Priority**: `priority-critical`, `priority-high`, `priority-medium`, `priority-low`
+- **Effort**: `effort-small` (< 1 day), `effort-medium` (1-3 days), `effort-large` (> 3 days)
+- **Status**: `needs-investigation`, `blocked`, `in-progress`, `ready-for-review`
+
 ## Commands for Development
 
 ### Versioning and Release
