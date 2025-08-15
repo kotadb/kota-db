@@ -1253,21 +1253,51 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::json;
-    use tempfile::TempDir;
     use tower::util::ServiceExt;
 
-    async fn create_test_storage() -> (Arc<Mutex<dyn Storage>>, TempDir) {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let storage = create_file_storage(temp_dir.path().to_str().unwrap(), Some(1000))
+    // Test directory that cleans up on drop
+    struct TestDir {
+        path: String,
+    }
+
+    impl TestDir {
+        async fn new() -> Self {
+            let path = format!("test_data/http_test_{}", uuid::Uuid::new_v4());
+            tokio::fs::create_dir_all(&path)
+                .await
+                .expect("Failed to create test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &str {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            // Clean up test directory
+            let path = self.path.clone();
+            std::thread::spawn(move || {
+                let _ = std::fs::remove_dir_all(path);
+            });
+        }
+    }
+
+    async fn create_test_storage() -> (Arc<Mutex<dyn Storage>>, TestDir) {
+        let test_dir = TestDir::new().await;
+
+        let storage = create_file_storage(test_dir.path(), Some(1000))
             .await
             .expect("Failed to create storage");
         let wrapped = create_wrapped_storage(storage, 100).await;
-        (Arc::new(Mutex::new(wrapped)), temp_dir)
+
+        (Arc::new(Mutex::new(wrapped)), test_dir)
     }
 
     #[tokio::test]
     async fn test_health_check() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1280,11 +1310,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_document() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let request_body = json!({
-            "path": "/test.md",
+            "path": "test.md",
             "title": "Test Document",
             "content": b"Hello, world!".to_vec(),
             "tags": ["test"]
@@ -1306,7 +1336,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nonexistent_document() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let doc_id = Uuid::new_v4();
@@ -1324,7 +1354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_document_id() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1341,7 +1371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_monitoring_endpoints() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test connection stats endpoint
@@ -1366,7 +1396,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1383,7 +1413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resource_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1405,7 +1435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_aggregated_stats_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1424,7 +1454,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_semantic_search_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let request_body = json!({
@@ -1451,7 +1481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_search_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let request_body = json!({
@@ -1478,7 +1508,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_documents_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         let response = app
@@ -1495,14 +1525,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_large_document_support() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Create a document larger than 1MB (but less than our 100MB limit)
         let large_content = vec![b'a'; 5 * 1024 * 1024]; // 5MB of 'a' characters
 
         let request_body = json!({
-            "path": "/large_test.md",
+            "path": "large_test.md",
             "title": "Large Test Document",
             "content": large_content,
             "tags": ["large", "test"]
@@ -1531,7 +1561,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_document_size_limit_exceeded() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Create a document larger than our 100MB limit
@@ -1548,12 +1578,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_path_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test valid path
         let request_body = json!({
-            "path": "/test/document.md"
+            "path": "test/document.md"
         });
 
         let response = app
@@ -1578,7 +1608,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_path_endpoint_invalid() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test invalid path (contains parent directory reference)
@@ -1608,7 +1638,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_document_id_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test valid document ID
@@ -1638,7 +1668,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_document_id_endpoint_invalid() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test invalid document ID
@@ -1668,7 +1698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_title_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test valid title
@@ -1697,7 +1727,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_tag_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test valid tag
@@ -1726,12 +1756,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_bulk_endpoint() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Test bulk validation with mixed valid/invalid data
         let request_body = json!({
-            "paths": ["/valid/path.md", "../invalid/path"],
+            "paths": ["valid/path.md", "../invalid/path"],
             "document_ids": [Uuid::new_v4().to_string(), "invalid-uuid"],
             "titles": ["Valid Title", ""],
             "tags": ["valid-tag", "invalid@tag"]
@@ -1761,7 +1791,7 @@ mod tests {
         // Check path validations
         let path_results = bulk_response.paths.unwrap();
         assert_eq!(path_results.len(), 2);
-        assert!(path_results[0].valid); // /valid/path.md
+        assert!(path_results[0].valid); // valid/path.md
         assert!(!path_results[1].valid); // ../invalid/path
 
         // Check document ID validations
@@ -1775,11 +1805,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_bulk_request_limits() -> Result<()> {
-        let (storage, _temp_dir) = create_test_storage().await;
+        let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
         // Create a request with too many items
-        let too_many_paths: Vec<String> = (0..150).map(|i| format!("/path_{}.md", i)).collect();
+        let too_many_paths: Vec<String> = (0..150).map(|i| format!("path_{}.md", i)).collect();
         let request_body = json!({
             "paths": too_many_paths
         });

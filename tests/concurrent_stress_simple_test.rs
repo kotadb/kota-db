@@ -83,9 +83,8 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
                 } else {
                     // Write operation
                     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                    let path = ValidatedPath::new(format!(
-                        "/phase2b/pattern_{pattern_id}/op_{op_num}.md"
-                    ))?;
+                    let path =
+                        ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
                     let title =
                         ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
                     let content = format!(
@@ -493,7 +492,7 @@ async fn test_phase2b_burst_workload_patterns() -> Result<()> {
 // Helper function to create test documents
 async fn create_test_document(index: usize, test_type: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/{test_type}/doc_{index:06}.md"))?;
+    let path = ValidatedPath::new(format!("{test_type}/doc_{index:06}.md"))?;
     let title = ValidatedTitle::new(format!("{test_type} Test Document {index}"))?;
 
     let content = format!(

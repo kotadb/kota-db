@@ -295,8 +295,8 @@ impl Index for PrimaryIndex {
     where
         Self: Sized,
     {
-        // Validate path using existing validation
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let index_path = PathBuf::from(path);
         let index = Self {
@@ -501,8 +501,8 @@ pub async fn create_primary_index(
     path: &str,
     _cache_capacity: Option<usize>,
 ) -> Result<MeteredIndex<PrimaryIndex>> {
-    // Stage 2: Validate path using existing validation
-    validation::path::validate_directory_path(path)?;
+    // Stage 2: Validate path for internal storage (allows absolute paths)
+    validation::path::validate_storage_directory_path(path)?;
 
     let index_path = PathBuf::from(path);
     let index = PrimaryIndex {
@@ -528,7 +528,7 @@ pub async fn create_primary_index(
 /// Alternative factory function for testing without cache parameter
 /// Used internally by tests that don't need to specify cache capacity
 pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> {
-    validation::path::validate_directory_path(path)?;
+    validation::path::validate_storage_directory_path(path)?;
 
     let index_path = PathBuf::from(path);
     let index = PrimaryIndex {
@@ -548,23 +548,17 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_primary_index_contract_enforcement() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("contract_test");
+        let test_dir = format!("test_data/primary_contract_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
 
-        let mut index = create_primary_index_for_tests(
-            index_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid primary index test path"))?,
-        )
-        .await?;
+        let mut index = create_primary_index_for_tests(&test_dir).await?;
 
         // Test precondition validation
         let valid_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let valid_path = ValidatedPath::new("/test/contract.md")?;
+        let valid_path = ValidatedPath::new("test/contract.md")?;
 
         // This should succeed
         index.insert(valid_id, valid_path.clone()).await?;
@@ -575,20 +569,18 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], valid_id);
 
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_primary_index_metadata_management() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("metadata_test");
+        let test_dir = format!("test_data/primary_metadata_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
 
-        let mut index = create_primary_index_for_tests(
-            index_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid primary index test path"))?,
-        )
-        .await?;
+        let mut index = create_primary_index_for_tests(&test_dir).await?;
 
         // Check initial metadata
         {
@@ -599,7 +591,7 @@ mod tests {
 
         // Insert document and check metadata update
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test/metadata.md")?;
+        let doc_path = ValidatedPath::new("test/metadata.md")?;
 
         index.insert(doc_id, doc_path).await?;
 
@@ -615,6 +607,9 @@ mod tests {
             let metadata = index.metadata.read().await;
             assert_eq!(metadata.document_count, 0);
         }
+
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
 
         Ok(())
     }

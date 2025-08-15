@@ -271,8 +271,8 @@ jobs:
       run: |
         # Quick performance smoke test - just verify the binary works
         ./target/release/kotadb --version
-        ./target/release/kotadb insert /test/doc.md "Test Document" "Test content"
-        ./target/release/kotadb get /test/doc.md
+        ./target/release/kotadb insert test/doc.md "Test Document" "Test content"
+        ./target/release/kotadb get test/doc.md
         ./target/release/kotadb list
         ./target/release/kotadb stats
         echo "✅ Basic operations working"

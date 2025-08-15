@@ -7,13 +7,13 @@ use kotadb::builders::*;
 #[test]
 fn test_document_builder_basic() -> Result<()> {
     let doc = DocumentBuilder::new()
-        .path("/test/document.md")?
+        .path("test/document.md")?
         .title("Test Document")?
         .content(b"Hello, world!")
         .word_count(2)
         .build()?;
 
-    assert_eq!(doc.path.as_str(), "/test/document.md");
+    assert_eq!(doc.path.as_str(), "test/document.md");
     assert_eq!(doc.title.as_str(), "Test Document");
     assert_eq!(doc.size, 13);
     assert!(doc.created_at.timestamp() > 0);
@@ -26,7 +26,7 @@ fn test_document_builder_basic() -> Result<()> {
 fn test_document_builder_auto_word_count() -> Result<()> {
     let content = b"This is a test document with several words in it.";
     let doc = DocumentBuilder::new()
-        .path("/test/auto_count.md")?
+        .path("test/auto_count.md")?
         .title("Auto Count")?
         .content(content)
         // Don't set word_count - should be calculated
@@ -40,7 +40,7 @@ fn test_document_builder_auto_word_count() -> Result<()> {
 #[test]
 fn test_document_builder_custom_timestamps() -> Result<()> {
     let doc = DocumentBuilder::new()
-        .path("/test/timed.md")?
+        .path("test/timed.md")?
         .title("Timed Document")?
         .content(b"Content")
         .timestamps(1000, 2000)?
@@ -59,7 +59,7 @@ fn test_document_builder_validation() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("path is required"));
 
-    let result = DocumentBuilder::new().path("/test/doc.md").unwrap().build();
+    let result = DocumentBuilder::new().path("test/doc.md").unwrap().build();
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
@@ -67,7 +67,7 @@ fn test_document_builder_validation() {
         .contains("title is required"));
 
     let result = DocumentBuilder::new()
-        .path("/test/doc.md")
+        .path("test/doc.md")
         .unwrap()
         .title("Title")
         .unwrap()
@@ -80,7 +80,7 @@ fn test_document_builder_validation() {
 
     // Invalid timestamps
     let result = DocumentBuilder::new()
-        .path("/test/doc.md")
+        .path("test/doc.md")
         .unwrap()
         .title("Title")
         .unwrap()
@@ -164,13 +164,13 @@ fn test_storage_config_builder() -> Result<()> {
     use std::time::Duration;
 
     let config = StorageConfigBuilder::new()
-        .path("/data/kotadb")?
+        .path("data/kotadb")?
         .cache_size(200 * 1024 * 1024)
         .sync_interval(Duration::from_secs(30))
         .compression(true)
         .build()?;
 
-    assert_eq!(config.path.as_str(), "/data/kotadb");
+    assert_eq!(config.path.as_str(), "data/kotadb");
     assert_eq!(config.cache_size, Some(200 * 1024 * 1024));
     assert_eq!(config.sync_interval, Some(Duration::from_secs(30)));
     assert!(config.compression_enabled);
@@ -182,7 +182,7 @@ fn test_storage_config_builder() -> Result<()> {
 #[test]
 fn test_storage_config_builder_no_cache() -> Result<()> {
     let config = StorageConfigBuilder::new()
-        .path("/data/kotadb")?
+        .path("data/kotadb")?
         .no_cache()
         .build()?;
 
@@ -195,7 +195,7 @@ fn test_storage_config_builder_no_cache() -> Result<()> {
 fn test_storage_config_builder_with_encryption() -> Result<()> {
     let key = [0u8; 32];
     let config = StorageConfigBuilder::new()
-        .path("/data/secure")?
+        .path("data/secure")?
         .encryption_key(key)
         .build()?;
 
@@ -268,7 +268,7 @@ fn test_metrics_builder_validation() {
 fn test_builder_defaults() -> Result<()> {
     // StorageConfigBuilder has sensible defaults
     let config = StorageConfigBuilder::default()
-        .path("/data/kotadb")?
+        .path("data/kotadb")?
         .build()?;
 
     assert_eq!(config.cache_size, Some(100 * 1024 * 1024)); // 100MB default
@@ -289,14 +289,14 @@ fn test_builder_defaults() -> Result<()> {
 fn test_builder_chaining() -> Result<()> {
     // All methods should chain properly
     let doc = DocumentBuilder::new()
-        .path("/test/chain.md")?
+        .path("test/chain.md")?
         .title("Chained Document")?
         .content(b"Chained content")
         .word_count(2)
         .timestamps(1000, 2000)?
         .build()?;
 
-    assert_eq!(doc.path.as_str(), "/test/chain.md");
+    assert_eq!(doc.path.as_str(), "test/chain.md");
     assert_eq!(doc.title.as_str(), "Chained Document");
     assert_eq!(doc.created_at.timestamp(), 1000);
     assert_eq!(doc.updated_at.timestamp(), 2000);
@@ -313,14 +313,14 @@ fn test_builder_error_propagation() {
     assert!(result.is_err());
 
     let result = DocumentBuilder::new()
-        .path("/valid/path.md")
+        .path("valid/path.md")
         .unwrap()
         .title("") // Invalid empty title
         .map(|_| ());
     assert!(result.is_err());
 
     let result = DocumentBuilder::new()
-        .path("/valid/path.md")
+        .path("valid/path.md")
         .unwrap()
         .title("Valid Title")
         .unwrap()

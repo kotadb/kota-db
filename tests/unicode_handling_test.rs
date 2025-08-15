@@ -68,7 +68,7 @@ async fn test_comprehensive_unicode_support() -> Result<()> {
 
     println!("\nTesting Unicode content in documents...");
     for (i, content_str) in unicode_content_samples.iter().enumerate() {
-        let path = format!("/test/unicode_{}.md", i);
+        let path = format!("test/unicode_{}.md", i);
         let title = format!("Unicode Test {}", i);
 
         let result = DocumentBuilder::new()
@@ -113,8 +113,8 @@ async fn test_comprehensive_unicode_support() -> Result<()> {
             precomposed, combining
         );
 
-        let path1_result = ValidatedPath::new(format!("/test/{}.md", precomposed));
-        let path2_result = ValidatedPath::new(format!("/test/{}.md", combining));
+        let path1_result = ValidatedPath::new(format!("test/{}.md", precomposed));
+        let path2_result = ValidatedPath::new(format!("test/{}.md", combining));
 
         match (path1_result, path2_result) {
             (Ok(_), Ok(_)) => println!("  ✅ Both forms accepted"),
@@ -189,7 +189,7 @@ async fn test_unicode_content_processing() -> Result<()> {
     "#;
 
     let doc = DocumentBuilder::new()
-        .path("/test/comprehensive_unicode.md")?
+        .path("test/comprehensive_unicode.md")?
         .title("Comprehensive Unicode Test 🧪")?
         .content(unicode_content.as_bytes())
         .build()?;
@@ -205,7 +205,7 @@ async fn test_unicode_content_processing() -> Result<()> {
     assert_eq!(doc.title.as_str(), "Comprehensive Unicode Test 🧪");
 
     // Verify path handling
-    assert_eq!(doc.path.as_str(), "/test/comprehensive_unicode.md");
+    assert_eq!(doc.path.as_str(), "test/comprehensive_unicode.md");
 
     println!("✅ All Unicode content properly preserved and handled");
 

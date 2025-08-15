@@ -47,7 +47,7 @@ mod storage_index_integration_tests {
 
         // Create a test document
         let doc = DocumentBuilder::new()
-            .path("/integration/test.md")?
+            .path("integration/test.md")?
             .title("Integration Test Document")?
             .content(b"This tests storage and index coordination")
             .build()?;
@@ -83,7 +83,7 @@ mod storage_index_integration_tests {
 
         // Create and insert document
         let doc = DocumentBuilder::new()
-            .path("/integration/delete_test.md")?
+            .path("integration/delete_test.md")?
             .title("Delete Test Document")?
             .content(b"This document will be deleted")
             .build()?;
@@ -118,7 +118,7 @@ mod storage_index_integration_tests {
 
         // Create original document
         let doc = DocumentBuilder::new()
-            .path("/integration/update_test.md")?
+            .path("integration/update_test.md")?
             .title("Original Title")?
             .content(b"Original content")
             .build()?;
@@ -133,7 +133,7 @@ mod storage_index_integration_tests {
 
         // Update document (same ID, different content)
         let updated_doc = DocumentBuilder::new()
-            .path("/integration/updated_test.md")? // New path
+            .path("integration/updated_test.md")? // New path
             .title("Updated Title")?
             .content(b"Updated content")
             .build()?;
@@ -176,7 +176,7 @@ mod storage_index_integration_tests {
         // Create and insert multiple documents
         for i in 0..5 {
             let doc = DocumentBuilder::new()
-                .path(format!("/integration/multi_{i}.md"))?
+                .path(format!("integration/multi_{i}.md"))?
                 .title(format!("Multi Document {i}"))?
                 .content(format!("Content for document {i}").as_bytes())
                 .build()?;
@@ -225,7 +225,7 @@ mod storage_index_integration_tests {
 
             let handle = tokio::spawn(async move {
                 let doc = DocumentBuilder::new()
-                    .path(format!("/integration/concurrent_{i}.md"))
+                    .path(format!("integration/concurrent_{i}.md"))
                     .unwrap()
                     .title(format!("Concurrent Document {i}"))
                     .unwrap()
@@ -284,7 +284,7 @@ mod storage_index_integration_tests {
         std::fs::create_dir_all(format!("{storage_path}/meta"))?;
 
         let doc_id = Uuid::new_v4();
-        let doc_path = "/integration/persistent.md";
+        let doc_path = "integration/persistent.md";
 
         // Create and populate storage and index
         {
@@ -364,7 +364,7 @@ mod storage_index_performance_integration_tests {
         // Insert 100 documents to both storage and index
         for i in 0..100 {
             let doc = DocumentBuilder::new()
-                .path(format!("/integration/perf_{i}.md"))?
+                .path(format!("integration/perf_{i}.md"))?
                 .title(format!("Performance Document {i}"))?
                 .content(format!("Performance test content {i}").as_bytes())
                 .build()?;
@@ -397,7 +397,7 @@ mod storage_index_performance_integration_tests {
         // Pre-populate with 1000 documents
         for i in 0..1000 {
             let doc = DocumentBuilder::new()
-                .path(format!("/integration/search_perf_{i}.md"))?
+                .path(format!("integration/search_perf_{i}.md"))?
                 .title(format!("Search Performance Document {i}"))?
                 .content(format!("Search performance test content {i}").as_bytes())
                 .build()?;

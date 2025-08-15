@@ -78,7 +78,7 @@ fn compare_insertion_performance(sizes: &[usize]) {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(format!("/cmp/doc_{i}.md")).unwrap())
+            .map(|i| ValidatedPath::new(format!("cmp/doc_{i}.md")).unwrap())
             .collect();
 
         // Linear insertion
@@ -138,7 +138,7 @@ fn compare_search_performance(sizes: &[usize]) {
         let mut btree_idx = btree::create_empty_tree();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/cmp/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("cmp/doc_{i}.md")).unwrap();
             linear.insert(*key, path.clone());
             hashmap.insert(*key, path.clone());
             btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
@@ -205,7 +205,7 @@ fn demonstrate_complexity_growth() {
         // Build linear index and measure worst-case search
         let mut linear = LinearIndex::new();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/growth/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("growth/doc_{i}.md")).unwrap();
             linear.insert(*key, path);
         }
 
@@ -221,7 +221,7 @@ fn demonstrate_complexity_growth() {
         // Build B+ tree and measure search
         let mut btree_idx = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/growth/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("growth/doc_{i}.md")).unwrap();
             btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
         }
 
@@ -297,7 +297,7 @@ fn test_worst_case_scenarios() {
     let mut btree_idx = btree::create_empty_tree();
 
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/worst/doc_{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("worst/doc_{i}.md")).unwrap();
         linear.insert(*key, path.clone());
         btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
@@ -367,7 +367,7 @@ fn test_performance_at_scale() {
 
     // Insert sample keys
     for (i, key) in keys.iter().enumerate() {
-        let path = ValidatedPath::new(format!("/scale/doc_{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("scale/doc_{i}.md")).unwrap();
         btree_idx = btree::insert_into_tree(btree_idx, *key, path).unwrap();
     }
 
@@ -377,7 +377,7 @@ fn test_performance_at_scale() {
             println!("  Inserted {i} entries...");
         }
         let key = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-        let path = ValidatedPath::new(format!("/scale/doc_{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("scale/doc_{i}.md")).unwrap();
         btree_idx = btree::insert_into_tree(btree_idx, key, path).unwrap();
     }
 

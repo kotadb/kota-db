@@ -8,7 +8,7 @@ mod tests {
     fn test_btree_deletion_simple() {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())
             .expect("Failed to create document ID from UUID");
-        let path = ValidatedPath::new("/test/delete.md")
+        let path = ValidatedPath::new("test/delete.md")
             .expect("Failed to create valid path for test document");
 
         let mut tree = btree::create_empty_tree();
@@ -35,7 +35,7 @@ mod tests {
 
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/test/doc{i}.md"))
+            let path = ValidatedPath::new(format!("test/doc{i}.md"))
                 .expect("Failed to create valid path for test document");
             tree = btree::insert_into_tree(tree, *key, path)
                 .expect("Failed to insert document into B-tree");

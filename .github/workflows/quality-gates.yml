@@ -121,9 +121,9 @@ jobs:
         cargo build --release
         
         # Create test data with current version (db auto-initializes)
-        ./target/release/kotadb insert /test/doc.md "Test Document" "Test content"
+        ./target/release/kotadb insert test/doc.md "Test Document" "Test content"
         
         # Verify data can be read
-        ./target/release/kotadb get /test/doc.md | grep -q "Test content"
+        ./target/release/kotadb get test/doc.md | grep -q "Test content"
         echo "✅ Data operations working"
       continue-on-error: true

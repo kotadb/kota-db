@@ -275,8 +275,8 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
     where
         Self: Sized,
     {
-        // Validate path before opening
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let inner = S::open(path).await?;
         Ok(Self::new(inner))
@@ -1056,14 +1056,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_traced_storage() {
-        let storage = MockStorage::open("/test")
+        let storage = MockStorage::open("test")
             .await
             .expect("Mock storage should open");
         let mut traced = TracedStorage::new(storage);
 
         let doc = Document::new(
             ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
-            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedPath::new("test.md").expect("Test path should be valid"),
             ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],
@@ -1084,14 +1084,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_cached_storage() {
-        let storage = MockStorage::open("/test")
+        let storage = MockStorage::open("test")
             .await
             .expect("Mock storage should open");
         let cached = CachedStorage::new(storage, 10);
 
         let doc = Document::new(
             ValidatedDocumentId::from_uuid(Uuid::new_v4()).expect("UUID should be valid"),
-            ValidatedPath::new("/test.md").expect("Test path should be valid"),
+            ValidatedPath::new("test.md").expect("Test path should be valid"),
             ValidatedTitle::new("Test Document").expect("Test title should be valid"),
             b"test content".to_vec(),
             vec![],

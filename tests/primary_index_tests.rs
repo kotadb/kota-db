@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use kotadb::{Index, Query, ValidatedDocumentId, ValidatedPath};
-use tempfile::TempDir;
 use uuid::Uuid;
 
 // Note: PrimaryIndex will be implemented to satisfy these tests
@@ -11,10 +10,18 @@ use uuid::Uuid;
 
 // Helper function to create test primary index
 async fn create_test_index() -> Result<impl Index> {
-    let temp_dir = TempDir::new()?;
-    let index_path = temp_dir.path().join("primary_index");
+    let test_dir = format!("test_data/primary_test_{}", uuid::Uuid::new_v4());
+    tokio::fs::create_dir_all(&test_dir).await?;
+    let index_path = format!("{}/primary_index", test_dir);
 
-    kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await
+    let result = kotadb::create_primary_index_for_tests(&index_path).await;
+
+    // Clean up on test completion (best effort)
+    tokio::spawn(async move {
+        let _ = tokio::fs::remove_dir_all(&test_dir).await;
+    });
+
+    result
 }
 
 #[cfg(test)]
@@ -27,7 +34,7 @@ mod primary_index_tests {
 
         // Create test data
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test/document.md")?;
+        let doc_path = ValidatedPath::new("test/document.md")?;
 
         // Insert key-value pair
         index.insert(doc_id, doc_path.clone()).await?;
@@ -57,8 +64,8 @@ mod primary_index_tests {
         let mut index = create_test_index().await?;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path1 = ValidatedPath::new("/test/doc1.md")?;
-        let path2 = ValidatedPath::new("/test/doc2.md")?;
+        let path1 = ValidatedPath::new("test/doc1.md")?;
+        let path2 = ValidatedPath::new("test/doc2.md")?;
 
         // First insert
         index.insert(doc_id, path1).await?;
@@ -81,7 +88,7 @@ mod primary_index_tests {
         let mut index = create_test_index().await?;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test/document.md")?;
+        let doc_path = ValidatedPath::new("test/document.md")?;
 
         // Insert then delete
         index.insert(doc_id, doc_path).await?;
@@ -114,13 +121,13 @@ mod primary_index_tests {
 
         // Create multiple documents
         let doc1_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc1_path = ValidatedPath::new("/test/doc1.md")?;
+        let doc1_path = ValidatedPath::new("test/doc1.md")?;
 
         let doc2_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc2_path = ValidatedPath::new("/test/doc2.md")?;
+        let doc2_path = ValidatedPath::new("test/doc2.md")?;
 
         let doc3_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc3_path = ValidatedPath::new("/test/doc3.md")?;
+        let doc3_path = ValidatedPath::new("test/doc3.md")?;
 
         // Insert all documents
         index.insert(doc1_id, doc1_path.clone()).await?;
@@ -141,12 +148,13 @@ mod primary_index_tests {
 
     #[tokio::test]
     async fn test_primary_index_persistence() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("persistent_index");
-        let index_path_str = index_path.to_str().unwrap();
+        let test_dir = format!("test_data/persistence_test_{}", uuid::Uuid::new_v4());
+        tokio::fs::create_dir_all(&test_dir).await?;
+        let index_path = format!("{}/persistent_index", test_dir);
+        let index_path_str = &index_path;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test/persistent.md")?;
+        let doc_path = ValidatedPath::new("test/persistent.md")?;
 
         // Create index, insert data, and flush
         {
@@ -166,6 +174,9 @@ mod primary_index_tests {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0], doc_id);
         }
+
+        // Clean up test directory
+        let _ = tokio::fs::remove_dir_all(&test_dir).await;
 
         Ok(())
     }
@@ -190,7 +201,7 @@ mod primary_index_tests {
         let mut expected_paths = Vec::new();
         for i in 0..1000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/test/doc_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("test/doc_{i}.md"))?;
 
             index.insert(doc_id, doc_path.clone()).await?;
             expected_paths.push(doc_path);
@@ -223,7 +234,7 @@ mod primary_index_tests {
 
             let handle = tokio::spawn(async move {
                 let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let doc_path = ValidatedPath::new(format!("/test/concurrent_{i}.md")).unwrap();
+                let doc_path = ValidatedPath::new(format!("test/concurrent_{i}.md")).unwrap();
 
                 let mut index_guard = index_clone.lock().await;
                 index_guard.insert(doc_id, doc_path).await.unwrap();
@@ -262,7 +273,7 @@ mod primary_index_performance_tests {
         // Insert 100 documents and measure time
         for i in 0..100 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/test/perf_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("test/perf_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
         }
@@ -286,7 +297,7 @@ mod primary_index_performance_tests {
         // Pre-populate with 1000 documents
         for i in 0..1000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/test/search_perf_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("test/search_perf_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
         }

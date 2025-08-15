@@ -930,7 +930,7 @@ fn create_observable_test_documents(count: usize) -> Result<Vec<Document>> {
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/observability/test_{i:04}.md"))?;
+        let path = ValidatedPath::new(format!("observability/test_{i:04}.md"))?;
         let title = ValidatedTitle::new(format!("Observability Test Document {i}"))?;
 
         let content = format!(
@@ -981,7 +981,7 @@ This document helps validate logging, metrics, and tracing capabilities.
 
 fn create_monitoring_test_document(index: usize) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/monitoring/doc_{index:04}.md"))?;
+    let path = ValidatedPath::new(format!("monitoring/doc_{index:04}.md"))?;
     let title = ValidatedTitle::new(format!("Monitoring Test Document {index}"))?;
 
     let content = format!(

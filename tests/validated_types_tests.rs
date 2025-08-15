@@ -7,16 +7,16 @@ use uuid::Uuid;
 
 #[test]
 fn test_validated_path_accepts_valid_paths() {
-    // Absolute paths
-    assert!(ValidatedPath::new("/home/user/documents/file.md").is_ok());
-    assert!(ValidatedPath::new("/var/log/kotadb/data.db").is_ok());
+    // Relative paths that should be accepted
+    assert!(ValidatedPath::new("home/user/documents/file.md").is_ok());
+    assert!(ValidatedPath::new("var/log/kotadb/data.db").is_ok());
 
     // Relative paths
     assert!(ValidatedPath::new("documents/notes/todo.md").is_ok());
     assert!(ValidatedPath::new("./local/file.txt").is_ok());
 
     // Paths with spaces (properly handled)
-    assert!(ValidatedPath::new("/Users/name/My Documents/file.md").is_ok());
+    assert!(ValidatedPath::new("Users/name/My Documents/file.md").is_ok());
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn test_validated_limit() {
 fn test_document_state_machine() {
     // Create a draft document
     let draft = TypedDocument::<Draft>::new(
-        ValidatedPath::new("/test/doc.md").unwrap(),
+        ValidatedPath::new("test/doc.md").unwrap(),
         [0u8; 32],
         NonZeroSize::new(1024).unwrap(),
         ValidatedTitle::new("Test Document").unwrap(),
@@ -227,7 +227,7 @@ fn test_document_state_machine() {
     );
 
     // Check initial state
-    assert_eq!(draft.path.as_str(), "/test/doc.md");
+    assert_eq!(draft.path.as_str(), "test/doc.md");
     assert_eq!(draft.title.as_str(), "Test Document");
     assert_eq!(draft.size.get(), 1024);
     assert_eq!(draft.word_count, 100);
@@ -251,9 +251,9 @@ fn test_document_state_machine() {
 #[test]
 fn test_type_conversions() {
     // ValidatedPath to String
-    let path = ValidatedPath::new("/test/file.md").unwrap();
-    assert_eq!(path.to_string(), "/test/file.md");
-    assert_eq!(path.as_str(), "/test/file.md");
+    let path = ValidatedPath::new("test/file.md").unwrap();
+    assert_eq!(path.to_string(), "test/file.md");
+    assert_eq!(path.as_str(), "test/file.md");
 
     // ValidatedTitle to String
     let title = ValidatedTitle::new("My Title").unwrap();
@@ -274,9 +274,9 @@ fn test_equality_and_hashing() {
     use std::collections::HashSet;
 
     // ValidatedPath equality and hashing
-    let path1 = ValidatedPath::new("/test/file.md").unwrap();
-    let path2 = ValidatedPath::new("/test/file.md").unwrap();
-    let path3 = ValidatedPath::new("/test/other.md").unwrap();
+    let path1 = ValidatedPath::new("test/file.md").unwrap();
+    let path2 = ValidatedPath::new("test/file.md").unwrap();
+    let path3 = ValidatedPath::new("test/other.md").unwrap();
 
     assert_eq!(path1, path2);
     assert_ne!(path1, path3);

@@ -34,9 +34,9 @@ mod btree_node_tests {
         let doc_id2 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc_id3 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
 
-        let path1 = ValidatedPath::new("/test/doc1.md")?;
-        let path2 = ValidatedPath::new("/test/doc2.md")?;
-        let path3 = ValidatedPath::new("/test/doc3.md")?;
+        let path1 = ValidatedPath::new("test/doc1.md")?;
+        let path2 = ValidatedPath::new("test/doc2.md")?;
+        let path3 = ValidatedPath::new("test/doc3.md")?;
 
         // Insert keys in non-sorted order
         let mut node = btree::create_leaf_node();
@@ -57,7 +57,7 @@ mod btree_node_tests {
     fn test_btree_node_search() -> Result<()> {
         // Test binary search within a node
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/search.md")?;
+        let path = ValidatedPath::new("test/search.md")?;
 
         let mut node = btree::create_leaf_node();
         node = btree::insert_key_value_in_leaf(node, doc_id, path.clone())?;
@@ -85,7 +85,7 @@ mod btree_node_tests {
         // Insert up to capacity
         for i in 0..MAX_KEYS {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/test/capacity_{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/capacity_{i}.md"))?;
             node = btree::insert_key_value_in_leaf(node, doc_id, path)?;
         }
 
@@ -94,7 +94,7 @@ mod btree_node_tests {
 
         // One more insertion should trigger split requirement
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/overflow.md")?;
+        let path = ValidatedPath::new("test/overflow.md")?;
         node = btree::insert_key_value_in_leaf(node, doc_id, path)?;
         assert!(node.needs_split());
 
@@ -116,7 +116,7 @@ mod btree_split_tests {
         // Fill node beyond capacity
         for i in 0..(MAX_KEYS + 1) {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/test/split_{i:02}.md"))?;
+            let path = ValidatedPath::new(format!("test/split_{i:02}.md"))?;
             node = btree::insert_key_value_in_leaf(node, doc_id, path)?;
         }
 
@@ -182,7 +182,7 @@ mod btree_tree_operations_tests {
         // Pure function: search_in_tree(root, key) -> Option<Value>
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/search_target.md")?;
+        let path = ValidatedPath::new("test/search_target.md")?;
 
         // let mut tree_root = btree::create_empty_tree()?;
         // tree_root = btree::insert_into_tree(tree_root, doc_id.clone(), path.clone())?;
@@ -206,7 +206,7 @@ mod btree_tree_operations_tests {
         // Pure function: delete_from_tree(root, key) -> Result<TreeRoot>
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/delete_target.md")?;
+        let path = ValidatedPath::new("test/delete_target.md")?;
 
         // Create tree and insert key
         let mut tree_root = btree::create_empty_tree();
@@ -237,7 +237,7 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/test/doc{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/doc{i}.md"))?;
             tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
@@ -271,7 +271,7 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/test/redistribute{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/redistribute{i}.md"))?;
             tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
@@ -295,7 +295,7 @@ mod btree_tree_operations_tests {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/test/merge{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/merge{i}.md"))?;
             tree_root = btree::insert_into_tree(tree_root, *key, path)?;
         }
 
@@ -325,7 +325,7 @@ mod btree_tree_operations_tests {
         let mut tree = btree::create_empty_tree();
         let key1 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let key2 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/edge.md")?;
+        let path = ValidatedPath::new("test/edge.md")?;
 
         tree = btree::insert_into_tree(tree, key1, path)?;
         let result = btree::delete_from_tree(tree.clone(), &key2)?;

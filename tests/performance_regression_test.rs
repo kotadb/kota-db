@@ -77,7 +77,7 @@ fn measure_insertion_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
             .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
             .collect();
         let paths: Vec<_> = (0..size)
-            .map(|i| ValidatedPath::new(format!("/perf/doc_{i}.md")).unwrap())
+            .map(|i| ValidatedPath::new(format!("perf/doc_{i}.md")).unwrap())
             .collect();
 
         // Measure insertion time
@@ -107,7 +107,7 @@ fn measure_search_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/perf/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("perf/doc_{i}.md")).unwrap();
             tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
@@ -139,7 +139,7 @@ fn measure_deletion_performance(sizes: &[usize]) -> Vec<PerformanceResult> {
 
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/perf/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("perf/doc_{i}.md")).unwrap();
             tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 
@@ -305,7 +305,7 @@ fn test_mixed_operations_performance() {
     // Build initial tree
     let mut tree = btree::create_empty_tree();
     for (i, key) in keys.iter().take(size / 2).enumerate() {
-        let path = ValidatedPath::new(format!("/mixed/doc_{i}.md")).unwrap();
+        let path = ValidatedPath::new(format!("mixed/doc_{i}.md")).unwrap();
         tree = btree::insert_into_tree(tree, *key, path).unwrap();
     }
 
@@ -319,7 +319,7 @@ fn test_mixed_operations_performance() {
                 // Insert
                 let idx = size / 2 + i / 3;
                 if idx < size {
-                    let path = ValidatedPath::new(format!("/mixed/new_{i}.md")).unwrap();
+                    let path = ValidatedPath::new(format!("mixed/new_{i}.md")).unwrap();
                     tree = btree::insert_into_tree(tree, keys[idx], path).unwrap();
                 }
             }
@@ -379,7 +379,7 @@ fn test_performance_stability() {
         let start = Instant::now();
         let mut tree = btree::create_empty_tree();
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/stable/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("stable/doc_{i}.md")).unwrap();
             tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
         let insert_duration = start.elapsed();
