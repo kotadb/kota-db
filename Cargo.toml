@@ -103,6 +103,11 @@ fastrand = "2.3"
 tantivy = { version = "0.22", optional = true }  # Full-text search
 hnsw = { version = "0.11", optional = true }     # Vector search
 
+# Embedding and AI dependencies
+ort = { version = "2.0.0-rc.10", features = ["ndarray"], optional = true }  # ONNX Runtime
+tokenizers = { version = "0.20", optional = true }                          # Tokenization
+ndarray = { version = "0.15", optional = true }                             # N-dimensional arrays
+
 [dev-dependencies]
 criterion = "0.5"
 proptest = "1.5"
@@ -114,15 +119,17 @@ tempfile = "3.0"
 reqwest = { version = "0.11", features = ["json"] }
 
 [features]
-default = []
+default = ["embeddings-onnx"]
 # Advanced search features
 advanced-search = ["tantivy", "hnsw"]
 # MCP Server features
 mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
+# Embedding features
+embeddings-onnx = ["ort", "tokenizers", "ndarray"]           # ONNX Runtime embeddings (default)
 # Benchmarking
 bench = ["criterion", "proptest"]
 # Development features
-dev = ["bench"]
+dev = ["bench", "embeddings-onnx"]
 
 [profile.release]
 opt-level = 3

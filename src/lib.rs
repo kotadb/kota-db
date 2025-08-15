@@ -4,6 +4,7 @@
 pub mod builders;
 pub mod connection_pool;
 pub mod contracts;
+pub mod embedding_transformer;
 pub mod embeddings;
 pub mod file_storage;
 pub mod http_server;
