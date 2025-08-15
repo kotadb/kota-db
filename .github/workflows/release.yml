@@ -219,8 +219,16 @@ jobs:
       working-directory: ./clients/typescript
       run: |
         VERSION="${{ needs.create-release.outputs.version }}"
-        echo "Publishing TypeScript package version: $VERSION"
-        npm version $VERSION --no-git-tag-version
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "Current version: $CURRENT_VERSION"
+        echo "Target version: $VERSION"
+        
+        if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+          echo "Updating version from $CURRENT_VERSION to $VERSION"
+          npm version $VERSION --no-git-tag-version
+        else
+          echo "Version already set to $VERSION, skipping update"
+        fi
         
     - name: Install dependencies
       working-directory: ./clients/typescript
