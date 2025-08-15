@@ -275,8 +275,8 @@ impl<S: Storage> Storage for ValidatedStorage<S> {
     where
         Self: Sized,
     {
-        // Validate path before opening
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let inner = S::open(path).await?;
         Ok(Self::new(inner))

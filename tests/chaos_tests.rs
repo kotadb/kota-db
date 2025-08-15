@@ -86,14 +86,14 @@ async fn test_sudden_shutdown() -> Result<()> {
         }
     }
 
-    let mut storage = ShutdownStorage::open("/test").await?;
+    let mut storage = ShutdownStorage::open("test").await?;
     let mut successful_writes = 0;
 
     // Try to write 20 documents, but system will shutdown after 10
     for i in 0..20 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Doc {i}"))?,
             vec![0u8; 1024], // content
             vec![],          // tags
@@ -237,7 +237,7 @@ async fn test_network_partition() -> Result<()> {
     // Insert document on node1
     let doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/partition.md")?,
+        ValidatedPath::new("test/partition.md")?,
         ValidatedTitle::new("Partition Test")?,
         vec![0u8; 1024], // content
         vec![],          // tags
@@ -260,7 +260,7 @@ async fn test_network_partition() -> Result<()> {
     // Insert new document on node1
     let doc2 = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/partition2.md")?,
+        ValidatedPath::new("test/partition2.md")?,
         ValidatedTitle::new("Partition Test 2")?,
         vec![0u8; 1024], // content
         vec![],          // tags
@@ -401,7 +401,7 @@ async fn test_resource_exhaustion() -> Result<()> {
         }
     }
 
-    let storage = Arc::new(Mutex::new(ResourceLimitedStorage::open("/test").await?));
+    let storage = Arc::new(Mutex::new(ResourceLimitedStorage::open("test").await?));
     let mut handles = vec![];
 
     // Spawn many concurrent operations to exhaust file handles
@@ -410,7 +410,7 @@ async fn test_resource_exhaustion() -> Result<()> {
         let handle = tokio::spawn(async move {
             let doc = Document::new(
                 ValidatedDocumentId::new(),
-                ValidatedPath::new(format!("/test/{i}.md")).unwrap(),
+                ValidatedPath::new(format!("test/{i}.md")).unwrap(),
                 ValidatedTitle::new(format!("Doc {i}")).unwrap(),
                 vec![0u8; 50_000], // 50KB content
                 vec![],            // tags
@@ -565,7 +565,7 @@ async fn test_cascading_failure() -> Result<()> {
     for i in 0..20 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Doc {i}"))?,
             vec![0u8; 1024], // content
             vec![],          // tags
@@ -625,7 +625,7 @@ async fn test_byzantine_failures() -> Result<()> {
                 }
                 3 => {
                     // Corrupt path
-                    doc.path = ValidatedPath::new("/corrupted/path.md").unwrap();
+                    doc.path = ValidatedPath::new("corrupted/path.md").unwrap();
                 }
                 _ => {}
             }
@@ -678,7 +678,7 @@ async fn test_byzantine_failures() -> Result<()> {
                 if rand::random::<f32>() < 0.1 {
                     Ok(Some(Document::new(
                         ValidatedDocumentId::new(),
-                        ValidatedPath::new("/fake/doc.md")?,
+                        ValidatedPath::new("fake/doc.md")?,
                         ValidatedTitle::new("Fake Doc")?,
                         vec![0u8; 32],
                         vec![],
@@ -756,14 +756,14 @@ async fn test_byzantine_failures() -> Result<()> {
         }
     }
 
-    let mut storage = ByzantineStorage::open("/test").await?;
+    let mut storage = ByzantineStorage::open("test").await?;
     let mut inconsistencies = 0;
 
     // Insert documents and check for Byzantine behavior
     for i in 0..10 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Doc {i}"))?,
             vec![0u8; 1024], // content
             vec![],          // tags

@@ -180,12 +180,94 @@ pub mod path {
         Ok(())
     }
 
-    /// Validate a directory path
+    /// Validate a directory path (for user-provided paths - relative only)
     pub fn validate_directory_path(path: &str) -> Result<()> {
         validate_file_path(path)?;
 
         // Additional directory-specific checks
         let path_obj = Path::new(path);
+
+        // Ensure it's not a file with extension
+        if path_obj.extension().is_some() {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Directory path should not have file extension".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validate an internal storage directory path (allows absolute paths for storage)
+    pub fn validate_storage_directory_path(path: &str) -> Result<()> {
+        let ctx =
+            ValidationContext::new("validate_storage_directory_path").with_attribute("path", path);
+
+        // Check empty
+        ctx.clone()
+            .validate(!path.is_empty(), "Path cannot be empty")?;
+
+        // Check length
+        ctx.clone().validate(
+            path.len() < MAX_PATH_LENGTH,
+            &format!("Path exceeds maximum length of {MAX_PATH_LENGTH}"),
+        )?;
+
+        // Check for null bytes
+        ctx.clone()
+            .validate(!path.contains('\0'), "Path contains null bytes")?;
+
+        // Allow absolute paths for storage directories (unlike user paths)
+
+        // Still reject URL schemes
+        if path.contains("://") {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "URL schemes are not allowed in paths".to_string(),
+            });
+        }
+
+        // Still reject URL-encoded sequences
+        if path.contains("%2e")
+            || path.contains("%2E")
+            || path.contains("%2f")
+            || path.contains("%2F")
+            || path.contains("%5c")
+            || path.contains("%5C")
+        {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "URL-encoded characters are not allowed in paths".to_string(),
+            });
+        }
+
+        // Still reject multiple consecutive slashes or dots
+        if path.contains("//") || path.contains("\\\\") || path.contains("....") {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Multiple consecutive slashes or dots are not allowed".to_string(),
+            });
+        }
+
+        let path_obj = Path::new(path);
+
+        // Still check for directory traversal attempts in components
+        for component in path_obj.components() {
+            if let std::path::Component::ParentDir = component {
+                bail!(ValidationError::InvalidInput {
+                    field: "path".to_string(),
+                    reason: "Parent directory references (..) not allowed".to_string(),
+                });
+            }
+        }
+
+        // Check for valid UTF-8
+        if path_obj.to_str().is_none() {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Path is not valid UTF-8".to_string(),
+            });
+        }
 
         // Ensure it's not a file with extension
         if path_obj.extension().is_some() {

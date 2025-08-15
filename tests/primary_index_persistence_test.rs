@@ -29,15 +29,15 @@ async fn test_persistence_basic_save_and_load() -> Result<()> {
 
         // Insert multiple documents
         let doc1_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc1_path = ValidatedPath::new("/docs/first.md")?;
+        let doc1_path = ValidatedPath::new("docs/first.md")?;
         index.insert(doc1_id, doc1_path.clone()).await?;
 
         let doc2_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc2_path = ValidatedPath::new("/docs/second.md")?;
+        let doc2_path = ValidatedPath::new("docs/second.md")?;
         index.insert(doc2_id, doc2_path.clone()).await?;
 
         let doc3_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc3_path = ValidatedPath::new("/docs/third.md")?;
+        let doc3_path = ValidatedPath::new("docs/third.md")?;
         index.insert(doc3_id, doc3_path.clone()).await?;
 
         // Explicitly flush to disk
@@ -98,7 +98,7 @@ async fn test_persistence_corrupted_metadata() -> Result<()> {
     {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test.md")?;
+        let doc_path = ValidatedPath::new("test.md")?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
     }
@@ -131,7 +131,7 @@ async fn test_persistence_corrupted_btree_data() -> Result<()> {
     {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test.md")?;
+        let doc_path = ValidatedPath::new("test.md")?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
     }
@@ -265,10 +265,10 @@ async fn test_persistence_incremental_updates() -> Result<()> {
     let index_path = temp_dir.path().join("incremental_test");
 
     let doc1_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let doc1_path = ValidatedPath::new("/first.md")?;
+    let doc1_path = ValidatedPath::new("first.md")?;
 
     let doc2_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let doc2_path = ValidatedPath::new("/second.md")?;
+    let doc2_path = ValidatedPath::new("second.md")?;
 
     // First session: add one document
     {
@@ -320,7 +320,7 @@ async fn test_persistence_large_dataset() -> Result<()> {
 
         for i in 0..NUM_DOCS {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/docs/doc_{i:04}.md"))?;
+            let doc_path = ValidatedPath::new(format!("docs/doc_{i:04}.md"))?;
             doc_ids.push(doc_id);
             index.insert(doc_id, doc_path).await?;
         }
@@ -355,7 +355,7 @@ async fn test_persistence_concurrent_modifications() -> Result<()> {
     {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/initial.md")?;
+        let doc_path = ValidatedPath::new("initial.md")?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
     }
@@ -364,7 +364,7 @@ async fn test_persistence_concurrent_modifications() -> Result<()> {
     for i in 0..5 {
         let mut index = create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new(format!("/concurrent_{i}.md"))?;
+        let doc_path = ValidatedPath::new(format!("concurrent_{i}.md"))?;
         index.insert(doc_id, doc_path).await?;
         index.flush().await?;
         // Index dropped here, simulating process exit

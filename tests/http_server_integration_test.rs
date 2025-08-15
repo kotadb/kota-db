@@ -69,7 +69,7 @@ async fn test_document_lifecycle() -> Result<()> {
 
     // 1. Create a document
     let create_payload = json!({
-        "path": "/test-doc.md",
+        "path": "test-doc.md",
         "title": "Test Document",
         "content": [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100], // "Hello World"
         "tags": ["test", "integration"]
@@ -87,7 +87,7 @@ async fn test_document_lifecycle() -> Result<()> {
     let doc_id = created_doc["id"].as_str().unwrap();
 
     // Validate created document structure
-    assert_eq!(created_doc["path"], "/test-doc.md");
+    assert_eq!(created_doc["path"], "test-doc.md");
     assert_eq!(created_doc["title"], "Test Document");
     assert_eq!(
         created_doc["content"],
@@ -107,7 +107,7 @@ async fn test_document_lifecycle() -> Result<()> {
 
     let retrieved_doc: Value = get_response.json().await?;
     assert_eq!(retrieved_doc["id"], doc_id);
-    assert_eq!(retrieved_doc["path"], "/test-doc.md");
+    assert_eq!(retrieved_doc["path"], "test-doc.md");
     assert_eq!(retrieved_doc["title"], "Test Document");
 
     // 3. Update the document
@@ -234,19 +234,19 @@ async fn test_search_functionality() -> Result<()> {
     // Create multiple test documents
     let docs = vec![
         json!({
-            "path": "/rust-guide.md",
+            "path": "rust-guide.md",
             "title": "Rust Programming Guide",
             "content": [82, 117, 115, 116, 32, 105, 115, 32, 97, 119, 101, 115, 111, 109, 101], // "Rust is awesome"
             "tags": ["rust", "programming"]
         }),
         json!({
-            "path": "/python-tutorial.py",
+            "path": "python-tutorial.py",
             "title": "Python Tutorial",
             "content": [80, 121, 116, 104, 111, 110, 32, 105, 115, 32, 101, 97, 115, 121], // "Python is easy"
             "tags": ["python", "tutorial"]
         }),
         json!({
-            "path": "/javascript-notes.js",
+            "path": "javascript-notes.js",
             "title": "JavaScript Notes",
             "content": [74, 83, 32, 105, 115, 32, 101, 118, 101, 114, 121, 119, 104, 101, 114, 101], // "JS is everywhere"
             "tags": ["javascript", "web"]
@@ -323,7 +323,7 @@ async fn test_concurrent_operations() -> Result<()> {
 
         let handle = tokio::spawn(async move {
             let payload = json!({
-                "path": format!("/test-doc-{i}.md"),
+                "path": format!("test-doc-{i}.md"),
                 "title": format!("Test Document {i}"),
                 "content": format!("Content for concurrent document {i}").into_bytes(),
                 "tags": ["test", "concurrent"]
@@ -372,7 +372,7 @@ async fn test_performance_response_times() -> Result<()> {
 
     // Create a test document
     let create_payload = json!({
-        "path": "/performance-test.md",
+        "path": "performance-test.md",
         "title": "Performance Test Document",
         "content": [80, 101, 114, 102, 111, 114, 109, 97, 110, 99, 101], // "Performance"
         "tags": ["performance", "test"]

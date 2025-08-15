@@ -323,7 +323,7 @@ async fn test_random_failures() -> Result<()> {
     for i in 0..100 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Test Doc {i}"))?,
             b"test content".to_vec(),
             vec![],
@@ -357,7 +357,7 @@ async fn test_disk_full() -> Result<()> {
     for i in 0..20 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Test Doc {i}"))?,
             vec![0u8; 1024], // 1KB each
             vec![],
@@ -380,7 +380,7 @@ async fn test_disk_full() -> Result<()> {
     // Delete one document to free space
     let doc_to_delete = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/0.md")?,
+        ValidatedPath::new("test/0.md")?,
         ValidatedTitle::new("Test Doc 0")?,
         vec![0u8; 1024],
         vec![],
@@ -398,7 +398,7 @@ async fn test_disk_full() -> Result<()> {
     // Should be able to insert another document now
     let new_doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/new.md")?,
+        ValidatedPath::new("test/new.md")?,
         ValidatedTitle::new("New Doc")?,
         vec![0u8; 1024],
         vec![],
@@ -492,7 +492,7 @@ async fn test_concurrent_stress() -> Result<()> {
             for i in 0..100 {
                 let doc = Document::new(
                     ValidatedDocumentId::new(),
-                    ValidatedPath::new(format!("/test/thread{thread_id}/{i}.md")).unwrap(),
+                    ValidatedPath::new(format!("test/thread{thread_id}/{i}.md")).unwrap(),
                     ValidatedTitle::new(format!("Doc {thread_id}-{i}")).unwrap(),
                     vec![0u8; 1024],
                     vec![],
@@ -530,7 +530,7 @@ async fn test_operation_timeouts() -> Result<()> {
 
     let doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/timeout.md")?,
+        ValidatedPath::new("test/timeout.md")?,
         ValidatedTitle::new("Timeout Test")?,
         vec![0u8; 1024],
         vec![],
@@ -586,7 +586,7 @@ async fn test_invalid_inputs() -> Result<()> {
     // This is valid construction, but semantically incorrect
     let doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test.md")?,
+        ValidatedPath::new("test.md")?,
         ValidatedTitle::new("Test")?,
         b"content".to_vec(),
         vec![],
@@ -711,7 +711,7 @@ async fn test_memory_pressure() -> Result<()> {
     for i in 0..1000 {
         let doc = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new(format!("/test/{i}.md"))?,
+            ValidatedPath::new(format!("test/{i}.md"))?,
             ValidatedTitle::new(format!("Doc {i}"))?,
             vec![0u8; 1024 * (i % 10 + 1)], // Variable sizes
             vec![],
@@ -874,7 +874,7 @@ async fn test_concurrent_update_race() -> Result<()> {
     let doc_id = ValidatedDocumentId::new();
     let initial_doc = Document::new(
         doc_id,
-        ValidatedPath::new("/test/race.md")?,
+        ValidatedPath::new("test/race.md")?,
         ValidatedTitle::new("Race Test")?,
         vec![0u8; 1024],
         vec![],
@@ -891,7 +891,7 @@ async fn test_concurrent_update_race() -> Result<()> {
         let handle = tokio::spawn(async move {
             let doc = Document::new(
                 doc_id,
-                ValidatedPath::new("/test/race.md").unwrap(),
+                ValidatedPath::new("test/race.md").unwrap(),
                 ValidatedTitle::new(format!("Updated by thread {i}")).unwrap(),
                 vec![0u8; 1024 + i],
                 vec![],
@@ -967,7 +967,7 @@ async fn test_panic_during_operation() {
     let mut storage = PanicStorage;
     let doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/panic.md").unwrap(),
+        ValidatedPath::new("test/panic.md").unwrap(),
         ValidatedTitle::new("Panic Test").unwrap(),
         vec![0u8; 1024],
         vec![],
@@ -1090,7 +1090,7 @@ async fn test_resource_cleanup() -> Result<()> {
     // Try operation that fails
     let doc = Document::new(
         ValidatedDocumentId::new(),
-        ValidatedPath::new("/test/fail.md")?,
+        ValidatedPath::new("test/fail.md")?,
         ValidatedTitle::new("Fail Test")?,
         vec![0u8; 1024],
         vec![],

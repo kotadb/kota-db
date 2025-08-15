@@ -369,7 +369,7 @@ async fn test_lock_contention_analysis() -> Result<()> {
                         // Create test document
                         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                         let path =
-                            ValidatedPath::new(format!("/lock_test/t{thread_id}_op{op_id}.md"))?;
+                            ValidatedPath::new(format!("lock_test/t{thread_id}_op{op_id}.md"))?;
                         let title =
                             ValidatedTitle::new(format!("Lock Test T{thread_id} O{op_id}"))?;
                         let content = format!(
@@ -1187,7 +1187,7 @@ async fn execute_write_operation(
     metrics.lock_acquisitions.fetch_add(1, Ordering::Relaxed);
 
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
+    let path = ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
     let title = ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
     let content = format!(
         "Phase 2B enhanced concurrent stress test content for pattern {pattern_id} operation {op_num}. \
@@ -1336,7 +1336,7 @@ fn analyze_lock_contention(
 
 async fn create_race_test_document(index: usize, version: u32, modifier: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("/race_test/shared_doc_{index:03}.md"))?;
+    let path = ValidatedPath::new(format!("race_test/shared_doc_{index:03}.md"))?;
     let title = ValidatedTitle::new(format!("Shared Race Test Doc {index} v{version}"))?;
     let content = format!(
         "Race test document {index} version {version} modified by {modifier}.\n\
@@ -1494,7 +1494,7 @@ async fn validate_data_consistency(
 async fn create_index_test_document(indexer_id: usize, op_num: usize) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
     let path = ValidatedPath::new(format!(
-        "/index_test/indexer_{indexer_id}/doc_{op_num:04}.md"
+        "index_test/indexer_{indexer_id}/doc_{op_num:04}.md"
     ))?;
     let title = ValidatedTitle::new(format!("Index Test I{indexer_id} D{op_num}"))?;
 

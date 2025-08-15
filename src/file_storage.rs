@@ -192,8 +192,8 @@ impl Storage for FileStorage {
     where
         Self: Sized,
     {
-        // Validate path using existing Stage 2 validation
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let db_path = PathBuf::from(path);
         let storage = Self {

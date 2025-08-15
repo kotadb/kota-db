@@ -378,8 +378,8 @@ impl Index for TrigramIndex {
     where
         Self: Sized,
     {
-        // Validate path using existing validation
-        validation::path::validate_directory_path(path)?;
+        // Validate path for internal storage (allows absolute paths)
+        validation::path::validate_storage_directory_path(path)?;
 
         let index_path = PathBuf::from(path);
         let index = Self {
@@ -606,8 +606,8 @@ pub async fn create_trigram_index(
     path: &str,
     _cache_capacity: Option<usize>,
 ) -> Result<MeteredIndex<TrigramIndex>> {
-    // Validate path using existing validation
-    validation::path::validate_directory_path(path)?;
+    // Validate path for internal storage (allows absolute paths)
+    validation::path::validate_storage_directory_path(path)?;
 
     let index = TrigramIndex::open(path).await?;
 
@@ -624,7 +624,7 @@ pub async fn create_trigram_index_for_tests(path: &str) -> Result<TrigramIndex> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use uuid::Uuid;
 
     #[test]
     fn test_trigram_extraction() {
@@ -661,15 +661,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_trigram_index_basic_operations() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let index_path = temp_dir.path().join("trigram_test");
+        let test_dir = format!("test_data/trigram_basic_{}", Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
 
-        let mut index = TrigramIndex::open(
-            index_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid trigram index test path"))?,
-        )
-        .await?;
+        let mut index = TrigramIndex::open(&test_dir).await?;
 
         // Test insertion
         let doc_id = ValidatedDocumentId::new();
@@ -683,6 +678,9 @@ mod tests {
             assert_eq!(metadata.document_count, 1);
             assert!(metadata.trigram_count > 0);
         }
+
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
 
         Ok(())
     }

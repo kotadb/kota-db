@@ -15,7 +15,7 @@ async fn test_bulk_insert_throughput_improvement() -> Result<()> {
     let mut test_pairs = Vec::new();
     for i in 0..test_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/bulk/test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("bulk/test_{i}.md"))?;
         test_pairs.push((id, path));
     }
 
@@ -71,7 +71,7 @@ async fn test_bulk_delete_throughput_improvement() -> Result<()> {
     let mut test_pairs = Vec::new();
     for i in 0..test_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/bulk/delete_test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("bulk/delete_test_{i}.md"))?;
         test_pairs.push((id, path));
     }
 
@@ -139,7 +139,7 @@ async fn test_bulk_operations_maintain_tree_balance() -> Result<()> {
     let mut test_pairs = Vec::new();
     for i in 0..test_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/bulk/balance_test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("bulk/balance_test_{i}.md"))?;
         test_pairs.push((id, path));
     }
 
@@ -191,7 +191,7 @@ async fn test_bulk_operations_memory_efficiency() -> Result<()> {
     let mut test_pairs = Vec::new();
     for i in 0..test_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/bulk/memory_test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("bulk/memory_test_{i}.md"))?;
         test_pairs.push((id, path));
     }
 
@@ -247,8 +247,8 @@ async fn test_bulk_operations_memory_efficiency() -> Result<()> {
 async fn test_bulk_operations_error_handling() -> Result<()> {
     // Test bulk insert with duplicate keys
     let duplicate_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path1 = ValidatedPath::new("/bulk/duplicate1.md")?;
-    let path2 = ValidatedPath::new("/bulk/duplicate2.md")?;
+    let path1 = ValidatedPath::new("bulk/duplicate1.md")?;
+    let path2 = ValidatedPath::new("bulk/duplicate2.md")?;
 
     let test_pairs = vec![
         (duplicate_id, path1),
@@ -293,7 +293,7 @@ async fn test_bulk_operations_concurrent_safety() -> Result<()> {
         let mut batch_pairs = Vec::new();
         for i in 0..batch_size {
             let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/bulk/concurrent_batch_{batch}_{i}.md"))?;
+            let path = ValidatedPath::new(format!("bulk/concurrent_batch_{batch}_{i}.md"))?;
             batch_pairs.push((id, path));
         }
 

@@ -232,7 +232,7 @@ impl QueryRouter {
 
         for i in 0..document_count {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/routing/test/doc_{i:06}.md"))?;
+            let path = ValidatedPath::new(format!("routing/test/doc_{i:06}.md"))?;
 
             // Insert into both indices
             {
@@ -649,7 +649,7 @@ async fn test_multi_index_concurrent_access() -> Result<()> {
 
             for i in 0..10 {
                 let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let path = ValidatedPath::new(format!("/concurrent/writer_{writer_id}/doc_{i}.md"))
+                let path = ValidatedPath::new(format!("concurrent/writer_{writer_id}/doc_{i}.md"))
                     .unwrap();
 
                 // Insert into both indices

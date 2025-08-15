@@ -30,7 +30,7 @@ mod primary_index_edge_cases {
 
         // Basic operations should still work
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/edge/zero_capacity.md")?;
+        let doc_path = ValidatedPath::new("edge/zero_capacity.md")?;
 
         // This should work even with zero cache
         // index.insert(doc_id, doc_path).await?;
@@ -44,7 +44,7 @@ mod primary_index_edge_cases {
 
         // Create path near filesystem limits
         let long_component = "a".repeat(255); // Max filename length on most filesystems
-        let long_path = format!("/edge/{long_component}/{long_component}/{long_component}.md");
+        let long_path = format!("edge/{long_component}/{long_component}/{long_component}.md");
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
 
@@ -68,11 +68,11 @@ mod primary_index_edge_cases {
 
         // Test various Unicode characters
         let unicode_paths = [
-            "/edge/русский.md",
-            "/edge/中文.md",
-            "/edge/🚀📦.md",
-            "/edge/café.md",
-            "/edge/naïve.md",
+            "edge/русский.md",
+            "edge/中文.md",
+            "edge/🚀📦.md",
+            "edge/café.md",
+            "edge/naïve.md",
         ];
 
         for path_str in unicode_paths.iter() {
@@ -97,7 +97,7 @@ mod primary_index_edge_cases {
         let mut index = primary_index_edge_cases::create_test_index().await?;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/edge/cycle_test.md")?;
+        let doc_path = ValidatedPath::new("edge/cycle_test.md")?;
 
         // Rapid insert/delete cycles to test for memory leaks or corruption
         for _ in 0..1000 {
@@ -125,7 +125,7 @@ mod primary_index_edge_cases {
         // Test many small operations to stress internal data structures
         for i in 0..10000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/edge/small_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("edge/small_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
 
@@ -169,7 +169,7 @@ mod primary_index_adversarial_tests {
                 for j in 0..100 {
                     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
                     let doc_path =
-                        ValidatedPath::new(format!("/adversarial/writer_{i}_{j}.md")).unwrap();
+                        ValidatedPath::new(format!("adversarial/writer_{i}_{j}.md")).unwrap();
 
                     let mut index_guard = index_clone.lock().await;
                     index_guard.insert(doc_id, doc_path).await.unwrap();
@@ -223,7 +223,7 @@ mod primary_index_adversarial_tests {
 
         for i in 0..1000 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/adversarial/memory_pressure_{i:06}.md"))?;
+            let doc_path = ValidatedPath::new(format!("adversarial/memory_pressure_{i:06}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
             doc_ids.push(doc_id);
@@ -264,7 +264,7 @@ mod primary_index_adversarial_tests {
 
         for i in 0..100 {
             let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let doc_path = ValidatedPath::new(format!("/adversarial/disk_full_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("adversarial/disk_full_{i}.md"))?;
 
             match index.insert(doc_id, doc_path).await {
                 Ok(()) => {
@@ -290,7 +290,7 @@ mod primary_index_adversarial_tests {
         // This simulates power failure, process kill, etc.
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/adversarial/interrupted.md")?;
+        let doc_path = ValidatedPath::new("adversarial/interrupted.md")?;
 
         // Start an operation but don't complete it
         // In real implementation, this might involve:
@@ -306,7 +306,7 @@ mod primary_index_adversarial_tests {
 
         // Should be able to operate on recovered index
         let new_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let new_doc_path = ValidatedPath::new("/adversarial/post_recovery.md")?;
+        let new_doc_path = ValidatedPath::new("adversarial/post_recovery.md")?;
 
         // recovered_index.insert(new_doc_id, new_doc_path).await?;
 
@@ -334,7 +334,7 @@ mod primary_index_adversarial_tests {
             Ok(_index) => {
                 // If it opens successfully, basic operations should work
                 // let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                // let doc_path = ValidatedPath::new("/adversarial/after_corruption.md")?;
+                // let doc_path = ValidatedPath::new("adversarial/after_corruption.md"))?;
                 // index.insert(doc_id, doc_path).await?;
             }
             Err(e) => {
@@ -364,7 +364,7 @@ mod primary_index_adversarial_tests {
 
             let sequential_uuid = Uuid::from_bytes(base_bytes);
             let doc_id = ValidatedDocumentId::from_uuid(sequential_uuid)?;
-            let doc_path = ValidatedPath::new(format!("/adversarial/sequential_{i}.md"))?;
+            let doc_path = ValidatedPath::new(format!("adversarial/sequential_{i}.md"))?;
 
             index.insert(doc_id, doc_path).await?;
         }

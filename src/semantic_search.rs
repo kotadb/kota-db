@@ -310,41 +310,52 @@ mod tests {
     use crate::file_storage::FileStorage;
     use crate::types::{ValidatedPath, ValidatedTag, ValidatedTitle};
     use chrono::Utc;
-    use tempfile::TempDir;
+    use uuid::Uuid;
 
-    async fn create_test_search_engine() -> Result<(SemanticSearchEngine, TempDir)> {
-        let temp_dir = TempDir::new()?;
+    struct TestSemanticEngine {
+        engine: SemanticSearchEngine,
+        test_dir: String,
+    }
+
+    impl Drop for TestSemanticEngine {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.test_dir);
+        }
+    }
+
+    async fn create_test_search_engine() -> Result<TestSemanticEngine> {
+        let test_dir = format!("test_data/semantic_{}", Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
 
         // Create storage
-        let storage_path = temp_dir.path().join("storage");
-        let storage = Box::new(FileStorage::open(storage_path.to_str().unwrap()).await?);
+        let storage_path = format!("{}/storage", test_dir);
+        let storage = Box::new(FileStorage::open(&storage_path).await?);
 
         // Create embedding config (using local model for testing)
-        let model_path = temp_dir.path().join("test_model.onnx");
-        let embedding_config = models::local_minilm_l6_v2(model_path);
+        let model_path = format!("{}/test_model.onnx", test_dir);
+        let embedding_config = models::local_minilm_l6_v2(std::path::PathBuf::from(model_path));
 
         // Create vector index path
-        let vector_index_path = temp_dir.path().join("vector.idx");
+        let vector_index_path = format!("{}/vector.idx", test_dir);
 
-        let search_engine = SemanticSearchEngine::new(
-            storage,
-            vector_index_path.to_str().unwrap(),
-            embedding_config,
-        )
-        .await?;
+        let search_engine =
+            SemanticSearchEngine::new(storage, &vector_index_path, embedding_config).await?;
 
-        Ok((search_engine, temp_dir))
+        Ok(TestSemanticEngine {
+            engine: search_engine,
+            test_dir,
+        })
     }
 
     #[tokio::test]
     async fn test_semantic_search_engine_creation() -> Result<()> {
-        let (_engine, _temp_dir) = create_test_search_engine().await?;
+        let _test_engine = create_test_search_engine().await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_document_insertion_with_auto_embedding() -> Result<()> {
-        let (mut engine, _temp_dir) = create_test_search_engine().await?;
+        let mut test_engine = create_test_search_engine().await?;
 
         let document = Document::new(
             ValidatedDocumentId::new(),
@@ -359,10 +370,10 @@ mod tests {
         // Verify the document starts without embedding
         assert!(document.embedding.is_none());
 
-        engine.insert_document(document.clone()).await?;
+        test_engine.engine.insert_document(document.clone()).await?;
 
         // Verify document was inserted with embedding
-        let retrieved = engine.storage.get(&document.id).await?.unwrap();
+        let retrieved = test_engine.engine.storage.get(&document.id).await?.unwrap();
         assert!(
             retrieved.embedding.is_some(),
             "Document should have an embedding after insertion"
@@ -374,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_semantic_search() -> Result<()> {
-        let (mut engine, _temp_dir) = create_test_search_engine().await?;
+        let mut test_engine = create_test_search_engine().await?;
 
         // Insert test documents
         let doc1 = Document::new(
@@ -397,11 +408,12 @@ mod tests {
             Utc::now(),
         );
 
-        engine.insert_document(doc1).await?;
-        engine.insert_document(doc2).await?;
+        test_engine.engine.insert_document(doc1).await?;
+        test_engine.engine.insert_document(doc2).await?;
 
         // Search for AI-related content
-        let results = engine
+        let results = test_engine
+            .engine
             .semantic_search("artificial intelligence", 5, None)
             .await?;
 
@@ -413,9 +425,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_embedding_stats() -> Result<()> {
-        let (engine, _temp_dir) = create_test_search_engine().await?;
+        let test_engine = create_test_search_engine().await?;
 
-        let stats = engine.embedding_stats().await?;
+        let stats = test_engine.engine.embedding_stats().await?;
         assert_eq!(stats.model_name, "all-MiniLM-L6-v2");
         assert_eq!(stats.dimension, 384);
 

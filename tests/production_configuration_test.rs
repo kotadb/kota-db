@@ -955,7 +955,7 @@ fn create_config_test_documents(count: usize, test_type: &str) -> Result<Vec<Doc
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/config/{test_type}/doc_{i:04}.md"))?;
+        let path = ValidatedPath::new(format!("config/{test_type}/doc_{i:04}.md"))?;
         let title = ValidatedTitle::new(format!("{test_type} Config Test Doc {i}"))?;
 
         let content = format!(
@@ -987,7 +987,7 @@ fn create_large_config_documents(count: usize, content_size: usize) -> Result<Ve
 
     for i in 0..count {
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("/config/large/doc_{i:04}.md"))?;
+        let path = ValidatedPath::new(format!("config/large/doc_{i:04}.md"))?;
         let title = ValidatedTitle::new(format!("Large Config Test Doc {i}"))?;
 
         let base_content = format!("# Large Configuration Test Document {i}\n\n");
