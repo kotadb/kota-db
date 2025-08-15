@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-08-15
+
 ### Added
 - Comprehensive MCP package integration testing suite (#124)
   - Protocol compliance tests for JSON-RPC 2.0 and MCP standards
@@ -129,3 +131,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/jayminwest/kota-db/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/jayminwest/kota-db/compare/v0.3.1...v0.4.0
+
+[Unreleased]: https://github.com/jayminwest/kota-db/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jayminwest/kota-db/compare/v0.4.0...v0.5.0
