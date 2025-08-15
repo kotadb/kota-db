@@ -350,6 +350,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires actual embedding provider - enable for integration testing"]
     async fn test_semantic_search_engine_creation() -> Result<()> {
+        // Skip this test in CI environment unless explicitly enabled
+        if std::env::var("CI").is_ok() && std::env::var("KOTADB_ENABLE_EMBEDDING_TESTS").is_err() {
+            println!("Skipping embedding test in CI environment. Set KOTADB_ENABLE_EMBEDDING_TESTS=1 to enable.");
+            return Ok(());
+        }
         let _test_engine = create_test_search_engine().await?;
         Ok(())
     }
@@ -357,6 +362,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires actual embedding provider - enable for integration testing"]
     async fn test_document_insertion_with_auto_embedding() -> Result<()> {
+        // Skip this test in CI environment unless explicitly enabled
+        if std::env::var("CI").is_ok() && std::env::var("KOTADB_ENABLE_EMBEDDING_TESTS").is_err() {
+            println!("Skipping embedding test in CI environment. Set KOTADB_ENABLE_EMBEDDING_TESTS=1 to enable.");
+            return Ok(());
+        }
         let mut test_engine = create_test_search_engine().await?;
 
         let document = Document::new(
@@ -388,6 +398,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires actual embedding provider - enable for integration testing"]
     async fn test_semantic_search() -> Result<()> {
+        // Skip this test in CI environment unless explicitly enabled
+        if std::env::var("CI").is_ok() && std::env::var("KOTADB_ENABLE_EMBEDDING_TESTS").is_err() {
+            println!("Skipping embedding test in CI environment. Set KOTADB_ENABLE_EMBEDDING_TESTS=1 to enable.");
+            return Ok(());
+        }
         let mut test_engine = create_test_search_engine().await?;
 
         // Insert test documents
@@ -429,6 +444,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires actual embedding provider - enable for integration testing"]
     async fn test_embedding_stats() -> Result<()> {
+        // Skip this test in CI environment unless explicitly enabled
+        if std::env::var("CI").is_ok() && std::env::var("KOTADB_ENABLE_EMBEDDING_TESTS").is_err() {
+            println!("Skipping embedding test in CI environment. Set KOTADB_ENABLE_EMBEDDING_TESTS=1 to enable.");
+            return Ok(());
+        }
         let test_engine = create_test_search_engine().await?;
 
         let stats = test_engine.engine.embedding_stats().await?;

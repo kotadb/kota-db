@@ -10,6 +10,52 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
 
+// Embedding model constants
+/// Nomic Embed v2 native dimension (highest quality local model)
+pub const NOMIC_EMBED_V2_DIMENSION: usize = 768;
+/// MiniLM native dimension (lightweight model)
+pub const MINILM_L6_V2_DIMENSION: usize = 384;
+/// BGE small model native dimension  
+pub const BGE_SMALL_DIMENSION: usize = 384;
+/// E5 small model native dimension
+pub const E5_SMALL_DIMENSION: usize = 384;
+/// BERT base model native dimension
+pub const BERT_BASE_DIMENSION: usize = 768;
+/// OpenAI text-embedding-3-large native dimension
+pub const OPENAI_LARGE_DIMENSION: usize = 3072;
+
+// Batch size constants
+/// Optimal batch size for high-quality models (Nomic, BERT)
+pub const HIGH_QUALITY_BATCH_SIZE: usize = 16;
+/// Standard batch size for lightweight models
+pub const STANDARD_BATCH_SIZE: usize = 32;
+/// Maximum batch size for OpenAI API
+pub const OPENAI_MAX_BATCH_SIZE: usize = 2048;
+
+// Token processing constants
+/// Maximum tokens per input text for most models
+pub const MAX_TOKEN_LENGTH: usize = 512;
+/// Hash multiplier for fallback tokenization
+pub const HASH_MULTIPLIER: u64 = 31;
+/// Vocabulary range for fallback tokens
+pub const VOCAB_RANGE: u64 = 30000;
+/// Base token offset
+pub const BASE_TOKEN_OFFSET: u64 = 100;
+
+// API constants
+/// Default timeout for OpenAI API requests (seconds)
+pub const API_TIMEOUT_SECONDS: u64 = 30;
+/// Default OpenAI API base URL
+pub const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+
+// Model file paths
+/// Default model directory
+pub const DEFAULT_MODEL_DIR: &str = "./models";
+/// Default Nomic Embed v2 model filename  
+pub const NOMIC_MODEL_FILE: &str = "nomic-embed-text-v2.onnx";
+/// Default tokenizer filename
+pub const DEFAULT_TOKENIZER_FILE: &str = "tokenizer.json";
+
 #[cfg(feature = "embeddings-onnx")]
 use ort::session::Session;
 #[cfg(feature = "embeddings-onnx")]
@@ -31,14 +77,16 @@ impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
             provider: EmbeddingProviderType::Local,
-            model_name: "all-MiniLM-L6-v2".to_string(),
+            model_name: "nomic-ai/nomic-embed-text-v2".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Output OpenAI-compatible dimensions
-            native_dimension: Some(384),          // MiniLM's native dimension
-            max_batch_size: 32,
+            native_dimension: Some(NOMIC_EMBED_V2_DIMENSION), // Nomic's native dimension (highest quality)
+            max_batch_size: HIGH_QUALITY_BATCH_SIZE,          // Optimized for quality models
             compatibility_mode: CompatibilityMode::OpenAIStandard, // Auto-transform to OpenAI standard
             provider_config: ProviderConfig::Local {
-                model_path: "./models/all-MiniLM-L6-v2.onnx".into(),
-                tokenizer_path: Some("./models/tokenizer.json".into()),
+                model_path: format!("{}/{}", DEFAULT_MODEL_DIR, NOMIC_MODEL_FILE).into(),
+                tokenizer_path: Some(
+                    format!("{}/{}", DEFAULT_MODEL_DIR, DEFAULT_TOKENIZER_FILE).into(),
+                ),
             },
         }
     }
@@ -237,7 +285,7 @@ impl LocalEmbeddingProvider {
 
         // Fallback tokenization (simple word-based)
         let words: Vec<&str> = text.split_whitespace().collect();
-        let max_len = max_length.unwrap_or(512);
+        let max_len = max_length.unwrap_or(MAX_TOKEN_LENGTH);
 
         let tokens: Vec<i64> = words
             .iter()
@@ -247,9 +295,9 @@ impl LocalEmbeddingProvider {
                 // Simple hash-based token ID
                 let mut hash = 0u64;
                 for byte in word.bytes() {
-                    hash = hash.wrapping_mul(31).wrapping_add(byte as u64);
+                    hash = hash.wrapping_mul(HASH_MULTIPLIER).wrapping_add(byte as u64);
                 }
-                (hash % 30000 + 100) as i64 // Keep in reasonable vocab range
+                (hash % VOCAB_RANGE + BASE_TOKEN_OFFSET) as i64 // Keep in reasonable vocab range
             })
             .collect();
 
@@ -305,7 +353,7 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
         // Tokenize all texts
         let mut all_tokens = Vec::new();
         for text in texts {
-            let tokens = self.tokenize(text, Some(512))?; // Limit to 512 tokens
+            let tokens = self.tokenize(text, Some(MAX_TOKEN_LENGTH))?; // Limit to max token length
             all_tokens.push(tokens);
         }
 
@@ -366,7 +414,7 @@ impl OpenAIEmbeddingProvider {
         };
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(API_TIMEOUT_SECONDS))
             .build()?;
 
         Ok(Self {
@@ -375,7 +423,7 @@ impl OpenAIEmbeddingProvider {
             api_key: provider_config.0,
             api_base: provider_config
                 .1
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                .unwrap_or_else(|| OPENAI_API_BASE.to_string()),
         })
     }
 }
@@ -554,7 +602,7 @@ pub mod models {
             model_name: "text-embedding-3-small".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION,
             native_dimension: Some(OPENAI_STANDARD_DIMENSION), // Native OpenAI dimension
-            max_batch_size: 2048,
+            max_batch_size: OPENAI_MAX_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard, // Already compatible
             provider_config: ProviderConfig::OpenAI {
                 api_key,
@@ -570,8 +618,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::OpenAI,
             model_name: "text-embedding-3-large".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Downscale to standard
-            native_dimension: Some(3072),         // Large model's native dimension
-            max_batch_size: 2048,
+            native_dimension: Some(OPENAI_LARGE_DIMENSION), // Large model's native dimension
+            max_batch_size: OPENAI_MAX_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard, // Use standard dimension
             provider_config: ProviderConfig::OpenAI {
                 api_key,
@@ -587,8 +635,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::Local,
             model_name: "all-MiniLM-L6-v2".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Transform to OpenAI standard
-            native_dimension: Some(384),          // MiniLM's native dimension
-            max_batch_size: 32,
+            native_dimension: Some(MINILM_L6_V2_DIMENSION), // MiniLM's native dimension
+            max_batch_size: STANDARD_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard,
             provider_config: ProviderConfig::Local {
                 model_path,
@@ -603,8 +651,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::Local,
             model_name: "BAAI/bge-small-en-v1.5".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Transform to OpenAI standard
-            native_dimension: Some(384),          // BGE's native dimension
-            max_batch_size: 32,
+            native_dimension: Some(BGE_SMALL_DIMENSION), // BGE's native dimension
+            max_batch_size: STANDARD_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard,
             provider_config: ProviderConfig::Local {
                 model_path,
@@ -619,8 +667,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::Local,
             model_name: "intfloat/e5-small-v2".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Transform to OpenAI standard
-            native_dimension: Some(384),          // E5's native dimension
-            max_batch_size: 32,
+            native_dimension: Some(E5_SMALL_DIMENSION), // E5's native dimension
+            max_batch_size: STANDARD_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard,
             provider_config: ProviderConfig::Local {
                 model_path,
@@ -635,8 +683,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::Local,
             model_name: "nomic-ai/nomic-embed-text-v2".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Transform to OpenAI standard
-            native_dimension: Some(768),          // Nomic's native dimension
-            max_batch_size: 32,
+            native_dimension: Some(NOMIC_EMBED_V2_DIMENSION), // Nomic's native dimension
+            max_batch_size: HIGH_QUALITY_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard,
             provider_config: ProviderConfig::Local {
                 model_path,
@@ -651,8 +699,8 @@ pub mod models {
             provider: crate::embeddings::EmbeddingProviderType::Local,
             model_name: "bert-base-uncased".to_string(),
             dimension: OPENAI_STANDARD_DIMENSION, // Transform to OpenAI standard
-            native_dimension: Some(768),          // BERT-base's native dimension
-            max_batch_size: 16,
+            native_dimension: Some(BERT_BASE_DIMENSION), // BERT-base's native dimension
+            max_batch_size: HIGH_QUALITY_BATCH_SIZE,
             compatibility_mode: CompatibilityMode::OpenAIStandard,
             provider_config: ProviderConfig::Local {
                 model_path,
@@ -678,7 +726,7 @@ mod tests {
 
         // Test configuration is correct
         assert_eq!(config.dimension, OPENAI_STANDARD_DIMENSION); // Output dimension
-        assert_eq!(config.native_dimension, Some(384)); // Native MiniLM dimension
+        assert_eq!(config.native_dimension, Some(MINILM_L6_V2_DIMENSION)); // Native MiniLM dimension
         assert_eq!(config.model_name, "all-MiniLM-L6-v2");
 
         // Test provider creation - should fail gracefully since model file doesn't exist
@@ -725,6 +773,28 @@ mod tests {
     }
 
     #[test]
+    fn test_default_model_quality_upgrade() {
+        // Test that the default configuration uses Nomic Embed v2 (highest quality local model)
+        let default_config = EmbeddingConfig::default();
+        assert_eq!(default_config.model_name, "nomic-ai/nomic-embed-text-v2");
+        assert_eq!(
+            default_config.native_dimension,
+            Some(NOMIC_EMBED_V2_DIMENSION)
+        );
+        assert_eq!(default_config.max_batch_size, HIGH_QUALITY_BATCH_SIZE);
+
+        // Verify dimension transformation works correctly
+        assert_eq!(default_config.dimension, OPENAI_STANDARD_DIMENSION);
+        assert_eq!(
+            default_config.compatibility_mode,
+            CompatibilityMode::OpenAIStandard
+        );
+
+        // Quality models use smaller batch sizes for better performance
+        assert!(default_config.max_batch_size < STANDARD_BATCH_SIZE);
+    }
+
+    #[test]
     fn test_model_configurations() {
         let openai_config = models::openai_text_embedding_3_small("test-key".to_string());
         assert_eq!(openai_config.dimension, OPENAI_STANDARD_DIMENSION);
@@ -736,12 +806,15 @@ mod tests {
 
         let local_config = models::local_minilm_l6_v2("/path/to/model.onnx".into());
         assert_eq!(local_config.dimension, OPENAI_STANDARD_DIMENSION); // Transformed output
-        assert_eq!(local_config.native_dimension, Some(384)); // Native input
+        assert_eq!(local_config.native_dimension, Some(MINILM_L6_V2_DIMENSION)); // Native input
         assert_eq!(local_config.model_name, "all-MiniLM-L6-v2");
 
         let nomic_config = models::local_nomic_embed_v2("/path/to/nomic.onnx".into());
         assert_eq!(nomic_config.dimension, OPENAI_STANDARD_DIMENSION); // Transformed output
-        assert_eq!(nomic_config.native_dimension, Some(768)); // Native input
+        assert_eq!(
+            nomic_config.native_dimension,
+            Some(NOMIC_EMBED_V2_DIMENSION)
+        ); // Native input
         assert_eq!(nomic_config.model_name, "nomic-ai/nomic-embed-text-v2");
     }
 }
