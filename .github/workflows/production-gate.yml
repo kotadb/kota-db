@@ -115,7 +115,7 @@ jobs:
         # Database auto-initializes on first use
         # Insert test data
         for i in {1..100}; do
-          echo "Document $i" | ./target/release/kotadb insert "/test/doc$i.md" --stdin
+          ./target/release/kotadb insert "/test/doc$i.md" "Document $i" "Content for document $i"
         done
         
         # Verify all documents
@@ -154,7 +154,7 @@ jobs:
       run: |
         # Run the binary and check basic performance with real operations
         for i in {1..10}; do
-          echo "Perf test $i" | ./target/release/kotadb insert "/perf/doc$i.md" --stdin
+          ./target/release/kotadb insert "/perf/doc$i.md" "Perf Test $i" "Performance test content $i"
         done
         ./target/release/kotadb stats
 
@@ -184,7 +184,7 @@ jobs:
         cargo build --release
         
         # Create test database with current version (auto-initializes)
-        echo "Test" | ./target/release/kotadb insert /test.md --stdin
+        ./target/release/kotadb insert /test.md "Test Document" "Test content"
         
         # Try to checkout and test with previous version
         if git checkout ${{ env.LAST_VERSION }} 2>/dev/null; then

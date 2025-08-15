@@ -221,7 +221,7 @@ jobs:
       run: |
         # Quick performance smoke test - just verify the binary works
         ./target/release/kotadb --version
-        echo "Test content" | ./target/release/kotadb insert /test/doc.md --stdin
+        ./target/release/kotadb insert /test/doc.md "Test Document" "Test content"
         ./target/release/kotadb get /test/doc.md
         ./target/release/kotadb list
         ./target/release/kotadb stats
