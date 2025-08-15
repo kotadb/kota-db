@@ -219,9 +219,13 @@ jobs:
     
     - name: Run quick performance test
       run: |
-        # Quick performance smoke test
-        ./target/release/kotadb init test-db
-        ./target/release/kotadb --db test-db benchmark --operations 100 --quiet || true
+        # Quick performance smoke test - just verify the binary works
+        ./target/release/kotadb --version
+        echo "Test content" | ./target/release/kotadb insert /test/doc.md --stdin
+        ./target/release/kotadb get /test/doc.md
+        ./target/release/kotadb list
+        ./target/release/kotadb stats
+        echo "✅ Basic operations working"
       env:
         CI: true
 

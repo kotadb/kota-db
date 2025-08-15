@@ -67,9 +67,9 @@ jobs:
       run: |
         # Run basic operations under valgrind
         valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1 \
-          ./target/debug/kotadb init test-db || true
+        # Database auto-initializes, no init command needed
         valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1 \
-          ./target/debug/kotadb --db test-db stats || true
+          ./target/debug/kotadb stats || true
       continue-on-error: true
 
   # Thread safety verification
@@ -112,17 +112,15 @@ jobs:
     
     - name: Test data persistence
       run: |
-        # Initialize database
-        ./target/release/kotadb init test-db
-        
+        # Database auto-initializes on first use
         # Insert test data
         for i in {1..100}; do
-          echo "Document $i" | ./target/release/kotadb --db test-db insert "/test/doc$i.md" --stdin
+          echo "Document $i" | ./target/release/kotadb insert "/test/doc$i.md" --stdin
         done
         
         # Verify all documents
         for i in {1..100}; do
-          ./target/release/kotadb --db test-db get "/test/doc$i.md" | grep -q "Document $i" || exit 1
+          ./target/release/kotadb get "/test/doc$i.md" | grep -q "Document $i" || exit 1
         done
         
         echo "✅ Data integrity verified"
@@ -154,8 +152,11 @@ jobs:
     
     - name: Check performance metrics
       run: |
-        # Run the binary and check basic performance
-        ./target/release/kotadb benchmark --operations 1000 --quiet || true
+        # Run the binary and check basic performance with real operations
+        for i in {1..10}; do
+          echo "Perf test $i" | ./target/release/kotadb insert "/perf/doc$i.md" --stdin
+        done
+        ./target/release/kotadb stats
 
   # Backwards compatibility
   backwards-compatibility:
@@ -182,9 +183,8 @@ jobs:
         # Build current version
         cargo build --release
         
-        # Create test database with current version
-        ./target/release/kotadb init new-db
-        ./target/release/kotadb --db new-db insert /test.md --content "Test"
+        # Create test database with current version (auto-initializes)
+        echo "Test" | ./target/release/kotadb insert /test.md --stdin
         
         # Try to checkout and test with previous version
         if git checkout ${{ env.LAST_VERSION }} 2>/dev/null; then

@@ -120,11 +120,10 @@ jobs:
         # Build current version
         cargo build --release
         
-        # Create test data with current version
-        ./target/release/kotadb init test-db
-        echo "Test content" | ./target/release/kotadb --db test-db insert /test/doc.md --stdin
+        # Create test data with current version (db auto-initializes)
+        echo "Test content" | ./target/release/kotadb insert /test/doc.md --stdin
         
         # Verify data can be read
-        ./target/release/kotadb --db test-db get /test/doc.md | grep -q "Test content"
+        ./target/release/kotadb get /test/doc.md | grep -q "Test content"
         echo "✅ Data operations working"
       continue-on-error: true
