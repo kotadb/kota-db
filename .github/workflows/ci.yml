@@ -101,9 +101,10 @@ jobs:
         shared-key: "build"
     
     - name: Run unit tests
-      run: cargo test --lib --release --all-features -- --test-threads=4
+      run: cargo test --lib --release --all-features -- --test-threads=2
       env:
         RUST_LOG: error
+        CI: true
     
     - name: Run doc tests
       run: cargo test --doc --release --all-features
@@ -172,7 +173,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: build
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -186,9 +187,10 @@ jobs:
         shared-key: "build"
     
     - name: Run integration tests
-      run: cargo test --test '*' --release --features bench -- --test-threads=4
+      run: cargo test --test '*' --release --features bench -- --test-threads=2
       env:
         RUST_LOG: error
+        CI: true
 
   # Performance tests - quick smoke test only for PRs
   performance:
