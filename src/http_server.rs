@@ -1284,7 +1284,7 @@ mod tests {
         let app = create_server(storage);
 
         let request_body = json!({
-            "path": "/test.md",
+            "path": "test.md",
             "title": "Test Document",
             "content": b"Hello, world!".to_vec(),
             "tags": ["test"]
@@ -1502,7 +1502,7 @@ mod tests {
         let large_content = vec![b'a'; 5 * 1024 * 1024]; // 5MB of 'a' characters
 
         let request_body = json!({
-            "path": "/large_test.md",
+            "path": "large_test.md",
             "title": "Large Test Document",
             "content": large_content,
             "tags": ["large", "test"]
@@ -1553,7 +1553,7 @@ mod tests {
 
         // Test valid path
         let request_body = json!({
-            "path": "/test/document.md"
+            "path": "test/document.md"
         });
 
         let response = app
@@ -1731,7 +1731,7 @@ mod tests {
 
         // Test bulk validation with mixed valid/invalid data
         let request_body = json!({
-            "paths": ["/valid/path.md", "../invalid/path"],
+            "paths": ["valid/path.md", "../invalid/path"],
             "document_ids": [Uuid::new_v4().to_string(), "invalid-uuid"],
             "titles": ["Valid Title", ""],
             "tags": ["valid-tag", "invalid@tag"]
@@ -1761,7 +1761,7 @@ mod tests {
         // Check path validations
         let path_results = bulk_response.paths.unwrap();
         assert_eq!(path_results.len(), 2);
-        assert!(path_results[0].valid); // /valid/path.md
+        assert!(path_results[0].valid); // valid/path.md
         assert!(!path_results[1].valid); // ../invalid/path
 
         // Check document ID validations
@@ -1779,7 +1779,7 @@ mod tests {
         let app = create_server(storage);
 
         // Create a request with too many items
-        let too_many_paths: Vec<String> = (0..150).map(|i| format!("/path_{}.md", i)).collect();
+        let too_many_paths: Vec<String> = (0..150).map(|i| format!("path_{}.md", i)).collect();
         let request_body = json!({
             "paths": too_many_paths
         });

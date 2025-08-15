@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn test_document_builder() {
         let doc = DocumentBuilder::new()
-            .path("/test/doc.md")
+            .path("test/doc.md")
             .expect("Valid path should not fail")
             .title("Test Document")
             .expect("Valid title should not fail")
@@ -484,7 +484,7 @@ mod tests {
 
         assert!(doc.is_ok());
         let doc = doc.expect("Document build should succeed");
-        assert_eq!(doc.path.as_str(), "/test/doc.md");
+        assert_eq!(doc.path.as_str(), "test/doc.md");
         assert_eq!(doc.title.as_str(), "Test Document");
         assert_eq!(doc.size, 13);
     }
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_storage_config_builder() {
         let config = StorageConfigBuilder::new()
-            .path("/data/kotadb")
+            .path("data/kotadb")
             .expect("Valid path should not fail")
             .cache_size(200 * 1024 * 1024)
             .compression(true)
@@ -521,7 +521,7 @@ mod tests {
 
         assert!(config.is_ok());
         let config = config.expect("Config build should succeed");
-        assert_eq!(config.path.as_str(), "/data/kotadb");
+        assert_eq!(config.path.as_str(), "data/kotadb");
         assert_eq!(config.cache_size, Some(200 * 1024 * 1024));
         assert!(config.compression_enabled);
     }

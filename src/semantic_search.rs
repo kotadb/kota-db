@@ -348,7 +348,7 @@ mod tests {
 
         let document = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new("/test/doc.md")?,
+            ValidatedPath::new("test/doc.md").expect("Test path should be valid"),
             ValidatedTitle::new("Test Document")?,
             b"This is a test document about machine learning.".to_vec(),
             vec![ValidatedTag::new("test")?],
@@ -379,7 +379,7 @@ mod tests {
         // Insert test documents
         let doc1 = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new("/test/ml.md")?,
+            ValidatedPath::new("test/ml.md").expect("Test path should be valid"),
             ValidatedTitle::new("Machine Learning Guide")?,
             b"Machine learning is a subset of artificial intelligence.".to_vec(),
             vec![],
@@ -389,7 +389,7 @@ mod tests {
 
         let doc2 = Document::new(
             ValidatedDocumentId::new(),
-            ValidatedPath::new("/test/cooking.md")?,
+            ValidatedPath::new("test/cooking.md").expect("Test path should be valid"),
             ValidatedTitle::new("Cooking Recipe")?,
             b"How to cook pasta with tomato sauce.".to_vec(),
             vec![],

@@ -853,7 +853,7 @@ mod tests {
     fn test_single_insertion() -> Result<()> {
         let mut tree = create_empty_tree();
         let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let value = ValidatedPath::new("/test.md")?;
+        let value = ValidatedPath::new("test.md")?;
 
         tree = insert_into_tree(tree, key, value.clone())?;
 
@@ -869,7 +869,7 @@ mod tests {
 
         for i in 0..10 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let value = ValidatedPath::new(format!("/test{i}.md"))?;
+            let value = ValidatedPath::new(format!("test{i}.md"))?;
             keys.push((key, value.clone()));
             tree = insert_into_tree(tree, key, value)?;
         }

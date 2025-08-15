@@ -564,7 +564,7 @@ mod tests {
 
         // Test precondition validation
         let valid_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let valid_path = ValidatedPath::new("/test/contract.md")?;
+        let valid_path = ValidatedPath::new("test/contract.md")?;
 
         // This should succeed
         index.insert(valid_id, valid_path.clone()).await?;
@@ -599,7 +599,7 @@ mod tests {
 
         // Insert document and check metadata update
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let doc_path = ValidatedPath::new("/test/metadata.md")?;
+        let doc_path = ValidatedPath::new("test/metadata.md")?;
 
         index.insert(doc_id, doc_path).await?;
 

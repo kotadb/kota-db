@@ -399,7 +399,7 @@ impl<T: Index + Send + Sync> BulkOperations for OptimizedIndex<T> {
             .iter()
             .map(|_| {
                 Some(
-                    ValidatedPath::new("/simulated/result.md")
+                    ValidatedPath::new("simulated/result.md")
                         .expect("Simulation path should be valid"),
                 )
             })
@@ -430,7 +430,7 @@ impl<T: Index + Send + Sync> ConcurrentAccess for OptimizedIndex<T> {
     fn concurrent_read(&self, _key: &ValidatedDocumentId) -> Result<Option<ValidatedPath>> {
         // Simulate concurrent read with optimized locking
         Ok(Some(
-            ValidatedPath::new("/concurrent/read/result.md")
+            ValidatedPath::new("concurrent/read/result.md")
                 .expect("Concurrent read path should be valid"),
         ))
     }
@@ -571,7 +571,7 @@ mod tests {
 
         // Test basic operations
         let id = ValidatedDocumentId::from_uuid(uuid::Uuid::new_v4())?;
-        let path = ValidatedPath::new("/test/optimized.md")?;
+        let path = ValidatedPath::new("test/optimized.md")?;
 
         optimized.insert(id, path).await?;
 
@@ -593,11 +593,11 @@ mod tests {
         let pairs = vec![
             (
                 ValidatedDocumentId::from_uuid(uuid::Uuid::new_v4())?,
-                ValidatedPath::new("/bulk/1.md")?,
+                ValidatedPath::new("bulk/1.md")?,
             ),
             (
                 ValidatedDocumentId::from_uuid(uuid::Uuid::new_v4())?,
-                ValidatedPath::new("/bulk/2.md")?,
+                ValidatedPath::new("bulk/2.md")?,
             ),
         ];
 

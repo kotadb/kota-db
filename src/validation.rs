@@ -92,9 +92,63 @@ pub mod path {
         ctx.clone()
             .validate(!path.contains('\0'), "Path contains null bytes")?;
 
+        // Reject absolute paths - must be relative for security
+        if path.starts_with('/') || path.starts_with('\\') {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Absolute paths are not allowed for security reasons".to_string(),
+            });
+        }
+
+        // Reject Windows drive letters (C:, D:, etc.)
+        if path.len() >= 2 && path.chars().nth(1) == Some(':') {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Windows drive paths are not allowed".to_string(),
+            });
+        }
+
+        // Reject file:// URLs and other schemes
+        if path.contains("://") {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "URL schemes are not allowed in paths".to_string(),
+            });
+        }
+
+        // Reject URL-encoded sequences that could hide directory traversal
+        if path.contains("%2e")
+            || path.contains("%2E")
+            || path.contains("%2f")
+            || path.contains("%2F")
+            || path.contains("%5c")
+            || path.contains("%5C")
+        {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "URL-encoded characters are not allowed in paths".to_string(),
+            });
+        }
+
+        // Reject multiple consecutive slashes or dots that could be used in attacks
+        if path.contains("//") || path.contains("\\\\") || path.contains("....") {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Multiple consecutive slashes or dots are not allowed".to_string(),
+            });
+        }
+
         let path_obj = Path::new(path);
 
         // Check for directory traversal attempts
+        // Note: Check for backslash traversal before Path parsing since Path may normalize them
+        if path.contains("..\\") || path.contains("\\..") {
+            bail!(ValidationError::InvalidInput {
+                field: "path".to_string(),
+                reason: "Parent directory references (..) not allowed".to_string(),
+            });
+        }
+
         for component in path_obj.components() {
             if let std::path::Component::ParentDir = component {
                 bail!(ValidationError::InvalidInput {
@@ -382,15 +436,26 @@ mod tests {
 
     #[test]
     fn test_path_validation() {
-        // Valid paths
-        assert!(path::validate_file_path("/test/file.md").is_ok());
+        // Valid paths (relative only)
+        assert!(path::validate_file_path("test/file.md").is_ok());
         assert!(path::validate_file_path("relative/path.txt").is_ok());
+        assert!(path::validate_file_path("docs/readme.md").is_ok());
 
-        // Invalid paths
+        // Invalid paths - absolute paths
+        assert!(path::validate_file_path("/test/file.md").is_err());
+        assert!(path::validate_file_path("/etc/passwd").is_err());
+        assert!(path::validate_file_path("C:\\Windows\\System32").is_err());
+
+        // Invalid paths - traversal attempts
         assert!(path::validate_file_path("").is_err());
         assert!(path::validate_file_path("../../../etc/passwd").is_err());
         assert!(path::validate_file_path("file\0with\0nulls").is_err());
         assert!(path::validate_file_path("CON.txt").is_err()); // Windows reserved
+
+        // Invalid paths - URL schemes and encoding
+        assert!(path::validate_file_path("file:///etc/passwd").is_err());
+        assert!(path::validate_file_path("test%2e%2e/passwd").is_err());
+        assert!(path::validate_file_path("....//etc/passwd").is_err());
 
         // Path too long
         let long_path = "x".repeat(5000);
@@ -404,7 +469,7 @@ mod tests {
 
         let valid_doc = Document {
             id: doc_id,
-            path: ValidatedPath::new("/test/doc.md").expect("Test path should be valid"),
+            path: ValidatedPath::new("test/doc.md").expect("Test path should be valid"),
             title: ValidatedTitle::new("Test Doc").expect("Test title should be valid"),
             content: vec![0u8; 1024],
             tags: vec![],
@@ -446,7 +511,7 @@ mod tests {
         // Document with empty content should be valid
         let empty_content_doc = Document {
             id: doc_id,
-            path: ValidatedPath::new("/test/empty.md").expect("Test path should be valid"),
+            path: ValidatedPath::new("test/empty.md").expect("Test path should be valid"),
             title: ValidatedTitle::new("Empty Document").expect("Test title should be valid"),
             content: vec![], // Empty content
             tags: vec![],

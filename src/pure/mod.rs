@@ -428,11 +428,11 @@ mod tests {
         let pairs = vec![
             (
                 ValidatedDocumentId::from_uuid(Uuid::new_v4())?,
-                ValidatedPath::new("/test/1.md")?,
+                ValidatedPath::new("test/1.md")?,
             ),
             (
                 ValidatedDocumentId::from_uuid(Uuid::new_v4())?,
-                ValidatedPath::new("/test/2.md")?,
+                ValidatedPath::new("test/2.md")?,
             ),
         ];
 
@@ -456,7 +456,7 @@ mod tests {
         let mut all_keys = Vec::new();
         for i in 0..10 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/{i}.md"))?;
             tree = insert_into_tree(tree, key, path)?;
             all_keys.push(key);
         }
@@ -487,7 +487,7 @@ mod tests {
 
         for i in 0..5 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/{i}.md"))?;
             tree = insert_into_tree(tree, key, path)?;
             assert_eq!(count_entries(&tree), i + 1);
         }
@@ -502,7 +502,7 @@ mod tests {
         // Build a tree with known structure
         for i in 0..20 {
             let key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-            let path = ValidatedPath::new(format!("/test/{i}.md"))?;
+            let path = ValidatedPath::new(format!("test/{i}.md"))?;
             tree = insert_into_tree(tree, key, path)?;
         }
 

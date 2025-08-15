@@ -673,7 +673,7 @@ mod tests {
 
         // Test insertion
         let doc_id = ValidatedDocumentId::new();
-        let doc_path = ValidatedPath::new("/test/document.md")?;
+        let doc_path = ValidatedPath::new("test/document.md")?;
 
         index.insert(doc_id, doc_path).await?;
 
