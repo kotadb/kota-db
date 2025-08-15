@@ -90,6 +90,7 @@ kota-db-data/
 # Test artifacts
 /test-results/
 /test-output/
+/test_data/
 
 # Benchmark results
 /benchmarks/results/
