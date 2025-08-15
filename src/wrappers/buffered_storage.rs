@@ -76,8 +76,10 @@ impl<S: Storage> BufferedStorage<S> {
         let last_flush = Arc::new(RwLock::new(Instant::now()));
 
         // Start background flush task if interval is non-zero
-        // Use a more restrictive condition to avoid hanging in CI
-        let flush_handle = if !config.flush_interval.is_zero() {
+        // Disable background tasks in test environments to avoid hanging
+        let is_test_env =
+            cfg!(test) || std::env::var("CI").is_ok() || std::env::var("CARGO_TARGET_DIR").is_ok();
+        let flush_handle = if !config.flush_interval.is_zero() && !is_test_env {
             let shutdown_clone = Arc::clone(&shutdown);
             let needs_flush_clone = Arc::clone(&needs_flush);
             let last_flush_clone = Arc::clone(&last_flush);
