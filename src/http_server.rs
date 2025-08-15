@@ -103,6 +103,8 @@ pub struct SearchParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     pub tags: Option<String>, // comma-separated tags
+    pub tag: Option<String>,  // single tag filter (for compatibility with QueryBuilder)
+    pub path: Option<String>, // path pattern filter
 }
 
 /// Health check response
@@ -251,10 +253,10 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
         .route("/documents", get(search_documents))
+        .route("/documents/search", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
-        .route("/documents/search", get(search_documents))
         // New search endpoints for client compatibility
         .route("/search/semantic", post(semantic_search))
         .route("/search/hybrid", post(hybrid_search))
@@ -292,10 +294,10 @@ pub fn create_server_with_pool(
         .route("/health", get(health_check))
         .route("/documents", post(create_document))
         .route("/documents", get(search_documents))
+        .route("/documents/search", get(search_documents))
         .route("/documents/:id", get(get_document))
         .route("/documents/:id", put(update_document))
         .route("/documents/:id", delete(delete_document))
-        .route("/documents/search", get(search_documents))
         // New search endpoints for client compatibility
         .route("/search/semantic", post(semantic_search))
         .route("/search/hybrid", post(hybrid_search))
@@ -645,24 +647,58 @@ async fn search_documents(
         let all_docs = state.storage.lock().await.list_all().await?;
         let mut filtered_docs = Vec::new();
 
+        // Prepare tag filter - support both 'tag' and 'tags' parameters
+        let tag_filter = params.tag.as_ref().or(params.tags.as_ref());
+
         for doc in all_docs {
-            // Simple text matching if query is provided
+            let mut matches = true;
+
+            // Apply text search filter
             if let Some(ref query) = params.q {
                 if !query.is_empty() {
                     let content_str = String::from_utf8_lossy(&doc.content);
                     let title_str = doc.title.as_str();
                     let path_str = doc.path.as_str();
 
-                    if content_str.to_lowercase().contains(&query.to_lowercase())
+                    matches = content_str.to_lowercase().contains(&query.to_lowercase())
                         || title_str.to_lowercase().contains(&query.to_lowercase())
-                        || path_str.to_lowercase().contains(&query.to_lowercase())
-                    {
-                        filtered_docs.push(doc);
-                    }
-                } else {
-                    filtered_docs.push(doc);
+                        || path_str.to_lowercase().contains(&query.to_lowercase());
                 }
-            } else {
+            }
+
+            // Apply tag filter if specified
+            if matches {
+                if let Some(tag) = tag_filter {
+                    // Check if document has the specified tag
+                    matches = doc.tags.iter().any(|t| t.as_str() == tag.as_str());
+                }
+            }
+
+            // Apply path filter if specified
+            if matches {
+                if let Some(ref path_pattern) = params.path {
+                    // Simple pattern matching - support wildcards
+                    if path_pattern.contains('*') {
+                        // Convert wildcard pattern to simple prefix/suffix matching
+                        let pattern = path_pattern.replace("*", "");
+                        if path_pattern.starts_with('*') && path_pattern.ends_with('*') {
+                            matches = doc.path.as_str().contains(&pattern);
+                        } else if path_pattern.starts_with('*') {
+                            matches = doc.path.as_str().ends_with(&pattern);
+                        } else if path_pattern.ends_with('*') {
+                            matches = doc.path.as_str().starts_with(&pattern);
+                        } else {
+                            // Pattern has * in the middle - just check contains for now
+                            matches = doc.path.as_str().contains(&pattern);
+                        }
+                    } else {
+                        // Exact path match
+                        matches = doc.path.as_str() == path_pattern;
+                    }
+                }
+            }
+
+            if matches {
                 filtered_docs.push(doc);
             }
         }
@@ -935,6 +971,8 @@ async fn semantic_search(
         limit: request.limit,
         offset: None,
         tags: None,
+        tag: None,
+        path: None,
     };
 
     // Note: To enable actual semantic search, initialize SemanticSearchEngine with:
@@ -966,6 +1004,8 @@ async fn hybrid_search(
         limit: request.limit,
         offset: None,
         tags: None,
+        tag: None,
+        path: None,
     };
 
     // Note: To enable actual hybrid search, use:
