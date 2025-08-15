@@ -65,12 +65,16 @@ fn test_cli_update_by_path() -> Result<()> {
             "Updated content",
         ],
     )?;
-    
+
     // Debug output if test fails
     if !output.contains("Document updated successfully") {
         eprintln!("Update output: {}", output);
     }
-    assert!(output.contains("Document updated successfully"), "Output was: {}", output);
+    assert!(
+        output.contains("Document updated successfully"),
+        "Output was: {}",
+        output
+    );
 
     // Verify the update
     let output = run_cli_command(db_path, &["get", "/test/doc.md"])?;
@@ -140,12 +144,16 @@ fn test_cli_update_path_change() -> Result<()> {
         db_path,
         &["update", "/old/path.md", "--new-path", "/new/path.md"],
     )?;
-    
+
     // Debug output if test fails
     if !output.contains("Document updated successfully") {
         eprintln!("Update path change output: {}", output);
     }
-    assert!(output.contains("Document updated successfully"), "Output was: {}", output);
+    assert!(
+        output.contains("Document updated successfully"),
+        "Output was: {}",
+        output
+    );
 
     // Old path should not exist
     let output = run_cli_command(db_path, &["get", "/old/path.md"])?;
