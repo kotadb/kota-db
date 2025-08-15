@@ -1,0 +1,133 @@
+name: Release Checklist
+
+# Runs comprehensive checks before releases
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release-validation:
+    name: Release Validation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Validate version consistency
+      run: |
+        echo "Checking version consistency across files..."
+        
+        # Get version from Cargo.toml
+        CARGO_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+        
+        # Get version from VERSION file
+        VERSION_FILE=$(cat VERSION 2>/dev/null || echo "")
+        
+        # Get version from git tag
+        GIT_TAG=${GITHUB_REF#refs/tags/}
+        GIT_VERSION=${GIT_TAG#v}
+        
+        echo "Cargo.toml version: $CARGO_VERSION"
+        echo "VERSION file: $VERSION_FILE"
+        echo "Git tag version: $GIT_VERSION"
+        
+        # Verify all versions match
+        if [[ "$CARGO_VERSION" != "$VERSION_FILE" ]]; then
+          echo "❌ Version mismatch between Cargo.toml and VERSION file"
+          exit 1
+        fi
+        
+        if [[ "$GIT_TAG" != "refs/tags/"* ]] && [[ "$CARGO_VERSION" != "$GIT_VERSION" ]]; then
+          echo "❌ Version mismatch between Cargo.toml and git tag"
+          exit 1
+        fi
+        
+        echo "✅ Version consistency verified"
+    
+    - name: Verify CHANGELOG entry
+      run: |
+        VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+        
+        # Check if version exists in CHANGELOG
+        if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+          echo "✅ CHANGELOG entry found for version $VERSION"
+        else
+          echo "❌ No CHANGELOG entry for version $VERSION"
+          echo "Please add release notes to CHANGELOG.md"
+          exit 1
+        fi
+    
+    - name: Check for breaking changes
+      run: |
+        # Look for breaking change indicators in commit messages
+        BREAKING=$(git log --pretty=format:"%s" $(git describe --tags --abbrev=0)..HEAD | grep -i "breaking" || true)
+        
+        if [ ! -z "$BREAKING" ]; then
+          echo "⚠️  Potential breaking changes detected:"
+          echo "$BREAKING"
+          echo ""
+          echo "Ensure major version bump if these are breaking changes"
+        fi
+    
+    - name: Verify all tests pass
+      run: |
+        cargo test --all-features --workspace --release
+    
+    - name: Check documentation
+      run: |
+        cargo doc --all-features --no-deps
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+    
+    - name: Verify examples
+      run: |
+        # Build and test all examples
+        for example in examples/*.rs; do
+          if [ -f "$example" ]; then
+            cargo build --example $(basename "$example" .rs)
+          fi
+        done
+    
+    - name: License check
+      run: |
+        # Ensure LICENSE file exists
+        if [ ! -f LICENSE ]; then
+          echo "❌ LICENSE file not found"
+          exit 1
+        fi
+        echo "✅ LICENSE file present"
+    
+    - name: Security audit
+      run: |
+        cargo install cargo-audit --locked
+        cargo audit
+    
+    - name: Generate release notes
+      run: |
+        VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+        
+        echo "## Release Notes for v$VERSION" > release-notes.md
+        echo "" >> release-notes.md
+        
+        # Extract changelog section for this version
+        awk "/## \[$VERSION\]/,/## \[.*\]/" CHANGELOG.md | head -n -1 >> release-notes.md
+        
+        echo "" >> release-notes.md
+        echo "### Checklist" >> release-notes.md
+        echo "- [x] Version consistency verified" >> release-notes.md
+        echo "- [x] CHANGELOG updated" >> release-notes.md
+        echo "- [x] All tests passing" >> release-notes.md
+        echo "- [x] Documentation built" >> release-notes.md
+        echo "- [x] Security audit passed" >> release-notes.md
+        echo "- [x] License verified" >> release-notes.md
+        
+        cat release-notes.md
+    
+    - name: Upload release notes
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-notes
+        path: release-notes.md
