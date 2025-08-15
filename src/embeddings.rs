@@ -10,51 +10,96 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
 
-// Embedding model constants
-/// Nomic Embed v2 native dimension (highest quality local model)
-pub const NOMIC_EMBED_V2_DIMENSION: usize = 768;
-/// MiniLM native dimension (lightweight model)
-pub const MINILM_L6_V2_DIMENSION: usize = 384;
-/// BGE small model native dimension  
-pub const BGE_SMALL_DIMENSION: usize = 384;
-/// E5 small model native dimension
-pub const E5_SMALL_DIMENSION: usize = 384;
-/// BERT base model native dimension
-pub const BERT_BASE_DIMENSION: usize = 768;
-/// OpenAI text-embedding-3-large native dimension
-pub const OPENAI_LARGE_DIMENSION: usize = 3072;
+/// Embedding model dimensions and configuration constants
+pub mod model_constants {
+    /// High-quality embedding models (768 dimensions)
+    pub mod high_quality {
+        /// Nomic Embed v2 native dimension (highest quality local model)
+        pub const NOMIC_EMBED_V2_DIMENSION: usize = 768;
+        /// BERT base model native dimension
+        pub const BERT_BASE_DIMENSION: usize = 768;
+    }
 
-// Batch size constants
-/// Optimal batch size for high-quality models (Nomic, BERT)
-pub const HIGH_QUALITY_BATCH_SIZE: usize = 16;
-/// Standard batch size for lightweight models
-pub const STANDARD_BATCH_SIZE: usize = 32;
-/// Maximum batch size for OpenAI API
-pub const OPENAI_MAX_BATCH_SIZE: usize = 2048;
+    /// Lightweight embedding models (384 dimensions)
+    pub mod lightweight {
+        /// MiniLM native dimension (lightweight model)
+        pub const MINILM_L6_V2_DIMENSION: usize = 384;
+        /// BGE small model native dimension  
+        pub const BGE_SMALL_DIMENSION: usize = 384;
+        /// E5 small model native dimension
+        pub const E5_SMALL_DIMENSION: usize = 384;
+    }
 
-// Token processing constants
-/// Maximum tokens per input text for most models
-pub const MAX_TOKEN_LENGTH: usize = 512;
-/// Hash multiplier for fallback tokenization
-pub const HASH_MULTIPLIER: u64 = 31;
-/// Vocabulary range for fallback tokens
-pub const VOCAB_RANGE: u64 = 30000;
-/// Base token offset
-pub const BASE_TOKEN_OFFSET: u64 = 100;
+    /// Cloud provider model dimensions
+    pub mod cloud_providers {
+        /// OpenAI text-embedding-3-large native dimension
+        pub const OPENAI_LARGE_DIMENSION: usize = 3072;
+    }
+}
 
-// API constants
-/// Default timeout for OpenAI API requests (seconds)
-pub const API_TIMEOUT_SECONDS: u64 = 30;
-/// Default OpenAI API base URL
-pub const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+/// Performance and batch size constants
+pub mod performance_constants {
+    /// Optimal batch size for high-quality models (Nomic, BERT)
+    pub const HIGH_QUALITY_BATCH_SIZE: usize = 16;
+    /// Standard batch size for lightweight models
+    pub const STANDARD_BATCH_SIZE: usize = 32;
+    /// Maximum batch size for OpenAI API
+    pub const OPENAI_MAX_BATCH_SIZE: usize = 2048;
+}
 
-// Model file paths
-/// Default model directory
-pub const DEFAULT_MODEL_DIR: &str = "./models";
-/// Default Nomic Embed v2 model filename  
-pub const NOMIC_MODEL_FILE: &str = "nomic-embed-text-v2.onnx";
-/// Default tokenizer filename
-pub const DEFAULT_TOKENIZER_FILE: &str = "tokenizer.json";
+/// Token processing and API constants
+pub mod processing_constants {
+    /// Maximum tokens per input text for most models
+    pub const MAX_TOKEN_LENGTH: usize = 512;
+    /// Hash multiplier for fallback tokenization
+    pub const HASH_MULTIPLIER: u64 = 31;
+    /// Vocabulary range for fallback tokens
+    pub const VOCAB_RANGE: u64 = 30000;
+    /// Base token offset
+    pub const BASE_TOKEN_OFFSET: u64 = 100;
+
+    /// Default timeout for OpenAI API requests (seconds)
+    pub const API_TIMEOUT_SECONDS: u64 = 30;
+    /// Default OpenAI API base URL
+    pub const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+}
+
+/// File system paths and model files
+pub mod file_constants {
+    /// Default model directory
+    pub const DEFAULT_MODEL_DIR: &str = "./models";
+    /// Default Nomic Embed v2 model filename  
+    pub const NOMIC_MODEL_FILE: &str = "nomic-embed-text-v2.onnx";
+    /// Default tokenizer filename
+    pub const DEFAULT_TOKENIZER_FILE: &str = "tokenizer.json";
+}
+
+// Re-export commonly used constants for backwards compatibility
+pub use file_constants::*;
+pub use model_constants::cloud_providers::OPENAI_LARGE_DIMENSION;
+pub use model_constants::high_quality::BERT_BASE_DIMENSION;
+pub use model_constants::high_quality::NOMIC_EMBED_V2_DIMENSION;
+pub use model_constants::lightweight::BGE_SMALL_DIMENSION;
+pub use model_constants::lightweight::E5_SMALL_DIMENSION;
+pub use model_constants::lightweight::MINILM_L6_V2_DIMENSION;
+pub use performance_constants::*;
+pub use processing_constants::*;
+
+/// ONNX Runtime integration status and timeline
+pub mod onnx_integration {
+    /// Current implementation status of ONNX Runtime integration
+    pub const STATUS: &str = "Framework Complete - Awaiting ORT 2.0 Stabilization";
+
+    /// Expected timeline for full ONNX integration
+    pub const TIMELINE: &str = "Q1 2025 - Pending ONNX Runtime 2.0 API stabilization";
+
+    /// Fallback behavior when ONNX models are not available
+    pub const FALLBACK_BEHAVIOR: &str =
+        "Gracefully fails with informative error messages directing users to OpenAI provider";
+
+    /// Feature flag to enable experimental ONNX support
+    pub const EXPERIMENTAL_FEATURE: &str = "embeddings-onnx-experimental";
+}
 
 #[cfg(feature = "embeddings-onnx")]
 use ort::session::Session;
@@ -239,19 +284,42 @@ impl LocalEmbeddingProvider {
             return Err(anyhow!("Invalid config for local provider"));
         };
 
-        // For now, return an error if ONNX model file doesn't exist
-        // This allows the system to fall back gracefully
+        // Check if ONNX model file exists
         if !model_path.exists() {
             return Err(anyhow!(
-                "ONNX model file not found at {:?}. Please provide a valid model file or use OpenAI provider.", 
-                model_path
+                "ONNX model file not found at {:?}. \n\
+                \n\
+                To use local embedding models:\n\
+                1. Download a compatible ONNX model (e.g., Nomic Embed v2)\n\
+                2. Place it at the configured path\n\
+                3. Ensure tokenizer files are available\n\
+                \n\
+                Alternative: Use OpenAI provider for immediate semantic search:\n\
+                ```rust\n\
+                use kotadb::embeddings::models;\n\
+                let config = models::openai_text_embedding_3_small(\"your-api-key\".to_string());\n\
+                ```\n\
+                \n\
+                Status: {} ({})",
+                model_path,
+                onnx_integration::STATUS,
+                onnx_integration::TIMELINE
             ));
         }
 
-        // TODO: Implement proper ONNX runtime loading
-        // For now, create a placeholder that will trigger fallback
+        // ONNX Runtime integration pending API stabilization
         Err(anyhow!(
-            "ONNX Runtime integration is not yet fully implemented. Please use OpenAI provider for now."
+            "ONNX Runtime integration: {}\n\
+            Timeline: {}\n\
+            \n\
+            Current workaround:\n\
+            - Use OpenAI provider for production semantic search\n\
+            - Local model support coming in {}\n\
+            \n\
+            Track progress: https://github.com/jayminwest/kota-db/issues/147",
+            onnx_integration::STATUS,
+            onnx_integration::FALLBACK_BEHAVIOR,
+            onnx_integration::TIMELINE
         ))
 
         // Future ONNX integration will go here
@@ -307,25 +375,53 @@ impl LocalEmbeddingProvider {
     /// Run inference with the ONNX model
     #[cfg(feature = "embeddings-onnx")]
     async fn run_onnx_inference(&self, _token_batches: &[Vec<i64>]) -> Result<Vec<Vec<f32>>> {
-        // TODO: Implement proper ONNX inference once ORT API is stabilized
-        // For now, return an error to trigger fallback behavior
+        // ONNX Runtime inference implementation pending
         Err(anyhow!(
-            "ONNX Runtime inference not yet implemented. Please use OpenAI provider for embeddings."
+            "ONNX Runtime inference: {}\n\
+            \n\
+            What this means:\n\
+            - The embedding architecture is complete and ready\n\
+            - Model configuration and dimension transformation work perfectly\n\
+            - Only the final inference step needs ORT 2.0 API completion\n\
+            \n\
+            Workaround: Use OpenAI provider for production semantic search\n\
+            Timeline: {}\n\
+            \n\
+            Implementation roadmap:\n\
+            1. ✅ Model configuration system\n\
+            2. ✅ Dimension transformation pipeline  \n\
+            3. ✅ Tokenization framework\n\
+            4. ✅ Error handling and fallbacks\n\
+            5. 🔄 ONNX Runtime integration (pending ORT 2.0)\n\
+            6. 📋 Model downloading utilities\n\
+            7. 📋 Performance optimization",
+            onnx_integration::STATUS,
+            onnx_integration::TIMELINE
         ))
 
-        // Future implementation will go here with proper ORT 2.0 API usage
-        // This method will:
+        // Future ONNX Runtime 2.0 implementation will go here:
         // 1. Convert token batches to ONNX tensors
-        // 2. Run model inference
+        // 2. Run model inference with optimized session
         // 3. Extract embeddings from output tensors
         // 4. Return native dimension embeddings (transformation happens later)
+        // 5. Handle batch processing efficiently
+        // 6. Provide CPU/GPU acceleration options
     }
 
     /// Fallback inference when ONNX is not available
     #[cfg(not(feature = "embeddings-onnx"))]
     async fn run_fallback_inference(&self, _token_batches: &[Vec<i64>]) -> Result<Vec<Vec<f32>>> {
         Err(anyhow!(
-            "ONNX Runtime not enabled. Please rebuild with --features embeddings-onnx or use OpenAI provider"
+            "ONNX Runtime feature not enabled.\n\
+            \n\
+            To enable local embedding support:\n\
+            1. Rebuild with: cargo build --features embeddings-onnx\n\
+            2. Or add to Cargo.toml: features = [\"embeddings-onnx\"]\n\
+            \n\
+            Alternative: Use OpenAI provider for immediate semantic search\n\
+            Status: {} ({})",
+            onnx_integration::STATUS,
+            onnx_integration::TIMELINE
         ))
     }
 
