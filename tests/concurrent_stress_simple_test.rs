@@ -83,9 +83,8 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
                 } else {
                     // Write operation
                     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                    let path = ValidatedPath::new(format!(
-                        "/phase2b/pattern_{pattern_id}/op_{op_num}.md"
-                    ))?;
+                    let path =
+                        ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
                     let title =
                         ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
                     let content = format!(
