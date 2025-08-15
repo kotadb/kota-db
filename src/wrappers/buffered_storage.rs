@@ -3,13 +3,13 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::contracts::{Document, Storage};
 use crate::observability::{record_metric, MetricType};
@@ -325,10 +325,8 @@ impl<S: Storage> Storage for BufferedStorage<S> {
                 *self.buffered_writes.lock().await += 1;
             }
 
-            // Check if we should flush
-            if self.should_flush().await {
-                self.flush_buffer().await?;
-            }
+            // Check for timer-triggered flush and other conditions
+            self.check_and_flush_if_needed().await?;
         }
 
         Ok(exists)
@@ -340,16 +338,38 @@ impl<S: Storage> Storage for BufferedStorage<S> {
     }
 
     async fn sync(&mut self) -> Result<()> {
-        // Flush buffer before syncing
+        // Flush buffer before syncing to ensure durability
         self.flush_buffer().await?;
         self.inner.sync().await
     }
 
     async fn list_all(&self) -> Result<Vec<Document>> {
-        // Note: This doesn't include buffered documents that haven't been flushed
-        // In production, we might want to merge buffered and persisted documents
-        warn!("list_all called with pending buffered writes - results may be incomplete");
-        self.inner.list_all().await
+        // Get documents from underlying storage
+        let mut docs = self.inner.list_all().await?;
+
+        // Create a map for efficient lookups and updates
+        let mut doc_map: HashMap<ValidatedDocumentId, Document> =
+            docs.drain(..).map(|d| (d.id, d)).collect();
+
+        // Apply buffered operations to get consistent view
+        {
+            let buffer = self.write_buffer.lock().await;
+            for op in buffer.iter() {
+                match op {
+                    BufferedOperation::Insert(doc) | BufferedOperation::Update(doc) => {
+                        // Insert or update in the map
+                        doc_map.insert(doc.id, doc.clone());
+                    }
+                    BufferedOperation::Delete(id) => {
+                        // Remove from the map
+                        doc_map.remove(id);
+                    }
+                }
+            }
+        }
+
+        // Return the merged list
+        Ok(doc_map.into_values().collect())
     }
 
     async fn close(mut self) -> Result<()> {
