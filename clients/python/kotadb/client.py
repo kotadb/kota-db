@@ -127,7 +127,7 @@ class KotaDB:
         except requests.RequestException as e:
             raise ConnectionError(f"Request failed: {e}") from e
 
-    def query(self, query: str, limit: Optional[int] = None, offset: int = 0) -> QueryResult:
+    def query(self, query: str, limit: Optional[int] = None, offset: int = 0, **kwargs) -> QueryResult:
         """
         Search documents using text query.
 
@@ -135,6 +135,7 @@ class KotaDB:
             query: Search query string
             limit: Maximum number of results to return
             offset: Number of results to skip
+            **kwargs: Additional filter parameters (e.g., tag, path)
 
         Returns:
             QueryResult with matching documents and metadata
@@ -144,6 +145,9 @@ class KotaDB:
             params["limit"] = limit
         if offset:
             params["offset"] = offset
+        
+        # Add any additional filter parameters
+        params.update(kwargs)
 
         response = self._make_request("GET", "/documents/search", params=params)
         return QueryResult.from_dict(response.json())
