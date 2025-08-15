@@ -106,7 +106,7 @@ impl MCPServer {
             let trigram_index: Arc<Mutex<dyn crate::contracts::Index>> =
                 Arc::new(Mutex::new(trigram_index));
 
-            // Create semantic search engine
+            // Create semantic search engine with trigram support for hybrid search
             let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
@@ -118,10 +118,15 @@ impl MCPServer {
             )
             .await?;
 
-            let semantic_engine = SemanticSearchEngine::new(
+            // Create a trigram index for the semantic engine's hybrid search
+            let trigram_index_for_semantic =
+                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+
+            let semantic_engine = SemanticSearchEngine::new_with_trigram(
                 Box::new(semantic_storage),
                 vector_index_path.to_str().unwrap(),
                 embedding_config,
+                Box::new(trigram_index_for_semantic),
             )
             .await?;
             let semantic_engine = Arc::new(Mutex::new(semantic_engine));
