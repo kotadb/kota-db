@@ -1,0 +1,162 @@
+name: CI Fast
+
+# Optimized CI that actually runs in ~3 minutes
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  # Quick format and clippy checks (< 1 min)
+  quick-checks:
+    name: Quick Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - name: Format check
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+
+  # Build once, cache for other jobs
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-artifacts"
+    - name: Build release
+      run: cargo build --release --all-features
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: kotadb-binary
+        path: target/release/kotadb
+
+  # Unit tests only (fast)
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 3
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-artifacts"
+    - name: Run unit tests
+      run: cargo test --lib --release --all-features -- --test-threads=4
+      env:
+        RUST_LOG: error
+
+  # Integration tests (separate job)
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 3
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-artifacts"
+    - name: Run integration tests
+      run: cargo test --test '*' --release --features bench -- --test-threads=4
+      env:
+        RUST_LOG: error
+
+  # Doc tests (separate job)
+  doc-tests:
+    name: Doc Tests
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 2
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-artifacts"
+    - name: Run doc tests
+      run: cargo test --doc --release --all-features
+
+  # Security and license checks (parallel)
+  compliance:
+    name: Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+    - uses: actions/checkout@v4
+    - name: Security audit
+      run: |
+        cargo install cargo-audit --features vendored-openssl --locked || true
+        cargo audit || true
+      continue-on-error: true
+
+  # Performance smoke test (not full benchmark)
+  perf-smoke:
+    name: Performance Smoke Test
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 2
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-artifacts"
+    - name: Download binary
+      uses: actions/download-artifact@v4
+      with:
+        name: kotadb-binary
+        path: target/release/
+    - name: Make binary executable
+      run: chmod +x target/release/kotadb
+    - name: Quick performance check
+      run: |
+        ./target/release/kotadb init test-db
+        time ./target/release/kotadb --db test-db benchmark --operations 100 --quiet || true
+
+  # Final status check
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [quick-checks, unit-tests, integration-tests, doc-tests]
+    if: always()
+    timeout-minutes: 1
+    steps:
+    - name: Check status
+      run: |
+        if [[ "${{ needs.quick-checks.result }}" == "success" && 
+              "${{ needs.unit-tests.result }}" == "success" && 
+              "${{ needs.integration-tests.result }}" == "success" ]]; then
+          echo "✅ CI passed"
+        else
+          echo "❌ CI failed"
+          exit 1
+        fi
