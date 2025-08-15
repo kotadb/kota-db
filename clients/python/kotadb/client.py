@@ -127,7 +127,9 @@ class KotaDB:
         except requests.RequestException as e:
             raise ConnectionError(f"Request failed: {e}") from e
 
-    def query(self, query: str, limit: Optional[int] = None, offset: int = 0, **kwargs) -> QueryResult:
+    def query(
+        self, query: str, limit: Optional[int] = None, offset: int = 0, **kwargs
+    ) -> QueryResult:
         """
         Search documents using text query.
 
@@ -145,7 +147,7 @@ class KotaDB:
             params["limit"] = limit
         if offset:
             params["offset"] = offset
-        
+
         # Add any additional filter parameters
         params.update(kwargs)
 
