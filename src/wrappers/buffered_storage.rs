@@ -49,7 +49,7 @@ enum BufferedOperation {
 
 /// Storage wrapper that buffers write operations for improved performance
 pub struct BufferedStorage<S: Storage> {
-    inner: S,
+    inner: Option<S>,
     config: BufferConfig,
     write_buffer: Arc<Mutex<VecDeque<BufferedOperation>>>,
     buffer_memory: Arc<AtomicUsize>,
@@ -75,15 +75,18 @@ impl<S: Storage> BufferedStorage<S> {
         let buffer_memory = Arc::new(AtomicUsize::new(0));
         let last_flush = Arc::new(RwLock::new(Instant::now()));
 
-        // Start background flush task if not in test mode
-        let flush_handle = if !cfg!(test) && !config.flush_interval.is_zero() {
+        // Start background flush task if not in test mode or if interval is zero
+        // Note: Integration tests run with --release, so cfg!(test) is false there
+        let flush_handle = if !config.flush_interval.is_zero() && !cfg!(test) {
             let shutdown_clone = Arc::clone(&shutdown);
             let needs_flush_clone = Arc::clone(&needs_flush);
             let last_flush_clone = Arc::clone(&last_flush);
             let interval = config.flush_interval;
 
             Some(tokio::spawn(async move {
-                let mut interval_timer = time::interval(interval);
+                // Use a shorter check interval for responsiveness
+                let check_interval = std::cmp::min(interval, Duration::from_millis(100));
+                let mut interval_timer = time::interval(check_interval);
 
                 loop {
                     interval_timer.tick().await;
@@ -107,7 +110,7 @@ impl<S: Storage> BufferedStorage<S> {
         };
 
         Self {
-            inner,
+            inner: Some(inner),
             config,
             write_buffer: buffer,
             buffer_memory,
@@ -142,18 +145,24 @@ impl<S: Storage> BufferedStorage<S> {
             match op {
                 BufferedOperation::Insert(doc) => {
                     self.inner
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Storage already closed"))?
                         .insert(doc)
                         .await
                         .context("Failed to insert document during flush")?;
                 }
                 BufferedOperation::Update(doc) => {
                     self.inner
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Storage already closed"))?
                         .update(doc)
                         .await
                         .context("Failed to update document during flush")?;
                 }
                 BufferedOperation::Delete(id) => {
                     self.inner
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Storage already closed"))?
                         .delete(&id)
                         .await
                         .context("Failed to delete document during flush")?;
@@ -163,6 +172,8 @@ impl<S: Storage> BufferedStorage<S> {
 
         // Ensure all writes are persisted
         self.inner
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage already closed"))?
             .sync()
             .await
             .context("Failed to sync after flush")?;
@@ -290,7 +301,10 @@ impl<S: Storage> Storage for BufferedStorage<S> {
         }
 
         // Not in buffer, check underlying storage
-        self.inner.get(id).await
+        match &self.inner {
+            Some(inner) => inner.get(id).await,
+            None => Err(anyhow::anyhow!("Storage already closed")),
+        }
     }
 
     async fn update(&mut self, doc: Document) -> Result<()> {
@@ -340,12 +354,19 @@ impl<S: Storage> Storage for BufferedStorage<S> {
     async fn sync(&mut self) -> Result<()> {
         // Flush buffer before syncing to ensure durability
         self.flush_buffer().await?;
-        self.inner.sync().await
+        self.inner
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage already closed"))?
+            .sync()
+            .await
     }
 
     async fn list_all(&self) -> Result<Vec<Document>> {
         // Get documents from underlying storage
-        let mut docs = self.inner.list_all().await?;
+        let mut docs = match &self.inner {
+            Some(inner) => inner.list_all().await?,
+            None => return Err(anyhow::anyhow!("Storage already closed")),
+        };
 
         // Create a map for efficient lookups and updates
         let mut doc_map: HashMap<ValidatedDocumentId, Document> =
@@ -386,8 +407,24 @@ impl<S: Storage> Storage for BufferedStorage<S> {
         // Flush any remaining buffered operations
         self.flush_buffer().await?;
 
-        // Close underlying storage
-        self.inner.close().await
+        // Close underlying storage if it exists
+        if let Some(inner) = self.inner.take() {
+            inner.close().await
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<S: Storage> Drop for BufferedStorage<S> {
+    fn drop(&mut self) {
+        // Signal shutdown to background task when storage is dropped
+        self.shutdown.store(true, Ordering::Relaxed);
+
+        // Abort the flush task if it exists
+        if let Some(handle) = self.flush_handle.take() {
+            handle.abort();
+        }
     }
 }
 
