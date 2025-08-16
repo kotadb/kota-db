@@ -12,11 +12,11 @@ pub mod metrics;
 pub mod observability;
 pub mod primary_index;
 pub mod pure;
+pub mod search_validation;
 pub mod semantic_search;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;
-pub mod search_validation;
 pub mod vector_index;
 pub mod wrappers;
 

@@ -720,12 +720,11 @@ async fn main() -> Result<()> {
 
             Commands::Validate => {
                 println!("🔍 Running search functionality validation...");
-                
+
                 let validation_result = {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    
                     validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
                 };
 
@@ -737,7 +736,7 @@ async fn main() -> Result<()> {
                     ValidationStatus::Failed => "❌ FAILED",
                 });
                 println!("   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
-                
+
                 // Show individual check results
                 for check in &validation_result.check_results {
                     let status_icon = if check.passed { "✅" } else { "❌" };
@@ -750,7 +749,7 @@ async fn main() -> Result<()> {
                         println!("      Error: {}", error);
                     }
                 }
-                
+
                 // Show issues and recommendations
                 if !validation_result.issues.is_empty() {
                     println!("\n🚨 Issues Found:");
@@ -758,14 +757,14 @@ async fn main() -> Result<()> {
                         println!("   - {}", issue);
                     }
                 }
-                
+
                 if !validation_result.recommendations.is_empty() {
                     println!("\n💡 Recommendations:");
                     for rec in &validation_result.recommendations {
                         println!("   • {}", rec);
                     }
                 }
-                
+
                 // Exit with error code if validation failed
                 if validation_result.overall_status == ValidationStatus::Failed {
                     return Err(anyhow::anyhow!("Search validation failed"));
@@ -818,7 +817,6 @@ async fn main() -> Result<()> {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    
                     validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
                 };
 
@@ -846,7 +844,7 @@ async fn main() -> Result<()> {
                         for rec in &validation_result.recommendations {
                             println!("   • {}", rec);
                         }
-                        
+
                         // Return error for critical failures
                         return Err(anyhow::anyhow!(
                             "Post-ingestion search validation failed. Search functionality is broken."
@@ -861,7 +859,7 @@ async fn main() -> Result<()> {
                 if result.errors > 0 {
                     println!("   ⚠️ Errors encountered: {}", result.errors);
                 }
-                
+
                 // Show validation summary
                 println!("   Validation: {} ({}/{})", 
                     validation_result.summary(),
