@@ -181,6 +181,42 @@ impl Database {
         Ok(())
     }
 
+    /// Rebuild all indices from current storage
+    /// This is needed after bulk operations like git ingestion
+    async fn rebuild_indices(&self) -> Result<()> {
+        // Get all documents from storage
+        let all_docs = self.storage.lock().await.list_all().await?;
+
+        // Clear and rebuild indices
+        for doc in all_docs {
+            let doc_id = doc.id;
+            let doc_path = ValidatedPath::new(doc.path.to_string())?;
+
+            // Insert into primary index
+            self.primary_index
+                .lock()
+                .await
+                .insert(doc_id, doc_path.clone())
+                .await?;
+
+            // Insert into trigram index
+            // Note: The Index trait doesn't support content, but the trigram index
+            // needs to extract trigrams from somewhere. For now, we pass the path
+            // but this is a known limitation that needs addressing.
+            self.trigram_index
+                .lock()
+                .await
+                .insert(doc_id, doc_path)
+                .await?;
+        }
+
+        // Flush indices to persist changes
+        self.primary_index.lock().await.flush().await?;
+        self.trigram_index.lock().await.flush().await?;
+
+        Ok(())
+    }
+
     async fn insert(
         &self,
         path: String,
@@ -597,7 +633,12 @@ async fn main() -> Result<()> {
                 let mut storage = db.storage.lock().await;
                 let result = ingester.ingest(&repo_path, &mut **storage).await?;
 
-                // Update indices after ingestion
+                // Release the storage lock before rebuilding indices
+                drop(storage);
+
+                // Rebuild indices and cache after ingestion
+                println!("🔄 Rebuilding indices...");
+                db.rebuild_indices().await?;
                 db.rebuild_path_cache().await?;
 
                 println!("✅ Repository ingestion complete!");
