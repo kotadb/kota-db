@@ -517,7 +517,15 @@ impl Index for TrigramIndex {
     /// Search the trigram index
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
         if query.search_terms.is_empty() {
-            return Ok(Vec::new()); // No text to search
+            // Wildcard search: return all indexed documents
+            let cache = self.document_cache.read().await;
+            let mut all_docs: Vec<ValidatedDocumentId> = cache.keys().copied().collect();
+
+            // Apply limit
+            let limit = query.limit.get();
+            all_docs.truncate(limit);
+
+            return Ok(all_docs);
         }
 
         // Extract trigrams from all search terms
