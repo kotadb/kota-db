@@ -19,6 +19,10 @@ pub mod validation;
 pub mod vector_index;
 pub mod wrappers;
 
+// Git integration module
+#[cfg(feature = "git-integration")]
+pub mod git;
+
 // Re-export key types
 pub use observability::{
     init_logging, log_operation, record_metric, with_trace_id, MetricType, Operation,

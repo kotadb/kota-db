@@ -91,6 +91,25 @@ enum Commands {
 
     /// Show database statistics
     Stats,
+
+    /// Ingest a git repository into the database
+    #[cfg(feature = "git-integration")]
+    IngestRepo {
+        /// Path to the git repository
+        repo_path: PathBuf,
+        /// Prefix for document paths in the database
+        #[arg(short, long, default_value = "repos")]
+        prefix: String,
+        /// Include file contents
+        #[arg(long, default_value = "true")]
+        include_files: bool,
+        /// Include commit history
+        #[arg(long, default_value = "true")]
+        include_commits: bool,
+        /// Maximum file size to ingest (in MB)
+        #[arg(long, default_value = "10")]
+        max_file_size_mb: usize,
+    },
 }
 
 struct Database {
@@ -543,6 +562,50 @@ async fn main() -> Result<()> {
                 println!("   Total size: {total_size} bytes");
                 if count > 0 {
                     println!("   Average size: {} bytes", total_size / count);
+                }
+            }
+
+            #[cfg(feature = "git-integration")]
+            Commands::IngestRepo {
+                repo_path,
+                prefix,
+                include_files,
+                include_commits,
+                max_file_size_mb,
+            } => {
+                use kotadb::git::types::IngestionOptions;
+                use kotadb::git::{IngestionConfig, RepositoryIngester};
+
+                println!("🔄 Ingesting git repository: {:?}", repo_path);
+
+                // Configure ingestion options
+                let options = IngestionOptions {
+                    include_file_contents: include_files,
+                    include_commit_history: include_commits,
+                    max_file_size: max_file_size_mb * 1024 * 1024,
+                    ..Default::default()
+                };
+
+                let config = IngestionConfig {
+                    path_prefix: prefix,
+                    options,
+                    create_index: true,
+                };
+
+                // Create ingester and run ingestion
+                let ingester = RepositoryIngester::new(config);
+                let mut storage = db.storage.lock().await;
+                let result = ingester.ingest(&repo_path, &mut **storage).await?;
+
+                // Update indices after ingestion
+                db.rebuild_path_cache().await?;
+
+                println!("✅ Repository ingestion complete!");
+                println!("   Documents created: {}", result.documents_created);
+                println!("   Files ingested: {}", result.files_ingested);
+                println!("   Commits ingested: {}", result.commits_ingested);
+                if result.errors > 0 {
+                    println!("   ⚠️ Errors encountered: {}", result.errors);
                 }
             }
         }

@@ -1109,6 +1109,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
+name = "git2"
+version = "0.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "232e6a7bfe35766bf715e55a88b39a700596c0ccfd88cd3680b4cdb40d66ef70"
+dependencies = [
+ "bitflags 2.9.1",
+ "libc",
+ "libgit2-sys",
+ "log",
+ "openssl-probe",
+ "openssl-sys",
+ "url",
+]
+
+[[package]]
 name = "globset"
 version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1744,6 +1759,7 @@ dependencies = [
  "fake",
  "fastrand",
  "futures",
+ "git2",
  "hnsw",
  "hyper 1.6.0",
  "indexmap",
@@ -1827,6 +1843,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
+name = "libgit2-sys"
+version = "0.16.2+1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee4126d8b4ee5c9d9ea891dd875cfdc1e9d0950437179104b183d7d8a74d24e8"
+dependencies = [
+ "cc",
+ "libc",
+ "libssh2-sys",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "libm"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1841,6 +1871,32 @@ dependencies = [
  "bitflags 2.9.1",
  "libc",
  "redox_syscall 0.5.17",
+]
+
+[[package]]
+name = "libssh2-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "220e4f05ad4a218192533b300327f5150e809b54c4ec83b5a1d91833601811b9"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
+name = "libz-sys"
+version = "1.1.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b70e7a7df205e92a1a4cd9aaae7898dac0aa555503cc0a649494d0d60e7651d"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
