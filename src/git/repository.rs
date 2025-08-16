@@ -55,20 +55,15 @@ impl GitRepository {
             revwalk.push_head()?;
             let commit_count = revwalk.count();
 
-            // Get repository name from path
-            let name = self
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
             // Try to get remote URL
             let url = self
                 .repo
                 .find_remote("origin")
                 .ok()
                 .and_then(|remote| remote.url().map(String::from));
+
+            // Extract repository name with multiple fallback strategies
+            let name = self.extract_repository_name(&url);
 
             Ok(RepositoryMetadata {
                 name,
@@ -84,6 +79,100 @@ impl GitRepository {
         #[cfg(not(feature = "git-integration"))]
         {
             anyhow::bail!("Git integration feature not enabled");
+        }
+    }
+
+    /// Extract repository name from remote URL or fall back to directory name
+    ///
+    /// Attempts multiple strategies in order:
+    /// 1. Parse from git remote URL (most accurate)
+    /// 2. Use directory name (for local repos)
+    /// 3. Return "unknown-repository" as final fallback
+    ///
+    /// # Examples
+    /// - `https://github.com/user/repo.git` → "repo"
+    /// - `git@github.com:user/repo.git` → "repo"
+    /// - `/path/to/local-repo` → "local-repo"
+    fn extract_repository_name(&self, url: &Option<String>) -> String {
+        // First, try to extract from remote URL if available
+        if let Some(remote_url) = url {
+            if let Some(name) = Self::parse_repository_name_from_url(remote_url) {
+                return name;
+            }
+        }
+
+        // Fall back to directory name
+        self.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown-repository")
+            .to_string()
+    }
+
+    /// Parse repository name from various Git URL formats
+    fn parse_repository_name_from_url(url: &str) -> Option<String> {
+        // Handle SSH URLs: git@github.com:user/repo.git
+        if url.starts_with("git@") {
+            if let Some(path_part) = url.split(':').nth(1) {
+                return Self::extract_name_from_path(path_part);
+            }
+        }
+
+        // Handle HTTP/HTTPS URLs: https://github.com/user/repo.git
+        if url.starts_with("http://") || url.starts_with("https://") {
+            // Remove protocol and find path
+            if let Some(path_start) = url.find("://") {
+                let mut path = &url[path_start + 3..];
+
+                // Strip authentication info if present (user:pass@domain)
+                if let Some(at_pos) = path.find('@') {
+                    path = &path[at_pos + 1..];
+                }
+
+                // Find the repository path after the domain
+                if let Some(slash_pos) = path.find('/') {
+                    let mut repo_path = &path[slash_pos + 1..];
+
+                    // Strip query parameters if present (?param=value)
+                    if let Some(query_pos) = repo_path.find('?') {
+                        repo_path = &repo_path[..query_pos];
+                    }
+
+                    // Strip fragment if present (#fragment)
+                    if let Some(fragment_pos) = repo_path.find('#') {
+                        repo_path = &repo_path[..fragment_pos];
+                    }
+
+                    return Self::extract_name_from_path(repo_path);
+                }
+            }
+        }
+
+        // Handle file:// URLs
+        if let Some(path) = url.strip_prefix("file://") {
+            return path
+                .split('/')
+                .next_back()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+        }
+
+        None
+    }
+
+    /// Extract repository name from path component (handles user/repo.git format)
+    fn extract_name_from_path(path: &str) -> Option<String> {
+        // Get the last component of the path (repo.git or repo)
+        let name = path.split('/').next_back().filter(|s| !s.is_empty())?;
+
+        // Remove .git extension if present
+        let name = name.strip_suffix(".git").unwrap_or(name);
+
+        // Ensure the name is not empty
+        if !name.is_empty() {
+            Some(name.to_string())
+        } else {
+            None
         }
     }
 
@@ -371,5 +460,145 @@ mod tests {
         assert!(result.is_err()); // Feature not enabled
 
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_github_https() {
+        let url = "https://github.com/jayminwest/kota-db.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("kota-db".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_github_ssh() {
+        let url = "git@github.com:jayminwest/kota-db.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("kota-db".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_gitlab_https() {
+        let url = "https://gitlab.com/someuser/my-project.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("my-project".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_gitlab_ssh() {
+        let url = "git@gitlab.com:someuser/my-project.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("my-project".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_without_git_extension() {
+        let url = "https://github.com/user/repo-without-extension";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("repo-without-extension".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_bitbucket() {
+        let url = "https://bitbucket.org/team/project.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("project".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_custom_domain() {
+        let url = "https://git.company.com/internal/private-repo.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("private-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_from_file_url() {
+        let url = "file:///home/user/repos/local-repo";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("local-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_with_nested_path() {
+        let url = "https://github.com/org/team/subteam/deep-repo.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("deep-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_http_url() {
+        // Test plain HTTP (non-HTTPS)
+        let url = "http://github.com/user/repo.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_with_auth() {
+        // Test URL with authentication credentials
+        let url = "https://user:password@github.com/org/repo.git";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("repo".to_string()));
+
+        // Test SSH-style with user info
+        let url2 = "https://oauth2:token@gitlab.com/team/project.git";
+        let name2 = GitRepository::parse_repository_name_from_url(url2);
+        assert_eq!(name2, Some("project".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_with_query_params() {
+        // Test URL with query parameters
+        let url = "https://github.com/user/repo.git?ref=main&clone=true";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_with_fragment() {
+        // Test URL with fragment/anchor
+        let url = "https://github.com/user/repo.git#readme";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_complex_url() {
+        // Test URL with auth, query params, and fragment
+        let url = "https://token:x-oauth-basic@github.com/org/complex-repo.git?shallow=true#branch";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, Some("complex-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repository_name_invalid_url() {
+        let url = "not-a-valid-url";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_parse_repository_name_empty_url() {
+        let url = "";
+        let name = GitRepository::parse_repository_name_from_url(url);
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_extract_name_from_path() {
+        assert_eq!(
+            GitRepository::extract_name_from_path("user/repo.git"),
+            Some("repo".to_string())
+        );
+        assert_eq!(
+            GitRepository::extract_name_from_path("org/team/project"),
+            Some("project".to_string())
+        );
+        assert_eq!(
+            GitRepository::extract_name_from_path("simple-name.git"),
+            Some("simple-name".to_string())
+        );
+        assert_eq!(GitRepository::extract_name_from_path(""), None);
+        assert_eq!(GitRepository::extract_name_from_path("/"), None);
     }
 }
