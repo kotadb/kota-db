@@ -227,10 +227,30 @@ pub async fn validate_post_ingestion_search_with_config(
     trigram_index: &dyn Index,
     config: ValidationConfig,
 ) -> Result<ValidationReport> {
-    // Input validation
+    // Input validation with resource safety bounds
     if config.max_documents_check == 0 || config.max_search_results == 0 {
         return Err(anyhow::anyhow!(
             "Invalid validation configuration: limits must be greater than 0"
+        ));
+    }
+
+    // Prevent resource exhaustion with reasonable upper bounds
+    const MAX_SAFE_DOCUMENT_CHECK: usize = 10_000;
+    const MAX_SAFE_SEARCH_RESULTS: usize = 5_000;
+
+    if config.max_documents_check > MAX_SAFE_DOCUMENT_CHECK {
+        return Err(anyhow::anyhow!(
+            "Invalid validation configuration: max_documents_check ({}) exceeds safe limit ({})",
+            config.max_documents_check,
+            MAX_SAFE_DOCUMENT_CHECK
+        ));
+    }
+
+    if config.max_search_results > MAX_SAFE_SEARCH_RESULTS {
+        return Err(anyhow::anyhow!(
+            "Invalid validation configuration: max_search_results ({}) exceeds safe limit ({})",
+            config.max_search_results,
+            MAX_SAFE_SEARCH_RESULTS
         ));
     }
 
@@ -429,12 +449,14 @@ async fn get_dynamic_search_terms(
     let sample_size = std::cmp::min(docs.len(), 5);
     for doc in docs.iter().take(sample_size) {
         if let Some(retrieved_doc) = storage.get(&doc.id).await? {
-            // Extract words from content (simple tokenization)
+            // Extract and sanitize words from content with comprehensive validation
             let content_str = String::from_utf8_lossy(&retrieved_doc.content);
             let words: Vec<&str> = content_str
                 .split_whitespace()
                 .filter(|word| word.len() >= 3 && word.len() <= 20)
                 .filter(|word| word.chars().all(|c| c.is_alphabetic()))
+                .filter(|word| !is_common_stop_word(word))
+                .filter(|word| !contains_sensitive_patterns(word))
                 .take(3)
                 .collect();
 
@@ -455,6 +477,44 @@ async fn get_dynamic_search_terms(
     }
 
     Ok(terms)
+}
+
+/// Check if a word is a common stop word that shouldn't be used for validation
+fn is_common_stop_word(word: &str) -> bool {
+    const STOP_WORDS: &[&str] = &[
+        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one",
+        "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see",
+        "two", "way", "who", "its", "did", "yes", "yet", "use", "may", "say", "she", "let", "put",
+        "end", "why", "try", "got", "run", "own", "too", "any", "off", "far", "set", "ask", "big",
+    ];
+
+    let word_lower = word.to_lowercase();
+    STOP_WORDS.contains(&word_lower.as_str())
+}
+
+/// Check if a word contains patterns that could be sensitive or problematic
+fn contains_sensitive_patterns(word: &str) -> bool {
+    let word_lower = word.to_lowercase();
+
+    // Filter out potential security-sensitive terms
+    if word_lower.contains("password")
+        || word_lower.contains("secret")
+        || word_lower.contains("token")
+    {
+        return true;
+    }
+
+    // Filter out very common programming terms that are too generic
+    if word_lower.len() <= 2 {
+        return true;
+    }
+
+    // Filter out words that are just numbers or contain special patterns
+    if word_lower.chars().any(|c| c.is_numeric()) {
+        return true;
+    }
+
+    false
 }
 
 /// Validate that indices contain the same documents as storage

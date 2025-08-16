@@ -819,6 +819,20 @@ async fn main() -> Result<()> {
                 db.rebuild_indices().await?;
                 db.rebuild_path_cache().await?;
 
+                // Ensure all async operations are complete before validation
+                println!("⏳ Ensuring index synchronization...");
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                // Explicit flush verification
+                {
+                    let mut storage = db.storage.lock().await;
+                    let mut primary_index = db.primary_index.lock().await;
+                    let mut trigram_index = db.trigram_index.lock().await;
+                    storage.flush().await?;
+                    primary_index.flush().await?;
+                    trigram_index.flush().await?;
+                }
+
                 // Validate search functionality after ingestion
                 println!("🔍 Validating search functionality...");
                 let validation_result = {
