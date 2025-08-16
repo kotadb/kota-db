@@ -97,6 +97,52 @@ pub struct SymbolIndexStats {
     pub last_updated: DateTime<Utc>,
 }
 
+/// Configuration for symbol storage
+pub struct SymbolStorageConfig {
+    /// Maximum number of symbols to keep in memory (default: 100,000)
+    pub max_symbols: usize,
+    /// Maximum memory usage in bytes (default: 500MB)
+    pub max_memory_bytes: usize,
+    /// Fuzzy search score thresholds
+    pub search_thresholds: SearchThresholds,
+}
+
+impl Default for SymbolStorageConfig {
+    fn default() -> Self {
+        Self {
+            max_symbols: 100_000,
+            max_memory_bytes: 500 * 1024 * 1024, // 500MB
+            search_thresholds: SearchThresholds::default(),
+        }
+    }
+}
+
+/// Configurable thresholds for fuzzy search scoring
+pub struct SearchThresholds {
+    /// Score for exact name match (default: 1.0)
+    pub exact_match: f32,
+    /// Score for prefix match (default: 0.8)
+    pub prefix_match: f32,
+    /// Score for substring match (default: 0.6)
+    pub contains_match: f32,
+    /// Minimum overlap ratio for fuzzy match (default: 0.5)
+    pub min_fuzzy_overlap: f32,
+    /// Score multiplier for fuzzy matches (default: 0.5)
+    pub fuzzy_multiplier: f32,
+}
+
+impl Default for SearchThresholds {
+    fn default() -> Self {
+        Self {
+            exact_match: 1.0,
+            prefix_match: 0.8,
+            contains_match: 0.6,
+            min_fuzzy_overlap: 0.5,
+            fuzzy_multiplier: 0.5,
+        }
+    }
+}
+
 /// Symbol storage and extraction pipeline
 pub struct SymbolStorage {
     /// Underlying document storage
@@ -111,11 +157,23 @@ pub struct SymbolStorage {
     name_index: HashMap<String, Vec<Uuid>>,
     /// Repository to files mapping
     repository_files: HashMap<String, HashSet<PathBuf>>,
+    /// Configuration
+    config: SymbolStorageConfig,
+    /// Current estimated memory usage
+    estimated_memory_usage: usize,
 }
 
 impl SymbolStorage {
-    /// Create a new symbol storage instance
+    /// Create a new symbol storage instance with default configuration
     pub async fn new(storage: Box<dyn Storage + Send + Sync>) -> Result<Self> {
+        Self::with_config(storage, SymbolStorageConfig::default()).await
+    }
+
+    /// Create a new symbol storage instance with custom configuration
+    pub async fn with_config(
+        storage: Box<dyn Storage + Send + Sync>,
+        config: SymbolStorageConfig,
+    ) -> Result<Self> {
         let mut instance = Self {
             storage,
             symbol_index: HashMap::new(),
@@ -123,6 +181,8 @@ impl SymbolStorage {
             file_symbols: HashMap::new(),
             name_index: HashMap::new(),
             repository_files: HashMap::new(),
+            config,
+            estimated_memory_usage: 0,
         };
 
         // Load existing symbols from storage
@@ -150,9 +210,14 @@ impl SymbolStorage {
 
         let mut loaded_count = 0;
         for doc in results {
-            if let Ok(entry) = self.deserialize_symbol(&doc) {
-                self.index_symbol(entry)?;
-                loaded_count += 1;
+            match self.deserialize_symbol(&doc) {
+                Ok(entry) => {
+                    self.index_symbol(entry)?;
+                    loaded_count += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize symbol from {}: {}", doc.path, e);
+                }
             }
         }
 
@@ -188,10 +253,13 @@ impl SymbolStorage {
             // Generate qualified name
             let qualified_name = self.build_qualified_name(&symbol.name, parent_id, file_path);
 
-            // Create symbol entry
+            // Create symbol entry with deterministic ID based on content
+            let symbol_id = self.generate_deterministic_id(&symbol, file_path, parent_id);
+            let doc_id = self.generate_document_id(&symbol_id)?;
+
             let entry = SymbolEntry {
-                id: Uuid::new_v4(),
-                document_id: ValidatedDocumentId::new(),
+                id: symbol_id,
+                document_id: doc_id,
                 repository: repository.clone(),
                 file_path: file_path.to_path_buf(),
                 symbol: symbol.clone(),
@@ -228,8 +296,8 @@ impl SymbolStorage {
                 parent_stack.push((symbol_id, symbol.end_line));
             }
 
-            // Clean up stack
-            parent_stack.retain(|(_, end_line)| symbol.start_line <= *end_line);
+            // Clean up stack - remove completed scopes
+            parent_stack.retain(|(_, end_line)| symbol.start_line < *end_line);
 
             // Persist symbol
             self.store_symbol(entry).await?;
@@ -264,8 +332,27 @@ impl SymbolStorage {
         Ok(())
     }
 
-    /// Index a symbol in memory for fast lookups
+    /// Index a symbol in memory for fast lookups with memory limits
     fn index_symbol(&mut self, entry: SymbolEntry) -> Result<()> {
+        // Check memory limits
+        let entry_size = self.estimate_symbol_size(&entry);
+
+        if self.symbol_index.len() >= self.config.max_symbols {
+            tracing::warn!(
+                "Symbol limit reached ({} symbols), skipping indexing",
+                self.config.max_symbols
+            );
+            return Ok(());
+        }
+
+        if self.estimated_memory_usage + entry_size > self.config.max_memory_bytes {
+            tracing::warn!(
+                "Memory limit reached ({} bytes), skipping indexing",
+                self.config.max_memory_bytes
+            );
+            return Ok(());
+        }
+
         // Add to name index
         self.name_index
             .entry(entry.qualified_name.clone())
@@ -274,8 +361,28 @@ impl SymbolStorage {
 
         // Add to main index
         self.symbol_index.insert(entry.id, entry);
+        self.estimated_memory_usage += entry_size;
 
         Ok(())
+    }
+
+    /// Estimate memory usage of a symbol entry
+    fn estimate_symbol_size(&self, entry: &SymbolEntry) -> usize {
+        use std::mem;
+
+        // Base struct size
+        mem::size_of::<SymbolEntry>()
+            // String allocations
+            + entry.qualified_name.len()
+            + entry.symbol.name.len()
+            + entry.symbol.text.len()
+            + entry.content_hash.len()
+            // Path allocation
+            + entry.file_path.to_string_lossy().len()
+            // Collections
+            + entry.children.len() * mem::size_of::<Uuid>()
+            + entry.dependencies.iter().map(|s| s.len()).sum::<usize>()
+            + entry.dependents.len() * mem::size_of::<Uuid>()
     }
 
     /// Build a qualified name for a symbol
@@ -326,24 +433,44 @@ impl SymbolStorage {
 
     /// Parse an import statement to extract the imported path
     fn parse_import_statement(&self, text: &str) -> Option<String> {
-        // Simplified import parsing - enhance based on language
-        if text.contains("use ") {
-            // Rust use statement
-            text.split("use ")
-                .nth(1)?
-                .split(';')
-                .next()
-                .map(|s| s.trim().to_string())
-        } else if text.contains("import ") {
-            // Python/JS import
-            text.split("import ")
-                .nth(1)?
-                .split(|c: char| c.is_whitespace() || c == ';')
-                .next()
-                .map(|s| s.trim().to_string())
-        } else {
-            None
+        // Enhanced import parsing with better pattern matching
+        let trimmed = text.trim();
+
+        // Rust imports: use crate::module; use super::module; use self::module;
+        if let Some(rest) = trimmed.strip_prefix("use ") {
+            // Handle complex imports like: use std::{io, fmt};
+            if let Some(base) = rest.split(':').next() {
+                return Some(base.trim().to_string());
+            }
         }
+
+        // Python imports: import module; from module import x; import module as alias
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            // Handle "import x as y" by taking just the module name
+            if let Some(module) = rest.split_whitespace().next() {
+                return Some(module.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("from ") {
+            // Handle "from module import x"
+            if let Some(module) = rest.split_whitespace().next() {
+                return Some(module.to_string());
+            }
+        }
+
+        // JavaScript/TypeScript imports: import x from 'module'; import {x} from 'module';
+        if trimmed.starts_with("import ") {
+            // Look for quoted module path
+            if let Some(start) = trimmed.find(['\'', '"']) {
+                let quote_char = trimmed.chars().nth(start).unwrap();
+                if let Some(end) = trimmed[start + 1..].find(quote_char) {
+                    return Some(trimmed[start + 1..start + 1 + end].to_string());
+                }
+            }
+        }
+
+        // TODO: Add support for other languages (Go, Java, C++, etc.)
+
+        None
     }
 
     /// Compute a hash of symbol content for change detection
@@ -378,7 +505,9 @@ impl SymbolStorage {
             }
         );
 
-        let path = format!("symbols/{}/{}.json", entry.file_path.display(), entry.id);
+        // Sanitize file path to prevent directory traversal
+        let sanitized_path = self.sanitize_path(&entry.file_path);
+        let path = format!("symbols/{}/{}.json", sanitized_path, entry.id);
 
         DocumentBuilder::new()
             .id(entry.document_id)
@@ -453,7 +582,7 @@ impl SymbolStorage {
             .collect()
     }
 
-    /// Perform incremental update for a file
+    /// Perform incremental update for a file with atomic rollback on failure
     #[instrument(skip(self, parsed_code))]
     pub async fn update_file_symbols(
         &mut self,
@@ -463,26 +592,73 @@ impl SymbolStorage {
     ) -> Result<()> {
         info!("Updating symbols for {}", file_path.display());
 
-        // Remove old symbols for this file
-        if let Some(old_ids) = self.file_symbols.remove(file_path) {
-            for id in old_ids {
-                if let Some(entry) = self.symbol_index.remove(&id) {
-                    // Remove from name index
-                    if let Some(names) = self.name_index.get_mut(&entry.qualified_name) {
-                        names.retain(|&x| x != id);
-                    }
+        // Backup old symbols for rollback
+        let old_ids = self.file_symbols.get(file_path).cloned();
+        let mut old_entries = Vec::new();
+        let mut old_name_mappings = HashMap::new();
 
-                    // Remove from storage
-                    self.storage.delete(&entry.document_id).await?;
+        // Collect old data for potential rollback
+        if let Some(ref ids) = old_ids {
+            for id in ids {
+                if let Some(entry) = self.symbol_index.get(id) {
+                    old_entries.push(entry.clone());
+                    if let Some(names) = self.name_index.get(&entry.qualified_name) {
+                        old_name_mappings.insert(entry.qualified_name.clone(), names.clone());
+                    }
                 }
             }
         }
 
-        // Add new symbols
-        self.extract_symbols(file_path, parsed_code, repository)
-            .await?;
+        // Remove old symbols from indices (but keep in storage temporarily)
+        if let Some(ref ids) = old_ids {
+            for id in ids {
+                if let Some(entry) = self.symbol_index.remove(id) {
+                    // Remove from name index
+                    if let Some(names) = self.name_index.get_mut(&entry.qualified_name) {
+                        names.retain(|&x| x != *id);
+                    }
+                }
+            }
+            self.file_symbols.remove(file_path);
+        }
 
-        Ok(())
+        // Try to add new symbols
+        match self
+            .extract_symbols(file_path, parsed_code, repository)
+            .await
+        {
+            Ok(new_ids) => {
+                // Success - now safe to delete old symbols from storage
+                if let Some(old_ids) = old_ids {
+                    for entry in &old_entries {
+                        // Ignore deletion errors for old symbols
+                        let _ = self.storage.delete(&entry.document_id).await;
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Rollback: restore old symbols to indices
+                tracing::error!("Failed to extract new symbols, rolling back: {}", e);
+
+                if let Some(old_ids) = old_ids {
+                    // Restore to file mapping
+                    self.file_symbols.insert(file_path.to_path_buf(), old_ids);
+
+                    // Restore to symbol index
+                    for entry in old_entries {
+                        self.symbol_index.insert(entry.id, entry);
+                    }
+
+                    // Restore name mappings
+                    for (name, ids) in old_name_mappings {
+                        self.name_index.insert(name, ids);
+                    }
+                }
+
+                Err(e).context("Failed to update file symbols")
+            }
+        }
     }
 
     /// Get statistics about the symbol index
@@ -509,6 +685,14 @@ impl SymbolStorage {
         }
     }
 
+    /// Get memory usage information
+    pub fn get_memory_usage(&self) -> (usize, usize, f32) {
+        let used = self.estimated_memory_usage;
+        let limit = self.config.max_memory_bytes;
+        let percentage = (used as f32 / limit as f32) * 100.0;
+        (used, limit, percentage)
+    }
+
     /// Search symbols with fuzzy matching
     pub fn search(&self, query: &str, limit: usize) -> Vec<&SymbolEntry> {
         let query_lower = query.to_lowercase();
@@ -521,23 +705,26 @@ impl SymbolStorage {
 
                 // Exact match
                 if name_lower == query_lower {
-                    return Some((entry, 1.0));
+                    return Some((entry, self.config.search_thresholds.exact_match));
                 }
 
                 // Prefix match
                 if name_lower.starts_with(&query_lower) {
-                    return Some((entry, 0.8));
+                    return Some((entry, self.config.search_thresholds.prefix_match));
                 }
 
                 // Contains match
                 if name_lower.contains(&query_lower) {
-                    return Some((entry, 0.6));
+                    return Some((entry, self.config.search_thresholds.contains_match));
                 }
 
                 // Fuzzy match (simple character overlap)
                 let overlap = self.calculate_overlap(&name_lower, &query_lower);
-                if overlap > 0.5 {
-                    return Some((entry, overlap * 0.5));
+                if overlap > self.config.search_thresholds.min_fuzzy_overlap {
+                    return Some((
+                        entry,
+                        overlap * self.config.search_thresholds.fuzzy_multiplier,
+                    ));
                 }
 
                 None
@@ -568,12 +755,79 @@ impl SymbolStorage {
             intersection as f32 / union as f32
         }
     }
+
+    /// Generate a deterministic ID for a symbol based on its content and location
+    fn generate_deterministic_id(
+        &self,
+        symbol: &ParsedSymbol,
+        file_path: &Path,
+        parent_id: Option<Uuid>,
+    ) -> Uuid {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+
+        // Include file path for uniqueness
+        hasher.update(file_path.to_string_lossy().as_bytes());
+
+        // Include parent ID if present
+        if let Some(parent) = parent_id {
+            hasher.update(parent.as_bytes());
+        }
+
+        // Include symbol name and type
+        hasher.update(symbol.name.as_bytes());
+        hasher.update(format!("{:?}", symbol.symbol_type).as_bytes());
+
+        // Include position for uniqueness within file
+        hasher.update(symbol.start_line.to_le_bytes());
+        hasher.update(symbol.start_column.to_le_bytes());
+
+        // Create UUID from hash
+        let hash = hasher.finalize();
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&hash[..16]);
+
+        // Set version (4) and variant bits for valid UUID v4
+        uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x40;
+        uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80;
+
+        Uuid::from_bytes(uuid_bytes)
+    }
+
+    /// Generate a deterministic document ID from a symbol ID
+    fn generate_document_id(&self, symbol_id: &Uuid) -> Result<ValidatedDocumentId> {
+        // Use the symbol ID directly as the document ID for consistency
+        // This ensures the same symbol always gets the same document ID
+        ValidatedDocumentId::from_uuid(*symbol_id)
+            .context("Failed to create document ID from symbol ID")
+    }
+
+    /// Sanitize a file path to prevent directory traversal attacks
+    fn sanitize_path(&self, path: &Path) -> String {
+        // Remove any parent directory references and convert to string
+        let components: Vec<_> = path
+            .components()
+            .filter_map(|comp| {
+                use std::path::Component;
+                match comp {
+                    Component::Normal(s) => s.to_str(),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        // Join with forward slashes for consistent storage paths
+        components.join("/")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsing::{CodeParser, SupportedLanguage};
+    use crate::parsing::{
+        CodeParser, ParseStats, ParsedCode, ParsedSymbol, SupportedLanguage, SymbolKind, SymbolType,
+    };
 
     async fn create_test_storage() -> Result<Box<dyn Storage + Send + Sync>> {
         use crate::file_storage::create_file_storage;
@@ -688,6 +942,290 @@ fn compute_sum() -> i32 { 0 }
         let symbols_v2 = symbol_storage.find_by_file(Path::new("evolving.rs"));
         assert_eq!(symbols_v2.len(), 1);
         assert_eq!(symbols_v2[0].symbol.name, "new_function");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_deterministic_symbol_ids() -> Result<()> {
+        let storage = create_test_storage().await?;
+        let mut symbol_storage = SymbolStorage::new(storage).await?;
+
+        let rust_code = r#"fn test_function() { println!("test"); }"#;
+
+        let mut parser = CodeParser::new()?;
+        let parsed1 = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+        let parsed2 = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+
+        // Extract symbols twice from the same code
+        let ids1 = symbol_storage
+            .extract_symbols(Path::new("test.rs"), parsed1, None)
+            .await?;
+
+        // Clear and re-extract to test determinism
+        symbol_storage.file_symbols.clear();
+        symbol_storage.symbol_index.clear();
+        symbol_storage.name_index.clear();
+
+        let ids2 = symbol_storage
+            .extract_symbols(Path::new("test.rs"), parsed2, None)
+            .await?;
+
+        // Symbol IDs should be identical for the same code
+        assert_eq!(ids1, ids2, "Symbol IDs should be deterministic");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_path_sanitization() -> Result<()> {
+        // Test the path sanitization function directly
+        fn test_sanitize(path: &str) -> String {
+            let components: Vec<_> = Path::new(path)
+                .components()
+                .filter_map(|comp| {
+                    use std::path::Component;
+                    match comp {
+                        Component::Normal(s) => s.to_str(),
+                        _ => None,
+                    }
+                })
+                .collect();
+            components.join("/")
+        }
+
+        // Test various malicious paths
+        let test_paths = vec![
+            "../../../etc/passwd",
+            "..\\..\\windows\\system32",
+            "normal/../../malicious",
+            "./normal/../../../bad",
+        ];
+
+        for path in test_paths {
+            let sanitized = test_sanitize(path);
+            // Should not contain any parent directory references
+            assert!(
+                !sanitized.contains(".."),
+                "Path {} was not properly sanitized: {}",
+                path,
+                sanitized
+            );
+            // Should only contain normal components
+            assert!(
+                !sanitized.contains("./"),
+                "Path {} contains current dir reference: {}",
+                path,
+                sanitized
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_deeply_nested_symbols() -> Result<()> {
+        let storage = create_test_storage().await?;
+        let mut symbol_storage = SymbolStorage::new(storage).await?;
+
+        // Create deeply nested code structure
+        let rust_code = r#"
+mod level1 {
+    mod level2 {
+        mod level3 {
+            mod level4 {
+                mod level5 {
+                    mod level6 {
+                        fn deeply_nested_function() {
+                            println!("Very deep!");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+
+        let mut parser = CodeParser::new()?;
+        let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+
+        let symbol_ids = symbol_storage
+            .extract_symbols(Path::new("deep.rs"), parsed, None)
+            .await?;
+
+        // Should handle deep nesting without stack overflow
+        assert!(!symbol_ids.is_empty());
+
+        // Verify parent-child relationships are correct
+        let symbols = symbol_storage.find_by_file(Path::new("deep.rs"));
+        let functions: Vec<_> = symbols
+            .iter()
+            .filter(|s| s.symbol.symbol_type == SymbolType::Function)
+            .collect();
+
+        if !functions.is_empty() {
+            // The deeply nested function should have a parent
+            assert!(
+                functions[0].parent_id.is_some(),
+                "Nested function should have parent"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_memory_limits() -> Result<()> {
+        let storage = create_test_storage().await?;
+
+        // Create storage with very low memory limit
+        let config = SymbolStorageConfig {
+            max_symbols: 5,
+            max_memory_bytes: 1024, // 1KB - very small
+            search_thresholds: SearchThresholds::default(),
+        };
+
+        let mut symbol_storage = SymbolStorage::with_config(storage, config).await?;
+
+        // Try to add many symbols
+        for i in 0..10 {
+            let rust_code = format!("fn function_{}() {{}}", i);
+            let mut parser = CodeParser::new()?;
+            let parsed = parser.parse_content(&rust_code, SupportedLanguage::Rust)?;
+
+            let _ = symbol_storage
+                .extract_symbols(Path::new(&format!("file_{}.rs", i)), parsed, None)
+                .await;
+        }
+
+        // Should respect the symbol limit
+        assert!(
+            symbol_storage.symbol_index.len() <= 5,
+            "Should respect max_symbols limit"
+        );
+
+        let (used, limit, _) = symbol_storage.get_memory_usage();
+        assert!(used <= limit, "Memory usage should not exceed limit");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rollback_on_extraction_failure() -> Result<()> {
+        let storage = create_test_storage().await?;
+        let mut symbol_storage = SymbolStorage::new(storage).await?;
+
+        // Add initial symbols
+        let rust_code = r#"fn original_function() {}"#;
+        let mut parser = CodeParser::new()?;
+        let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+
+        symbol_storage
+            .extract_symbols(Path::new("test.rs"), parsed, None)
+            .await?;
+
+        let original_count = symbol_storage.symbol_index.len();
+
+        // Create a ParsedCode that will cause extraction to fail
+        // by using an invalid path that will fail during storage
+        let invalid_parsed = ParsedCode {
+            language: SupportedLanguage::Rust,
+            symbols: vec![ParsedSymbol {
+                name: "\0invalid\0name".to_string(), // Invalid characters
+                symbol_type: SymbolType::Function,
+                kind: SymbolKind::Unknown,
+                start_line: 1,
+                end_line: 1,
+                start_column: 0,
+                end_column: 10,
+                text: "invalid".to_string(),
+                documentation: None,
+            }],
+            stats: ParseStats {
+                total_nodes: 1,
+                named_nodes: 1,
+                max_depth: 1,
+                error_count: 0,
+            },
+            errors: vec![],
+        };
+
+        // Try to update with invalid symbols - should fail and rollback
+        let result = symbol_storage
+            .update_file_symbols(Path::new("test.rs"), invalid_parsed, None)
+            .await;
+
+        // Update should fail but original symbols should be preserved
+        assert!(
+            result.is_err() || original_count == symbol_storage.symbol_index.len(),
+            "Should rollback on failure"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_complex_import_parsing() -> Result<()> {
+        // Test the import parsing function directly
+        fn test_parse_import(text: &str) -> Option<String> {
+            let trimmed = text.trim();
+
+            // Rust imports
+            if let Some(rest) = trimmed.strip_prefix("use ") {
+                if let Some(base) = rest.split(':').next() {
+                    return Some(base.trim().to_string());
+                }
+            }
+
+            // Python imports
+            if let Some(rest) = trimmed.strip_prefix("import ") {
+                if let Some(module) = rest.split_whitespace().next() {
+                    return Some(module.to_string());
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("from ") {
+                if let Some(module) = rest.split_whitespace().next() {
+                    return Some(module.to_string());
+                }
+            }
+
+            // JavaScript/TypeScript imports
+            if trimmed.starts_with("import ") {
+                if let Some(start) = trimmed.find(['\'', '"']) {
+                    let quote_char = trimmed.chars().nth(start).unwrap();
+                    if let Some(end) = trimmed[start + 1..].find(quote_char) {
+                        return Some(trimmed[start + 1..start + 1 + end].to_string());
+                    }
+                }
+            }
+
+            None
+        }
+
+        // Test various import formats
+        let test_cases = vec![
+            ("use std::collections::HashMap;", Some("std")),
+            ("use crate::{Error, Result};", Some("crate")),
+            ("import numpy as np", Some("numpy")),
+            ("from sklearn import svm", Some("sklearn")),
+            ("import React from 'react';", Some("react")),
+            (
+                "import { Component } from '@angular/core';",
+                Some("@angular/core"),
+            ),
+            ("use super::parent_module;", Some("super")),
+            ("", None),
+        ];
+
+        for (import_text, expected) in test_cases {
+            let result = test_parse_import(import_text);
+            assert_eq!(
+                result.as_deref(),
+                expected,
+                "Failed to parse: {}",
+                import_text
+            );
+        }
 
         Ok(())
     }

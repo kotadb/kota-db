@@ -118,7 +118,8 @@ pub use metrics::performance as performance_metrics;
 // Re-export symbol storage and extraction
 #[cfg(feature = "tree-sitter-parsing")]
 pub use symbol_storage::{
-    RelationType, SymbolEntry, SymbolIndexStats, SymbolRelation, SymbolStorage,
+    RelationType, SearchThresholds, SymbolEntry, SymbolIndexStats, SymbolRelation, SymbolStorage,
+    SymbolStorageConfig,
 };
 
 // Re-export symbol factory functions
