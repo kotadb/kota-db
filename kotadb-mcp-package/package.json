@@ -22,6 +22,7 @@
     "url": "https://github.com/jayminwest/kota-db/issues"
   },
   "homepage": "https://github.com/jayminwest/kota-db#readme",
+  "type": "module",
   "main": "dist/index.js",
   "bin": {
     "kotadb-mcp": "dist/index.js",

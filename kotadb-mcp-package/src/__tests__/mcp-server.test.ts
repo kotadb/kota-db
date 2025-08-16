@@ -37,26 +37,16 @@ describe('KotaDB MCP Server', () => {
 
       serverProcess.stderr?.on('data', (data: Buffer) => {
         const output = data.toString();
-        console.log('Server stderr:', output); // Debug output for CI
         if (output.includes('7 tools available') && !initialized) {
           initialized = true;
           resolve(serverProcess);
         }
       });
 
-      serverProcess.stdout?.on('data', (data: Buffer) => {
-        const output = data.toString();
-        console.log('Server stdout:', output); // Debug output for CI
-      });
-
-      serverProcess.on('error', (error) => {
-        console.log('Server process error:', error);
-        reject(error);
-      });
+      serverProcess.on('error', reject);
 
       serverProcess.on('exit', (code, signal) => {
         if (!initialized) {
-          console.log(`Server exited early with code ${code}, signal ${signal}`);
           reject(new Error(`Server process exited early with code ${code}, signal ${signal}`));
         }
       });
