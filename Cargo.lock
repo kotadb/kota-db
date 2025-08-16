@@ -1781,6 +1781,7 @@ dependencies = [
  "pretty_assertions",
  "proptest",
  "rand 0.8.5",
+ "regex",
  "reqwest",
  "rmp-serde",
  "roaring",

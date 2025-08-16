@@ -709,6 +709,30 @@ impl SymbolStorage {
         (used, limit, percentage)
     }
 
+    /// Get all files that have symbols indexed
+    pub fn get_indexed_files(&self) -> Vec<std::path::PathBuf> {
+        self.file_symbols.keys().cloned().collect()
+    }
+
+    /// Sync the underlying storage
+    pub async fn sync_storage(&mut self) -> Result<()> {
+        self.storage.sync().await
+    }
+
+    /// Flush the underlying storage
+    pub async fn flush_storage(&mut self) -> Result<()> {
+        self.storage.flush().await
+    }
+
+    /// Close the underlying storage
+    pub async fn close_storage(mut self) -> Result<()> {
+        // Since we can't move out of a trait object directly, we'll just call sync first
+        self.storage.sync().await?;
+        self.storage.flush().await?;
+        // Note: The actual close will happen when the storage is dropped
+        Ok(())
+    }
+
     /// Search symbols with fuzzy matching
     pub fn search(&self, query: &str, limit: usize) -> Vec<&SymbolEntry> {
         let query_lower = query.to_lowercase();
