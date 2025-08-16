@@ -186,33 +186,53 @@ impl Database {
     async fn rebuild_indices(&self) -> Result<()> {
         // Get all documents from storage
         let all_docs = self.storage.lock().await.list_all().await?;
+        let total_docs = all_docs.len();
 
-        // Clear and rebuild indices
-        for doc in all_docs {
-            let doc_id = doc.id;
-            let doc_path = ValidatedPath::new(doc.path.to_string())?;
-
-            // Insert into primary index
-            self.primary_index
-                .lock()
-                .await
-                .insert(doc_id, doc_path.clone())
-                .await?;
-
-            // Insert into trigram index
-            // Note: The Index trait doesn't support content, but the trigram index
-            // needs to extract trigrams from somewhere. For now, we pass the path
-            // but this is a known limitation that needs addressing.
-            self.trigram_index
-                .lock()
-                .await
-                .insert(doc_id, doc_path)
-                .await?;
+        if total_docs == 0 {
+            return Ok(());
         }
 
-        // Flush indices to persist changes
-        self.primary_index.lock().await.flush().await?;
-        self.trigram_index.lock().await.flush().await?;
+        // Process documents in batches for better performance
+        const BATCH_SIZE: usize = 100;
+        let mut processed = 0;
+
+        // Process in chunks to reduce lock contention
+        for chunk in all_docs.chunks(BATCH_SIZE) {
+            // Collect document IDs and paths for this batch
+            let mut batch_entries = Vec::with_capacity(chunk.len());
+            for doc in chunk {
+                let doc_id = doc.id;
+                let doc_path = ValidatedPath::new(doc.path.to_string())?;
+                batch_entries.push((doc_id, doc_path));
+            }
+
+            // Insert batch into primary index
+            {
+                let mut primary_index = self.primary_index.lock().await;
+                for (doc_id, doc_path) in &batch_entries {
+                    primary_index.insert(*doc_id, doc_path.clone()).await?;
+                }
+            }
+
+            // Insert batch into trigram index
+            {
+                let mut trigram_index = self.trigram_index.lock().await;
+                for (doc_id, doc_path) in &batch_entries {
+                    // Note: The Index trait doesn't support content, but the trigram index
+                    // needs to extract trigrams from somewhere. For now, we pass the path
+                    // but this is a known limitation that needs addressing.
+                    trigram_index.insert(*doc_id, doc_path.clone()).await?;
+                }
+            }
+
+            processed += chunk.len();
+
+            // Periodic flush for large datasets
+            if processed % 500 == 0 || processed == total_docs {
+                self.primary_index.lock().await.flush().await?;
+                self.trigram_index.lock().await.flush().await?;
+            }
+        }
 
         Ok(())
     }
@@ -432,6 +452,100 @@ impl Database {
     /// Flush any buffered writes to ensure durability
     async fn flush(&self) -> Result<()> {
         self.storage.lock().await.flush().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use kotadb::{
+        create_file_storage, create_primary_index, create_trigram_index, DocumentBuilder,
+    };
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_rebuild_indices_empty_storage() -> Result<()> {
+        // Test that rebuild_indices handles empty storage gracefully
+        let temp_dir = TempDir::new()?;
+        let storage_path = temp_dir.path().join("storage");
+        let primary_path = temp_dir.path().join("primary");
+        let trigram_path = temp_dir.path().join("trigram");
+
+        let storage = create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?;
+
+        let primary_index = create_primary_index(primary_path.to_str().unwrap(), Some(100)).await?;
+
+        let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
+
+        let db = Database {
+            storage: Arc::new(Mutex::new(Box::new(storage))),
+            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
+            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        // Should not panic with empty storage
+        db.rebuild_indices().await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rebuild_indices_batch_processing() -> Result<()> {
+        // Test that rebuild_indices handles many documents efficiently
+        let temp_dir = TempDir::new()?;
+        let storage_path = temp_dir.path().join("storage");
+        let primary_path = temp_dir.path().join("primary");
+        let trigram_path = temp_dir.path().join("trigram");
+
+        let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(1000)).await?;
+
+        // Add test documents to storage
+        for i in 0..150 {
+            let doc = DocumentBuilder::new()
+                .path(format!("batch/doc_{}.md", i))?
+                .title(format!("Batch Document {}", i))?
+                .content(format!("Content for batch document {}", i).as_bytes())
+                .build()?;
+            storage.insert(doc).await?;
+        }
+
+        let primary_index =
+            create_primary_index(primary_path.to_str().unwrap(), Some(1000)).await?;
+
+        let trigram_index =
+            create_trigram_index(trigram_path.to_str().unwrap(), Some(1000)).await?;
+
+        let db = Database {
+            storage: Arc::new(Mutex::new(Box::new(storage))),
+            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
+            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        // Time the rebuild operation
+        let start = std::time::Instant::now();
+        db.rebuild_indices().await?;
+        let duration = start.elapsed();
+
+        // Verify all documents are indexed
+        let query = QueryBuilder::new().with_limit(200)?.build()?;
+        let results = db.primary_index.lock().await.search(&query).await?;
+        assert!(
+            results.len() >= 150,
+            "Expected at least 150 documents, got {}",
+            results.len()
+        );
+
+        // Performance check: should complete in reasonable time
+        assert!(
+            duration.as_secs() < 3,
+            "Batch rebuild took too long: {:?}",
+            duration
+        );
+
         Ok(())
     }
 }
