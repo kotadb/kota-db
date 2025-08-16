@@ -207,11 +207,11 @@ export class MCPTestClient extends EventEmitter {
     return response.result?.tools || [];
   }
 
-  async callTool(name: string, args: any): Promise<any> {
+  async callTool(name: string, args: any, timeoutMs: number = 5000): Promise<any> {
     const response = await this.sendRequest('tools/call', {
       name,
       arguments: args,
-    });
+    }, timeoutMs);
     return response.result;
   }
 
@@ -225,8 +225,8 @@ export class MCPTestClient extends EventEmitter {
     return response.result;
   }
 
-  async createDocument(doc: TestDocument): Promise<any> {
-    const result = await this.callTool('kotadb_document_create', doc);
+  async createDocument(doc: TestDocument, timeoutMs: number = 5000): Promise<any> {
+    const result = await this.callTool('kotadb_document_create', doc, timeoutMs);
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Create failed: ${content.error}`);
