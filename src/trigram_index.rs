@@ -590,6 +590,108 @@ impl Index for TrigramIndex {
         Ok(())
     }
 
+    /// Insert with document content for proper trigram indexing
+    ///
+    /// This method extracts trigrams from the actual document content,
+    /// providing the full-text search capability that trigram indices are designed for.
+    async fn insert_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        content: &[u8],
+    ) -> Result<()> {
+        // Convert content to string for trigram extraction
+        let content_str = String::from_utf8_lossy(content);
+
+        // Create a Document-like structure for text extraction
+        // We need title and content for comprehensive indexing
+        let title = path
+            .as_str()
+            .split('/')
+            .next_back()
+            .unwrap_or(path.as_str());
+        let searchable_text = format!("{} {}", title, content_str);
+
+        // Extract trigrams from the full content
+        let trigrams = Self::extract_trigrams(&searchable_text);
+
+        if trigrams.is_empty() {
+            return Ok(()); // Nothing to index
+        }
+
+        let was_new_document;
+
+        // Check if document already exists
+        {
+            let cache = self.document_cache.read().await;
+            was_new_document = !cache.contains_key(&id);
+        }
+
+        // Update trigram index
+        {
+            let mut index = self.trigram_index.write().await;
+            for trigram in &trigrams {
+                index
+                    .entry(trigram.clone())
+                    .or_insert_with(HashSet::new)
+                    .insert(id);
+            }
+        }
+
+        // Update document cache with actual content
+        {
+            let mut cache = self.document_cache.write().await;
+            let content_preview = if content_str.len() > 500 {
+                format!("{}...", &content_str[..497])
+            } else {
+                content_str.to_string()
+            };
+
+            cache.insert(
+                id,
+                DocumentContent {
+                    title: title.to_string(),
+                    content_preview,
+                    word_count: searchable_text.split_whitespace().count(),
+                    trigram_count: trigrams.len(),
+                },
+            );
+        }
+
+        // Update metadata
+        let trigram_delta = if was_new_document {
+            trigrams.len() as i32
+        } else {
+            0
+        };
+
+        self.update_metadata(
+            if was_new_document { 1 } else { 0 },
+            trigram_delta,
+            trigrams.len() as i32,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update with document content for proper trigram indexing
+    ///
+    /// This method updates the trigram index with new document content,
+    /// removing old trigrams and adding new ones.
+    async fn update_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        content: &[u8],
+    ) -> Result<()> {
+        // First delete the existing entry
+        self.delete(&id).await?;
+
+        // Then insert with new content
+        self.insert_with_content(id, path, content).await
+    }
+
     /// Close the trigram index instance
     async fn close(self) -> Result<()> {
         // Drop the WAL writer (automatically closes the file)
