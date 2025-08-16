@@ -187,7 +187,6 @@ impl Database {
 
     /// Rebuild all indices from current storage
     /// This is needed after bulk operations like git ingestion
-    #[allow(dead_code)]
     async fn rebuild_indices(&self) -> Result<()> {
         // Get all documents from storage
         let all_docs = self.storage.lock().await.list_all().await?;

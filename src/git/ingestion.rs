@@ -316,7 +316,10 @@ impl RepositoryIngester {
         builder = builder.tag(repo_name)?;
 
         if let Some(ext) = &file.extension {
-            builder = builder.tag(&format!("ext:{}", ext))?;
+            // Sanitize extension by replacing dots with underscores for tag validation
+            // Also use underscore instead of colon since colons aren't allowed in tags
+            let sanitized_ext = ext.replace('.', "_");
+            builder = builder.tag(&format!("ext_{}", sanitized_ext))?;
         }
 
         builder.build()
@@ -378,7 +381,20 @@ impl RepositoryIngester {
         builder = builder.content(content.as_bytes());
         builder = builder.tag("commit")?;
         builder = builder.tag(repo_name)?;
-        builder = builder.tag(&commit.author_name)?;
+
+        // Sanitize author name for use as tag - replace special characters with underscores
+        let sanitized_author = commit
+            .author_name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        builder = builder.tag(&sanitized_author)?;
         builder.build()
     }
 }
