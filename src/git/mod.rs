@@ -3,11 +3,15 @@
 //! This module provides functionality for ingesting git repositories into KotaDB,
 //! enabling codebase analysis and intelligence features.
 
+mod document_metadata;
+mod file_organization;
 mod ingestion;
 mod repository;
 pub mod types;
 
-pub use ingestion::{IngestResult, IngestionConfig, RepositoryIngester};
+pub use document_metadata::{GitDocument, GitMetadata, RepositoryOrganizationConfig};
+pub use file_organization::{FileOrganizationManager, FileOrganizationStats};
+pub use ingestion::{IngestResult, IngestionConfig, ProgressCallback, RepositoryIngester};
 pub use repository::GitRepository;
 pub use types::{CommitInfo, FileEntry, IngestionOptions, RepositoryMetadata};
 

@@ -1763,6 +1763,7 @@ dependencies = [
  "hnsw",
  "hyper 1.6.0",
  "indexmap",
+ "indicatif",
  "jsonrpc-core",
  "jsonrpc-derive",
  "jsonrpc-http-server",

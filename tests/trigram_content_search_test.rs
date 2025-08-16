@@ -66,11 +66,9 @@ impl TestDatabase {
 
             processed += chunk.len();
 
-            // Periodic flush for large datasets
-            if processed % 500 == 0 || processed == total_docs {
-                self.primary_index.lock().await.flush().await?;
-                self.trigram_index.lock().await.flush().await?;
-            }
+            // Force flush after every batch to ensure all data is persisted
+            self.primary_index.lock().await.flush().await?;
+            self.trigram_index.lock().await.flush().await?;
         }
 
         Ok(())
@@ -278,8 +276,13 @@ async fn test_large_content_memory_safety() -> Result<()> {
     let duration = start.elapsed();
 
     // Test that content search works with large documents
-    let lorem_query = QueryBuilder::new().with_text("Lorem")?.build()?;
+    // Use a higher limit to ensure we can find all 50 documents
+    let lorem_query = QueryBuilder::new()
+        .with_text("Lorem")?
+        .with_limit(100)?
+        .build()?;
     let lorem_results = db.trigram_index.lock().await.search(&lorem_query).await?;
+
     assert!(
         lorem_results.len() >= 50,
         "Should find 'Lorem ipsum' in all large documents, got {} results",

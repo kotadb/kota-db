@@ -788,8 +788,9 @@ async fn main() -> Result<()> {
                 include_commits,
                 max_file_size_mb,
             } => {
+                use indicatif::{ProgressBar, ProgressStyle};
                 use kotadb::git::types::IngestionOptions;
-                use kotadb::git::{IngestionConfig, RepositoryIngester};
+                use kotadb::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 
                 println!("🔄 Ingesting git repository: {:?}", repo_path);
 
@@ -805,20 +806,52 @@ async fn main() -> Result<()> {
                     path_prefix: prefix,
                     options,
                     create_index: true,
+                    organization_config: Some(kotadb::git::RepositoryOrganizationConfig::default()),
                 };
 
-                // Create ingester and run ingestion
+                // Create progress bar
+                let progress_bar = ProgressBar::new_spinner();
+                progress_bar.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .expect("Valid template")
+                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                );
+                progress_bar.set_message("Initializing...");
+
+                // Create progress callback
+                let pb = progress_bar.clone();
+                let progress_callback: ProgressCallback = Box::new(move |message: &str| {
+                    pb.set_message(message.to_string());
+                    pb.tick();
+                });
+
+                // Create ingester and run ingestion with progress
                 let ingester = RepositoryIngester::new(config);
                 let mut storage = db.storage.lock().await;
-                let result = ingester.ingest(&repo_path, &mut **storage).await?;
+                let result = ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?;
+
+                progress_bar.finish_with_message("✅ Ingestion complete");
 
                 // Release the storage lock before rebuilding indices
                 drop(storage);
 
-                // Rebuild indices and cache after ingestion
-                println!("🔄 Rebuilding indices...");
+                // Rebuild indices and cache after ingestion with progress indication
+                let rebuild_progress = ProgressBar::new_spinner();
+                rebuild_progress.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.blue} {msg}")
+                        .expect("Valid template")
+                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                );
+
+                rebuild_progress.set_message("Rebuilding primary and trigram indices...");
                 db.rebuild_indices().await?;
+
+                rebuild_progress.set_message("Rebuilding path cache...");
                 db.rebuild_path_cache().await?;
+
+                rebuild_progress.finish_with_message("✅ Indices rebuilt");
 
                 // Ensure all async operations are complete before validation
                 println!("⏳ Ensuring index synchronization...");
@@ -835,13 +868,23 @@ async fn main() -> Result<()> {
                 }
 
                 // Validate search functionality after ingestion
-                println!("🔍 Validating search functionality...");
+                let validation_progress = ProgressBar::new_spinner();
+                validation_progress.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.yellow} {msg}")
+                        .expect("Valid template")
+                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                );
+
+                validation_progress.set_message("Running search validation tests...");
                 let validation_result = {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
                     validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
                 };
+
+                validation_progress.finish_with_message("✅ Validation complete");
 
                 // Report validation results
                 match validation_result.overall_status {
