@@ -210,6 +210,30 @@ just docker-shell      # Connect to development container
 ./run_standalone.sh build    # Build project
 ```
 
+## 🔬 Dogfooding Recommendation
+
+When working on search, indexing, or git features, consider testing on KotaDB itself:
+
+### Quick Setup
+1. **Create temporary config**: Copy `kotadb-dev.toml` to `kotadb-dogfood.toml`
+2. **Change data directory**: Set data path to `data/analysis/` in the config
+3. **Test on real codebase**: `cargo run -- --config kotadb-dogfood.toml git-ingest .`
+4. **Validate functionality**: Run searches and queries to test your changes
+5. **Document findings**: Create GitHub issues for any problems discovered
+6. **Clean up**: Delete config and data directory when done
+
+### Why Dogfood?
+Real-world testing on KotaDB's own codebase consistently reveals integration issues that unit tests miss:
+- **Issue #191**: Search disconnection after git ingestion (found only through dogfooding)
+- **Issue #196**: Trigram index architectural limitation (discovered during self-analysis)
+- **Issue #184**: Comprehensive validation revealed multiple UX and functionality gaps
+
+### Best Practices
+- Use separate data directory (`data/analysis/`) to avoid conflicts
+- Test queries that matter: content search, path search, performance validation
+- Create GitHub issues for any problems found - other agents benefit from your discoveries
+- Never commit dogfooding artifacts (config files, analysis data)
+
 ## 🏛️ Architecture Principles
 
 ### 1. Risk Reduction First

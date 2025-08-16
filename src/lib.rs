@@ -16,6 +16,7 @@ pub mod semantic_search;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;
+pub mod search_validation;
 pub mod vector_index;
 pub mod wrappers;
 
@@ -83,6 +84,12 @@ pub use semantic_search::{
 // Re-export pure functions
 pub use pure::btree;
 pub use pure::performance;
+
+// Re-export search validation
+pub use search_validation::{
+    quick_search_validation, validate_post_ingestion_search, ValidationCheck, ValidationReport,
+    ValidationStatus,
+};
 // Re-export bulk operations
 pub use pure::{
     analyze_tree_structure, bulk_delete_from_tree, bulk_insert_into_tree, count_entries,
