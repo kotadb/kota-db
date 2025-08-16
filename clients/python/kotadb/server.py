@@ -23,7 +23,7 @@ from urllib.request import urlopen, urlretrieve
 from urllib.error import URLError
 
 # Version should match the KotaDB release version
-KOTADB_VERSION = "0.1.12"
+KOTADB_VERSION = "0.5.0"
 
 # Binary download configuration
 BINARY_BASE_URL = "https://github.com/jayminwest/kota-db/releases/download"

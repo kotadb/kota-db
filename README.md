@@ -487,7 +487,7 @@ kotadb search "query"           # Search documents
 [![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
 ```toml
 [dependencies]
-kotadb = "0.3.0"
+kotadb = "0.5.0"
 # or from git:
 kotadb = { git = "https://github.com/jayminwest/kota-db" }
 ```
