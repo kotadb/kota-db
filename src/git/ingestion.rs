@@ -5,10 +5,14 @@ use std::path::Path;
 use tracing::{info, instrument, warn};
 
 use crate::builders::DocumentBuilder;
+use crate::git::file_organization::FileOrganizationManager;
 use crate::git::repository::GitRepository;
 use crate::git::types::{CommitInfo, FileEntry, IngestionOptions};
 use crate::Document;
 use crate::Storage;
+
+/// Progress update callback type
+pub type ProgressCallback = Box<dyn Fn(&str) + Send + Sync>;
 
 /// Configuration for repository ingestion
 #[derive(Debug, Clone)]
@@ -19,6 +23,8 @@ pub struct IngestionConfig {
     pub options: IngestionOptions,
     /// Whether to create an index document for the repository
     pub create_index: bool,
+    /// Repository file organization configuration
+    pub organization_config: Option<crate::git::document_metadata::RepositoryOrganizationConfig>,
 }
 
 impl Default for IngestionConfig {
@@ -27,6 +33,9 @@ impl Default for IngestionConfig {
             path_prefix: "repos".to_string(),
             options: IngestionOptions::default(),
             create_index: true,
+            organization_config: Some(
+                crate::git::document_metadata::RepositoryOrganizationConfig::default(),
+            ),
         }
     }
 }
@@ -64,12 +73,34 @@ impl RepositoryIngester {
         repo_path: impl AsRef<Path>,
         storage: &mut S,
     ) -> Result<IngestResult> {
+        self.ingest_with_progress(repo_path, storage, None).await
+    }
+
+    /// Ingest a git repository into KotaDB storage with progress reporting
+    #[instrument(skip(self, storage, repo_path, progress_callback))]
+    pub async fn ingest_with_progress<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        progress_callback: Option<ProgressCallback>,
+    ) -> Result<IngestResult> {
         let repo_path = repo_path.as_ref();
         info!("Starting repository ingestion from: {:?}", repo_path);
+
+        // Helper function to report progress
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+        };
+
+        report_progress("Opening repository...");
 
         // Open the repository
         let repo = GitRepository::open(repo_path, self.config.options.clone())
             .context("Failed to open git repository")?;
+
+        report_progress("Analyzing repository metadata...");
 
         // Get repository metadata
         let metadata = repo
@@ -84,8 +115,16 @@ impl RepositoryIngester {
 
         let mut result = IngestResult::default();
 
+        // Initialize file organization manager if configured
+        let _file_org_manager = self
+            .config
+            .organization_config
+            .as_ref()
+            .map(|org_config| FileOrganizationManager::new(org_config.clone()));
+
         // Create repository index document if requested
         if self.config.create_index {
+            report_progress("Creating repository index document...");
             let index_doc = self.create_index_document(&metadata, &safe_repo_name)?;
             storage
                 .insert(index_doc)
@@ -96,26 +135,42 @@ impl RepositoryIngester {
 
         // Ingest files
         if self.config.options.include_file_contents {
+            report_progress("Discovering repository files...");
             let files = repo
                 .list_files()
                 .context("Failed to list repository files")?;
 
             info!("Found {} files to ingest", files.len());
 
-            for file in files {
-                match self.create_file_document(&safe_repo_name, &file) {
-                    Ok(doc) => {
-                        if let Err(e) = storage.insert(doc).await {
-                            warn!("Failed to insert file document {}: {}", file.path, e);
-                            result.errors += 1;
-                        } else {
-                            result.documents_created += 1;
-                            result.files_ingested += 1;
-                        }
+            if !files.is_empty() {
+                report_progress(&format!("Processing {} files...", files.len()));
+
+                for (index, file) in files.iter().enumerate() {
+                    // Report progress every 10 files or at milestones
+                    if index % 10 == 0 || index + 1 == files.len() {
+                        let progress = ((index + 1) as f64 / files.len() as f64 * 100.0) as u32;
+                        report_progress(&format!(
+                            "Processing files: {}/{} ({}%)",
+                            index + 1,
+                            files.len(),
+                            progress
+                        ));
                     }
-                    Err(e) => {
-                        warn!("Failed to create document for {}: {}", file.path, e);
-                        result.errors += 1;
+
+                    match self.create_file_document(&safe_repo_name, file) {
+                        Ok(doc) => {
+                            if let Err(e) = storage.insert(doc).await {
+                                warn!("Failed to insert file document {}: {}", file.path, e);
+                                result.errors += 1;
+                            } else {
+                                result.documents_created += 1;
+                                result.files_ingested += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to create document for {}: {}", file.path, e);
+                            result.errors += 1;
+                        }
                     }
                 }
             }
@@ -123,30 +178,48 @@ impl RepositoryIngester {
 
         // Ingest commit history
         if self.config.options.include_commit_history {
+            report_progress("Loading commit history...");
             let commits = repo
                 .get_commits(None)
                 .context("Failed to get repository commits")?;
 
             info!("Processing {} commits", commits.len());
 
-            for commit in commits {
-                match self.create_commit_document(&safe_repo_name, &commit) {
-                    Ok(doc) => {
-                        if let Err(e) = storage.insert(doc).await {
-                            warn!("Failed to insert commit document {}: {}", commit.sha, e);
-                            result.errors += 1;
-                        } else {
-                            result.documents_created += 1;
-                            result.commits_ingested += 1;
-                        }
+            if !commits.is_empty() {
+                report_progress(&format!("Processing {} commits...", commits.len()));
+
+                for (index, commit) in commits.iter().enumerate() {
+                    // Report progress every 5 commits or at milestones
+                    if index % 5 == 0 || index + 1 == commits.len() {
+                        let progress = ((index + 1) as f64 / commits.len() as f64 * 100.0) as u32;
+                        report_progress(&format!(
+                            "Processing commits: {}/{} ({}%)",
+                            index + 1,
+                            commits.len(),
+                            progress
+                        ));
                     }
-                    Err(e) => {
-                        warn!("Failed to create document for commit {}: {}", commit.sha, e);
-                        result.errors += 1;
+
+                    match self.create_commit_document(&safe_repo_name, commit) {
+                        Ok(doc) => {
+                            if let Err(e) = storage.insert(doc).await {
+                                warn!("Failed to insert commit document {}: {}", commit.sha, e);
+                                result.errors += 1;
+                            } else {
+                                result.documents_created += 1;
+                                result.commits_ingested += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to create document for commit {}: {}", commit.sha, e);
+                            result.errors += 1;
+                        }
                     }
                 }
             }
         }
+
+        report_progress("Finalizing ingestion...");
 
         info!(
             "Ingestion complete: {} documents created ({} files, {} commits), {} errors",

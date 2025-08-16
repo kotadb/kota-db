@@ -106,6 +106,9 @@ async-trait = "0.1"
 rand = "0.8"
 fastrand = "2.3"
 
+# Progress indication
+indicatif = "0.17"
+
 # Optional dependencies for advanced features
 tantivy = { version = "0.22", optional = true }  # Full-text search
 hnsw = { version = "0.11", optional = true }     # Vector search

@@ -151,3 +151,4 @@ kotadb-test-data/
 kotadb-dogfood.toml
 data/dogfood/
 data/analysis/
+test-data/
