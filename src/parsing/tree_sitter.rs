@@ -280,10 +280,13 @@ impl CodeParser {
         };
 
         if let Some(sym_type) = symbol_type {
-            // Extract symbol name (this is a simplified approach)
+            // Extract symbol name with improved fallback handling
             let name = self
                 .extract_symbol_name(node, content)
-                .unwrap_or_else(|| "unnamed".to_string());
+                .unwrap_or_else(|| self.generate_fallback_name(node, &sym_type));
+
+            // Extract visibility information
+            let kind = self.extract_symbol_visibility(node, content);
 
             let start_pos = node.start_position();
             let end_pos = node.end_position();
@@ -291,7 +294,7 @@ impl CodeParser {
             let symbol = ParsedSymbol {
                 name,
                 symbol_type: sym_type,
-                kind: SymbolKind::Unknown, // Will be enhanced with proper analysis
+                kind,
                 start_line: start_pos.row + 1, // Convert to 1-based
                 end_line: end_pos.row + 1,
                 start_column: start_pos.column,
@@ -322,6 +325,56 @@ impl CodeParser {
             }
         }
         None
+    }
+
+    /// Generate a meaningful fallback name based on symbol type and position
+    fn generate_fallback_name(&self, node: Node, symbol_type: &SymbolType) -> String {
+        let start_pos = node.start_position();
+        match symbol_type {
+            SymbolType::Function => format!("function_at_line_{}", start_pos.row + 1),
+            SymbolType::Struct => format!("struct_at_line_{}", start_pos.row + 1),
+            SymbolType::Enum => format!("enum_at_line_{}", start_pos.row + 1),
+            SymbolType::Class => format!("impl_at_line_{}", start_pos.row + 1),
+            SymbolType::Variable => format!("variable_at_line_{}", start_pos.row + 1),
+            SymbolType::Constant => format!("constant_at_line_{}", start_pos.row + 1),
+            SymbolType::Comment => format!("comment_at_line_{}", start_pos.row + 1),
+            _ => format!("symbol_at_line_{}", start_pos.row + 1),
+        }
+    }
+
+    /// Extract visibility information from a node
+    fn extract_symbol_visibility(&self, node: Node, content: &str) -> SymbolKind {
+        // Check for visibility modifier in current node or parent context
+        let mut cursor = node.walk();
+
+        // Look for visibility_modifier child nodes
+        for child in node.children(&mut cursor) {
+            if child.kind() == "visibility_modifier" {
+                if let Ok(visibility_text) = child.utf8_text(content.as_bytes()) {
+                    return match visibility_text.trim() {
+                        "pub" => SymbolKind::Public,
+                        "pub(crate)" => SymbolKind::Internal,
+                        "pub(super)" => SymbolKind::Protected,
+                        _ => SymbolKind::Unknown,
+                    };
+                }
+            }
+        }
+
+        // Check if the node text starts with 'pub' (fallback for complex visibility)
+        if let Ok(node_text) = node.utf8_text(content.as_bytes()) {
+            let trimmed = node_text.trim();
+            if trimmed.starts_with("pub(crate)") {
+                return SymbolKind::Internal;
+            } else if trimmed.starts_with("pub(super)") {
+                return SymbolKind::Protected;
+            } else if trimmed.starts_with("pub ") {
+                return SymbolKind::Public;
+            }
+        }
+
+        // Default to private for Rust (no explicit visibility means private)
+        SymbolKind::Private
     }
 
     /// Calculate parse tree statistics
@@ -494,6 +547,62 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceeds limit"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_visibility_detection() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let rust_code = r#"
+        pub fn public_function() {}
+        fn private_function() {}
+        pub(crate) fn crate_function() {}
+        pub struct PublicStruct {}
+        struct PrivateStruct {}
+        "#;
+
+        let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+
+        // Find symbols and check their visibility
+        let public_fn = parsed.symbols.iter().find(|s| s.name == "public_function");
+        assert!(public_fn.is_some());
+        assert_eq!(public_fn.unwrap().kind, SymbolKind::Public);
+
+        let private_fn = parsed.symbols.iter().find(|s| s.name == "private_function");
+        assert!(private_fn.is_some());
+        assert_eq!(private_fn.unwrap().kind, SymbolKind::Private);
+
+        let crate_fn = parsed.symbols.iter().find(|s| s.name == "crate_function");
+        assert!(crate_fn.is_some());
+        assert_eq!(crate_fn.unwrap().kind, SymbolKind::Internal);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_improved_symbol_names() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        // Test with some unnamed constructs that should get better fallback names
+        let rust_code = r#"
+        // This is a comment
+        const VALUE: i32 = 42;
+        "#;
+
+        let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+
+        // Check that we have meaningful names even for constructs without explicit names
+        let has_meaningful_names = parsed
+            .symbols
+            .iter()
+            .all(|s| !s.name.is_empty() && s.name != "unnamed");
+
+        assert!(
+            has_meaningful_names,
+            "All symbols should have meaningful names"
+        );
 
         Ok(())
     }

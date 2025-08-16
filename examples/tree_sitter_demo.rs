@@ -35,6 +35,11 @@ impl Person {
         self.age
     }
     
+    /// Crate-visible helper method
+    pub(crate) fn internal_method(&self) -> bool {
+        true
+    }
+    
     /// Private helper method
     fn validate_age(age: u32) -> bool {
         age > 0 && age < 150
@@ -85,7 +90,13 @@ static SYSTEM_NAME: &str = "PeopleManager";
     println!();
 
     for (i, symbol) in parsed.symbols.iter().enumerate() {
-        println!("  {}. {} ({:?})", i + 1, symbol.name, symbol.symbol_type);
+        println!(
+            "  {}. {} ({:?}) - {:?}",
+            i + 1,
+            symbol.name,
+            symbol.symbol_type,
+            symbol.kind
+        );
         println!(
             "     Location: lines {}-{}",
             symbol.start_line, symbol.end_line
