@@ -24,6 +24,9 @@ pub mod wrappers;
 #[cfg(feature = "git-integration")]
 pub mod git;
 
+// Code parsing module
+pub mod parsing;
+
 // Re-export key types
 pub use observability::{
     init_logging, log_operation, record_metric, with_trace_id, MetricType, Operation,
