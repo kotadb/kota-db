@@ -37,29 +37,56 @@ impl FileOrganizationManager {
         file_path: &str,
         commit_hash: Option<&str>,
     ) -> Result<String> {
+        // Validate and sanitize the file path to prevent directory traversal
+        let sanitized_path = self.sanitize_file_path(file_path)?;
+
         let base_path = if self.config.separate_repo_directories {
             format!("{}/{}", self.config.base_data_dir, repo_name)
         } else {
             self.config.base_data_dir.clone()
         };
 
-        let file_path_normalized = file_path.trim_start_matches('/');
-
         let doc_path = if self.config.include_commit_in_path {
             if let Some(hash) = commit_hash {
                 let short_hash = &hash[..8.min(hash.len())];
-                format!(
-                    "{}/files/{}/{}",
-                    base_path, short_hash, file_path_normalized
-                )
+                format!("{}/files/{}/{}", base_path, short_hash, sanitized_path)
             } else {
-                format!("{}/files/{}", base_path, file_path_normalized)
+                format!("{}/files/{}", base_path, sanitized_path)
             }
         } else {
-            format!("{}/files/{}", base_path, file_path_normalized)
+            format!("{}/files/{}", base_path, sanitized_path)
         };
 
         Ok(doc_path)
+    }
+
+    /// Sanitize file path to prevent directory traversal attacks
+    fn sanitize_file_path(&self, file_path: &str) -> Result<String> {
+        // Remove leading slashes and normalize the path
+        let normalized = file_path.trim_start_matches('/');
+
+        // Check for directory traversal patterns
+        if normalized.contains("..") {
+            anyhow::bail!("Directory traversal detected in file path: {}", file_path);
+        }
+
+        // Check for absolute paths (shouldn't happen in git, but be safe)
+        if file_path.starts_with('/') && file_path.len() > 1 {
+            warn!("Absolute file path detected, normalizing: {}", file_path);
+        }
+
+        // Ensure path is not empty after normalization
+        if normalized.is_empty() {
+            anyhow::bail!("Empty file path after normalization");
+        }
+
+        // Check for suspicious characters that shouldn't be in file paths
+        let invalid_chars = ['<', '>', ':', '"', '|', '?', '*', '\0'];
+        if normalized.chars().any(|c| invalid_chars.contains(&c)) {
+            anyhow::bail!("Invalid characters in file path: {}", file_path);
+        }
+
+        Ok(normalized.to_string())
     }
 
     /// Handle file creation in repository
@@ -70,6 +97,7 @@ impl FileOrganizationManager {
         commit_info: &CommitInfo,
         repo_name: &str,
         repo_path: &str,
+        branch_name: &str,
     ) -> Result<ValidatedDocumentId> {
         debug!(
             "Creating file document for {} in repository {}",
@@ -81,7 +109,7 @@ impl FileOrganizationManager {
             repo_name.to_string(),
             repo_path.to_string(),
             commit_info.sha.clone(),
-            "main".to_string(), // TODO: Get actual branch from commit info
+            branch_name.to_string(),
             commit_info.author_name.clone(),
             commit_info.author_email.clone(),
             commit_info.timestamp,
@@ -177,6 +205,9 @@ impl FileOrganizationManager {
                     history.drain(0..history.len() - max_versions);
                 }
             }
+
+            // Check global cache limits and evict if necessary
+            self.enforce_cache_limits();
         }
 
         info!(
@@ -195,6 +226,7 @@ impl FileOrganizationManager {
         commit_info: &CommitInfo,
         repo_name: &str,
         repo_path: &str,
+        branch_name: &str,
     ) -> Result<ValidatedDocumentId> {
         debug!(
             "Handling file modification for {} in repository {}",
@@ -207,8 +239,15 @@ impl FileOrganizationManager {
         // 2. Create new version if tracking history
         // 3. Link versions together
 
-        self.handle_file_creation(storage, file_entry, commit_info, repo_name, repo_path)
-            .await
+        self.handle_file_creation(
+            storage,
+            file_entry,
+            commit_info,
+            repo_name,
+            repo_path,
+            branch_name,
+        )
+        .await
     }
 
     /// Handle file deletion in repository
@@ -302,6 +341,7 @@ impl FileOrganizationManager {
         commit_info: &CommitInfo,
         repo_name: &str,
         repo_path: &str,
+        branch_name: &str,
     ) -> Result<ValidatedDocumentId> {
         debug!(
             "Handling file rename from {} to {} in repository {}",
@@ -353,8 +393,15 @@ impl FileOrganizationManager {
         }
 
         // Create new document at new location
-        self.handle_file_creation(storage, file_entry, commit_info, repo_name, repo_path)
-            .await
+        self.handle_file_creation(
+            storage,
+            file_entry,
+            commit_info,
+            repo_name,
+            repo_path,
+            branch_name,
+        )
+        .await
     }
 
     /// Get file history for a given file path
@@ -371,6 +418,75 @@ impl FileOrganizationManager {
     pub fn clear_caches(&mut self) {
         self.file_path_cache.clear();
         self.file_history_cache.clear();
+    }
+
+    /// Enforce cache memory and size limits
+    fn enforce_cache_limits(&mut self) {
+        // Check file count limit
+        if let Some(max_files) = self.config.max_tracked_files {
+            if self.file_history_cache.len() > max_files {
+                // Remove oldest files (simple FIFO eviction)
+                let excess = self.file_history_cache.len() - max_files;
+                let keys_to_remove: Vec<_> = self
+                    .file_history_cache
+                    .keys()
+                    .take(excess)
+                    .cloned()
+                    .collect();
+
+                for key in keys_to_remove {
+                    self.file_history_cache.remove(&key);
+                    self.file_path_cache.remove(&key);
+                }
+            }
+        }
+
+        // Estimate memory usage (rough calculation)
+        if let Some(max_memory_mb) = self.config.max_cache_memory_mb {
+            let estimated_memory_bytes = self.estimate_cache_memory_usage();
+            let max_memory_bytes = max_memory_mb * 1024 * 1024;
+
+            if estimated_memory_bytes > max_memory_bytes {
+                // Aggressively remove entries until under limit
+                let target_entries = (self.file_history_cache.len() * max_memory_bytes
+                    / estimated_memory_bytes)
+                    .max(1);
+                let to_remove = self.file_history_cache.len().saturating_sub(target_entries);
+
+                if to_remove > 0 {
+                    let keys_to_remove: Vec<_> = self
+                        .file_history_cache
+                        .keys()
+                        .take(to_remove)
+                        .cloned()
+                        .collect();
+
+                    for key in keys_to_remove {
+                        self.file_history_cache.remove(&key);
+                        self.file_path_cache.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Estimate memory usage of the cache (rough calculation)
+    fn estimate_cache_memory_usage(&self) -> usize {
+        let mut total_bytes = 0;
+
+        // File path cache: key + value
+        for key in self.file_path_cache.keys() {
+            total_bytes += key.len() + std::mem::size_of::<crate::ValidatedDocumentId>();
+        }
+
+        // File history cache: key + values
+        for (key, history) in &self.file_history_cache {
+            total_bytes += key.len();
+            total_bytes += history.len() * (40 + std::mem::size_of::<crate::ValidatedDocumentId>());
+            // SHA + doc ID
+        }
+
+        total_bytes
     }
 
     /// Get statistics about managed files
@@ -438,33 +554,32 @@ mod tests {
     }
 
     #[test]
-    fn test_document_path_creation() {
+    fn test_document_path_creation() -> Result<()> {
         let config = RepositoryOrganizationConfig::default();
         let manager = FileOrganizationManager::new(config);
 
-        let path = manager
-            .create_document_path("kota-db", "src/main.rs", None)
-            .unwrap();
+        let path = manager.create_document_path("kota-db", "src/main.rs", None)?;
         assert_eq!(path, "data/analysis/kota-db/files/src/main.rs");
 
-        let path_with_commit = manager
-            .create_document_path("kota-db", "src/main.rs", Some("abc123def"))
-            .unwrap();
+        let path_with_commit =
+            manager.create_document_path("kota-db", "src/main.rs", Some("abc123def"))?;
         assert_eq!(path_with_commit, "data/analysis/kota-db/files/src/main.rs");
+
+        Ok(())
     }
 
     #[test]
-    fn test_document_path_with_commit() {
+    fn test_document_path_with_commit() -> Result<()> {
         let config = RepositoryOrganizationConfig {
             include_commit_in_path: true,
             ..Default::default()
         };
         let manager = FileOrganizationManager::new(config);
 
-        let path = manager
-            .create_document_path("kota-db", "src/main.rs", Some("abc123def456"))
-            .unwrap();
+        let path = manager.create_document_path("kota-db", "src/main.rs", Some("abc123def456"))?;
         assert_eq!(path, "data/analysis/kota-db/files/abc123de/src/main.rs");
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -485,6 +600,7 @@ mod tests {
                 &commit_info,
                 "test-repo",
                 "/path/to/repo",
+                "main",
             )
             .await?;
 
@@ -500,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_statistics() {
+    fn test_statistics() -> Result<()> {
         let config = RepositoryOrganizationConfig::default();
         let mut manager = FileOrganizationManager::new(config);
 
@@ -524,5 +640,33 @@ mod tests {
         assert_eq!(stats.total_files, 2);
         assert_eq!(stats.total_versions, 1);
         assert_eq!(stats.files_with_history, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_path_sanitization() {
+        let config = RepositoryOrganizationConfig::default();
+        let manager = FileOrganizationManager::new(config);
+
+        // Valid paths should work
+        assert!(manager.sanitize_file_path("src/main.rs").is_ok());
+        assert!(manager.sanitize_file_path("path/to/file.txt").is_ok());
+
+        // Directory traversal should be rejected
+        assert!(manager.sanitize_file_path("../etc/passwd").is_err());
+        assert!(manager
+            .sanitize_file_path("src/../../../etc/passwd")
+            .is_err());
+        assert!(manager.sanitize_file_path("src/../../file.txt").is_err());
+
+        // Invalid characters should be rejected
+        assert!(manager.sanitize_file_path("file<name>.txt").is_err());
+        assert!(manager.sanitize_file_path("file|name.txt").is_err());
+        assert!(manager.sanitize_file_path("file?name.txt").is_err());
+
+        // Empty path should be rejected
+        assert!(manager.sanitize_file_path("").is_err());
+        assert!(manager.sanitize_file_path("/").is_err());
     }
 }

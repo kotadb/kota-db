@@ -53,7 +53,8 @@ impl RepositoryIngester {
 
     /// Sanitize repository name for safe filesystem usage
     fn sanitize_name(name: &str) -> String {
-        name.chars()
+        let sanitized = name
+            .chars()
             .map(|c| {
                 if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
                     c
@@ -63,7 +64,14 @@ impl RepositoryIngester {
             })
             .collect::<String>()
             .trim_matches('-')
-            .to_lowercase()
+            .to_lowercase();
+
+        // Ensure we never return an empty string
+        if sanitized.is_empty() {
+            "repository".to_string()
+        } else {
+            sanitized
+        }
     }
 
     /// Ingest a git repository into KotaDB storage
@@ -145,9 +153,16 @@ impl RepositoryIngester {
             if !files.is_empty() {
                 report_progress(&format!("Processing {} files...", files.len()));
 
+                let mut last_progress_time = std::time::Instant::now();
+                let progress_throttle = std::time::Duration::from_millis(250); // Update every 250ms max
+
                 for (index, file) in files.iter().enumerate() {
-                    // Report progress every 10 files or at milestones
-                    if index % 10 == 0 || index + 1 == files.len() {
+                    let now = std::time::Instant::now();
+                    let should_report = index % 50 == 0 || // Every 50 files
+                        index + 1 == files.len() || // Last file
+                        now.duration_since(last_progress_time) >= progress_throttle; // Time-based throttle
+
+                    if should_report {
                         let progress = ((index + 1) as f64 / files.len() as f64 * 100.0) as u32;
                         report_progress(&format!(
                             "Processing files: {}/{} ({}%)",
@@ -155,6 +170,7 @@ impl RepositoryIngester {
                             files.len(),
                             progress
                         ));
+                        last_progress_time = now;
                     }
 
                     match self.create_file_document(&safe_repo_name, file) {
@@ -188,9 +204,16 @@ impl RepositoryIngester {
             if !commits.is_empty() {
                 report_progress(&format!("Processing {} commits...", commits.len()));
 
+                let mut last_progress_time = std::time::Instant::now();
+                let progress_throttle = std::time::Duration::from_millis(250); // Update every 250ms max
+
                 for (index, commit) in commits.iter().enumerate() {
-                    // Report progress every 5 commits or at milestones
-                    if index % 5 == 0 || index + 1 == commits.len() {
+                    let now = std::time::Instant::now();
+                    let should_report = index % 20 == 0 || // Every 20 commits  
+                        index + 1 == commits.len() || // Last commit
+                        now.duration_since(last_progress_time) >= progress_throttle; // Time-based throttle
+
+                    if should_report {
                         let progress = ((index + 1) as f64 / commits.len() as f64 * 100.0) as u32;
                         report_progress(&format!(
                             "Processing commits: {}/{} ({}%)",
@@ -198,6 +221,7 @@ impl RepositoryIngester {
                             commits.len(),
                             progress
                         ));
+                        last_progress_time = now;
                     }
 
                     match self.create_commit_document(&safe_repo_name, commit) {

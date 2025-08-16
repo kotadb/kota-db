@@ -162,6 +162,10 @@ pub struct RepositoryOrganizationConfig {
     pub track_file_history: bool,
     /// Maximum number of file versions to keep per file
     pub max_file_versions: Option<usize>,
+    /// Maximum total memory usage for file history cache (in MB)
+    pub max_cache_memory_mb: Option<usize>,
+    /// Maximum number of files to track in history cache
+    pub max_tracked_files: Option<usize>,
 }
 
 impl Default for RepositoryOrganizationConfig {
@@ -172,6 +176,8 @@ impl Default for RepositoryOrganizationConfig {
             include_commit_in_path: false,
             track_file_history: true,
             max_file_versions: Some(10), // Keep last 10 versions by default
+            max_cache_memory_mb: Some(100), // 100MB default cache limit
+            max_tracked_files: Some(10000), // Track up to 10k files by default
         }
     }
 }
