@@ -234,13 +234,14 @@ just release-preview  # Preview next release
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Query Interface                           │
-│              Natural Language + Structured                   │
+│                Text Search + Semantic Search                 │
 ├─────────────────────────────────────────────────────────────┤
 │                    Query Router                              │
 │         Automatic index selection based on query             │
 ├──────────────┬───────────────┬───────────────┬──────────────┤
 │   Primary    │   Full-Text   │     Graph     │   Semantic   │
-│   B+ Tree    │    Trigram    │  (Planned)    │     HNSW     │
+│   B+ Tree    │    Trigram    │   (Planned)   │     HNSW     │
+│     ✅       │      ✅       │      🚧       │      ✅      │
 ├──────────────┴───────────────┴───────────────┴──────────────┤
 │                    Storage Engine                            │
 │        Pages + WAL + Compression + Memory Map                │
@@ -257,11 +258,11 @@ just release-preview  # Preview next release
 - **Crash-Safe**: WAL ensures data durability
 - **Zero Database Dependencies**: No external database required
 
-### Indexing
-- **B+ Tree**: O(log n) path-based lookups
-- **Trigram**: Fuzzy-tolerant full-text search
-- **Graph**: Relationship traversal (MCP tools only, not fully implemented)
-- **Vector**: Semantic similarity with HNSW
+### Indexing (Current Capabilities)
+- **B+ Tree**: ✅ O(log n) path-based lookups with wildcard support
+- **Trigram**: ✅ Fuzzy-tolerant full-text search with ranking
+- **Vector**: ✅ Semantic similarity search using HNSW algorithm
+- **Graph**: 🚧 Planned - Relationship traversal (see roadmap)
 
 ### Safety
 - **Systematic Testing**: 6-stage risk reduction methodology
@@ -350,47 +351,92 @@ const results = await db.queryWithBuilder(
 
 ---
 
-## Query Language
+## Query Capabilities
 
-Natural, intuitive queries designed for human-AI interaction:
+### Currently Implemented
 
-```javascript
-// Natural language
-"meetings about rust programming last week"
+**Text Search** - Full-text search with fuzzy matching:
+```python
+# Simple text search
+results = db.query("rust programming")
 
-// Structured precision
-{
-  type: "semantic",
-  query: "distributed systems",
-  filter: { tags: { $contains: "architecture" } },
-  limit: 10
-}
-
-// Graph traversal
-GRAPH {
-  start: "projects/kota-ai/README.md",
-  follow: ["related", "references"],
-  depth: 2
-}
+# With filters and limits
+results = db.query("design patterns", limit=10)
 ```
+
+**Semantic Search** - Find conceptually similar documents:
+```python
+# Semantic similarity search (requires embeddings)
+results = db.semantic_search("distributed systems concepts")
+```
+
+**Path Queries** - Wildcard path matching:
+```bash
+# CLI wildcard search
+kotadb search "*"  # List all documents
+kotadb search "/projects/*"  # Documents in projects folder
+```
+
+### Planned Features (Not Yet Implemented)
+
+⚠️ **Note**: The following features are part of our roadmap but are **not currently available**:
+
+- **Natural Language Queries**: "meetings about rust last week" 
+- **Temporal Analysis**: Time-based aggregations and patterns
+- **Graph Traversal**: Following document relationships
+- **Advanced Filtering**: Complex structured queries
+
+See the [Roadmap](#roadmap) section for implementation timeline.
 
 ---
 
-## Project Status
+## Current Features (What's Actually Working)
 
-### Complete
-- Storage engine with WAL and compression
-- B+ tree primary index with persistence
-- Trigram full-text search with ranking
-- Intelligent query routing
-- CLI interface
-- Performance benchmarks
+### ✅ Production Ready
+- **Storage Engine**: WAL, compression, crash recovery
+- **B+ Tree Index**: Path-based lookups, wildcard queries
+- **Trigram Search**: Full-text search with fuzzy matching
+- **Semantic Search**: HNSW-based vector similarity
+- **Client Libraries**: Python, TypeScript/JavaScript, Rust
+- **Binary Distribution**: Pre-built binaries for all platforms
+- **MCP Server**: Model Context Protocol integration
 
-### In Progress
-- [x] Model Context Protocol (MCP) server
-- [x] Python/TypeScript client libraries
-- [ ] Semantic vector search
-- [ ] Graph relationship queries
+### 🔧 Currently Limited
+- **Search Filters**: Basic tag and path filtering only
+- **Query Builder**: Simple text queries (no complex operators)
+- **Bulk Operations**: Available but not optimized
+
+## Roadmap
+
+### Phase 1: Core Stability (Current)
+- ✅ Storage engine with persistence
+- ✅ Basic indexing (B+ tree, trigram)
+- ✅ Client libraries (Python, TypeScript)
+- ✅ Binary distribution
+
+### Phase 2: Enhanced Search (Q1 2025)
+- 🚧 Advanced query filters and operators
+- 🚧 Hybrid search (text + semantic combined)
+- 🚧 Field-specific search capabilities
+- 🚧 Performance optimizations
+
+### Phase 3: Graph & Relationships (Q2 2025)
+- ⏳ Graph index implementation
+- ⏳ Document relationship tracking
+- ⏳ Relationship-based queries
+- ⏳ Dependency analysis
+
+### Phase 4: Temporal & Analytics (Q3 2025)
+- ⏳ Temporal indexing and queries
+- ⏳ Time-based aggregations
+- ⏳ Pattern analysis
+- ⏳ Productivity metrics
+
+### Phase 5: Natural Language (Q4 2025)
+- ⏳ LLM-powered query parsing
+- ⏳ Natural language interface
+- ⏳ Context-aware search
+- ⏳ Query suggestions
 
 ---
 
@@ -441,7 +487,7 @@ kotadb search "query"           # Search documents
 [![Crates.io](https://img.shields.io/crates/v/kotadb.svg)](https://crates.io/crates/kotadb)
 ```toml
 [dependencies]
-kotadb = "0.3.0"
+kotadb = "0.5.0"
 # or from git:
 kotadb = { git = "https://github.com/jayminwest/kota-db" }
 ```

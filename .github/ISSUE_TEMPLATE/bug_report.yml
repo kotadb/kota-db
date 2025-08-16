@@ -68,7 +68,7 @@ body:
       value: |
         - OS: [e.g. Ubuntu 22.04, macOS 13.0, Windows 11]
         - Rust version: [e.g. 1.70.0]
-        - KotaDB version: [e.g. 0.1.0]
+        - KotaDB version: [e.g. 0.5.0]
         - Container runtime: [e.g. Docker 24.0.0, Podman 4.0.0, native]
     validations:
       required: true

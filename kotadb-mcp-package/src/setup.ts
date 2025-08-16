@@ -153,7 +153,7 @@ function showStatus(): void {
 program
   .name('kotadb-mcp-setup')
   .description('Setup KotaDB MCP server for Claude Desktop')
-  .version('0.1.0');
+  .version('0.5.0');
 
 program
   .command('setup', { isDefault: true })

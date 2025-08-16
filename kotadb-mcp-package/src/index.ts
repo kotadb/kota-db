@@ -52,7 +52,7 @@ class KotaDBMCPServer {
     this.server = new Server(
       {
         name: 'kotadb-mcp',
-        version: '0.1.0',
+        version: '0.5.0',
       },
       {
         capabilities: {

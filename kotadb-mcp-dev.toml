@@ -18,7 +18,7 @@ max_blocking_threads = 16
 # MCP Protocol Configuration
 protocol_version = "2024-11-05"
 server_name = "kotadb"
-server_version = "0.2.0"
+server_version = "0.5.0"
 
 # Tool Categories
 enable_document_tools = true
