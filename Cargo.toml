@@ -72,6 +72,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # System info
 num_cpus = "1.16"
 
+# Git repository parsing
+git2 = { version = "0.18", optional = true }
+
 # Bitmaps
 roaring = "0.10"
 
@@ -126,10 +129,12 @@ advanced-search = ["tantivy", "hnsw"]
 mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
 # Embedding features
 embeddings-onnx = ["ort", "tokenizers", "ndarray"]           # ONNX Runtime embeddings (default)
+# Git repository integration
+git-integration = ["git2"]
 # Benchmarking
 bench = ["criterion", "proptest"]
 # Development features
-dev = ["bench", "embeddings-onnx"]
+dev = ["bench", "embeddings-onnx", "git-integration"]
 
 [profile.release]
 opt-level = 3
