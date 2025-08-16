@@ -444,21 +444,9 @@ impl SymbolStorage {
             }
         }
 
-        // Python imports: import module; from module import x; import module as alias
-        if let Some(rest) = trimmed.strip_prefix("import ") {
-            // Handle "import x as y" by taking just the module name
-            if let Some(module) = rest.split_whitespace().next() {
-                return Some(module.to_string());
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("from ") {
-            // Handle "from module import x"
-            if let Some(module) = rest.split_whitespace().next() {
-                return Some(module.to_string());
-            }
-        }
-
         // JavaScript/TypeScript imports: import x from 'module'; import {x} from 'module';
-        if trimmed.starts_with("import ") {
+        // MUST check BEFORE Python to correctly handle "import X from 'Y'" syntax
+        if trimmed.starts_with("import ") && trimmed.contains(" from ") {
             // Look for 'from' keyword followed by quotes
             if let Some(from_pos) = trimmed.find(" from ") {
                 let after_from = &trimmed[from_pos + 6..];
@@ -469,12 +457,30 @@ impl SymbolStorage {
                     }
                 }
             }
-            // Also handle direct quotes (import 'module';)
-            else if let Some(start) = trimmed.find(['\'', '"']) {
+        }
+        // Also handle direct quotes (import 'module';)
+        else if trimmed.starts_with("import ")
+            && (trimmed.contains('\'') || trimmed.contains('"'))
+        {
+            if let Some(start) = trimmed.find(['\'', '"']) {
                 let quote_char = trimmed.chars().nth(start).unwrap();
                 if let Some(end) = trimmed[start + 1..].find(quote_char) {
                     return Some(trimmed[start + 1..start + 1 + end].to_string());
                 }
+            }
+        }
+
+        // Python imports: import module; from module import x; import module as alias
+        // Check AFTER JavaScript to avoid false matches on "import X from 'Y'"
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            // Handle "import x as y" by taking just the module name
+            if let Some(module) = rest.split_whitespace().next() {
+                return Some(module.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("from ") {
+            // Handle "from module import x"
+            if let Some(module) = rest.split_whitespace().next() {
+                return Some(module.to_string());
             }
         }
 
@@ -1000,40 +1006,43 @@ fn compute_sum() -> i32 { 0 }
 
     #[test]
     fn test_path_sanitization() -> Result<()> {
-        // Test the path sanitization function directly
-        fn test_sanitize(path: &str) -> String {
-            // Normalize path separators first (convert backslashes to forward slashes)
-            let normalized = path.replace('\\', "/");
-            let components: Vec<_> = Path::new(&normalized)
-                .components()
-                .filter_map(|comp| {
-                    use std::path::Component;
-                    match comp {
-                        Component::Normal(s) => s.to_str(),
-                        _ => None,
-                    }
-                })
-                .collect();
-            components.join("/")
-        }
+        use tokio::runtime::Runtime;
 
-        // Test various malicious paths
-        // Note: Path normalization may behave differently on different platforms
-        let test_cases = vec![
-            ("../../../etc/passwd", "etc/passwd"),
-            ("..\\..\\windows\\system32", "windows/system32"),
-            ("safe/normal/path", "safe/normal/path"),
-            ("./safe/path", "safe/path"),
-        ];
+        // Create a runtime for async test
+        let rt = Runtime::new()?;
 
-        for (input, expected) in test_cases {
-            let sanitized = test_sanitize(input);
-            assert_eq!(
-                sanitized, expected,
-                "Path {} was not properly sanitized. Got: {}, Expected: {}",
-                input, sanitized, expected
-            );
-        }
+        rt.block_on(async {
+            // Create a temporary symbol storage instance to test the actual sanitize_path method
+            let test_dir = format!("/tmp/test_path_sanitization_{}", uuid::Uuid::new_v4());
+            tokio::fs::create_dir_all(&test_dir).await?;
+
+            let storage = crate::file_storage::create_file_storage(&test_dir, Some(100)).await?;
+            let symbol_storage = SymbolStorage::new(Box::new(storage)).await?;
+
+            // Test various malicious paths
+            let test_cases = vec![
+                ("../../../etc/passwd", "etc/passwd"),
+                ("..\\..\\windows\\system32", "windows/system32"),
+                ("safe/normal/path", "safe/normal/path"),
+                ("./safe/path", "safe/path"),
+                ("./../parent", "parent"),
+                ("nested/../folder", "folder"),
+            ];
+
+            for (input, expected) in test_cases {
+                let sanitized = symbol_storage.sanitize_path(Path::new(input));
+                assert_eq!(
+                    sanitized, expected,
+                    "Path {} was not properly sanitized. Got: {}, Expected: {}",
+                    input, sanitized, expected
+                );
+            }
+
+            // Clean up
+            tokio::fs::remove_dir_all(&test_dir).await?;
+
+            Ok::<(), anyhow::Error>(())
+        })?;
 
         Ok(())
     }
@@ -1193,18 +1202,7 @@ mod level1 {
                 }
             }
 
-            // Python imports
-            if let Some(rest) = trimmed.strip_prefix("import ") {
-                if let Some(module) = rest.split_whitespace().next() {
-                    return Some(module.to_string());
-                }
-            } else if let Some(rest) = trimmed.strip_prefix("from ") {
-                if let Some(module) = rest.split_whitespace().next() {
-                    return Some(module.to_string());
-                }
-            }
-
-            // JavaScript/TypeScript imports
+            // JavaScript/TypeScript imports (check BEFORE Python to handle "import X from 'Y'" correctly)
             if trimmed.starts_with("import ") {
                 // Look for 'from' keyword followed by quotes
                 if let Some(from_pos) = trimmed.find(" from ") {
@@ -1222,6 +1220,17 @@ mod level1 {
                     if let Some(end) = trimmed[start + 1..].find(quote_char) {
                         return Some(trimmed[start + 1..start + 1 + end].to_string());
                     }
+                }
+            }
+
+            // Python imports (check AFTER JavaScript)
+            if let Some(rest) = trimmed.strip_prefix("import ") {
+                if let Some(module) = rest.split_whitespace().next() {
+                    return Some(module.to_string());
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("from ") {
+                if let Some(module) = rest.split_whitespace().next() {
+                    return Some(module.to_string());
                 }
             }
 
