@@ -139,11 +139,11 @@ impl FileOrganizationManager {
 
         // Add tags
         doc_builder = doc_builder.tag("git-file")?;
-        doc_builder = doc_builder.tag(&format!("repo:{}", repo_name))?;
-        doc_builder = doc_builder.tag(&format!("commit:{}", &commit_info.sha[..8]))?;
+        doc_builder = doc_builder.tag(&format!("repo-{}", repo_name))?;
+        doc_builder = doc_builder.tag(&format!("commit-{}", &commit_info.sha[..8]))?;
 
         if let Some(ref ext) = file_entry.extension {
-            doc_builder = doc_builder.tag(&format!("ext:{}", ext))?;
+            doc_builder = doc_builder.tag(&format!("ext-{}", ext))?;
         }
 
         if file_entry.is_binary {
@@ -263,8 +263,8 @@ impl FileOrganizationManager {
                         .title(format!("Deleted: {}", file_path))?
                         .content(deletion_content.as_bytes())
                         .tag("git-deletion")?
-                        .tag(&format!("repo:{}", repo_name))?
-                        .tag(&format!("commit:{}", &commit_info.sha[..8]))?
+                        .tag(&format!("repo-{}", repo_name))?
+                        .tag(&format!("commit-{}", &commit_info.sha[..8]))?
                         .build()?;
 
                     storage.insert(deletion_doc).await?;
@@ -342,8 +342,8 @@ impl FileOrganizationManager {
                 .title(format!("Moved: {} → {}", old_path, new_path))?
                 .content(move_content.as_bytes())
                 .tag("git-move")?
-                .tag(&format!("repo:{}", repo_name))?
-                .tag(&format!("commit:{}", &commit_info.sha[..8]))?
+                .tag(&format!("repo-{}", repo_name))?
+                .tag(&format!("commit-{}", &commit_info.sha[..8]))?
                 .build()?;
 
             storage.insert(move_doc).await?;
