@@ -280,6 +280,7 @@ jobs:
         CI: true
 
   # Container build - can run in parallel
+  # Uses standard Dockerfile (without ONNX) to avoid Alpine Linux compilation issues
   container:
     name: Container Build
     runs-on: ubuntu-latest
@@ -290,10 +291,11 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
-    - name: Build container
+    - name: Build container (Alpine-compatible without ONNX)
       uses: docker/build-push-action@v5
       with:
         context: .
+        file: ./Dockerfile
         push: false
         tags: kotadb:ci-test
         cache-from: type=gha
@@ -377,13 +379,11 @@ jobs:
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
       run: npm run build
-      continue-on-error: true
     
     - name: Run MCP unit tests
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
       run: npm run test:unit
-      continue-on-error: true
     
     - name: Run MCP integration tests
       if: steps.check_mcp.outputs.exists == 'true'
@@ -391,13 +391,12 @@ jobs:
       run: npm run test:integration
       env:
         KOTADB_BINARY_PATH: ../target/release/kotadb
-      continue-on-error: true
     
     - name: Generate MCP coverage report
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
       run: npm run test:coverage
-      continue-on-error: true
+      continue-on-error: true  # Coverage can fail without breaking the build
 
   # Code coverage - runs in parallel, not dependent on other tests
   coverage:

@@ -18,7 +18,8 @@ RUN mkdir src benches && \
     echo "fn main() {}" > benches/indices.rs && \
     echo "fn main() {}" > benches/queries.rs && \
     echo "fn main() {}" > benches/storage_stress.rs
-RUN cargo build --release && rm -rf src benches
+# Build dependencies only
+RUN cargo build --release --lib --no-default-features && rm -rf src benches
 
 # Copy actual source code
 COPY src ./src
@@ -29,7 +30,10 @@ COPY benches ./benches
 
 # Build the actual application
 RUN touch src/main.rs src/lib.rs  # Force rebuild
-RUN cargo build --release --bin kotadb
+# Temporary: Build without ONNX to fix Alpine Linux compilation issues (Issue #168)
+# TODO: Re-enable embeddings-onnx when ONNX Runtime 2.0 stabilizes on Alpine
+# Build only main binary to avoid MCP server binary source file issues
+RUN cargo build --release --bin kotadb --no-default-features
 
 # Runtime stage
 FROM alpine:3.18
