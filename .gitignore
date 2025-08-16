@@ -145,3 +145,7 @@ build/
 *.js.map
 *.d.ts.map
 .eslintcache
+kotadb-analysis/
+kotadb-test-data/
+kotadb-dogfood.toml
+data/dogfood/
