@@ -765,6 +765,14 @@ async fn main() -> Result<()> {
                     }
                 }
 
+                // Show warnings if any
+                if !validation_result.warnings.is_empty() {
+                    println!("\n⚠️ Warnings:");
+                    for warning in &validation_result.warnings {
+                        println!("   - {}", warning);
+                    }
+                }
+
                 // Exit with error code if validation failed
                 if validation_result.overall_status == ValidationStatus::Failed {
                     return Err(anyhow::anyhow!("Search validation failed"));
@@ -849,6 +857,14 @@ async fn main() -> Result<()> {
                         return Err(anyhow::anyhow!(
                             "Post-ingestion search validation failed. Search functionality is broken."
                         ));
+                    }
+                }
+
+                // Show warnings for git ingestion
+                if !validation_result.warnings.is_empty() {
+                    println!("   Validation warnings:");
+                    for warning in &validation_result.warnings {
+                        println!("   ⚠️ {}", warning);
                     }
                 }
 

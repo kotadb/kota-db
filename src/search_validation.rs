@@ -11,6 +11,38 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tracing::info;
 
+/// Configuration for validation behavior
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationConfig {
+    /// Maximum documents to check in large dataset validations
+    pub max_documents_check: usize,
+    /// Maximum results to fetch per search query
+    pub max_search_results: usize,
+    /// Whether to perform expensive coverage checks
+    pub enable_coverage_checks: bool,
+    /// Custom search terms for content validation
+    pub custom_search_terms: Vec<String>,
+    /// Whether to use dynamic content sampling
+    pub use_dynamic_sampling: bool,
+}
+
+impl Default for ValidationConfig {
+    fn default() -> Self {
+        Self {
+            max_documents_check: 1000,
+            max_search_results: 1000,
+            enable_coverage_checks: true,
+            custom_search_terms: vec![
+                "function".to_string(),
+                "struct".to_string(),
+                "impl".to_string(),
+                "let".to_string(),
+            ],
+            use_dynamic_sampling: true,
+        }
+    }
+}
+
 /// Comprehensive validation report for post-ingestion search functionality
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationReport {
@@ -28,6 +60,10 @@ pub struct ValidationReport {
     pub issues: Vec<String>,
     /// Recommendations for fixing failures
     pub recommendations: Vec<String>,
+    /// Configuration used for validation
+    pub config: ValidationConfig,
+    /// Warning messages about validation limitations
+    pub warnings: Vec<String>,
 }
 
 /// Status of the overall validation
@@ -61,6 +97,11 @@ pub struct ValidationCheck {
 impl ValidationReport {
     /// Create a new empty validation report
     pub fn new() -> Self {
+        Self::with_config(ValidationConfig::default())
+    }
+
+    /// Create a new validation report with custom configuration
+    pub fn with_config(config: ValidationConfig) -> Self {
         Self {
             total_checks: 0,
             passed_checks: 0,
@@ -69,7 +110,14 @@ impl ValidationReport {
             check_results: Vec::new(),
             issues: Vec::new(),
             recommendations: Vec::new(),
+            config,
+            warnings: Vec::new(),
         }
+    }
+
+    /// Add a warning about validation limitations
+    pub fn add_warning(&mut self, warning: String) {
+        self.warnings.push(warning);
     }
 
     /// Add a check result to the report
@@ -157,13 +205,36 @@ impl Default for ValidationReport {
     }
 }
 
-/// Comprehensive post-ingestion search validation
+/// Comprehensive post-ingestion search validation with default configuration
 pub async fn validate_post_ingestion_search(
     storage: &dyn Storage,
     primary_index: &dyn Index,
     trigram_index: &dyn Index,
 ) -> Result<ValidationReport> {
-    let mut report = ValidationReport::new();
+    validate_post_ingestion_search_with_config(
+        storage,
+        primary_index,
+        trigram_index,
+        ValidationConfig::default(),
+    )
+    .await
+}
+
+/// Comprehensive post-ingestion search validation with custom configuration
+pub async fn validate_post_ingestion_search_with_config(
+    storage: &dyn Storage,
+    primary_index: &dyn Index,
+    trigram_index: &dyn Index,
+    config: ValidationConfig,
+) -> Result<ValidationReport> {
+    // Input validation
+    if config.max_documents_check == 0 || config.max_search_results == 0 {
+        return Err(anyhow::anyhow!(
+            "Invalid validation configuration: limits must be greater than 0"
+        ));
+    }
+
+    let mut report = ValidationReport::with_config(config);
 
     info!("Starting post-ingestion search validation");
 
@@ -173,11 +244,16 @@ pub async fn validate_post_ingestion_search(
     // Check 2: Basic wildcard search functionality
     validate_basic_wildcard_search(primary_index, &mut report).await?;
 
-    // Check 3: Trigram text search functionality
-    validate_trigram_text_search(trigram_index, &mut report).await?;
+    // Check 3: Trigram text search functionality with dynamic content sampling
+    validate_trigram_text_search_with_config(storage, trigram_index, &mut report).await?;
 
-    // Check 4: Cross-index document coverage
-    validate_index_document_coverage(storage, primary_index, trigram_index, &mut report).await?;
+    // Check 4: Cross-index document coverage (configurable)
+    if report.config.enable_coverage_checks {
+        validate_index_document_coverage(storage, primary_index, trigram_index, &mut report)
+            .await?;
+    } else {
+        report.add_warning("Document coverage checks disabled in configuration".to_string());
+    }
 
     // Check 5: Sample query routing (if we have documents)
     let storage_docs = storage
@@ -214,10 +290,17 @@ async fn validate_document_count_consistency(
         .context("Failed to list documents from storage")?;
     let storage_count = storage_docs.len();
 
-    // For indices, we'll do a wildcard search to get all indexed documents
-    let wildcard_query = QueryBuilder::new()
-        .with_limit(1000)? // Maximum allowed limit to get all documents
-        .build()?;
+    // For indices, we'll do a wildcard search to get indexed documents
+    let search_limit = std::cmp::min(report.config.max_search_results, 1000); // Respect API limits
+    let wildcard_query = QueryBuilder::new().with_limit(search_limit)?.build()?;
+
+    // Add warning if we're potentially missing documents due to limits
+    if storage_count > search_limit {
+        report.add_warning(format!(
+            "Storage has {} documents but search limited to {}. Count comparison may be incomplete.",
+            storage_count, search_limit
+        ));
+    }
 
     let primary_results = primary_index
         .search(&wildcard_query)
@@ -279,14 +362,37 @@ async fn validate_basic_wildcard_search(
     Ok(())
 }
 
-/// Validate trigram text search functionality
-async fn validate_trigram_text_search(
+/// Validate trigram text search functionality with dynamic content sampling
+async fn validate_trigram_text_search_with_config(
+    storage: &dyn Storage,
     trigram_index: &dyn Index,
     report: &mut ValidationReport,
 ) -> Result<()> {
-    // Test with a common term that should exist in most codebases
+    let search_terms = if report.config.use_dynamic_sampling {
+        // Try to extract actual content for more realistic testing
+        get_dynamic_search_terms(storage, &report.config).await?
+    } else {
+        report.config.custom_search_terms.clone()
+    };
+
+    if search_terms.is_empty() {
+        report.add_warning("No search terms available for trigram validation".to_string());
+        let check = ValidationCheck {
+            name: "trigram_text_search".to_string(),
+            description: "Test trigram text search functionality".to_string(),
+            passed: false,
+            error: Some("No search terms available for testing".to_string()),
+            details: None,
+            critical: false, // Not critical if we can't find terms
+        };
+        report.add_check(check);
+        return Ok(());
+    }
+
+    // Test with the first available search term
+    let search_term = &search_terms[0];
     let text_query = QueryBuilder::new()
-        .with_text("rust")? // Common term in Rust codebases
+        .with_text(search_term)?
         .with_limit(5)?
         .build()?;
 
@@ -297,15 +403,58 @@ async fn validate_trigram_text_search(
         description: "Test trigram text search functionality".to_string(),
         passed: search_result.is_ok(),
         error: search_result.as_ref().err().map(|e| e.to_string()),
-        details: search_result
-            .as_ref()
-            .ok()
-            .map(|results| format!("Search for 'rust' returned {} documents", results.len())),
+        details: search_result.as_ref().ok().map(|results| {
+            format!(
+                "Search for '{}' returned {} documents",
+                search_term,
+                results.len()
+            )
+        }),
         critical: true,
     };
 
     report.add_check(check);
     Ok(())
+}
+
+/// Extract search terms dynamically from actual content
+async fn get_dynamic_search_terms(
+    storage: &dyn Storage,
+    config: &ValidationConfig,
+) -> Result<Vec<String>> {
+    let docs = storage.list_all().await?;
+    let mut terms = Vec::new();
+
+    // Sample a few documents to extract common terms
+    let sample_size = std::cmp::min(docs.len(), 5);
+    for doc in docs.iter().take(sample_size) {
+        if let Some(retrieved_doc) = storage.get(&doc.id).await? {
+            // Extract words from content (simple tokenization)
+            let content_str = String::from_utf8_lossy(&retrieved_doc.content);
+            let words: Vec<&str> = content_str
+                .split_whitespace()
+                .filter(|word| word.len() >= 3 && word.len() <= 20)
+                .filter(|word| word.chars().all(|c| c.is_alphabetic()))
+                .take(3)
+                .collect();
+
+            for word in words {
+                if !terms.contains(&word.to_lowercase()) {
+                    terms.push(word.to_lowercase());
+                    if terms.len() >= 4 {
+                        return Ok(terms);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback to configured terms if we didn't find enough dynamic ones
+    if terms.len() < 2 {
+        terms.extend(config.custom_search_terms.iter().cloned());
+    }
+
+    Ok(terms)
 }
 
 /// Validate that indices contain the same documents as storage
@@ -333,11 +482,26 @@ async fn validate_index_document_coverage(
         return Ok(());
     }
 
-    // Get all document IDs from storage
-    let storage_ids: HashSet<ValidatedDocumentId> = storage_docs.iter().map(|doc| doc.id).collect();
+    // Get document IDs from storage (limited for large datasets)
+    let check_limit = std::cmp::min(storage_docs.len(), report.config.max_documents_check);
+    let storage_ids: HashSet<ValidatedDocumentId> = storage_docs
+        .iter()
+        .take(check_limit)
+        .map(|doc| doc.id)
+        .collect();
 
-    // Get all document IDs from indices
-    let wildcard_query = QueryBuilder::new().with_limit(1000)?.build()?;
+    // Add warning if we're only checking a subset
+    if storage_docs.len() > check_limit {
+        report.add_warning(format!(
+            "Coverage check limited to {} of {} total documents for performance",
+            check_limit,
+            storage_docs.len()
+        ));
+    }
+
+    // Get document IDs from indices with configurable limits
+    let search_limit = std::cmp::min(report.config.max_search_results, 1000);
+    let wildcard_query = QueryBuilder::new().with_limit(search_limit)?.build()?;
 
     let primary_ids: HashSet<ValidatedDocumentId> = primary_index
         .search(&wildcard_query)
@@ -473,25 +637,78 @@ async fn validate_sample_query_routing(
     Ok(())
 }
 
+/// Quick validation result with more detailed information
+#[derive(Debug)]
+pub struct QuickValidationResult {
+    pub is_valid: bool,
+    pub storage_count: usize,
+    pub primary_search_works: bool,
+    pub trigram_search_works: bool,
+    pub error_details: Option<String>,
+}
+
 /// Quick validation check that can be called inline during operations
 pub async fn quick_search_validation(
     storage: &dyn Storage,
     primary_index: &dyn Index,
     trigram_index: &dyn Index,
-) -> Result<bool> {
-    // Just check basic functionality without full reporting
+) -> Result<QuickValidationResult> {
     let storage_count = storage.list_all().await?.len();
 
     if storage_count == 0 {
-        return Ok(true); // Empty database is valid
+        return Ok(QuickValidationResult {
+            is_valid: true,
+            storage_count: 0,
+            primary_search_works: true,
+            trigram_search_works: true,
+            error_details: None,
+        });
     }
 
-    // Quick wildcard search test
+    // Test primary index
     let wildcard_query = QueryBuilder::new().with_limit(1)?.build()?;
-    let primary_results = primary_index.search(&wildcard_query).await?;
+    let primary_works = match primary_index.search(&wildcard_query).await {
+        Ok(results) => !results.is_empty(),
+        Err(_) => false,
+    };
 
-    // Basic consistency check
-    Ok(!primary_results.is_empty())
+    // Test trigram index with a simple query
+    let text_query = QueryBuilder::new()
+        .with_text("the")?
+        .with_limit(1)?
+        .build()?;
+    let trigram_works = trigram_index.search(&text_query).await.is_ok();
+
+    let is_valid = primary_works && trigram_works;
+    let error_details = if !is_valid {
+        Some(format!(
+            "Primary index works: {}, Trigram index works: {}",
+            primary_works, trigram_works
+        ))
+    } else {
+        None
+    };
+
+    Ok(QuickValidationResult {
+        is_valid,
+        storage_count,
+        primary_search_works: primary_works,
+        trigram_search_works: trigram_works,
+        error_details,
+    })
+}
+
+/// Legacy function for backward compatibility
+pub async fn quick_search_validation_bool(
+    storage: &dyn Storage,
+    primary_index: &dyn Index,
+    trigram_index: &dyn Index,
+) -> Result<bool> {
+    Ok(
+        quick_search_validation(storage, primary_index, trigram_index)
+            .await?
+            .is_valid,
+    )
 }
 
 #[cfg(test)]

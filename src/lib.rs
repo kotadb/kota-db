@@ -87,8 +87,9 @@ pub use pure::performance;
 
 // Re-export search validation
 pub use search_validation::{
-    quick_search_validation, validate_post_ingestion_search, ValidationCheck, ValidationReport,
-    ValidationStatus,
+    quick_search_validation, quick_search_validation_bool, validate_post_ingestion_search,
+    validate_post_ingestion_search_with_config, QuickValidationResult, ValidationCheck,
+    ValidationConfig, ValidationReport, ValidationStatus,
 };
 // Re-export bulk operations
 pub use pure::{
