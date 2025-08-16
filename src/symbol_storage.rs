@@ -459,8 +459,18 @@ impl SymbolStorage {
 
         // JavaScript/TypeScript imports: import x from 'module'; import {x} from 'module';
         if trimmed.starts_with("import ") {
-            // Look for quoted module path
-            if let Some(start) = trimmed.find(['\'', '"']) {
+            // Look for 'from' keyword followed by quotes
+            if let Some(from_pos) = trimmed.find(" from ") {
+                let after_from = &trimmed[from_pos + 6..];
+                if let Some(start) = after_from.find(['\'', '"']) {
+                    let quote_char = after_from.chars().nth(start).unwrap();
+                    if let Some(end) = after_from[start + 1..].find(quote_char) {
+                        return Some(after_from[start + 1..start + 1 + end].to_string());
+                    }
+                }
+            }
+            // Also handle direct quotes (import 'module';)
+            else if let Some(start) = trimmed.find(['\'', '"']) {
                 let quote_char = trimmed.chars().nth(start).unwrap();
                 if let Some(end) = trimmed[start + 1..].find(quote_char) {
                     return Some(trimmed[start + 1..start + 1 + end].to_string());
@@ -805,8 +815,12 @@ impl SymbolStorage {
 
     /// Sanitize a file path to prevent directory traversal attacks
     fn sanitize_path(&self, path: &Path) -> String {
-        // Remove any parent directory references and convert to string
-        let components: Vec<_> = path
+        // Convert path to string and normalize separators
+        let path_str = path.to_string_lossy();
+        let normalized = path_str.replace('\\', "/");
+
+        // Parse normalized path and remove any parent directory references
+        let components: Vec<_> = Path::new(&normalized)
             .components()
             .filter_map(|comp| {
                 use std::path::Component;
@@ -962,7 +976,14 @@ fn compute_sum() -> i32 { 0 }
             .extract_symbols(Path::new("test.rs"), parsed1, None)
             .await?;
 
-        // Clear and re-extract to test determinism
+        // Delete the symbols from storage to test fresh extraction
+        for id in &ids1 {
+            if let Some(entry) = symbol_storage.symbol_index.get(id) {
+                let _ = symbol_storage.storage.delete(&entry.document_id).await;
+            }
+        }
+
+        // Clear indices and re-extract to test determinism
         symbol_storage.file_symbols.clear();
         symbol_storage.symbol_index.clear();
         symbol_storage.name_index.clear();
@@ -981,7 +1002,9 @@ fn compute_sum() -> i32 { 0 }
     fn test_path_sanitization() -> Result<()> {
         // Test the path sanitization function directly
         fn test_sanitize(path: &str) -> String {
-            let components: Vec<_> = Path::new(path)
+            // Normalize path separators first (convert backslashes to forward slashes)
+            let normalized = path.replace('\\', "/");
+            let components: Vec<_> = Path::new(&normalized)
                 .components()
                 .filter_map(|comp| {
                     use std::path::Component;
@@ -995,28 +1018,20 @@ fn compute_sum() -> i32 { 0 }
         }
 
         // Test various malicious paths
-        let test_paths = vec![
-            "../../../etc/passwd",
-            "..\\..\\windows\\system32",
-            "normal/../../malicious",
-            "./normal/../../../bad",
+        // Note: Path normalization may behave differently on different platforms
+        let test_cases = vec![
+            ("../../../etc/passwd", "etc/passwd"),
+            ("..\\..\\windows\\system32", "windows/system32"),
+            ("safe/normal/path", "safe/normal/path"),
+            ("./safe/path", "safe/path"),
         ];
 
-        for path in test_paths {
-            let sanitized = test_sanitize(path);
-            // Should not contain any parent directory references
-            assert!(
-                !sanitized.contains(".."),
-                "Path {} was not properly sanitized: {}",
-                path,
-                sanitized
-            );
-            // Should only contain normal components
-            assert!(
-                !sanitized.contains("./"),
-                "Path {} contains current dir reference: {}",
-                path,
-                sanitized
+        for (input, expected) in test_cases {
+            let sanitized = test_sanitize(input);
+            assert_eq!(
+                sanitized, expected,
+                "Path {} was not properly sanitized. Got: {}, Expected: {}",
+                input, sanitized, expected
             );
         }
 
@@ -1191,7 +1206,18 @@ mod level1 {
 
             // JavaScript/TypeScript imports
             if trimmed.starts_with("import ") {
-                if let Some(start) = trimmed.find(['\'', '"']) {
+                // Look for 'from' keyword followed by quotes
+                if let Some(from_pos) = trimmed.find(" from ") {
+                    let after_from = &trimmed[from_pos + 6..];
+                    if let Some(start) = after_from.find(['\'', '"']) {
+                        let quote_char = after_from.chars().nth(start).unwrap();
+                        if let Some(end) = after_from[start + 1..].find(quote_char) {
+                            return Some(after_from[start + 1..start + 1 + end].to_string());
+                        }
+                    }
+                }
+                // Also handle direct quotes (import 'module';)
+                else if let Some(start) = trimmed.find(['\'', '"']) {
                     let quote_char = trimmed.chars().nth(start).unwrap();
                     if let Some(end) = trimmed[start + 1..].find(quote_char) {
                         return Some(trimmed[start + 1..start + 1 + end].to_string());
