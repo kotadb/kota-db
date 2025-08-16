@@ -196,32 +196,32 @@ impl Database {
         const BATCH_SIZE: usize = 100;
         let mut processed = 0;
 
-        // Process in chunks to reduce lock contention
+        // Process in chunks to reduce lock contention and prevent OOM
         for chunk in all_docs.chunks(BATCH_SIZE) {
-            // Collect document IDs and paths for this batch
+            // Collect document data for this batch (including content for trigram indexing)
             let mut batch_entries = Vec::with_capacity(chunk.len());
             for doc in chunk {
                 let doc_id = doc.id;
                 let doc_path = ValidatedPath::new(doc.path.to_string())?;
-                batch_entries.push((doc_id, doc_path));
+                batch_entries.push((doc_id, doc_path, doc.content.clone()));
             }
 
-            // Insert batch into primary index
+            // Insert batch into primary index (path-based)
             {
                 let mut primary_index = self.primary_index.lock().await;
-                for (doc_id, doc_path) in &batch_entries {
+                for (doc_id, doc_path, _) in &batch_entries {
                     primary_index.insert(*doc_id, doc_path.clone()).await?;
                 }
             }
 
-            // Insert batch into trigram index
+            // Insert batch into trigram index with content for proper full-text search
             {
                 let mut trigram_index = self.trigram_index.lock().await;
-                for (doc_id, doc_path) in &batch_entries {
-                    // Note: The Index trait doesn't support content, but the trigram index
-                    // needs to extract trigrams from somewhere. For now, we pass the path
-                    // but this is a known limitation that needs addressing.
-                    trigram_index.insert(*doc_id, doc_path.clone()).await?;
+                for (doc_id, doc_path, content) in &batch_entries {
+                    // Use the new content-aware method for proper trigram indexing
+                    trigram_index
+                        .insert_with_content(*doc_id, doc_path.clone(), content)
+                        .await?;
                 }
             }
 
@@ -262,14 +262,13 @@ impl Database {
             .insert(doc_id, doc_path.clone())
             .await?;
 
-        // For trigram index, we need to pass the document content
-        // Since the Index trait is limited, we'll use a workaround by adding content to the trigram index directly
+        // Insert into trigram index with content for proper full-text search
         {
             let mut trigram_guard = self.trigram_index.lock().await;
-
-            // Downcast to access trigram-specific functionality if possible
-            // For now, use the standard insert (which only uses path)
-            trigram_guard.insert(doc_id, doc_path).await?;
+            // Use the new content-aware method for proper trigram indexing
+            trigram_guard
+                .insert_with_content(doc_id, doc_path, &doc.content)
+                .await?;
         }
 
         // Update path cache

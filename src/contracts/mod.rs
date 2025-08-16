@@ -78,8 +78,36 @@ pub trait Index: Send + Sync {
     /// Insert a key-value pair into the index
     async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
 
+    /// Insert with document content for content-aware indices
+    ///
+    /// Default implementation calls insert() for backward compatibility.
+    /// Indices that need content (like trigram) should override this method.
+    async fn insert_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        _content: &[u8],
+    ) -> Result<()> {
+        // Default implementation ignores content and delegates to insert()
+        self.insert(id, path).await
+    }
+
     /// Update an existing entry in the index
     async fn update(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
+
+    /// Update with document content for content-aware indices
+    ///
+    /// Default implementation calls update() for backward compatibility.
+    /// Indices that need content (like trigram) should override this method.
+    async fn update_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        _content: &[u8],
+    ) -> Result<()> {
+        // Default implementation ignores content and delegates to update()
+        self.update(id, path).await
+    }
 
     /// Delete an entry from the index
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool>;
