@@ -10,7 +10,8 @@ mod tree_sitter;
 
 #[cfg(feature = "tree-sitter-parsing")]
 pub use tree_sitter::{
-    CodeParser, ParsedCode, ParsedSymbol, ParsingConfig, SupportedLanguage, SymbolKind, SymbolType,
+    CodeParser, ParseStats, ParsedCode, ParsedSymbol, ParsingConfig, SupportedLanguage, SymbolKind,
+    SymbolType,
 };
 
 #[cfg(not(feature = "tree-sitter-parsing"))]
