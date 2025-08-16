@@ -821,24 +821,41 @@ impl SymbolStorage {
 
     /// Sanitize a file path to prevent directory traversal attacks
     fn sanitize_path(&self, path: &Path) -> String {
+        use std::path::Component;
+
         // Convert path to string and normalize separators
         let path_str = path.to_string_lossy();
         let normalized = path_str.replace('\\', "/");
 
-        // Parse normalized path and remove any parent directory references
-        let components: Vec<_> = Path::new(&normalized)
-            .components()
-            .filter_map(|comp| {
-                use std::path::Component;
-                match comp {
-                    Component::Normal(s) => s.to_str(),
-                    _ => None,
+        // Properly resolve the path by handling .. components
+        let mut resolved_parts = Vec::new();
+
+        for component in Path::new(&normalized).components() {
+            match component {
+                Component::Normal(part) => {
+                    if let Some(part_str) = part.to_str() {
+                        resolved_parts.push(part_str);
+                    }
                 }
-            })
-            .collect();
+                Component::ParentDir => {
+                    // Remove the last component if it exists (going up one directory)
+                    resolved_parts.pop();
+                }
+                Component::CurDir => {
+                    // Current directory (.) - skip it
+                }
+                _ => {
+                    // Skip other components (RootDir, Prefix)
+                }
+            }
+        }
 
         // Join with forward slashes for consistent storage paths
-        components.join("/")
+        if resolved_parts.is_empty() {
+            String::new()
+        } else {
+            resolved_parts.join("/")
+        }
     }
 }
 
