@@ -147,3 +147,5 @@ build/
 .eslintcache
 kotadb-analysis/
 kotadb-test-data/
+kotadb-dogfood.toml
+data/dogfood/
