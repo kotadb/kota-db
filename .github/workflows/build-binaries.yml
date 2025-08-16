@@ -1,0 +1,285 @@
+name: Build Binaries
+
+# Build and upload binaries as artifacts for every push to develop
+# This enables quick testing without waiting for releases
+on:
+  push:
+    branches: [ develop, main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    branches: [ develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated, or "all")'
+        required: false
+        default: 'all'
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-matrix:
+    name: Determine Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set-matrix
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.platforms }}" != "all" ]]; then
+            # Manual trigger with specific platforms
+            PLATFORMS="${{ inputs.platforms }}"
+            # Convert comma-separated list to JSON array
+            JSON_ARRAY=$(echo "$PLATFORMS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+            echo "matrix={\"target\":$JSON_ARRAY}" >> $GITHUB_OUTPUT
+          else
+            # Default: build all platforms
+            echo 'matrix={"target":["x86_64-unknown-linux-gnu","x86_64-unknown-linux-musl","x86_64-apple-darwin","aarch64-apple-darwin","x86_64-pc-windows-msvc"]}' >> $GITHUB_OUTPUT
+          fi
+
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: build-matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{fromJson(needs.build-matrix.outputs.matrix)}}
+      include:
+        - target: x86_64-unknown-linux-gnu
+          os: ubuntu-latest
+          name: kotadb-linux-x64
+          ext: tar.gz
+        - target: x86_64-unknown-linux-musl
+          os: ubuntu-latest
+          name: kotadb-linux-musl-x64
+          ext: tar.gz
+        - target: x86_64-apple-darwin
+          os: macos-13  # Use Intel runner
+          name: kotadb-macos-x64
+          ext: tar.gz
+        - target: aarch64-apple-darwin
+          os: macos-14  # Use ARM64 runner
+          name: kotadb-macos-arm64
+          ext: tar.gz
+        - target: x86_64-pc-windows-msvc
+          os: windows-latest
+          name: kotadb-windows-x64
+          ext: zip
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-registry-
+    
+    - name: Cache cargo build
+      uses: actions/cache@v4
+      with:
+        path: target
+        key: ${{ runner.os }}-cargo-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-build-${{ matrix.target }}-
+    
+    - name: Install musl-tools (Linux musl)
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools
+        # Use vendored OpenSSL to avoid linking issues
+        echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+        echo "OPENSSL_DIR=/musl" >> $GITHUB_ENV
+    
+    - name: Build binary
+      run: |
+        cargo build --release --target ${{ matrix.target }} --bin kotadb
+        cargo build --release --target ${{ matrix.target }} --bin mcp_server
+    
+    - name: Create checksum
+      shell: bash
+      run: |
+        cd target/${{ matrix.target }}/release
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          sha256sum kotadb.exe mcp_server.exe > checksums.txt
+        else
+          shasum -a 256 kotadb mcp_server > checksums.txt
+        fi
+        cat checksums.txt
+    
+    - name: Package binaries (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        cd target/${{ matrix.target }}/release
+        tar czvf ../../../${{ matrix.name }}.tar.gz kotadb mcp_server checksums.txt
+        cd ../../..
+        shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+    
+    - name: Package binaries (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        cd target/${{ matrix.target }}/release
+        Compress-Archive -Path kotadb.exe,mcp_server.exe,checksums.txt -DestinationPath ../../../${{ matrix.name }}.zip
+        cd ../../..
+        (Get-FileHash -Algorithm SHA256 ${{ matrix.name }}.zip).Hash.ToLower() + "  ${{ matrix.name }}.zip" | Out-File -Encoding ASCII ${{ matrix.name }}.zip.sha256
+    
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.name }}
+        path: |
+          ${{ matrix.name }}.${{ matrix.ext }}
+          ${{ matrix.name }}.${{ matrix.ext }}.sha256
+        retention-days: 7
+        if-no-files-found: error
+
+  create-manifest:
+    name: Create Binary Manifest
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: binaries/
+    
+    - name: Create manifest.json
+      run: |
+        cd binaries
+        
+        # Get version from Cargo.toml
+        VERSION=$(grep '^version' ../Cargo.toml | head -1 | cut -d'"' -f2)
+        
+        # Create manifest
+        cat > manifest.json <<EOF
+        {
+          "version": "$VERSION",
+          "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commit": "${{ github.sha }}",
+          "branch": "${{ github.ref_name }}",
+          "binaries": {
+            "linux-x64": {
+              "url": "kotadb-linux-x64.tar.gz",
+              "sha256": "$(cat kotadb-linux-x64/kotadb-linux-x64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
+              "platform": "linux",
+              "arch": "x64"
+            },
+            "linux-musl-x64": {
+              "url": "kotadb-linux-musl-x64.tar.gz",
+              "sha256": "$(cat kotadb-linux-musl-x64/kotadb-linux-musl-x64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
+              "platform": "linux-musl",
+              "arch": "x64"
+            },
+            "macos-x64": {
+              "url": "kotadb-macos-x64.tar.gz",
+              "sha256": "$(cat kotadb-macos-x64/kotadb-macos-x64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
+              "platform": "darwin",
+              "arch": "x64"
+            },
+            "macos-arm64": {
+              "url": "kotadb-macos-arm64.tar.gz",
+              "sha256": "$(cat kotadb-macos-arm64/kotadb-macos-arm64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
+              "platform": "darwin",
+              "arch": "arm64"
+            },
+            "windows-x64": {
+              "url": "kotadb-windows-x64.zip",
+              "sha256": "$(cat kotadb-windows-x64/kotadb-windows-x64.zip.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
+              "platform": "win32",
+              "arch": "x64"
+            }
+          }
+        }
+        EOF
+        
+        # Pretty print the manifest
+        python3 -m json.tool manifest.json
+    
+    - name: Upload manifest
+      uses: actions/upload-artifact@v4
+      with:
+        name: binary-manifest
+        path: binaries/manifest.json
+        retention-days: 7
+
+  summary:
+    name: Build Summary
+    needs: [build-binaries, create-manifest]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Download manifest
+      uses: actions/download-artifact@v4
+      with:
+        name: binary-manifest
+        path: .
+      continue-on-error: true
+    
+    - name: Generate summary
+      run: |
+        echo "# 📦 Binary Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f manifest.json ]; then
+          VERSION=$(jq -r '.version' manifest.json)
+          COMMIT=$(jq -r '.commit' manifest.json | cut -c1-8)
+          echo "**Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** $COMMIT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Available Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Architecture | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Check each platform
+          for platform in linux-x64 linux-musl-x64 macos-x64 macos-arm64 windows-x64; do
+            SHA=$(jq -r ".binaries.\"$platform\".sha256" manifest.json)
+            if [ "$SHA" != "pending" ] && [ "$SHA" != "null" ]; then
+              echo "| ${platform} | $(jq -r ".binaries.\"$platform\".arch" manifest.json) | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| ${platform} | - | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+        else
+          echo "⚠️ Build manifest not found. Some or all builds may have failed." >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Download" >> $GITHUB_STEP_SUMMARY
+        echo "Binaries are available as artifacts on this workflow run for 7 days." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "For production use, please use official releases from:" >> $GITHUB_STEP_SUMMARY
+        echo "- [GitHub Releases](https://github.com/${{ github.repository }}/releases)" >> $GITHUB_STEP_SUMMARY
+        echo "- \`cargo install kotadb\`" >> $GITHUB_STEP_SUMMARY
+        echo "- \`pip install kotadb\` (coming soon)" >> $GITHUB_STEP_SUMMARY
+        echo "- \`npm install kotadb\` (coming soon)" >> $GITHUB_STEP_SUMMARY

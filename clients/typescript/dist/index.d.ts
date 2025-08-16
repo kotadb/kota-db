@@ -22,6 +22,7 @@ export * from './types';
 export * from './validated-types';
 export { validateFilePath, validateDirectoryPath, validateDocumentId, validateTitle, validateTag, validateSearchQuery, validateTimestamp, validateSize } from './validation';
 export * from './builders';
+export { KotaDBServer, startServer, ensureBinaryInstalled, downloadBinary, ServerOptions } from './server';
 import { KotaDB } from './client';
 export default KotaDB;
 //# sourceMappingURL=index.d.ts.map

@@ -33,7 +33,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateSize = exports.validateTimestamp = exports.validateSearchQuery = exports.validateTag = exports.validateTitle = exports.validateDocumentId = exports.validateDirectoryPath = exports.validateFilePath = exports.connect = exports.KotaDB = void 0;
+exports.downloadBinary = exports.ensureBinaryInstalled = exports.startServer = exports.KotaDBServer = exports.validateSize = exports.validateTimestamp = exports.validateSearchQuery = exports.validateTag = exports.validateTitle = exports.validateDocumentId = exports.validateDirectoryPath = exports.validateFilePath = exports.connect = exports.KotaDB = void 0;
 var client_1 = require("./client");
 Object.defineProperty(exports, "KotaDB", { enumerable: true, get: function () { return client_1.KotaDB; } });
 Object.defineProperty(exports, "connect", { enumerable: true, get: function () { return client_1.connect; } });
@@ -49,6 +49,11 @@ Object.defineProperty(exports, "validateSearchQuery", { enumerable: true, get: f
 Object.defineProperty(exports, "validateTimestamp", { enumerable: true, get: function () { return validation_1.validateTimestamp; } });
 Object.defineProperty(exports, "validateSize", { enumerable: true, get: function () { return validation_1.validateSize; } });
 __exportStar(require("./builders"), exports);
+var server_1 = require("./server");
+Object.defineProperty(exports, "KotaDBServer", { enumerable: true, get: function () { return server_1.KotaDBServer; } });
+Object.defineProperty(exports, "startServer", { enumerable: true, get: function () { return server_1.startServer; } });
+Object.defineProperty(exports, "ensureBinaryInstalled", { enumerable: true, get: function () { return server_1.ensureBinaryInstalled; } });
+Object.defineProperty(exports, "downloadBinary", { enumerable: true, get: function () { return server_1.downloadBinary; } });
 // Default export for convenience
 const client_2 = require("./client");
 exports.default = client_2.KotaDB;

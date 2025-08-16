@@ -15,7 +15,16 @@
 [![Python Downloads](https://img.shields.io/pypi/dm/kotadb-client)](https://pypi.org/project/kotadb-client/)
 
 ```bash
+# Install with automatic server management
 pip install kotadb-client
+
+# Start server and connect (no compilation needed!)
+python -c "
+from kotadb import KotaDB, start_server
+server = start_server(port=8080)  # Auto-downloads binary
+db = KotaDB('http://localhost:8080')
+print('KotaDB is running!')
+"
 ```
 
 ### TypeScript/JavaScript  
@@ -23,7 +32,16 @@ pip install kotadb-client
 [![npm downloads](https://img.shields.io/npm/dm/kotadb-client)](https://www.npmjs.com/package/kotadb-client)
 
 ```bash
+# Install with automatic server management
 npm install kotadb-client
+
+# Start server and connect (no compilation needed!)
+npx tsx -e "
+import { KotaDB, startServer } from 'kotadb-client';
+const server = await startServer({ port: 8080 });  // Auto-downloads binary
+const db = new KotaDB({ url: 'http://localhost:8080' });
+console.log('KotaDB is running!');
+"
 ```
 
 ### Rust
@@ -32,6 +50,25 @@ npm install kotadb-client
 
 ```bash
 cargo add kotadb
+```
+
+### Pre-Built Binaries
+[![GitHub Release](https://img.shields.io/github/v/release/jayminwest/kota-db)](https://github.com/jayminwest/kota-db/releases)
+
+Download pre-compiled binaries for your platform - no build time required!
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-macos-arm64.tar.gz | tar xz
+
+# macOS (Intel)
+curl -L https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-macos-x64.tar.gz | tar xz
+
+# Linux x64
+curl -L https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-linux-x64.tar.gz | tar xz
+
+# Windows x64
+curl -L https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-windows-x64.zip -o kotadb.zip
 ```
 
 ### Go (Coming Soon)
