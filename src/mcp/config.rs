@@ -89,7 +89,7 @@ impl Default for MCPConfig {
             mcp: MCPProtocolConfig {
                 protocol_version: "2024-11-05".to_string(),
                 server_name: "kotadb".to_string(),
-                server_version: "0.2.0".to_string(),
+                server_version: "0.5.0".to_string(),
                 enable_document_tools: true,
                 enable_search_tools: true,
             },
