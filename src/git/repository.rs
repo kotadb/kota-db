@@ -111,11 +111,13 @@ impl GitRepository {
         use std::path::Path;
 
         for entry in tree.iter() {
-            let name = entry.name();
-            if name.is_none() {
-                continue;
-            }
-            let name = name.unwrap();
+            let name = match entry.name() {
+                Some(n) => n,
+                None => {
+                    debug!("Skipping entry with invalid UTF-8 name");
+                    continue;
+                }
+            };
             let path = if prefix.is_empty() {
                 name.to_string()
             } else {
@@ -158,7 +160,8 @@ impl GitRepository {
                             continue;
                         }
 
-                        let is_binary = content.contains(&0);
+                        // Check only first 8KB for binary detection (performance optimization)
+                        let is_binary = content.iter().take(8192).any(|&b| b == 0);
 
                         files.push(FileEntry {
                             path: path.clone(),
@@ -255,8 +258,11 @@ impl GitRepository {
 
         let parents = commit.parent_ids().map(|id| id.to_string()).collect();
 
-        // For files changed, we'd need to diff with parent
-        // This is simplified for now
+        // TODO: Implement proper diff calculation with parent commits
+        // This would provide:
+        // - List of changed files
+        // - Number of insertions/deletions
+        // Current implementation is a placeholder
         let files_changed = vec![];
         let insertions = 0;
         let deletions = 0;

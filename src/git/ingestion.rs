@@ -42,6 +42,21 @@ impl RepositoryIngester {
         Self { config }
     }
 
+    /// Sanitize repository name for safe filesystem usage
+    fn sanitize_name(name: &str) -> String {
+        name.chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_lowercase()
+    }
+
     /// Ingest a git repository into KotaDB storage
     #[instrument(skip(self, storage, repo_path))]
     pub async fn ingest<S: Storage + ?Sized>(
@@ -61,16 +76,17 @@ impl RepositoryIngester {
             .metadata()
             .context("Failed to get repository metadata")?;
 
+        let safe_repo_name = Self::sanitize_name(&metadata.name);
         info!(
-            "Repository: {} ({} commits)",
-            metadata.name, metadata.commit_count
+            "Repository: {} ({} commits) - using safe name: {}",
+            metadata.name, metadata.commit_count, safe_repo_name
         );
 
         let mut result = IngestResult::default();
 
         // Create repository index document if requested
         if self.config.create_index {
-            let index_doc = self.create_index_document(&metadata)?;
+            let index_doc = self.create_index_document(&metadata, &safe_repo_name)?;
             storage
                 .insert(index_doc)
                 .await
@@ -87,7 +103,7 @@ impl RepositoryIngester {
             info!("Found {} files to ingest", files.len());
 
             for file in files {
-                match self.create_file_document(&metadata.name, &file) {
+                match self.create_file_document(&safe_repo_name, &file) {
                     Ok(doc) => {
                         if let Err(e) = storage.insert(doc).await {
                             warn!("Failed to insert file document {}: {}", file.path, e);
@@ -114,7 +130,7 @@ impl RepositoryIngester {
             info!("Processing {} commits", commits.len());
 
             for commit in commits {
-                match self.create_commit_document(&metadata.name, &commit) {
+                match self.create_commit_document(&safe_repo_name, &commit) {
                     Ok(doc) => {
                         if let Err(e) = storage.insert(doc).await {
                             warn!("Failed to insert commit document {}: {}", commit.sha, e);
@@ -143,10 +159,11 @@ impl RepositoryIngester {
     fn create_index_document(
         &self,
         metadata: &crate::git::types::RepositoryMetadata,
+        safe_name: &str,
     ) -> Result<Document> {
         // Remove leading slash if present to create relative path
         let prefix = self.config.path_prefix.trim_start_matches('/');
-        let path = format!("{}/{}/index.md", prefix, metadata.name);
+        let path = format!("{}/{}/index.md", prefix, safe_name);
 
         let content = format!(
             "# Repository: {}\n\n\
@@ -278,6 +295,33 @@ mod tests {
         let config = IngestionConfig::default();
         let _ingester = RepositoryIngester::new(config);
         Ok(())
+    }
+
+    #[test]
+    fn test_repository_name_sanitization() {
+        assert_eq!(RepositoryIngester::sanitize_name("my-repo"), "my-repo");
+        assert_eq!(RepositoryIngester::sanitize_name("My_Repo"), "my_repo");
+        assert_eq!(RepositoryIngester::sanitize_name("repo.name"), "repo.name");
+        assert_eq!(
+            RepositoryIngester::sanitize_name("repo/with/slashes"),
+            "repo-with-slashes"
+        );
+        assert_eq!(
+            RepositoryIngester::sanitize_name("repo with spaces"),
+            "repo-with-spaces"
+        );
+        assert_eq!(
+            RepositoryIngester::sanitize_name("UPPERCASE-REPO"),
+            "uppercase-repo"
+        );
+        assert_eq!(
+            RepositoryIngester::sanitize_name("@special#chars$"),
+            "special-chars"
+        );
+        assert_eq!(
+            RepositoryIngester::sanitize_name("--leading-trailing--"),
+            "leading-trailing"
+        );
     }
 
     #[tokio::test]
