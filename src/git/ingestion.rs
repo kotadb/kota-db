@@ -235,7 +235,7 @@ impl RepositoryIngester {
             &commit.sha[..8] // Use short SHA for path
         );
 
-        let content = format!(
+        let mut content = format!(
             "# Commit: {}\n\n\
             **Author**: {} <{}>\n\
             **Date**: {}\n\n\
@@ -244,7 +244,8 @@ impl RepositoryIngester {
             ## Details\n\
             - **SHA**: {}\n\
             - **Parents**: {}\n\
-            - **Changes**: {} insertions, {} deletions\n",
+            - **Changes**: {} insertions(+), {} deletions(-)\n\
+            - **Files Modified**: {}\n",
             &commit.sha[..8],
             commit.author_name,
             commit.author_email,
@@ -252,13 +253,27 @@ impl RepositoryIngester {
             commit.message,
             commit.sha,
             if commit.parents.is_empty() {
-                "none".to_string()
+                "none (initial commit)".to_string()
             } else {
-                commit.parents.join(", ")
+                commit
+                    .parents
+                    .iter()
+                    .map(|p| &p[..8])
+                    .collect::<Vec<_>>()
+                    .join(", ")
             },
             commit.insertions,
-            commit.deletions
+            commit.deletions,
+            commit.files_changed.len()
         );
+
+        // Add list of changed files if any
+        if !commit.files_changed.is_empty() {
+            content.push_str("\n## Files Changed\n");
+            for file in &commit.files_changed {
+                content.push_str(&format!("- {}\n", file));
+            }
+        }
 
         let mut builder = DocumentBuilder::new()
             .path(&doc_path)?

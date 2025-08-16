@@ -258,14 +258,15 @@ impl GitRepository {
 
         let parents = commit.parent_ids().map(|id| id.to_string()).collect();
 
-        // TODO: Implement proper diff calculation with parent commits
-        // This would provide:
-        // - List of changed files
-        // - Number of insertions/deletions
-        // Current implementation is a placeholder
-        let files_changed = vec![];
-        let insertions = 0;
-        let deletions = 0;
+        // Calculate diff with parent commit (if exists)
+        let (files_changed, insertions, deletions) = if commit.parent_count() > 0 {
+            self.calculate_commit_diff(commit)?
+        } else {
+            // For initial commits, list all files as added
+            let tree = commit.tree()?;
+            let files = self.list_tree_files(&tree)?;
+            (files, 0, 0) // TODO: Could calculate actual line counts for initial commit
+        };
 
         Ok(CommitInfo {
             sha,
@@ -278,6 +279,75 @@ impl GitRepository {
             insertions,
             deletions,
         })
+    }
+
+    #[cfg(feature = "git-integration")]
+    fn calculate_commit_diff(&self, commit: &git2::Commit) -> Result<(Vec<String>, usize, usize)> {
+        let mut files_changed = Vec::new();
+
+        // Get the first parent (for merge commits, this gives the main branch)
+        let parent = commit.parent(0)?;
+        let parent_tree = parent.tree()?;
+        let commit_tree = commit.tree()?;
+
+        // Calculate diff between trees
+        let diff = self
+            .repo
+            .diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?;
+
+        // Get statistics
+        let stats = diff.stats()?;
+        let total_insertions = stats.insertions();
+        let total_deletions = stats.deletions();
+
+        // Collect changed files
+        diff.foreach(
+            &mut |delta, _progress| {
+                if let Some(path) = delta.new_file().path() {
+                    if let Some(path_str) = path.to_str() {
+                        files_changed.push(path_str.to_string());
+                    }
+                }
+                true
+            },
+            None,
+            None,
+            None,
+        )?;
+
+        Ok((files_changed, total_insertions, total_deletions))
+    }
+
+    #[cfg(feature = "git-integration")]
+    fn list_tree_files(&self, tree: &git2::Tree) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+
+        fn walk_tree_for_files(
+            tree: &git2::Tree,
+            prefix: &str,
+            files: &mut Vec<String>,
+        ) -> Result<()> {
+            for entry in tree.iter() {
+                let name = match entry.name() {
+                    Some(n) => n,
+                    None => continue,
+                };
+
+                let path = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+
+                if let Some(git2::ObjectType::Blob) = entry.kind() {
+                    files.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        walk_tree_for_files(tree, "", &mut files)?;
+        Ok(files)
     }
 }
 
