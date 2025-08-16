@@ -27,6 +27,14 @@ pub mod git;
 // Code parsing module
 pub mod parsing;
 
+// Symbol storage and extraction pipeline
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod symbol_storage;
+
+// Factory functions for production-ready components
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod factory;
+
 // Re-export key types
 pub use observability::{
     init_logging, log_operation, record_metric, with_trace_id, MetricType, Operation,
@@ -106,6 +114,18 @@ pub use contracts::performance as performance_contracts;
 // Re-export metrics
 pub use metrics::optimization as optimization_metrics;
 pub use metrics::performance as performance_metrics;
+
+// Re-export symbol storage and extraction
+#[cfg(feature = "tree-sitter-parsing")]
+pub use symbol_storage::{
+    RelationType, SymbolEntry, SymbolIndexStats, SymbolRelation, SymbolStorage,
+};
+
+// Re-export symbol factory functions
+#[cfg(feature = "tree-sitter-parsing")]
+pub use factory::{
+    create_symbol_storage, create_symbol_storage_with_storage, create_test_symbol_storage,
+};
 
 /// Model Context Protocol (MCP) Server
 #[cfg(feature = "mcp-server")]
