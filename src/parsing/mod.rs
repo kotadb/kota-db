@@ -19,10 +19,55 @@ pub mod stub {
     use anyhow::{anyhow, Result};
 
     pub struct CodeParser;
-    pub struct ParsedCode;
+
+    #[derive(Debug, Clone)]
+    pub struct ParsedCode {
+        pub language: SupportedLanguage,
+        pub stats: ParsedStats,
+        pub symbols: Vec<ParsedSymbol>,
+        pub errors: Vec<ParseError>,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct ParsedStats {
+        pub total_nodes: usize,
+        pub named_nodes: usize,
+        pub max_depth: usize,
+        pub error_count: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct ParsedSymbol {
+        pub name: String,
+        pub kind: String,
+        pub line: usize,
+        pub column: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct ParseError {
+        pub message: String,
+        pub line: usize,
+        pub column: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum SupportedLanguage {
+        Rust,
+    }
 
     impl CodeParser {
         pub fn new() -> Result<Self> {
+            Err(anyhow!(
+                "Tree-sitter parsing not enabled. Enable the 'tree-sitter-parsing' feature."
+            ))
+        }
+
+        pub fn parse_content(
+            &self,
+            _content: &str,
+            _language: SupportedLanguage,
+        ) -> Result<ParsedCode> {
             Err(anyhow!(
                 "Tree-sitter parsing not enabled. Enable the 'tree-sitter-parsing' feature."
             ))

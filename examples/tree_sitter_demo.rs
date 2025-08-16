@@ -90,19 +90,30 @@ static SYSTEM_NAME: &str = "PeopleManager";
     println!();
 
     for (i, symbol) in parsed.symbols.iter().enumerate() {
-        println!(
-            "  {}. {} ({:?}) - {:?}",
-            i + 1,
-            symbol.name,
-            symbol.symbol_type,
-            symbol.kind
-        );
-        println!(
-            "     Location: lines {}-{}",
-            symbol.start_line, symbol.end_line
-        );
-        if !symbol.text.is_empty() && symbol.text.len() < 100 {
-            println!("     Text: {}", symbol.text.replace('\n', " ").trim());
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            println!(
+                "  {}. {} ({:?}) - {:?}",
+                i + 1,
+                symbol.name,
+                symbol.symbol_type,
+                symbol.kind
+            );
+            println!(
+                "     Location: lines {}-{}",
+                symbol.start_line, symbol.end_line
+            );
+            if !symbol.text.is_empty() && symbol.text.len() < 100 {
+                println!("     Text: {}", symbol.text.replace('\n', " ").trim());
+            }
+        }
+        #[cfg(not(feature = "tree-sitter-parsing"))]
+        {
+            println!("  {}. {} - {}", i + 1, symbol.name, symbol.kind);
+            println!(
+                "     Location: line {} column {}",
+                symbol.line, symbol.column
+            );
         }
         println!();
     }
@@ -111,7 +122,14 @@ static SYSTEM_NAME: &str = "PeopleManager";
     if !parsed.errors.is_empty() {
         println!("⚠️  Parse Errors:");
         for error in &parsed.errors {
+            #[cfg(feature = "tree-sitter-parsing")]
             println!("  - {}", error);
+
+            #[cfg(not(feature = "tree-sitter-parsing"))]
+            println!(
+                "  - {} at line {} column {}",
+                error.message, error.line, error.column
+            );
         }
         println!();
     }
