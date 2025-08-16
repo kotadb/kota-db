@@ -917,6 +917,19 @@ impl<I: Index> Index for MeteredIndex<I> {
         result
     }
 
+    async fn insert_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        content: &[u8],
+    ) -> Result<()> {
+        let start = Instant::now();
+        let result = self.inner.insert_with_content(id, path, content).await;
+        self.record_timing("insert_with_content", start.elapsed())
+            .await;
+        result
+    }
+
     async fn close(self) -> Result<()> {
         let timing_stats = self.timing_stats().await;
         for (op, (min, avg, max)) in timing_stats {
@@ -1084,6 +1097,111 @@ mod tests {
         let retrieved = traced.get(&doc.id).await.expect("Get should succeed");
         assert!(retrieved.is_some());
         assert_eq!(traced.operation_count().await, 1); // get doesn't increment
+    }
+
+    #[tokio::test]
+    async fn test_metered_index_insert_with_content_forwards_correctly() {
+        // Regression test for issue #200: MeteredIndex wrapper must forward insert_with_content calls
+        use crate::contracts::Index;
+        use crate::types::{ValidatedDocumentId, ValidatedPath};
+        use crate::QueryBuilder;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_str().expect("Path should be valid");
+
+        // Create a metered trigram index (production pattern)
+        let mut index = crate::create_trigram_index(temp_path, Some(100))
+            .await
+            .expect("Failed to create trigram index");
+
+        // Create test data
+        let doc_id = ValidatedDocumentId::new();
+        let doc_path = ValidatedPath::new("test.rs").expect("Path should be valid");
+        let content = b"async fn test() { println!(\"hello world\"); }";
+
+        // Insert with content (this should work with the fix)
+        index
+            .insert_with_content(doc_id, doc_path, content)
+            .await
+            .expect("insert_with_content should succeed");
+
+        // Flush to ensure persistence
+        index.flush().await.expect("Flush should succeed");
+
+        // Test 1: Wildcard search should find the document
+        let wildcard_query = QueryBuilder::new().with_limit(10).unwrap().build().unwrap();
+        let wildcard_results = index
+            .search(&wildcard_query)
+            .await
+            .expect("Wildcard search should succeed");
+        assert_eq!(
+            wildcard_results.len(),
+            1,
+            "Wildcard search should find 1 document"
+        );
+        assert_eq!(
+            wildcard_results[0], doc_id,
+            "Should find the correct document"
+        );
+
+        // Test 2: Content-based search should find the document
+        let content_query = QueryBuilder::new()
+            .with_text("async")
+            .unwrap()
+            .with_limit(10)
+            .unwrap()
+            .build()
+            .unwrap();
+        let content_results = index
+            .search(&content_query)
+            .await
+            .expect("Content search should succeed");
+        assert_eq!(
+            content_results.len(),
+            1,
+            "Content search for 'async' should find 1 document"
+        );
+        assert_eq!(
+            content_results[0], doc_id,
+            "Should find the correct document"
+        );
+
+        // Test 3: Search for content that should exist
+        let hello_query = QueryBuilder::new()
+            .with_text("hello")
+            .unwrap()
+            .with_limit(10)
+            .unwrap()
+            .build()
+            .unwrap();
+        let hello_results = index
+            .search(&hello_query)
+            .await
+            .expect("Content search should succeed");
+        assert_eq!(
+            hello_results.len(),
+            1,
+            "Content search for 'hello' should find 1 document"
+        );
+
+        // Test 4: Search for content that should NOT exist
+        let missing_query = QueryBuilder::new()
+            .with_text("nonexistent")
+            .unwrap()
+            .with_limit(10)
+            .unwrap()
+            .build()
+            .unwrap();
+        let missing_results = index
+            .search(&missing_query)
+            .await
+            .expect("Content search should succeed");
+        assert_eq!(
+            missing_results.len(),
+            0,
+            "Content search for 'nonexistent' should find 0 documents"
+        );
     }
 
     #[tokio::test]
