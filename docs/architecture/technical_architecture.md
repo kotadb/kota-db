@@ -18,7 +18,7 @@ The KOTA Database (KotaDB) is a purpose-built storage engine designed specifical
 ### Design Philosophy
 
 1. **Memory as a Graph, Not a Hierarchy**: Documents are nodes in a knowledge graph
-2. **Time as a First-Class Dimension**: All data is temporal by default
+2. **Time as a First-Class Dimension**: All data has timestamps (temporal queries planned)
 3. **Semantic Understanding Built-In**: Vector embeddings for every document
 4. **Human-Readable Storage**: Markdown files remain the source of truth
 5. **AI-Native Query Language**: Designed for LLM interaction patterns
@@ -72,10 +72,12 @@ The KOTA Database (KotaDB) is a purpose-built storage engine designed specifical
 │                      Index Manager                           │
 ├──────────────┬───────────────┬───────────────┬──────────────┤
 │   Primary    │   Full-Text   │     Graph     │   Semantic   │
-│   (B+ Tree)  │   (Trigram)   │  (Adjacency)  │    (HNSW)    │
+│   (B+ Tree)  │   (Trigram)   │  (Planned)    │    (HNSW)    │
+│      ✅      │       ✅      │      🚧       │      ✅      │
 ├──────────────┼───────────────┼───────────────┼──────────────┤
 │   Temporal   │      Tag      │   Metadata    │   Spatial    │
-│ (Time-Series)│   (Bitmap)    │    (Hash)     │  (R-Tree)    │
+│   (Planned)  │   (Basic)     │    (Hash)     │  (Planned)   │
+│      🚧      │       ✅      │      ✅       │      🚧      │
 └──────────────┴───────────────┴───────────────┴──────────────┘
 ```
 

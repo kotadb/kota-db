@@ -11,6 +11,22 @@ created_by: "Claude Code"
 
 # KOTA Query Language (KQL) Design
 
+> ⚠️ **IMPORTANT**: This document describes the **planned** query language for KotaDB. Most features described here are **not yet implemented**.
+>
+> **Currently Implemented:**
+> - ✅ Text search via trigram index
+> - ✅ Semantic search via HNSW vector index
+> - ✅ Basic path-based queries with wildcards
+>
+> **Not Yet Implemented:**
+> - ⏳ Natural language processing
+> - ⏳ Temporal queries and aggregations
+> - ⏳ Graph traversal queries
+> - ⏳ Advanced structured queries
+> - ⏳ Pattern matching and analysis
+>
+> See the [Current API](#current-api) section at the end for what's actually available today.
+
 ## Overview
 
 KQL is designed to be a natural, intuitive query language that bridges human thought patterns and AI cognitive processes. Unlike SQL, which was designed for tabular data, KQL natively understands documents, relationships, time, and meaning.
@@ -25,11 +41,12 @@ KQL is designed to be a natural, intuitive query language that bridges human tho
 
 ## Query Types
 
-### 1. Natural Language Queries
+### 1. Natural Language Queries (🚧 PLANNED - Not Yet Implemented)
 
-The primary interface is natural language, processed by an LLM-powered parser:
+The primary interface will be natural language, processed by an LLM-powered parser:
 
 ```
+# These queries are PLANNED features, not currently available:
 "What did I learn about rust last week?"
 "Show me all meetings with Greg from Cogzia"
 "Find documents similar to distributed cognition"
@@ -65,7 +82,7 @@ For precise control and programmatic access:
   limit: 10
 }
 
-// Temporal aggregation
+// Temporal aggregation (PLANNED - Not Yet Implemented)
 {
   type: "temporal",
   aggregate: "count",
@@ -77,11 +94,12 @@ For precise control and programmatic access:
 }
 ```
 
-### 3. Hybrid Queries
+### 3. Hybrid Queries (🚧 PLANNED - Not Yet Implemented)
 
 Combining natural language with structured precision:
 
 ```
+# This syntax is PLANNED, not currently available:
 "meetings with Greg" WHERE {
   participants: { $contains: "Greg" },
   duration: { $gte: "30m" }
@@ -617,8 +635,60 @@ PREDICT {
 }
 ```
 
+## Current API (What's Actually Available Today)
+
+### Text Search
+```python
+# Python client
+from kotadb import KotaDB
+db = KotaDB("http://localhost:8080")
+
+# Simple text search using trigram index
+results = db.query("rust programming")
+
+# With limit
+results = db.query("design patterns", limit=10)
+```
+
+```typescript
+// TypeScript client
+import { KotaDB } from 'kotadb-client';
+const db = new KotaDB({ url: 'http://localhost:8080' });
+
+// Simple text search
+const results = await db.query("rust programming");
+
+// With options
+const results = await db.query("design patterns", { limit: 10 });
+```
+
+### Semantic Search (If Embeddings Configured)
+```bash
+# Via REST API
+curl -X POST http://localhost:8080/search/semantic \
+  -H "Content-Type: application/json" \
+  -d '{"query": "distributed systems concepts", "limit": 10}'
+```
+
+### Path-Based Queries
+```bash
+# CLI wildcard search
+kotadb search "*"              # List all documents
+kotadb search "/projects/*"    # Documents in projects folder
+```
+
+### What's NOT Available
+- ❌ Natural language queries ("what did I learn last week")
+- ❌ Temporal aggregations (groupBy day/week/month)
+- ❌ Graph traversal (follow relationships)
+- ❌ Complex filters (participants, duration, etc.)
+- ❌ Pattern analysis (productivity patterns)
+- ❌ Hybrid queries (natural language + structured)
+
 ## Conclusion
 
 KQL is designed to grow with KOTA's cognitive capabilities. It bridges natural human expression with precise data operations, enabling true distributed cognition. The language will evolve based on usage patterns, becoming more intuitive and powerful over time.
+
+**Current Status**: Basic text and semantic search are implemented. The full KQL vision remains a roadmap item for future development.
 
 The key innovation is treating queries not as database operations, but as cognitive requests - allowing KOTA to understand not just what you're looking for, but why you're looking for it.
