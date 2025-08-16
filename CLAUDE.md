@@ -238,6 +238,17 @@ Model Context Protocol server for LLM integration:
 3. Ensure all tests pass including integration tests
 4. Run `just check` to verify code quality
 
+### Dogfooding for Validation
+When working on search, indexing, or git features, test on KotaDB itself:
+- **Create temporary config**: Copy existing config to `kotadb-dogfood.toml`
+- **Use separate data**: Set data directory to `data/analysis/` in config
+- **Test real complexity**: `cargo run -- --config kotadb-dogfood.toml git-ingest .`
+- **Validate your changes**: Run searches and performance tests on actual codebase
+- **Document issues found**: Create GitHub issues for any problems discovered
+- **Clean up artifacts**: Delete config and analysis data (never commit)
+
+This approach has consistently revealed integration issues missed by unit tests (see issues #191, #196, #184).
+
 ### Performance Considerations
 - Use `MeteredIndex` wrapper for new indices
 - Leverage connection pooling for concurrent operations

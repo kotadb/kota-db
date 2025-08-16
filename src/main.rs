@@ -3,8 +3,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
     create_file_storage, create_primary_index, create_trigram_index, create_wrapped_storage,
-    init_logging, start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder,
-    Storage, ValidatedDocumentId, ValidatedPath,
+    init_logging, start_server, validate_post_ingestion_search, with_trace_id, Document,
+    DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
+    ValidationStatus,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -91,6 +92,9 @@ enum Commands {
 
     /// Show database statistics
     Stats,
+
+    /// Validate search functionality
+    Validate,
 
     /// Ingest a git repository into the database
     #[cfg(feature = "git-integration")]
@@ -714,6 +718,67 @@ async fn main() -> Result<()> {
                 }
             }
 
+            Commands::Validate => {
+                println!("🔍 Running search functionality validation...");
+
+                let validation_result = {
+                    let storage = db.storage.lock().await;
+                    let primary_index = db.primary_index.lock().await;
+                    let trigram_index = db.trigram_index.lock().await;
+                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                };
+
+                // Display detailed results
+                println!("\n📋 Validation Results:");
+                println!("   Status: {}", match validation_result.overall_status {
+                    ValidationStatus::Passed => "✅ PASSED",
+                    ValidationStatus::Warning => "⚠️ WARNING", 
+                    ValidationStatus::Failed => "❌ FAILED",
+                });
+                println!("   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
+
+                // Show individual check results
+                for check in &validation_result.check_results {
+                    let status_icon = if check.passed { "✅" } else { "❌" };
+                    let critical_mark = if check.critical { " [CRITICAL]" } else { "" };
+                    println!("   {} {}{}", status_icon, check.name, critical_mark);
+                    if let Some(ref details) = check.details {
+                        println!("      {}", details);
+                    }
+                    if let Some(ref error) = check.error {
+                        println!("      Error: {}", error);
+                    }
+                }
+
+                // Show issues and recommendations
+                if !validation_result.issues.is_empty() {
+                    println!("\n🚨 Issues Found:");
+                    for issue in &validation_result.issues {
+                        println!("   - {}", issue);
+                    }
+                }
+
+                if !validation_result.recommendations.is_empty() {
+                    println!("\n💡 Recommendations:");
+                    for rec in &validation_result.recommendations {
+                        println!("   • {}", rec);
+                    }
+                }
+
+                // Show warnings if any
+                if !validation_result.warnings.is_empty() {
+                    println!("\n⚠️ Warnings:");
+                    for warning in &validation_result.warnings {
+                        println!("   - {}", warning);
+                    }
+                }
+
+                // Exit with error code if validation failed
+                if validation_result.overall_status == ValidationStatus::Failed {
+                    return Err(anyhow::anyhow!("Search validation failed"));
+                }
+            }
+
             #[cfg(feature = "git-integration")]
             Commands::IngestRepo {
                 repo_path,
@@ -754,6 +819,69 @@ async fn main() -> Result<()> {
                 db.rebuild_indices().await?;
                 db.rebuild_path_cache().await?;
 
+                // Ensure all async operations are complete before validation
+                println!("⏳ Ensuring index synchronization...");
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                // Explicit flush verification
+                {
+                    let mut storage = db.storage.lock().await;
+                    let mut primary_index = db.primary_index.lock().await;
+                    let mut trigram_index = db.trigram_index.lock().await;
+                    storage.flush().await?;
+                    primary_index.flush().await?;
+                    trigram_index.flush().await?;
+                }
+
+                // Validate search functionality after ingestion
+                println!("🔍 Validating search functionality...");
+                let validation_result = {
+                    let storage = db.storage.lock().await;
+                    let primary_index = db.primary_index.lock().await;
+                    let trigram_index = db.trigram_index.lock().await;
+                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                };
+
+                // Report validation results
+                match validation_result.overall_status {
+                    ValidationStatus::Passed => {
+                        println!("✅ Search validation passed: All systems operational");
+                    }
+                    ValidationStatus::Warning => {
+                        println!("⚠️ Search validation completed with warnings:");
+                        for issue in &validation_result.issues {
+                            println!("   - {}", issue);
+                        }
+                        println!("   Recommendations:");
+                        for rec in &validation_result.recommendations {
+                            println!("   • {}", rec);
+                        }
+                    }
+                    ValidationStatus::Failed => {
+                        println!("❌ Search validation failed - ingestion may not be fully operational:");
+                        for issue in &validation_result.issues {
+                            println!("   - {}", issue);
+                        }
+                        println!("   Recommendations:");
+                        for rec in &validation_result.recommendations {
+                            println!("   • {}", rec);
+                        }
+
+                        // Return error for critical failures
+                        return Err(anyhow::anyhow!(
+                            "Post-ingestion search validation failed. Search functionality is broken."
+                        ));
+                    }
+                }
+
+                // Show warnings for git ingestion
+                if !validation_result.warnings.is_empty() {
+                    println!("   Validation warnings:");
+                    for warning in &validation_result.warnings {
+                        println!("   ⚠️ {}", warning);
+                    }
+                }
+
                 println!("✅ Repository ingestion complete!");
                 println!("   Documents created: {}", result.documents_created);
                 println!("   Files ingested: {}", result.files_ingested);
@@ -761,6 +889,13 @@ async fn main() -> Result<()> {
                 if result.errors > 0 {
                     println!("   ⚠️ Errors encountered: {}", result.errors);
                 }
+
+                // Show validation summary
+                println!("   Validation: {} ({}/{})", 
+                    validation_result.summary(),
+                    validation_result.passed_checks,
+                    validation_result.total_checks
+                );
             }
         }
 

@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod observability;
 pub mod primary_index;
 pub mod pure;
+pub mod search_validation;
 pub mod semantic_search;
 pub mod trigram_index;
 pub mod types;
@@ -83,6 +84,13 @@ pub use semantic_search::{
 // Re-export pure functions
 pub use pure::btree;
 pub use pure::performance;
+
+// Re-export search validation
+pub use search_validation::{
+    quick_search_validation, quick_search_validation_bool, validate_post_ingestion_search,
+    validate_post_ingestion_search_with_config, QuickValidationResult, ValidationCheck,
+    ValidationConfig, ValidationReport, ValidationStatus,
+};
 // Re-export bulk operations
 pub use pure::{
     analyze_tree_structure, bulk_delete_from_tree, bulk_insert_into_tree, count_entries,
