@@ -517,15 +517,10 @@ impl Index for TrigramIndex {
     /// Search the trigram index
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
         if query.search_terms.is_empty() {
-            // Wildcard search: return all indexed documents
-            let cache = self.document_cache.read().await;
-            let mut all_docs: Vec<ValidatedDocumentId> = cache.keys().copied().collect();
-
-            // Apply limit
-            let limit = query.limit.get();
-            all_docs.truncate(limit);
-
-            return Ok(all_docs);
+            // Empty query should return no results, not all documents
+            // This prevents the non-deterministic behavior where empty search_terms
+            // would return all documents
+            return Ok(Vec::new());
         }
 
         // Extract trigrams from all search terms
@@ -556,15 +551,27 @@ impl Index for TrigramIndex {
         let mut results: Vec<(ValidatedDocumentId, usize)> = candidate_docs.into_iter().collect();
         results.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by match count descending
 
-        // Apply limit and return document IDs
-        let limit = query.limit.get();
-        let final_results: Vec<ValidatedDocumentId> = results
+        // Calculate minimum match threshold
+        // For better precision, require a higher percentage of trigrams to match
+        // This prevents false positives from common trigrams like "ent", "ing", etc.
+        let min_match_threshold = if all_query_trigrams.len() <= 3 {
+            // For short queries (1-3 trigrams), require all trigrams to match
+            all_query_trigrams.len()
+        } else {
+            // For longer queries, require at least 30% of trigrams to match
+            // This balances between being too strict and too permissive
+            std::cmp::max(2, (all_query_trigrams.len() * 3) / 10)
+        };
+
+        // Filter results by minimum match threshold
+        let filtered_results: Vec<ValidatedDocumentId> = results
             .into_iter()
-            .take(limit)
+            .filter(|(_, match_count)| *match_count >= min_match_threshold)
+            .take(query.limit.get())
             .map(|(doc_id, _)| doc_id)
             .collect();
 
-        Ok(final_results)
+        Ok(filtered_results)
     }
 
     /// Sync changes to persistent storage
