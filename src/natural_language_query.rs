@@ -16,9 +16,24 @@ use crate::{
     types::{ValidatedDocumentId, ValidatedPath},
 };
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, instrument};
+
+/// Cached regex patterns for common query patterns
+static ERROR_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\berror\b.*\b(handling|handle)\b").expect("Invalid error pattern")
+});
+
+static ASYNC_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(async|await)\b").expect("Invalid async pattern"));
+
+#[allow(dead_code)]
+static DEPENDENCY_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(what|who)\s+(calls|depends|imports)\b").expect("Invalid dependency pattern")
+});
 
 /// Natural language query intent types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,119 +185,19 @@ impl NaturalLanguageQueryProcessor {
         let query_lower = query.to_lowercase();
         debug!("Parsing natural language query: {}", query);
 
-        // Pattern-based intent detection
-        if query_lower.contains("error")
-            && (query_lower.contains("handling") || query_lower.contains("handle"))
-        {
-            return Ok(QueryIntent::FindPatterns {
-                pattern: CodePattern::ErrorHandling,
-                scope: SearchScope::All,
-            });
+        // Try pattern-based detection first
+        if let Some(intent) = self.detect_pattern_query(&query_lower) {
+            return Ok(intent);
         }
 
-        if query_lower.contains("async") || query_lower.contains("await") {
-            return Ok(QueryIntent::FindPatterns {
-                pattern: CodePattern::AsyncAwait,
-                scope: SearchScope::All,
-            });
+        // Try dependency-based detection
+        if let Some(intent) = self.detect_dependency_query(query, &query_lower)? {
+            return Ok(intent);
         }
 
-        if query_lower.contains("test") {
-            return Ok(QueryIntent::FindPatterns {
-                pattern: CodePattern::TestCode,
-                scope: SearchScope::All,
-            });
-        }
-
-        if query_lower.contains("todo") || query_lower.contains("fixme") {
-            return Ok(QueryIntent::FindPatterns {
-                pattern: CodePattern::TodoComments,
-                scope: SearchScope::Comments,
-            });
-        }
-
-        if query_lower.contains("security")
-            || query_lower.contains("password")
-            || query_lower.contains("secret")
-        {
-            return Ok(QueryIntent::FindPatterns {
-                pattern: CodePattern::SecurityPatterns,
-                scope: SearchScope::All,
-            });
-        }
-
-        // Dependency-based queries
-        if query_lower.contains("what calls") || query_lower.contains("who calls") {
-            let target = self.extract_symbol_name(query, "calls")?;
-            return Ok(QueryIntent::FindDependencies {
-                target,
-                direction: DependencyDirection::Dependents,
-            });
-        }
-
-        if query_lower.contains("what does") && query_lower.contains("call") {
-            let target = self.extract_symbol_name(query, "does")?;
-            return Ok(QueryIntent::FindDependencies {
-                target,
-                direction: DependencyDirection::Dependencies,
-            });
-        }
-
-        if query_lower.contains("depends on") {
-            let target = self.extract_symbol_name(query, "on")?;
-            return Ok(QueryIntent::FindDependencies {
-                target,
-                direction: DependencyDirection::Both,
-            });
-        }
-
-        // Symbol-based queries
-        if query_lower.contains("function") || query_lower.contains("fn") {
-            let name_pattern = self
-                .extract_symbol_pattern(&query_lower)?
-                .unwrap_or_else(|| "*".to_string());
-            let fuzzy = !name_pattern.contains('*');
-            return Ok(QueryIntent::FindSymbols {
-                symbol_types: Some(vec![SymbolType::Function, SymbolType::Method]),
-                name_pattern,
-                fuzzy,
-            });
-        }
-
-        if query_lower.contains("struct") {
-            let name_pattern = self
-                .extract_symbol_pattern(&query_lower)?
-                .unwrap_or_else(|| "*".to_string());
-            let fuzzy = !name_pattern.contains('*');
-            return Ok(QueryIntent::FindSymbols {
-                symbol_types: Some(vec![SymbolType::Struct]),
-                name_pattern,
-                fuzzy,
-            });
-        }
-
-        if query_lower.contains("class") {
-            let name_pattern = self
-                .extract_symbol_pattern(&query_lower)?
-                .unwrap_or_else(|| "*".to_string());
-            let fuzzy = !name_pattern.contains('*');
-            return Ok(QueryIntent::FindSymbols {
-                symbol_types: Some(vec![SymbolType::Class]),
-                name_pattern,
-                fuzzy,
-            });
-        }
-
-        if query_lower.contains("interface") {
-            let name_pattern = self
-                .extract_symbol_pattern(&query_lower)?
-                .unwrap_or_else(|| "*".to_string());
-            let fuzzy = !name_pattern.contains('*');
-            return Ok(QueryIntent::FindSymbols {
-                symbol_types: Some(vec![SymbolType::Interface]),
-                name_pattern,
-                fuzzy,
-            });
+        // Try symbol-based detection
+        if let Some(intent) = self.detect_symbol_query(&query_lower)? {
+            return Ok(intent);
         }
 
         // Signature-based queries
@@ -300,6 +215,135 @@ impl NaturalLanguageQueryProcessor {
             name_pattern: query.to_string(),
             fuzzy: true,
         })
+    }
+
+    /// Detect pattern-based queries
+    fn detect_pattern_query(&self, query_lower: &str) -> Option<QueryIntent> {
+        if ERROR_PATTERN.is_match(query_lower) {
+            return Some(QueryIntent::FindPatterns {
+                pattern: CodePattern::ErrorHandling,
+                scope: SearchScope::All,
+            });
+        }
+
+        if ASYNC_PATTERN.is_match(query_lower) {
+            return Some(QueryIntent::FindPatterns {
+                pattern: CodePattern::AsyncAwait,
+                scope: SearchScope::All,
+            });
+        }
+
+        if query_lower.contains("test") {
+            return Some(QueryIntent::FindPatterns {
+                pattern: CodePattern::TestCode,
+                scope: SearchScope::All,
+            });
+        }
+
+        if query_lower.contains("todo") || query_lower.contains("fixme") {
+            return Some(QueryIntent::FindPatterns {
+                pattern: CodePattern::TodoComments,
+                scope: SearchScope::Comments,
+            });
+        }
+
+        if query_lower.contains("security")
+            || query_lower.contains("password")
+            || query_lower.contains("secret")
+        {
+            return Some(QueryIntent::FindPatterns {
+                pattern: CodePattern::SecurityPatterns,
+                scope: SearchScope::All,
+            });
+        }
+
+        None
+    }
+
+    /// Detect dependency-based queries
+    fn detect_dependency_query(
+        &self,
+        query: &str,
+        query_lower: &str,
+    ) -> Result<Option<QueryIntent>> {
+        if query_lower.contains("what calls") || query_lower.contains("who calls") {
+            let target = self.extract_symbol_name(query, "calls")?;
+            return Ok(Some(QueryIntent::FindDependencies {
+                target,
+                direction: DependencyDirection::Dependents,
+            }));
+        }
+
+        if query_lower.contains("what does") && query_lower.contains("call") {
+            let target = self.extract_symbol_name(query, "does")?;
+            return Ok(Some(QueryIntent::FindDependencies {
+                target,
+                direction: DependencyDirection::Dependencies,
+            }));
+        }
+
+        if query_lower.contains("depends on") {
+            let target = self.extract_symbol_name(query, "on")?;
+            return Ok(Some(QueryIntent::FindDependencies {
+                target,
+                direction: DependencyDirection::Both,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    /// Detect symbol-based queries
+    fn detect_symbol_query(&self, query_lower: &str) -> Result<Option<QueryIntent>> {
+        if query_lower.contains("function") || query_lower.contains("fn") {
+            let name_pattern = self
+                .extract_symbol_pattern(query_lower)?
+                .unwrap_or_else(|| "*".to_string());
+            let fuzzy = !name_pattern.contains('*');
+            return Ok(Some(QueryIntent::FindSymbols {
+                symbol_types: Some(vec![SymbolType::Function, SymbolType::Method]),
+                name_pattern,
+                fuzzy,
+            }));
+        }
+
+        if query_lower.contains("struct") {
+            let name_pattern = self
+                .extract_symbol_pattern(query_lower)?
+                .unwrap_or_else(|| "*".to_string());
+            let fuzzy = !name_pattern.contains('*');
+            return Ok(Some(QueryIntent::FindSymbols {
+                symbol_types: Some(vec![SymbolType::Struct]),
+                name_pattern,
+                fuzzy,
+            }));
+        }
+
+        if query_lower.contains("class") {
+            let name_pattern = self
+                .extract_symbol_pattern(query_lower)?
+                .unwrap_or_else(|| "*".to_string());
+            let fuzzy = !name_pattern.contains('*');
+            return Ok(Some(QueryIntent::FindSymbols {
+                symbol_types: Some(vec![SymbolType::Class]),
+                name_pattern,
+                fuzzy,
+            }));
+        }
+
+        if query_lower.contains("interface") {
+            let name_pattern = self
+                .extract_symbol_pattern(query_lower)?
+                .unwrap_or_else(|| "*".to_string());
+            let fuzzy = !name_pattern.contains('*');
+            return Ok(Some(QueryIntent::FindSymbols {
+                symbol_types: Some(vec![SymbolType::Interface]),
+                name_pattern,
+                fuzzy,
+            }));
+        }
+
+        Ok(None)
     }
 
     /// Execute a parsed query intent
@@ -510,7 +554,11 @@ impl NaturalLanguageQueryProcessor {
                 return Ok(name.to_string());
             }
         }
-        anyhow::bail!("Could not extract symbol name from query")
+        anyhow::bail!(
+            "Could not extract symbol name from query '{}' after keyword '{}'",
+            query,
+            keyword
+        )
     }
 
     /// Extract symbol pattern from query
@@ -567,7 +615,10 @@ impl NaturalLanguageQueryProcessor {
             }
         }
 
-        anyhow::bail!("Could not extract signature pattern from query")
+        anyhow::bail!(
+            "Could not extract signature pattern from query: '{}'",
+            query
+        )
     }
 }
 
