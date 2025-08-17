@@ -35,6 +35,10 @@ pub mod symbol_storage;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod symbol_index;
 
+// Dependency extraction and call graph building
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod dependency_extractor;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
