@@ -450,8 +450,8 @@ async fn test_edge_cases() -> Result<()> {
     let elapsed = start.elapsed();
 
     assert!(
-        elapsed.as_secs() < 30,
-        "Large file processing took too long: {}s",
+        elapsed.as_secs() < 10,
+        "Large file processing took too long: {}s (max 10s allowed)",
         elapsed.as_secs()
     );
 

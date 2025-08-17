@@ -116,7 +116,7 @@ fn benchmark_dependency_extraction(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     let files = load_benchmark_code();
-    let _extractor = DependencyExtractor::new().unwrap();
+    let extractor = DependencyExtractor::new().unwrap();
 
     // Simplified benchmark - just measure file parsing overhead
     let small_file = &files[0].1[..files[0].1.len().min(1000)];
@@ -125,25 +125,61 @@ fn benchmark_dependency_extraction(c: &mut Criterion) {
 
     group.bench_function("small_file_parsing", |b| {
         b.iter(|| {
-            // Simplified - just measure text processing overhead
-            let content_len = small_file.len();
-            black_box(content_len);
+            // Measure actual dependency extraction parsing
+            let mut parser = kotadb::parsing::CodeParser::new().unwrap();
+            if let Ok(parsed) =
+                parser.parse_content(small_file, kotadb::parsing::SupportedLanguage::Rust)
+            {
+                if let Ok(analysis) = extractor.extract_dependencies(
+                    &parsed,
+                    small_file,
+                    std::path::Path::new("bench.rs"),
+                ) {
+                    black_box(analysis);
+                } else {
+                    black_box(parsed);
+                }
+            }
         });
     });
 
     group.bench_function("medium_file_parsing", |b| {
         b.iter(|| {
-            // Simplified - just measure text processing overhead
-            let content_len = medium_file.len();
-            black_box(content_len);
+            // Measure actual dependency extraction parsing
+            let mut parser = kotadb::parsing::CodeParser::new().unwrap();
+            if let Ok(parsed) =
+                parser.parse_content(medium_file, kotadb::parsing::SupportedLanguage::Rust)
+            {
+                if let Ok(analysis) = extractor.extract_dependencies(
+                    &parsed,
+                    medium_file,
+                    std::path::Path::new("bench.rs"),
+                ) {
+                    black_box(analysis);
+                } else {
+                    black_box(parsed);
+                }
+            }
         });
     });
 
     group.bench_function("large_file_parsing", |b| {
         b.iter(|| {
-            // Simplified - just measure text processing overhead
-            let content_len = large_file.len();
-            black_box(content_len);
+            // Measure actual dependency extraction parsing
+            let mut parser = kotadb::parsing::CodeParser::new().unwrap();
+            if let Ok(parsed) =
+                parser.parse_content(large_file, kotadb::parsing::SupportedLanguage::Rust)
+            {
+                if let Ok(analysis) = extractor.extract_dependencies(
+                    &parsed,
+                    large_file,
+                    std::path::Path::new("bench.rs"),
+                ) {
+                    black_box(analysis);
+                } else {
+                    black_box(parsed);
+                }
+            }
         });
     });
 
