@@ -31,6 +31,10 @@ pub mod parsing;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod symbol_storage;
 
+// Symbol-aware index for code-specific searches
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod symbol_index;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
