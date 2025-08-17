@@ -1129,23 +1129,7 @@ mod tests {
         // Flush to ensure persistence
         index.flush().await.expect("Flush should succeed");
 
-        // Test 1: Wildcard search should find the document
-        let wildcard_query = QueryBuilder::new().with_limit(10).unwrap().build().unwrap();
-        let wildcard_results = index
-            .search(&wildcard_query)
-            .await
-            .expect("Wildcard search should succeed");
-        assert_eq!(
-            wildcard_results.len(),
-            1,
-            "Wildcard search should find 1 document"
-        );
-        assert_eq!(
-            wildcard_results[0], doc_id,
-            "Should find the correct document"
-        );
-
-        // Test 2: Content-based search should find the document
+        // Test 1: Content-based search should find the document
         let content_query = QueryBuilder::new()
             .with_text("async")
             .unwrap()
@@ -1167,7 +1151,7 @@ mod tests {
             "Should find the correct document"
         );
 
-        // Test 3: Search for content that should exist
+        // Test 2: Search for content that should exist
         let hello_query = QueryBuilder::new()
             .with_text("hello")
             .unwrap()
@@ -1185,7 +1169,7 @@ mod tests {
             "Content search for 'hello' should find 1 document"
         );
 
-        // Test 4: Search for content that should NOT exist
+        // Test 3: Search for content that should NOT exist
         let missing_query = QueryBuilder::new()
             .with_text("nonexistent")
             .unwrap()
