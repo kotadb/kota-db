@@ -421,9 +421,12 @@ impl DependencyExtractor {
                 let node = capture.node;
                 let pos = node.start_position();
                 let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                    format!(
+                        "Failed to extract function call at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
                 })?;
-                let pos = node.start_position();
 
                 references.push(CodeReference {
                     name: text.to_string(),
@@ -447,9 +450,12 @@ impl DependencyExtractor {
                 let node = capture.node;
                 let pos = node.start_position();
                 let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                    format!(
+                        "Failed to extract type reference at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
                 })?;
-                let pos = node.start_position();
 
                 references.push(CodeReference {
                     name: text.to_string(),
@@ -470,9 +476,12 @@ impl DependencyExtractor {
                 let node = capture.node;
                 let pos = node.start_position();
                 let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                    format!(
+                        "Failed to extract method call at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
                 })?;
-                let pos = node.start_position();
 
                 references.push(CodeReference {
                     name: text.to_string(),
@@ -596,20 +605,45 @@ impl DependencyExtractor {
         })
     }
 
-    /// Resolve a reference name to a symbol ID
+    /// Resolve a reference name to a symbol ID with sophisticated import handling
     fn resolve_reference(
         &self,
         name: &str,
         imports: &[ImportStatement],
         name_to_symbol: &HashMap<String, Uuid>,
     ) -> Option<Uuid> {
-        // Direct lookup
+        // Direct lookup - exact match
         if let Some(&id) = name_to_symbol.get(name) {
             return Some(id);
         }
 
         // Try with import prefixes
         for import in imports {
+            // Handle wildcard imports (use foo::*)
+            if import.is_wildcard {
+                let base_path = import.path.trim_end_matches("*").trim_end_matches("::");
+                let qualified = format!("{}::{}", base_path, name);
+                if let Some(&id) = name_to_symbol.get(&qualified) {
+                    return Some(id);
+                }
+            }
+
+            // Handle aliased imports (use foo as bar)
+            if let Some(alias) = &import.alias {
+                if name == alias || name.starts_with(&format!("{}::", alias)) {
+                    let without_alias = name.strip_prefix(alias).unwrap_or(name);
+                    let without_alias = without_alias.strip_prefix("::").unwrap_or(without_alias);
+                    let qualified = if without_alias.is_empty() {
+                        import.path.clone()
+                    } else {
+                        format!("{}::{}", import.path, without_alias)
+                    };
+                    if let Some(&id) = name_to_symbol.get(&qualified) {
+                        return Some(id);
+                    }
+                }
+            }
+
             // Check if this import could resolve the reference
             if import.items.contains(&name.to_string()) {
                 let qualified = format!("{}::{}", import.path, name);
@@ -618,14 +652,49 @@ impl DependencyExtractor {
                 }
             }
 
-            // Check if it's a path that starts with an imported module
-            if name.contains("::") {
-                let parts: Vec<&str> = name.split("::").collect();
-                if !parts.is_empty() && import.items.contains(&parts[0].to_string()) {
+            // Handle nested imports (use foo::{bar, baz})
+            for item in &import.items {
+                if name == item || name.starts_with(&format!("{}::", item)) {
                     let qualified = format!("{}::{}", import.path, name);
                     if let Some(&id) = name_to_symbol.get(&qualified) {
                         return Some(id);
                     }
+                }
+            }
+
+            // Check if it's a path that starts with an imported module
+            if name.contains("::") {
+                let parts: Vec<&str> = name.split("::").collect();
+                if !parts.is_empty() {
+                    // Check if first part matches any imported item
+                    if import.items.contains(&parts[0].to_string()) {
+                        let qualified = format!("{}::{}", import.path, name);
+                        if let Some(&id) = name_to_symbol.get(&qualified) {
+                            return Some(id);
+                        }
+                    }
+
+                    // Check if first part matches the last segment of import path
+                    if let Some(last_segment) = import.path.split("::").last() {
+                        if last_segment == parts[0] {
+                            let rest = parts[1..].join("::");
+                            let qualified = format!("{}::{}", import.path, rest);
+                            if let Some(&id) = name_to_symbol.get(&qualified) {
+                                return Some(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try standard library resolution for common types
+        if !name.contains("::") {
+            let std_types = ["String", "Vec", "HashMap", "Option", "Result"];
+            if std_types.contains(&name) {
+                let qualified = format!("std::{}", name);
+                if let Some(&id) = name_to_symbol.get(&qualified) {
+                    return Some(id);
                 }
             }
         }
@@ -1019,8 +1088,46 @@ fn validate_result(value: i32) -> i32 {
     }
 
     #[tokio::test]
-    async fn test_serialization_round_trip() {
+    async fn test_import_resolution_edge_cases() {
         let extractor = DependencyExtractor::new().unwrap();
+
+        // Test wildcard imports
+        let mut imports = vec![ImportStatement {
+            path: "std::collections".to_string(),
+            items: vec![],
+            alias: None,
+            line_number: 1,
+            is_wildcard: true,
+        }];
+
+        let mut name_to_symbol = HashMap::new();
+        let id = Uuid::new_v4();
+        name_to_symbol.insert("std::collections::HashMap".to_string(), id);
+
+        // Should resolve HashMap through wildcard import
+        let resolved = extractor.resolve_reference("HashMap", &imports, &name_to_symbol);
+        assert_eq!(resolved, Some(id));
+
+        // Test aliased imports
+        imports.push(ImportStatement {
+            path: "crate::utils::helper".to_string(),
+            items: vec![],
+            alias: Some("h".to_string()),
+            line_number: 2,
+            is_wildcard: false,
+        });
+
+        let helper_id = Uuid::new_v4();
+        name_to_symbol.insert("crate::utils::helper::calculate".to_string(), helper_id);
+
+        // Should resolve through alias
+        let resolved = extractor.resolve_reference("h::calculate", &imports, &name_to_symbol);
+        assert_eq!(resolved, Some(helper_id));
+    }
+
+    #[tokio::test]
+    async fn test_serialization_round_trip() {
+        let _extractor = DependencyExtractor::new().unwrap();
 
         // Create a simple graph
         let mut graph = DiGraph::new();
