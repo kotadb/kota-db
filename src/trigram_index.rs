@@ -554,6 +554,10 @@ impl Index for TrigramIndex {
         // Calculate minimum match threshold
         // For better precision, require a higher percentage of trigrams to match
         // This prevents false positives from common trigrams like "ent", "ing", etc.
+        debug_assert!(
+            !all_query_trigrams.is_empty(),
+            "Should not reach threshold calculation with empty trigrams"
+        );
         let min_match_threshold = if all_query_trigrams.len() <= 3 {
             // For short queries (1-3 trigrams), require all trigrams to match
             all_query_trigrams.len()
