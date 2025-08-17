@@ -126,6 +126,8 @@ pub struct SymbolIndex {
     text_index: RwLock<HashMap<String, HashSet<Uuid>>>,
     /// Signature patterns index
     signature_index: RwLock<HashMap<String, HashSet<Uuid>>>,
+    /// Cache for compiled custom regex patterns
+    regex_cache: RwLock<HashMap<String, Arc<Regex>>>,
     /// Configuration
     config: SymbolIndexConfig,
 }
@@ -177,6 +179,7 @@ impl SymbolIndex {
             symbol_cache: RwLock::new(HashMap::new()),
             text_index: RwLock::new(HashMap::new()),
             signature_index: RwLock::new(HashMap::new()),
+            regex_cache: RwLock::new(HashMap::new()),
             config,
         };
 
@@ -226,6 +229,52 @@ impl SymbolIndex {
         Ok(())
     }
 
+    /// Remove all index entries for a specific file
+    async fn remove_file_from_indices(&mut self, file_path: &std::path::Path) -> Result<()> {
+        let storage = self.symbol_storage.read().await;
+
+        // Get all symbols for this file that need to be removed
+        let symbols_to_remove = storage.find_by_file(file_path);
+
+        // Acquire locks in consistent order
+        let mut text_index = self.text_index.write().await;
+        let mut signature_index = self.signature_index.write().await;
+
+        // Remove each symbol from the indices
+        for entry in symbols_to_remove {
+            let id = entry.id;
+
+            // Remove from text index
+            for token in Self::tokenize(&entry.symbol.name) {
+                if let Some(ids) = text_index.get_mut(&token) {
+                    ids.remove(&id);
+                    // Clean up empty entries
+                    if ids.is_empty() {
+                        text_index.remove(&token);
+                    }
+                }
+            }
+
+            // Remove from signature index if it's a function
+            if matches!(
+                entry.symbol.symbol_type,
+                SymbolType::Function | SymbolType::Method
+            ) {
+                for token in Self::extract_signature_tokens(&entry.symbol.text) {
+                    if let Some(ids) = signature_index.get_mut(&token) {
+                        ids.remove(&id);
+                        // Clean up empty entries
+                        if ids.is_empty() {
+                            signature_index.remove(&token);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Incrementally update indices for a specific file
     async fn update_indices_for_file(&mut self, file_path: &std::path::Path) -> Result<()> {
         let storage = self.symbol_storage.read().await;
@@ -237,8 +286,7 @@ impl SymbolIndex {
         let mut text_index = self.text_index.write().await;
         let mut signature_index = self.signature_index.write().await;
 
-        // Remove old entries for this file first (if updating)
-        // This prevents stale entries from accumulating
+        // Note: Old entries should be removed by calling remove_file_from_indices() first
 
         // Add new entries
         for entry in symbols {
@@ -376,14 +424,23 @@ impl SymbolIndex {
                             // Filter by language if specified using proper enum comparison
                             if let Some(lang) = language {
                                 // Convert language string to enum for proper comparison
-                                let matches = match lang.to_lowercase().as_str() {
-                                    "rust" => matches!(
+                                // For now, only Rust is supported, but structure allows extension
+                                let language_matches = match lang.to_lowercase().as_str() {
+                                    "rust" | "rs" => matches!(
                                         entry.language,
                                         crate::parsing::SupportedLanguage::Rust
                                     ),
-                                    _ => false, // Unknown language
+                                    // When more languages are added to SupportedLanguage enum:
+                                    // "python" | "py" => matches!(entry.language, crate::parsing::SupportedLanguage::Python),
+                                    // "javascript" | "js" => matches!(entry.language, crate::parsing::SupportedLanguage::JavaScript),
+                                    // "typescript" | "ts" => matches!(entry.language, crate::parsing::SupportedLanguage::TypeScript),
+                                    _ => {
+                                        // Unknown language - skip this result
+                                        // This is intentional to avoid returning results for unsupported languages
+                                        false
+                                    }
                                 };
-                                if !matches {
+                                if !language_matches {
                                     continue;
                                 }
                             }
@@ -447,16 +504,34 @@ impl SymbolIndex {
                             results
                                 .push(SymbolSearchResult::from_entry((*dep_symbol).clone(), 1.0));
                         } else {
-                            // If we can't find the symbol, create a placeholder result
+                            // If we can't find the symbol, create a deterministic placeholder
+                            // Use a hash of the dependency name for consistent IDs
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            dep.hash(&mut hasher);
+                            let hash = hasher.finish();
+
+                            // Create a deterministic UUID from the hash
+                            let bytes = hash.to_be_bytes();
+                            let mut uuid_bytes = [0u8; 16];
+                            uuid_bytes[..8].copy_from_slice(&bytes);
+                            uuid_bytes[8..].copy_from_slice(&bytes); // Duplicate for full UUID
+
                             results.push(SymbolSearchResult {
-                                symbol_id: Uuid::new_v4(), // Generate a placeholder ID
+                                symbol_id: Uuid::from_bytes(uuid_bytes),
                                 document_id: target_symbol.document_id,
                                 symbol_name: dep.clone(),
                                 symbol_type: SymbolType::Import,
                                 file_path: target_symbol.file_path.clone(),
                                 qualified_name: dep.clone(),
-                                relevance: 1.0,
-                                metadata: HashMap::new(),
+                                relevance: 0.5, // Lower relevance for unresolved dependencies
+                                metadata: {
+                                    let mut meta = HashMap::new();
+                                    meta.insert("unresolved".to_string(), "true".to_string());
+                                    meta
+                                },
                             });
                         }
                     }
@@ -478,15 +553,32 @@ impl SymbolIndex {
                             results
                                 .push(SymbolSearchResult::from_entry((*dep_symbol).clone(), 1.0));
                         } else {
+                            // Create deterministic placeholder for unresolved dependency
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            dep.hash(&mut hasher);
+                            let hash = hasher.finish();
+
+                            let bytes = hash.to_be_bytes();
+                            let mut uuid_bytes = [0u8; 16];
+                            uuid_bytes[..8].copy_from_slice(&bytes);
+                            uuid_bytes[8..].copy_from_slice(&bytes);
+
                             results.push(SymbolSearchResult {
-                                symbol_id: Uuid::new_v4(),
+                                symbol_id: Uuid::from_bytes(uuid_bytes),
                                 document_id: target_symbol.document_id,
                                 symbol_name: dep.clone(),
                                 symbol_type: SymbolType::Import,
                                 file_path: target_symbol.file_path.clone(),
                                 qualified_name: dep.clone(),
-                                relevance: 1.0,
-                                metadata: HashMap::new(),
+                                relevance: 0.5,
+                                metadata: {
+                                    let mut meta = HashMap::new();
+                                    meta.insert("unresolved".to_string(), "true".to_string());
+                                    meta
+                                },
                             });
                         }
                     }
@@ -512,16 +604,35 @@ impl SymbolIndex {
         let storage = self.symbol_storage.read().await;
         let mut results = Vec::new();
 
-        // Use pre-compiled patterns where possible
-        let re = match pattern {
-            CodePattern::ErrorHandling => &*ERROR_HANDLING_PATTERN,
-            CodePattern::AsyncAwait => &*ASYNC_AWAIT_PATTERN,
-            CodePattern::TestCode => &*TEST_CODE_PATTERN,
-            CodePattern::TodoComments => &*TODO_COMMENTS_PATTERN,
-            CodePattern::SecurityPatterns => &*SECURITY_PATTERN,
-            CodePattern::Custom(regex) => {
-                // Compile custom patterns with validation
-                &Regex::new(regex).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))?
+        // Get the regex pattern to use
+        let regex_arc: Arc<Regex> = match pattern {
+            CodePattern::ErrorHandling => Arc::new(ERROR_HANDLING_PATTERN.clone()),
+            CodePattern::AsyncAwait => Arc::new(ASYNC_AWAIT_PATTERN.clone()),
+            CodePattern::TestCode => Arc::new(TEST_CODE_PATTERN.clone()),
+            CodePattern::TodoComments => Arc::new(TODO_COMMENTS_PATTERN.clone()),
+            CodePattern::SecurityPatterns => Arc::new(SECURITY_PATTERN.clone()),
+            CodePattern::Custom(regex_str) => {
+                // Check cache first
+                let cache = self.regex_cache.read().await;
+                if let Some(cached_regex) = cache.get(regex_str) {
+                    cached_regex.clone()
+                } else {
+                    drop(cache);
+                    // Compile and cache the regex
+                    match Regex::new(regex_str) {
+                        Ok(compiled_regex) => {
+                            let arc_regex = Arc::new(compiled_regex);
+                            let mut cache = self.regex_cache.write().await;
+                            cache.insert(regex_str.clone(), arc_regex.clone());
+                            arc_regex
+                        }
+                        Err(e) => {
+                            // Return empty results for invalid patterns instead of crashing
+                            tracing::warn!("Invalid custom regex pattern '{}': {}", regex_str, e);
+                            return Ok(Vec::new());
+                        }
+                    }
+                }
             }
         };
 
@@ -540,7 +651,7 @@ impl SymbolIndex {
                     SearchScope::All => true,
                 };
 
-                if should_search && re.is_match(&entry.symbol.text) {
+                if should_search && regex_arc.is_match(&entry.symbol.text) {
                     results.push(SymbolSearchResult::from_entry(entry.clone(), 1.0));
                 }
             }
@@ -748,8 +859,41 @@ impl Index for SymbolIndex {
         path: ValidatedPath,
         content: &[u8],
     ) -> Result<()> {
-        // Re-parse and update symbols
-        self.insert_with_content(id, path, content).await
+        // Parse the content and extract symbols
+        use crate::parsing::{CodeParser, SupportedLanguage};
+
+        // Detect language from path extension
+        let path_str = path.as_str();
+        let language = if path_str.ends_with(".rs") {
+            SupportedLanguage::Rust
+        } else if path_str.ends_with(".py") {
+            // Python not supported yet
+            return Ok(());
+        } else if path_str.ends_with(".js") || path_str.ends_with(".ts") {
+            // JavaScript not supported yet
+            return Ok(());
+        } else {
+            // Skip non-code files
+            return Ok(());
+        };
+
+        let content_str = String::from_utf8_lossy(content);
+        let mut parser = CodeParser::new()?;
+        let parsed = parser.parse_content(&content_str, language)?;
+
+        // First, remove old symbols for this file to prevent stale data
+        let file_path = std::path::Path::new(path.as_str());
+        self.remove_file_from_indices(file_path).await?;
+
+        // Extract new symbols
+        let mut storage = self.symbol_storage.write().await;
+        let _symbol_ids = storage.extract_symbols(file_path, parsed, None).await?;
+
+        // Use incremental update instead of full rebuild
+        drop(storage);
+        self.update_indices_for_file(file_path).await?;
+
+        Ok(())
     }
 
     async fn delete(&mut self, _id: &ValidatedDocumentId) -> Result<bool> {
@@ -795,16 +939,27 @@ impl Index for SymbolIndex {
         // Clear indices to free memory
         self.text_index.write().await.clear();
         self.signature_index.write().await.clear();
+        self.regex_cache.write().await.clear();
 
         // Try to get exclusive access to storage for cleanup
         match Arc::try_unwrap(self.symbol_storage) {
             Ok(storage) => {
                 // We have exclusive access, can close properly
+                tracing::debug!("Closing symbol index with exclusive storage access");
                 storage.into_inner().close_storage().await
             }
-            Err(_) => {
+            Err(arc_storage) => {
                 // There are still references, but we've done our best to clean up
-                // The storage will be closed when the last reference is dropped
+                let strong_count = Arc::strong_count(&arc_storage);
+                let weak_count = Arc::weak_count(&arc_storage);
+                tracing::warn!(
+                    "Cannot close symbol index storage: {} strong references, {} weak references remain. Storage will be closed when last reference is dropped.",
+                    strong_count, weak_count
+                );
+                // Attempt to at least sync the storage
+                if let Ok(mut storage) = arc_storage.try_write() {
+                    let _ = storage.sync_storage().await;
+                }
                 Ok(())
             }
         }
