@@ -650,7 +650,14 @@ impl Index for TrigramIndex {
         {
             let mut cache = self.document_cache.write().await;
             let content_preview = if content_str.len() > 500 {
-                format!("{}...", &content_str[..497])
+                // Truncate content preview to ~500 characters (not bytes) to avoid
+                // splitting multi-byte UTF-8 sequences
+                let truncate_at = content_str
+                    .char_indices()
+                    .nth(497) // Get the 497th character position
+                    .map(|(i, _)| i)
+                    .unwrap_or(content_str.len());
+                format!("{}...", &content_str[..truncate_at])
             } else {
                 content_str.to_string()
             };
@@ -788,6 +795,58 @@ mod tests {
             assert_eq!(metadata.document_count, 1);
             assert!(metadata.trigram_count > 0);
         }
+
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unicode_content_preview_truncation() -> Result<()> {
+        let test_dir = format!("test_data/trigram_unicode_{}", Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
+
+        let mut index = TrigramIndex::open(&test_dir).await?;
+
+        // Create a test document with Unicode content that has multi-byte characters
+        // around the 497 character mark
+        let mut long_content = String::new();
+
+        // Add ASCII content first
+        for _ in 0..490 {
+            long_content.push('a');
+        }
+
+        // Add multi-byte Unicode characters around the truncation point
+        long_content.push_str("中文字符测试"); // Chinese characters
+        long_content.push_str("🚀📝🎯🔥💡"); // Emojis
+        long_content.push_str("русский текст"); // Cyrillic
+
+        // Add more content to ensure we exceed 500 bytes
+        for _ in 0..100 {
+            long_content.push('b');
+        }
+
+        // Insert document with content
+        let doc_id = ValidatedDocumentId::new();
+        let doc_path = ValidatedPath::new("test/unicode.md")?;
+        index
+            .insert_with_content(doc_id, doc_path, long_content.as_bytes())
+            .await?;
+
+        // Verify that insertion succeeded without panic
+        let cache = index.document_cache.read().await;
+        let doc_content = cache.get(&doc_id).expect("Document should be cached");
+
+        // Check that the preview was truncated properly
+        assert!(doc_content.content_preview.ends_with("..."));
+
+        // Ensure the preview doesn't cut in the middle of a Unicode character
+        // by verifying it's valid UTF-8
+        assert!(doc_content.content_preview.is_char_boundary(
+            doc_content.content_preview.len() - 3 // Before the "..."
+        ));
 
         // Clean up test directory
         let _ = std::fs::remove_dir_all(&test_dir);
