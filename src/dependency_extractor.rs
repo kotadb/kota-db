@@ -7,8 +7,9 @@ use anyhow::{Context, Result};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tracing::{instrument, warn};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator, Tree};
 use uuid::Uuid;
@@ -151,6 +152,8 @@ pub struct DependencyExtractor {
     /// Code parser for symbol extraction (kept for future use)
     #[allow(dead_code)]
     parser: CodeParser,
+    /// Parser pool for efficient reuse
+    parser_pool: Arc<Mutex<Vec<Parser>>>,
     /// Tree-sitter queries for different languages
     queries: HashMap<SupportedLanguage, DependencyQueries>,
 }
@@ -171,13 +174,18 @@ impl DependencyExtractor {
     /// Create a new dependency extractor
     pub fn new() -> Result<Self> {
         let parser = CodeParser::new()?;
+        let parser_pool = Arc::new(Mutex::new(Vec::new()));
         let mut queries = HashMap::new();
 
         // Initialize Rust queries
         let rust_queries = Self::init_rust_queries()?;
         queries.insert(SupportedLanguage::Rust, rust_queries);
 
-        Ok(Self { parser, queries })
+        Ok(Self {
+            parser,
+            parser_pool,
+            queries,
+        })
     }
 
     /// Initialize tree-sitter queries for Rust
@@ -248,6 +256,33 @@ impl DependencyExtractor {
         })
     }
 
+    /// Get or create a parser from the pool
+    fn acquire_parser(&self, language: SupportedLanguage) -> Result<Parser> {
+        let mut pool = self.parser_pool.lock().unwrap();
+
+        if let Some(mut parser) = pool.pop() {
+            // Reuse existing parser
+            let ts_language = language.tree_sitter_language()?;
+            parser.set_language(&ts_language)?;
+            Ok(parser)
+        } else {
+            // Create new parser
+            let mut parser = Parser::new();
+            let ts_language = language.tree_sitter_language()?;
+            parser.set_language(&ts_language)?;
+            Ok(parser)
+        }
+    }
+
+    /// Return a parser to the pool for reuse
+    fn release_parser(&self, parser: Parser) {
+        let mut pool = self.parser_pool.lock().unwrap();
+        // Limit pool size to prevent unbounded growth
+        if pool.len() < 10 {
+            pool.push(parser);
+        }
+    }
+
     /// Extract dependencies from a parsed code file
     #[instrument(skip(self, parsed_code, content))]
     pub fn extract_dependencies(
@@ -263,10 +298,8 @@ impl DependencyExtractor {
             symbols: parsed_code.symbols.clone(),
         };
 
-        // Parse the content again to get the tree for queries
-        let mut parser = Parser::new();
-        let language = parsed_code.language.tree_sitter_language()?;
-        parser.set_language(&language)?;
+        // Get a parser from the pool
+        let mut parser = self.acquire_parser(parsed_code.language)?;
 
         let tree = parser
             .parse(content, None)
@@ -277,6 +310,9 @@ impl DependencyExtractor {
 
         // Extract references (function calls, type usage, etc.)
         analysis.references = self.extract_references(&tree, content, parsed_code.language)?;
+
+        // Return parser to pool for reuse
+        self.release_parser(parser);
 
         Ok(analysis)
     }
@@ -308,7 +344,10 @@ impl DependencyExtractor {
 
             for capture in match_.captures {
                 let node = capture.node;
-                let text = node.utf8_text(content.as_bytes())?;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                })?;
 
                 match queries.imports.capture_names()[capture.index as usize] {
                     "import_path" => {
@@ -380,7 +419,10 @@ impl DependencyExtractor {
         while let Some(match_) = matches.next() {
             for capture in match_.captures {
                 let node = capture.node;
-                let text = node.utf8_text(content.as_bytes())?;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                })?;
                 let pos = node.start_position();
 
                 references.push(CodeReference {
@@ -403,7 +445,10 @@ impl DependencyExtractor {
         while let Some(match_) = matches.next() {
             for capture in match_.captures {
                 let node = capture.node;
-                let text = node.utf8_text(content.as_bytes())?;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                })?;
                 let pos = node.start_position();
 
                 references.push(CodeReference {
@@ -423,7 +468,10 @@ impl DependencyExtractor {
         while let Some(match_) = matches.next() {
             for capture in match_.captures {
                 let node = capture.node;
-                let text = node.utf8_text(content.as_bytes())?;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!("Failed to parse UTF-8 at {}:{}", pos.row + 1, pos.column)
+                })?;
                 let pos = node.start_position();
 
                 references.push(CodeReference {
@@ -473,11 +521,16 @@ impl DependencyExtractor {
         for analysis in &analyses {
             file_imports.insert(analysis.file_path.clone(), analysis.imports.clone());
 
-            // Find symbols defined in this file
-            let file_symbols: Vec<_> = symbol_entries
+            // Build spatial index for efficient symbol lookup
+            let mut symbols_by_line: BTreeMap<usize, Vec<&SymbolEntry>> = BTreeMap::new();
+            for entry in symbol_entries
                 .iter()
                 .filter(|e| e.file_path == analysis.file_path)
-                .collect();
+            {
+                for line in entry.symbol.start_line..=entry.symbol.end_line {
+                    symbols_by_line.entry(line).or_default().push(entry);
+                }
+            }
 
             for reference in &analysis.references {
                 // Try to resolve the reference to a symbol
@@ -486,7 +539,7 @@ impl DependencyExtractor {
                 {
                     // Find the source symbol (the one containing this reference)
                     if let Some(source_symbol) =
-                        self.find_containing_symbol(reference.line, &file_symbols)
+                        self.find_containing_symbol_indexed(reference.line, &symbols_by_line)
                     {
                         if let (Some(&source_idx), Some(&target_idx)) = (
                             symbol_to_node.get(&source_symbol.id),
@@ -580,7 +633,23 @@ impl DependencyExtractor {
         None
     }
 
-    /// Find the symbol that contains a given line number
+    /// Find the symbol that contains a given line number (optimized with spatial index)
+    fn find_containing_symbol_indexed<'a>(
+        &self,
+        line: usize,
+        symbols_by_line: &BTreeMap<usize, Vec<&'a SymbolEntry>>,
+    ) -> Option<&'a SymbolEntry> {
+        symbols_by_line.get(&line).and_then(|symbols| {
+            // Among symbols at this line, find the one with smallest scope
+            symbols
+                .iter()
+                .min_by_key(|s| s.symbol.end_line - s.symbol.start_line)
+                .copied()
+        })
+    }
+
+    /// Find the symbol that contains a given line number (fallback for compatibility)
+    #[allow(dead_code)]
     fn find_containing_symbol<'a>(
         &self,
         line: usize,
@@ -851,7 +920,141 @@ fn validate_result(value: i32) -> i32 {
 
     #[tokio::test]
     async fn test_circular_dependency_detection() {
-        // This test would require setting up a graph with circular dependencies
-        // and verifying they're detected correctly
+        // Create a simple circular dependency graph
+        let mut graph = DiGraph::new();
+        let mut symbol_to_node = HashMap::new();
+        let mut name_to_symbol = HashMap::new();
+
+        // Create three symbols that form a cycle: A -> B -> C -> A
+        let id_a = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let id_c = Uuid::new_v4();
+
+        let node_a = graph.add_node(SymbolNode {
+            symbol_id: id_a,
+            qualified_name: "module::A".to_string(),
+            symbol_type: SymbolType::Function,
+            file_path: PathBuf::from("test.rs"),
+            in_degree: 0,
+            out_degree: 0,
+        });
+
+        let node_b = graph.add_node(SymbolNode {
+            symbol_id: id_b,
+            qualified_name: "module::B".to_string(),
+            symbol_type: SymbolType::Function,
+            file_path: PathBuf::from("test.rs"),
+            in_degree: 0,
+            out_degree: 0,
+        });
+
+        let node_c = graph.add_node(SymbolNode {
+            symbol_id: id_c,
+            qualified_name: "module::C".to_string(),
+            symbol_type: SymbolType::Function,
+            file_path: PathBuf::from("test.rs"),
+            in_degree: 0,
+            out_degree: 0,
+        });
+
+        // Add edges to create cycle
+        graph.add_edge(
+            node_a,
+            node_b,
+            DependencyEdge {
+                relation_type: RelationType::Calls,
+                line_number: 10,
+                column_number: 5,
+                context: Some("A calls B".to_string()),
+            },
+        );
+
+        graph.add_edge(
+            node_b,
+            node_c,
+            DependencyEdge {
+                relation_type: RelationType::Calls,
+                line_number: 20,
+                column_number: 5,
+                context: Some("B calls C".to_string()),
+            },
+        );
+
+        graph.add_edge(
+            node_c,
+            node_a,
+            DependencyEdge {
+                relation_type: RelationType::Calls,
+                line_number: 30,
+                column_number: 5,
+                context: Some("C calls A".to_string()),
+            },
+        );
+
+        symbol_to_node.insert(id_a, node_a);
+        symbol_to_node.insert(id_b, node_b);
+        symbol_to_node.insert(id_c, node_c);
+
+        name_to_symbol.insert("module::A".to_string(), id_a);
+        name_to_symbol.insert("module::B".to_string(), id_b);
+        name_to_symbol.insert("module::C".to_string(), id_c);
+
+        let dep_graph = DependencyGraph {
+            graph,
+            symbol_to_node,
+            name_to_symbol,
+            file_imports: HashMap::new(),
+            stats: GraphStats::default(),
+        };
+
+        // Test circular dependency detection
+        let cycles = dep_graph.find_circular_dependencies();
+        assert_eq!(cycles.len(), 1, "Should find exactly one cycle");
+
+        let cycle = &cycles[0];
+        assert_eq!(cycle.len(), 3, "Cycle should contain 3 nodes");
+        assert!(cycle.contains(&id_a));
+        assert!(cycle.contains(&id_b));
+        assert!(cycle.contains(&id_c));
+    }
+
+    #[tokio::test]
+    async fn test_serialization_round_trip() {
+        let extractor = DependencyExtractor::new().unwrap();
+
+        // Create a simple graph
+        let mut graph = DiGraph::new();
+        let mut symbol_to_node = HashMap::new();
+        let mut name_to_symbol = HashMap::new();
+
+        let id = Uuid::new_v4();
+        let node = graph.add_node(SymbolNode {
+            symbol_id: id,
+            qualified_name: "test::function".to_string(),
+            symbol_type: SymbolType::Function,
+            file_path: PathBuf::from("test.rs"),
+            in_degree: 0,
+            out_degree: 0,
+        });
+
+        symbol_to_node.insert(id, node);
+        name_to_symbol.insert("test::function".to_string(), id);
+
+        let original = DependencyGraph {
+            graph,
+            symbol_to_node,
+            name_to_symbol: name_to_symbol.clone(),
+            file_imports: HashMap::new(),
+            stats: GraphStats::default(),
+        };
+
+        // Convert to serializable and back
+        let serializable = original.to_serializable();
+        let reconstructed = DependencyGraph::from_serializable(serializable).unwrap();
+
+        // Verify reconstruction
+        assert_eq!(reconstructed.name_to_symbol, name_to_symbol);
+        assert_eq!(reconstructed.graph.node_count(), 1);
+        assert_eq!(reconstructed.graph.edge_count(), 0);
     }
 }
