@@ -297,10 +297,12 @@ fn benchmark_query_latency_targets(c: &mut Criterion) {
                 let results = index.search(&query).await.unwrap();
                 let elapsed = start.elapsed();
 
-                // Assert the <10ms requirement (relaxed for benchmarking)
-                if elapsed.as_millis() >= 100 {
-                    eprintln!("Warning: Query took {}ms", elapsed.as_millis());
-                }
+                // Assert the <10ms requirement strictly
+                assert!(
+                    elapsed.as_millis() < 10,
+                    "Query exceeded 10ms target: {}ms",
+                    elapsed.as_millis()
+                );
 
                 black_box(results);
             })
