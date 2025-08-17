@@ -28,6 +28,26 @@ impl SupportedLanguage {
         }
     }
 
+    /// Parse language from string name
+    /// Supports both full names and common abbreviations
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "rust" | "rs" => Some(SupportedLanguage::Rust),
+            // Future languages can be added here:
+            // "python" | "py" => Some(SupportedLanguage::Python),
+            // "javascript" | "js" => Some(SupportedLanguage::JavaScript),
+            // "typescript" | "ts" => Some(SupportedLanguage::TypeScript),
+            _ => None,
+        }
+    }
+
+    /// Get human-readable name for this language
+    pub fn name(&self) -> &'static str {
+        match self {
+            SupportedLanguage::Rust => "Rust",
+        }
+    }
+
     /// Get file extensions for this language
     pub fn extensions(&self) -> &'static [&'static str] {
         match self {

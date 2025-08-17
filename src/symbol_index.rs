@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::contracts::{Index, Query};
+use crate::contracts::{Index, Query, Storage};
 use crate::parsing::SymbolType;
 use crate::symbol_storage::{SymbolEntry, SymbolStorage};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
@@ -423,23 +423,23 @@ impl SymbolIndex {
                         if let Some(entry) = storage.get_symbol(id) {
                             // Filter by language if specified using proper enum comparison
                             if let Some(lang) = language {
-                                // Convert language string to enum for proper comparison
-                                // For now, only Rust is supported, but structure allows extension
-                                let language_matches = match lang.to_lowercase().as_str() {
-                                    "rust" | "rs" => matches!(
-                                        entry.language,
-                                        crate::parsing::SupportedLanguage::Rust
-                                    ),
-                                    // When more languages are added to SupportedLanguage enum:
-                                    // "python" | "py" => matches!(entry.language, crate::parsing::SupportedLanguage::Python),
-                                    // "javascript" | "js" => matches!(entry.language, crate::parsing::SupportedLanguage::JavaScript),
-                                    // "typescript" | "ts" => matches!(entry.language, crate::parsing::SupportedLanguage::TypeScript),
-                                    _ => {
-                                        // Unknown language - skip this result
-                                        // This is intentional to avoid returning results for unsupported languages
-                                        false
-                                    }
+                                // Use the from_name method to parse language string
+                                // This handles all supported languages dynamically
+                                let language_matches = if let Some(parsed_lang) =
+                                    crate::parsing::SupportedLanguage::from_name(lang)
+                                {
+                                    // Check if the entry's language matches the requested language
+                                    entry.language == parsed_lang
+                                } else {
+                                    // Unknown/unsupported language requested
+                                    // Log warning and skip - better than silently failing
+                                    tracing::debug!(
+                                        "Signature search requested for unsupported language: {}",
+                                        lang
+                                    );
+                                    false
                                 };
+
                                 if !language_matches {
                                     continue;
                                 }
@@ -834,16 +834,17 @@ impl Index for SymbolIndex {
         let mut parser = CodeParser::new()?;
         let parsed = parser.parse_content(&content_str, language)?;
 
+        // First, remove any existing symbols for this file to prevent stale data
+        let file_path = std::path::Path::new(path.as_str());
+        self.remove_file_from_indices(file_path).await?;
+
         // Extract symbols
         let mut storage = self.symbol_storage.write().await;
-        let _symbol_ids = storage
-            .extract_symbols(std::path::Path::new(path.as_str()), parsed, None)
-            .await?;
+        let _symbol_ids = storage.extract_symbols(file_path, parsed, None).await?;
 
         // Use incremental update instead of full rebuild
         drop(storage);
-        self.update_indices_for_file(std::path::Path::new(path.as_str()))
-            .await?;
+        self.update_indices_for_file(file_path).await?;
 
         Ok(())
     }
@@ -964,6 +965,46 @@ impl Index for SymbolIndex {
             }
         }
     }
+}
+
+/// Create a production-ready symbol index with metering wrapper
+///
+/// Returns a symbol index instance wrapped with MeteredIndex for:
+/// - Performance metrics collection
+/// - Operation counting
+/// - Latency tracking
+///
+/// # Arguments
+/// * `path` - Directory for storing index data
+/// * `storage` - Storage backend to use
+pub async fn create_symbol_index(
+    path: &str,
+    storage: Box<dyn Storage + Send + Sync>,
+) -> Result<crate::wrappers::MeteredIndex<SymbolIndex>> {
+    use crate::validation;
+    use crate::wrappers::MeteredIndex;
+
+    // Validate path for internal storage
+    validation::path::validate_storage_directory_path(path)?;
+
+    // Create the base index
+    let index = SymbolIndex::new(PathBuf::from(path), storage).await?;
+
+    // Wrap with metering for production use
+    Ok(MeteredIndex::new(index, "symbol_index".to_string()))
+}
+
+/// Create a test symbol index for unit tests
+///
+/// Returns an unwrapped symbol index for testing
+pub async fn create_symbol_index_for_tests(
+    path: &str,
+    storage: Box<dyn Storage + Send + Sync>,
+) -> Result<SymbolIndex> {
+    use crate::validation;
+
+    validation::path::validate_storage_directory_path(path)?;
+    SymbolIndex::new(PathBuf::from(path), storage).await
 }
 
 #[cfg(test)]
