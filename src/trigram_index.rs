@@ -650,7 +650,7 @@ impl Index for TrigramIndex {
         {
             let mut cache = self.document_cache.write().await;
             let content_preview = if content_str.len() > 500 {
-                // Truncate content preview to ~500 characters (not bytes) to avoid 
+                // Truncate content preview to ~500 characters (not bytes) to avoid
                 // splitting multi-byte UTF-8 sequences
                 let truncate_at = content_str
                     .char_indices()
