@@ -39,6 +39,10 @@ pub mod symbol_index;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod dependency_extractor;
 
+// Natural language query processing for code analysis
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod natural_language_query;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
