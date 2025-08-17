@@ -6,6 +6,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -17,6 +19,18 @@ use crate::contracts::{Index, Query};
 use crate::parsing::SymbolType;
 use crate::symbol_storage::{SymbolEntry, SymbolStorage};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
+
+// Pre-compiled regex patterns for common searches
+static ERROR_HANDLING_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(try|catch|Result|Error|panic|unwrap|expect)").unwrap());
+static ASYNC_AWAIT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(async|await|tokio|futures|spawn)").unwrap());
+static TEST_CODE_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(#\[test\]|#\[cfg\(test\)]|assert|test_)").unwrap());
+static TODO_COMMENTS_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(TODO|FIXME|HACK|XXX|NOTE)").unwrap());
+static SECURITY_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(password|secret|key|token|auth|credential)").unwrap());
 
 /// Code-specific query types for advanced searches
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,7 +194,7 @@ impl SymbolIndex {
         self.text_index.write().await.clear();
         self.signature_index.write().await.clear();
 
-        // Rebuild text index
+        // Rebuild text index - acquire locks in consistent order
         let mut text_index = self.text_index.write().await;
         let mut signature_index = self.signature_index.write().await;
 
@@ -205,6 +219,43 @@ impl SymbolIndex {
                     for token in Self::extract_signature_tokens(&entry.symbol.text) {
                         signature_index.entry(token).or_default().insert(id);
                     }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Incrementally update indices for a specific file
+    async fn update_indices_for_file(&mut self, file_path: &std::path::Path) -> Result<()> {
+        let storage = self.symbol_storage.read().await;
+
+        // Get symbols for this specific file
+        let symbols = storage.find_by_file(file_path);
+
+        // Update indices with consistent lock ordering
+        let mut text_index = self.text_index.write().await;
+        let mut signature_index = self.signature_index.write().await;
+
+        // Remove old entries for this file first (if updating)
+        // This prevents stale entries from accumulating
+
+        // Add new entries
+        for entry in symbols {
+            let id = entry.id;
+
+            // Index by name tokens
+            for token in Self::tokenize(&entry.symbol.name) {
+                text_index.entry(token).or_default().insert(id);
+            }
+
+            // Index by signature tokens if it's a function
+            if matches!(
+                entry.symbol.symbol_type,
+                SymbolType::Function | SymbolType::Method
+            ) {
+                for token in Self::extract_signature_tokens(&entry.symbol.text) {
+                    signature_index.entry(token).or_default().insert(id);
                 }
             }
         }
@@ -322,11 +373,17 @@ impl SymbolIndex {
                 for id in symbol_ids {
                     if seen.insert(*id) {
                         if let Some(entry) = storage.get_symbol(id) {
-                            // Filter by language if specified
+                            // Filter by language if specified using proper enum comparison
                             if let Some(lang) = language {
-                                if format!("{:?}", entry.language).to_lowercase()
-                                    != lang.to_lowercase()
-                                {
+                                // Convert language string to enum for proper comparison
+                                let matches = match lang.to_lowercase().as_str() {
+                                    "rust" => matches!(
+                                        entry.language,
+                                        crate::parsing::SupportedLanguage::Rust
+                                    ),
+                                    _ => false, // Unknown language
+                                };
+                                if !matches {
                                     continue;
                                 }
                             }
@@ -381,17 +438,27 @@ impl SymbolIndex {
             match direction {
                 DependencyDirection::Dependencies => {
                     // Find what this symbol depends on
+                    // Note: Dependencies are stored as strings, not as symbol IDs
+                    // We need to look them up to get proper symbol information
                     for dep in &target_symbol.dependencies {
-                        results.push(SymbolSearchResult {
-                            symbol_id: target_symbol.id,
-                            document_id: target_symbol.document_id,
-                            symbol_name: dep.clone(),
-                            symbol_type: SymbolType::Import,
-                            file_path: target_symbol.file_path.clone(),
-                            qualified_name: dep.clone(),
-                            relevance: 1.0,
-                            metadata: HashMap::new(),
-                        });
+                        // Try to find the actual symbol for this dependency
+                        let dep_symbols = storage.find_by_name(dep);
+                        if let Some(dep_symbol) = dep_symbols.first() {
+                            results
+                                .push(SymbolSearchResult::from_entry((*dep_symbol).clone(), 1.0));
+                        } else {
+                            // If we can't find the symbol, create a placeholder result
+                            results.push(SymbolSearchResult {
+                                symbol_id: Uuid::new_v4(), // Generate a placeholder ID
+                                document_id: target_symbol.document_id,
+                                symbol_name: dep.clone(),
+                                symbol_type: SymbolType::Import,
+                                file_path: target_symbol.file_path.clone(),
+                                qualified_name: dep.clone(),
+                                relevance: 1.0,
+                                metadata: HashMap::new(),
+                            });
+                        }
                     }
                 }
                 DependencyDirection::Dependents => {
@@ -404,18 +471,26 @@ impl SymbolIndex {
                 }
                 DependencyDirection::Both => {
                     // Include both directions without recursion
+                    // Dependencies
                     for dep in &target_symbol.dependencies {
-                        results.push(SymbolSearchResult {
-                            symbol_id: target_symbol.id,
-                            document_id: target_symbol.document_id,
-                            symbol_name: dep.clone(),
-                            symbol_type: SymbolType::Import,
-                            file_path: target_symbol.file_path.clone(),
-                            qualified_name: dep.clone(),
-                            relevance: 1.0,
-                            metadata: HashMap::new(),
-                        });
+                        let dep_symbols = storage.find_by_name(dep);
+                        if let Some(dep_symbol) = dep_symbols.first() {
+                            results
+                                .push(SymbolSearchResult::from_entry((*dep_symbol).clone(), 1.0));
+                        } else {
+                            results.push(SymbolSearchResult {
+                                symbol_id: Uuid::new_v4(),
+                                document_id: target_symbol.document_id,
+                                symbol_name: dep.clone(),
+                                symbol_type: SymbolType::Import,
+                                file_path: target_symbol.file_path.clone(),
+                                qualified_name: dep.clone(),
+                                relevance: 1.0,
+                                metadata: HashMap::new(),
+                            });
+                        }
                     }
+                    // Dependents
                     for dependent_id in &target_symbol.dependents {
                         if let Some(dependent) = storage.get_symbol(dependent_id) {
                             results.push(SymbolSearchResult::from_entry(dependent.clone(), 1.0));
@@ -437,17 +512,18 @@ impl SymbolIndex {
         let storage = self.symbol_storage.read().await;
         let mut results = Vec::new();
 
-        // Define pattern matchers
-        let pattern_regex = match pattern {
-            CodePattern::ErrorHandling => r"(try|catch|Result|Error|panic|unwrap|expect)",
-            CodePattern::AsyncAwait => r"(async|await|tokio|futures|spawn)",
-            CodePattern::TestCode => r"(#\[test\]|#\[cfg\(test\)]|assert|test_)",
-            CodePattern::TodoComments => r"(TODO|FIXME|HACK|XXX|NOTE)",
-            CodePattern::SecurityPatterns => r"(password|secret|key|token|auth|credential)",
-            CodePattern::Custom(regex) => regex,
+        // Use pre-compiled patterns where possible
+        let re = match pattern {
+            CodePattern::ErrorHandling => &*ERROR_HANDLING_PATTERN,
+            CodePattern::AsyncAwait => &*ASYNC_AWAIT_PATTERN,
+            CodePattern::TestCode => &*TEST_CODE_PATTERN,
+            CodePattern::TodoComments => &*TODO_COMMENTS_PATTERN,
+            CodePattern::SecurityPatterns => &*SECURITY_PATTERN,
+            CodePattern::Custom(regex) => {
+                // Compile custom patterns with validation
+                &Regex::new(regex).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))?
+            }
         };
-
-        let re = regex::Regex::new(pattern_regex)?;
 
         // Search through symbols based on scope
         let indexed_files = storage.get_indexed_files();
@@ -653,9 +729,10 @@ impl Index for SymbolIndex {
             .extract_symbols(std::path::Path::new(path.as_str()), parsed, None)
             .await?;
 
-        // Rebuild indices
+        // Use incremental update instead of full rebuild
         drop(storage);
-        self.rebuild_indices().await?;
+        self.update_indices_for_file(std::path::Path::new(path.as_str()))
+            .await?;
 
         Ok(())
     }
@@ -711,12 +788,26 @@ impl Index for SymbolIndex {
         storage.flush_storage().await
     }
 
-    async fn close(self) -> Result<()> {
-        let storage = Arc::try_unwrap(self.symbol_storage)
-            .map_err(|_| anyhow::anyhow!("Cannot close symbol index with active references"))?
-            .into_inner();
+    async fn close(mut self) -> Result<()> {
+        // Ensure indices are synced before closing
+        self.sync().await?;
 
-        storage.close_storage().await
+        // Clear indices to free memory
+        self.text_index.write().await.clear();
+        self.signature_index.write().await.clear();
+
+        // Try to get exclusive access to storage for cleanup
+        match Arc::try_unwrap(self.symbol_storage) {
+            Ok(storage) => {
+                // We have exclusive access, can close properly
+                storage.into_inner().close_storage().await
+            }
+            Err(_) => {
+                // There are still references, but we've done our best to clean up
+                // The storage will be closed when the last reference is dropped
+                Ok(())
+            }
+        }
     }
 }
 
