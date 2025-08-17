@@ -39,6 +39,10 @@ pub mod symbol_index;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod dependency_extractor;
 
+// Natural language query processing for code analysis
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod natural_language_query;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
@@ -85,6 +89,8 @@ pub use http_server::{create_server, create_server_with_pool, start_server};
 
 // Re-export index implementations
 pub use primary_index::{create_primary_index, create_primary_index_for_tests, PrimaryIndex};
+#[cfg(feature = "tree-sitter-parsing")]
+pub use symbol_index::{create_symbol_index, create_symbol_index_for_tests, SymbolIndex};
 pub use trigram_index::{create_trigram_index, create_trigram_index_for_tests, TrigramIndex};
 pub use vector_index::{DistanceMetric, SemanticQuery, VectorIndex};
 
