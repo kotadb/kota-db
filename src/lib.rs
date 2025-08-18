@@ -9,6 +9,7 @@ pub mod embedding_transformer;
 pub mod embeddings;
 pub mod file_storage;
 pub mod http_server;
+pub mod llm_search;
 pub mod metrics;
 pub mod observability;
 pub mod primary_index;
@@ -123,6 +124,13 @@ pub use search_validation::{
 pub use documentation_verification::{
     DocumentationVerificationReport, DocumentationVerifier, Severity, VerificationCheck,
     VerificationStatus,
+};
+
+// Re-export LLM search functionality
+pub use llm_search::{
+    ContextConfig, ContextInfo, ContextType, LLMSearchEngine, LLMSearchResponse, LLMSearchResult,
+    MatchDetails, MatchLocation, MatchType, OptimizationInfo, RelevanceConfig, SelectionStrategy,
+    TokenUsage,
 };
 // Re-export bulk operations
 pub use pure::{
