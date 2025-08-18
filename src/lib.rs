@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod observability;
 pub mod primary_index;
 pub mod pure;
+pub mod query_sanitization;
 pub mod search_validation;
 pub mod semantic_search;
 pub mod trigram_index;

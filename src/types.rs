@@ -284,15 +284,22 @@ pub struct ValidatedSearchQuery {
 }
 
 impl ValidatedSearchQuery {
-    /// Create a new validated search query
+    /// Create a new validated search query with enhanced sanitization
     ///
     /// # Invariants
     /// - Non-empty after trimming
     /// - Meets minimum length requirement
     /// - Not too long (max 1024 chars)
+    /// - Free from injection patterns
+    /// - Properly sanitized
     pub fn new(query: impl Into<String>, min_length: usize) -> Result<Self> {
         let query = query.into();
-        let trimmed = query.trim();
+
+        // Apply comprehensive sanitization
+        let sanitized = crate::query_sanitization::sanitize_search_query(&query)?;
+
+        // Use sanitized text for validation
+        let trimmed = sanitized.text.trim();
 
         ensure!(!trimmed.is_empty(), "Search query cannot be empty");
         ensure!(

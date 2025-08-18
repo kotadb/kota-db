@@ -213,7 +213,12 @@ impl Query {
         let mut search_terms = Vec::new();
         if let Some(text) = text {
             if !text.is_empty() && text != "*" {
-                search_terms.push(ValidatedSearchQuery::new(&text, 1)?); // min_length = 1
+                // Apply sanitization to the query text
+                let sanitized = crate::query_sanitization::sanitize_search_query(&text)?;
+                if !sanitized.is_empty() {
+                    search_terms.push(ValidatedSearchQuery::new(&sanitized.text, 1)?);
+                    // min_length = 1
+                }
             }
         }
 

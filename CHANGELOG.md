@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Enhanced input sanitization for search queries (#202)
+  - Added comprehensive query sanitization module to prevent injection attacks
+  - Protection against SQL injection, command injection, XSS, and path traversal
+  - Validated all search input through QueryBuilder and Query constructors
+  - Added ValidatedSearchQuery type with built-in sanitization
+  - Comprehensive test suite for security validation
+
 ## [0.5.0] - 2025-08-15
 
 ### Added
