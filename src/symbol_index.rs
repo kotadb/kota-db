@@ -151,7 +151,7 @@ impl Default for SymbolIndexConfig {
             cache_size: 10000,
             enable_fuzzy: true,
             fuzzy_threshold: 0.7,
-            max_results: 100,
+            max_results: 1000,
         }
     }
 }
@@ -1022,7 +1022,7 @@ mod tests {
         let storage = crate::file_storage::create_file_storage(&test_dir, Some(100)).await?;
         let index = SymbolIndex::new(PathBuf::from(&test_dir), Box::new(storage)).await?;
 
-        assert_eq!(index.config.max_results, 100);
+        assert_eq!(index.config.max_results, 1000);
 
         // Cleanup
         tokio::fs::remove_dir_all(&test_dir).await?;
