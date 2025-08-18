@@ -46,6 +46,12 @@ pub struct ContextConfig {
     pub prefer_complete_functions: bool,
     /// Maximum characters per content snippet
     pub max_snippet_chars: usize,
+    /// Window size for proximity scoring (characters before/after)
+    pub proximity_window_size: usize,
+    /// Maximum term matches to track per document
+    pub max_term_matches: usize,
+    /// Context size around matches for preview
+    pub match_context_size: usize,
 }
 
 impl Default for ContextConfig {
@@ -56,6 +62,9 @@ impl Default for ContextConfig {
             strip_comments: false, // Keep comments by default for context
             prefer_complete_functions: true,
             max_snippet_chars: 500,
+            proximity_window_size: 100,
+            max_term_matches: 10,
+            match_context_size: 50,
         }
     }
 }
@@ -250,9 +259,35 @@ impl LLMSearchEngine {
         let start_time = Instant::now();
         let limit = limit.unwrap_or(10);
 
-        // Validate query - handle empty queries with warnings instead of errors
+        // Validate query - handle empty queries consistently
         let query_trimmed = query.trim();
         let is_empty_query = query_trimmed.is_empty();
+
+        if is_empty_query {
+            // Return early with empty results and warning
+            return Ok(LLMSearchResponse {
+                query: query.to_string(),
+                optimization: OptimizationInfo {
+                    total_matches: 0,
+                    returned: 0,
+                    selection_strategy: SelectionStrategy::HighestRelevance,
+                    token_usage: TokenUsage {
+                        estimated_tokens: 0,
+                        budget: self.context_config.token_budget,
+                        efficiency: 0.0,
+                        truncated_results: 0,
+                    },
+                },
+                results: Vec::new(),
+                metadata: LLMResponseMetadata {
+                    query_time_ms: 0,
+                    suggestions: vec![
+                        "Provide a search query to find relevant documents".to_string()
+                    ],
+                    warnings: vec!["Empty search query provided".to_string()],
+                },
+            });
+        }
 
         info!("Starting LLM-optimized search for query: '{}'", query);
 
@@ -280,8 +315,12 @@ impl LLMSearchEngine {
             }
         }
 
-        // 3. Rank results by relevance score
-        scored_results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
+        // 3. Rank results by relevance score (handle NaN safely)
+        scored_results.sort_by(|a, b| {
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // 4. Apply context optimization and token budgeting
         let optimized_results = self.optimize_for_context(&scored_results, limit).await?;
@@ -289,7 +328,7 @@ impl LLMSearchEngine {
         // 5. Generate response metadata
         let query_time_ms = start_time.elapsed().as_millis() as u64;
         let suggestions = self.generate_suggestions(query, &optimized_results);
-        let warnings = self.generate_warnings(&optimized_results, is_empty_query);
+        let warnings = self.generate_warnings(&optimized_results);
 
         let token_usage = self.calculate_token_usage(&optimized_results);
 
@@ -323,13 +362,23 @@ impl LLMSearchEngine {
     async fn score_document(&self, document: &Document, query: &str) -> Result<LLMSearchResult> {
         // Convert document content to string for analysis
         let content = String::from_utf8_lossy(&document.content);
+        let content_lower = content.to_lowercase(); // Cache the lowercase version
         let query_lower = query.to_lowercase();
 
-        // Calculate different relevance factors
-        let exact_match_score = self.calculate_exact_match_score(&content, &query_lower);
-        let proximity_score = self.calculate_proximity_score(&content, &query_lower);
-        let symbol_score = self.calculate_symbol_importance_score(&content, &query_lower);
-        let freshness_score = 0.5; // TODO: Implement based on document metadata
+        // Calculate different relevance factors using cached lowercase content
+        let exact_match_score = self.calculate_exact_match_score(&content_lower, &query_lower);
+        let proximity_score = self.calculate_proximity_score(&content_lower, &query_lower);
+        let symbol_score = self.calculate_symbol_importance_score(&content_lower, &query_lower);
+        // Calculate freshness based on document age (newer = higher score)
+        let now = chrono::Utc::now();
+        let age_days = (now - document.updated_at).num_days();
+        let freshness_score = match age_days {
+            0..=7 => 1.0,    // Last week
+            8..=30 => 0.8,   // Last month
+            31..=90 => 0.6,  // Last 3 months
+            91..=365 => 0.4, // Last year
+            _ => 0.2,        // Older
+        };
 
         // Combine scores using weighted average
         let relevance_score = (exact_match_score * self.relevance_config.exact_match_weight)
@@ -338,13 +387,14 @@ impl LLMSearchEngine {
             + (freshness_score * self.relevance_config.freshness_weight);
 
         // Generate match details
-        let match_details = self.analyze_matches(&content, &query_lower)?;
+        let match_details = self.analyze_matches(&content, &content_lower, &query_lower)?;
 
         // Extract context information
         let context_info = self.extract_context_info(&content)?;
 
         // Create optimized content snippet
-        let content_snippet = self.create_optimized_snippet(&content, &query_lower)?;
+        let content_snippet =
+            self.create_optimized_snippet(&content, &content_lower, &query_lower)?;
         let estimated_tokens = self.estimate_token_count(&content_snippet);
 
         Ok(LLMSearchResult {
@@ -361,12 +411,11 @@ impl LLMSearchEngine {
     }
 
     /// Calculate exact match score for the query
-    fn calculate_exact_match_score(&self, content: &str, query: &str) -> f32 {
-        let content_lower = content.to_lowercase();
+    fn calculate_exact_match_score(&self, content_lower: &str, query: &str) -> f32 {
         if content_lower.contains(query) {
             // Count occurrences and normalize by content length
             let matches = content_lower.matches(query).count();
-            let content_len = content.len() as f32;
+            let content_len = content_lower.len() as f32;
             (matches as f32 / content_len * 1000.0).min(1.0) // Scale appropriately
         } else {
             0.0
@@ -374,13 +423,11 @@ impl LLMSearchEngine {
     }
 
     /// Calculate proximity score (how close query terms are to each other)
-    fn calculate_proximity_score(&self, content: &str, query: &str) -> f32 {
+    fn calculate_proximity_score(&self, content_lower: &str, query: &str) -> f32 {
         let terms: Vec<&str> = query.split_whitespace().collect();
         if terms.len() < 2 {
             return 0.0; // No proximity for single terms
         }
-
-        let content_lower = content.to_lowercase();
         let mut best_proximity: f32 = 0.0;
 
         // Find the closest occurrence of all terms
@@ -394,8 +441,10 @@ impl LLMSearchEngine {
                     }
 
                     // Search in a window around this term
-                    let window_start = pos.saturating_sub(100);
-                    let window_end = (pos + 200).min(content_lower.len());
+                    let window_start =
+                        pos.saturating_sub(self.context_config.proximity_window_size);
+                    let window_end = (pos + self.context_config.proximity_window_size * 2)
+                        .min(content_lower.len());
                     let window = &content_lower[window_start..window_end];
 
                     if window.contains(other_term) {
@@ -410,9 +459,8 @@ impl LLMSearchEngine {
     }
 
     /// Calculate symbol importance score (public APIs > private helpers)
-    fn calculate_symbol_importance_score(&self, content: &str, query: &str) -> f32 {
+    fn calculate_symbol_importance_score(&self, content_lower: &str, query: &str) -> f32 {
         // Simple heuristic: look for query terms in important contexts
-        let content_lower = content.to_lowercase();
         let mut importance: f32 = 0.0;
 
         // Higher score for matches in function signatures
@@ -438,8 +486,12 @@ impl LLMSearchEngine {
     }
 
     /// Analyze match details for the query in content
-    fn analyze_matches(&self, content: &str, query: &str) -> Result<MatchDetails> {
-        let content_lower = content.to_lowercase();
+    fn analyze_matches(
+        &self,
+        content: &str,
+        content_lower: &str,
+        query: &str,
+    ) -> Result<MatchDetails> {
         let mut exact_matches = Vec::new();
         let mut term_matches = Vec::new();
 
@@ -472,7 +524,7 @@ impl LLMSearchEngine {
                 start = absolute_pos + term.len();
 
                 // Limit term matches to avoid excessive data
-                if term_matches.len() >= 10 {
+                if term_matches.len() >= self.context_config.max_term_matches {
                     break;
                 }
             }
@@ -504,7 +556,7 @@ impl LLMSearchEngine {
 
     /// Extract context around a match
     fn extract_match_context(&self, content: &str, pos: usize, len: usize) -> Result<String> {
-        let context_size = 50; // Characters before and after
+        let context_size = self.context_config.match_context_size; // Characters before and after
         let start = pos.saturating_sub(context_size);
         let end = (pos + len + context_size).min(content.len());
 
@@ -513,26 +565,102 @@ impl LLMSearchEngine {
     }
 
     /// Determine the context type where a match occurred
-    fn determine_context_type(&self, _content: &str, _pos: usize) -> Result<ContextType> {
-        // TODO: Implement proper context analysis
-        // For now, return unknown - this would analyze surrounding code structure
-        Ok(ContextType::Unknown)
+    fn determine_context_type(&self, content: &str, pos: usize) -> Result<ContextType> {
+        // Look at surrounding context to determine match type
+        let start = pos.saturating_sub(50);
+        let end = (pos + 50).min(content.len());
+
+        // Safe substring extraction
+        let context = content.get(start..end).unwrap_or("");
+        let context_lower = context.to_lowercase();
+
+        // Analyze context for code patterns
+        if context_lower.contains("fn ") || context_lower.contains("pub fn") {
+            Ok(ContextType::FunctionName)
+        } else if context_lower.contains("struct ") || context_lower.contains("enum ") {
+            Ok(ContextType::TypeName)
+        } else if context_lower.contains("let ") || context_lower.contains("const ") {
+            Ok(ContextType::VariableName)
+        } else if context.contains("//") || context.contains("/*") || context.contains("///") {
+            Ok(ContextType::Comment)
+        } else if context.contains('"') || context.contains('\'') {
+            Ok(ContextType::TextContent)
+        } else if context.contains('{') || context.contains('}') || context.contains(';') {
+            Ok(ContextType::CodeBody)
+        } else {
+            Ok(ContextType::Unknown)
+        }
     }
 
     /// Extract context information about related code
-    fn extract_context_info(&self, _content: &str) -> Result<ContextInfo> {
-        // TODO: Implement proper code analysis
-        // For now, return empty context info
+    fn extract_context_info(&self, content: &str) -> Result<ContextInfo> {
+        // Basic code analysis to extract related symbols
+        let callers = Vec::new(); // Currently not populated - would need call graph analysis
+        let mut callees = Vec::new();
+        let mut related_types = Vec::new();
+
+        // Simple regex-like pattern matching for function calls and types
+        for line in content.lines() {
+            // Look for function calls (simplified)
+            if let Some(call_start) = line.find('(') {
+                if call_start > 0 {
+                    let before_paren = &line[..call_start];
+                    if let Some(last_word) = before_paren.split_whitespace().last() {
+                        if !last_word.starts_with("fn") && !last_word.starts_with("if") {
+                            callees.push(last_word.to_string());
+                        }
+                    }
+                }
+            }
+
+            // Look for type references
+            if line.contains("impl ") || line.contains(": ") {
+                for word in line.split_whitespace() {
+                    if word.chars().next().is_some_and(|c| c.is_uppercase()) {
+                        related_types.push(
+                            word.trim_end_matches(|c| !char::is_alphanumeric(c))
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Calculate importance based on visibility modifiers
+        let has_pub = content.contains("pub ");
+        let has_test = content.contains("#[test]") || content.contains("#[cfg(test)]");
+        let importance_score = if has_pub {
+            0.9
+        } else if has_test {
+            0.3
+        } else {
+            0.5
+        };
+
+        // Deduplicate and limit results
+        callees.sort();
+        callees.dedup();
+        callees.truncate(5);
+
+        related_types.sort();
+        related_types.dedup();
+        related_types.truncate(5);
+
         Ok(ContextInfo {
-            callers: Vec::new(),
-            callees: Vec::new(),
-            related_types: Vec::new(),
-            importance_score: 0.5,
+            callers,
+            callees,
+            related_types,
+            importance_score,
         })
     }
 
     /// Create an optimized content snippet for LLM consumption
-    fn create_optimized_snippet(&self, content: &str, query: &str) -> Result<String> {
+    fn create_optimized_snippet(
+        &self,
+        content: &str,
+        content_lower: &str,
+        query: &str,
+    ) -> Result<String> {
         let max_chars = self.context_config.max_snippet_chars;
 
         // If content is short enough, return as-is
@@ -541,13 +669,14 @@ impl LLMSearchEngine {
         }
 
         // Find the best section that includes query matches
-        let content_lower = content.to_lowercase();
         if let Some(match_pos) = content_lower.find(query) {
             // Center the snippet around the first match
-            let start = match_pos.saturating_sub(max_chars / 2);
+            let half_window = max_chars / 2;
+            let start = match_pos.saturating_sub(half_window);
             let end = (start + max_chars).min(content.len());
 
-            let snippet = &content[start..end];
+            // Safe string slicing that respects UTF-8 boundaries
+            let snippet = content.get(start..end).unwrap_or(&content[start..]);
 
             // Try to break at word boundaries
             let trimmed = if start > 0 && end < content.len() {
@@ -568,11 +697,15 @@ impl LLMSearchEngine {
         }
     }
 
-    /// Estimate token count for content (rough approximation)
+    /// Estimate token count for content (improved approximation)
     fn estimate_token_count(&self, content: &str) -> usize {
-        // Rough approximation: 1 token ≈ 4 characters for English text
-        // More sophisticated tokenization could be added later
-        content.len().div_ceil(4)
+        // Better approximation using word count and punctuation
+        // Average English word ≈ 1.3 tokens, punctuation adds tokens
+        let word_count = content.split_whitespace().count();
+        let punctuation_count = content.chars().filter(|c| c.is_ascii_punctuation()).count();
+
+        // Formula: words * 1.3 + punctuation * 0.3
+        ((word_count as f32 * 1.3) + (punctuation_count as f32 * 0.3)) as usize
     }
 
     /// Optimize results for context window constraints
@@ -634,7 +767,10 @@ impl LLMSearchEngine {
             estimated_tokens,
             budget,
             efficiency: efficiency.min(1.0),
-            truncated_results: 0, // TODO: Track actual truncations
+            truncated_results: results
+                .iter()
+                .filter(|r| r.content_snippet.ends_with("..."))
+                .count(),
         }
     }
 
@@ -665,15 +801,8 @@ impl LLMSearchEngine {
     }
 
     /// Generate warnings for the user
-    fn generate_warnings(&self, results: &[LLMSearchResult], is_empty_query: bool) -> Vec<String> {
+    fn generate_warnings(&self, results: &[LLMSearchResult]) -> Vec<String> {
         let mut warnings = Vec::new();
-
-        // Warning for empty queries
-        if is_empty_query {
-            warnings.push(
-                "Search query is empty. Consider providing specific search terms.".to_string(),
-            );
-        }
 
         let total_tokens: usize = results.iter().map(|r| r.estimated_tokens).sum();
         if total_tokens > self.context_config.token_budget {

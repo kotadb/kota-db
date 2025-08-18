@@ -284,6 +284,9 @@ async fn test_llm_search_token_optimization() -> Result<()> {
         include_related: false,
         strip_comments: true,
         prefer_complete_functions: true,
+        proximity_window_size: 100,
+        max_term_matches: 10,
+        match_context_size: 50,
     };
 
     let search_engine = LLMSearchEngine::with_config(RelevanceConfig::default(), context_config);
