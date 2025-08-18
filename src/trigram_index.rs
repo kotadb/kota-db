@@ -36,7 +36,8 @@ pub struct TrigramIndex {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocumentContent {
     title: String,
-    content_preview: String, // First 500 chars for snippets
+    content_preview: String,    // First 500 chars for snippets
+    full_trigrams: Vec<String>, // All trigrams from the document for accurate scoring
     word_count: usize,
     trigram_count: usize,
 }
@@ -71,6 +72,7 @@ impl TrigramIndex {
     ///
     /// Converts text to lowercase and extracts all 3-character sequences.
     /// Special handling for unicode characters and normalization.
+    /// Returns ALL trigrams including duplicates to preserve frequency information.
     pub fn extract_trigrams(text: &str) -> Vec<String> {
         let normalized = text.to_lowercase();
         let chars: Vec<char> = normalized.chars().collect();
@@ -89,10 +91,7 @@ impl TrigramIndex {
             }
         }
 
-        // Remove duplicates while preserving order
-        let mut seen = HashSet::new();
-        trigrams.retain(|trigram| seen.insert(trigram.clone()));
-
+        // Return all trigrams including duplicates for frequency analysis
         trigrams
     }
 
@@ -118,16 +117,51 @@ impl TrigramIndex {
             return 0.0;
         }
 
-        let doc_trigram_set: HashSet<&String> = doc_trigrams.iter().collect();
-        let matches = query_trigrams
-            .iter()
-            .filter(|trigram| doc_trigram_set.contains(trigram))
-            .count();
+        // Count trigram frequency in the document
+        let mut doc_trigram_freq: HashMap<&String, usize> = HashMap::new();
+        for trigram in doc_trigrams {
+            *doc_trigram_freq.entry(trigram).or_insert(0) += 1;
+        }
 
-        let match_ratio = matches as f64 / query_trigrams.len() as f64;
-        let length_penalty = 1.0 / (1.0 + (word_count as f64 / 1000.0).ln());
+        // Calculate match statistics
+        let mut total_matches = 0;
+        let mut unique_matches = 0;
 
-        match_ratio * length_penalty
+        for query_trigram in query_trigrams {
+            if let Some(&freq) = doc_trigram_freq.get(query_trigram) {
+                unique_matches += 1;
+                total_matches += freq;
+            }
+        }
+
+        if unique_matches == 0 {
+            return 0.0;
+        }
+
+        // Calculate match coverage (what % of query trigrams were found)
+        let coverage = unique_matches as f64 / query_trigrams.len() as f64;
+
+        // Calculate term frequency score (how many times query terms appear)
+        // More occurrences = higher relevance
+        let frequency_score = total_matches as f64;
+
+        // Calculate document relevance
+        // Balance between high frequency and reasonable document length
+        // We don't want to penalize longer documents too much if they have many matches
+        let length_factor = if word_count > 0 {
+            // Use logarithmic scaling to reduce the impact of document length
+            1.0 / (1.0 + (word_count as f64 / 100.0).ln())
+        } else {
+            1.0
+        };
+
+        // Final score combines:
+        // - Coverage: How many of the query trigrams were found (0-1)
+        // - Frequency: Raw count of matching trigrams
+        // - Length factor: Slight preference for focused documents
+        //
+        // The frequency component is most important for differentiation
+        (coverage * 10.0) + frequency_score + (length_factor * 5.0)
     }
 
     /// Create directory structure for the index
@@ -231,14 +265,66 @@ impl TrigramIndex {
                 format!("Failed to read document cache: {}", cache_path.display())
             })?;
 
-            // Deserialize as HashMap<String, DocumentContent> first, then convert
-            let raw_cache: HashMap<String, DocumentContent> = serde_json::from_str(&cache_content)
-                .context("Failed to deserialize document cache")?;
-
+            // Try to deserialize with the new format, handle old format gracefully
             let mut document_cache = HashMap::new();
-            for (id_str, content) in raw_cache {
-                if let Ok(doc_id) = ValidatedDocumentId::parse(&id_str) {
-                    document_cache.insert(doc_id, content);
+
+            // Try to parse as a JSON value first to handle backwards compatibility
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&cache_content) {
+                if let Some(cache_obj) = json_value.as_object() {
+                    for (id_str, doc_value) in cache_obj {
+                        if let Ok(doc_id) = ValidatedDocumentId::parse(id_str) {
+                            // Check if this is the old format (missing full_trigrams)
+                            if let Some(doc_obj) = doc_value.as_object() {
+                                let has_full_trigrams = doc_obj.contains_key("full_trigrams");
+
+                                if has_full_trigrams {
+                                    // New format - deserialize normally
+                                    if let Ok(content) =
+                                        serde_json::from_value::<DocumentContent>(doc_value.clone())
+                                    {
+                                        document_cache.insert(doc_id, content);
+                                    }
+                                } else {
+                                    // Old format - need to reconstruct trigrams from preview
+                                    let title = doc_obj
+                                        .get("title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let content_preview = doc_obj
+                                        .get("content_preview")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let word_count = doc_obj
+                                        .get("word_count")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as usize;
+                                    let trigram_count = doc_obj
+                                        .get("trigram_count")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as usize;
+
+                                    // Reconstruct trigrams from title and preview
+                                    let doc_text = format!("{} {}", title, content_preview);
+                                    let full_trigrams = Self::extract_trigrams(&doc_text);
+
+                                    document_cache.insert(
+                                        doc_id,
+                                        DocumentContent {
+                                            title,
+                                            content_preview,
+                                            full_trigrams,
+                                            word_count,
+                                            trigram_count,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -426,14 +512,12 @@ impl Index for TrigramIndex {
             was_new_document = !cache.contains_key(&id);
         }
 
-        // Update trigram index
+        // Update trigram index (use unique trigrams for the index)
         {
             let mut index = self.trigram_index.write().await;
-            for trigram in &trigrams {
-                index
-                    .entry(trigram.clone())
-                    .or_insert_with(HashSet::new)
-                    .insert(id);
+            let unique_trigrams: HashSet<String> = trigrams.iter().cloned().collect();
+            for trigram in unique_trigrams {
+                index.entry(trigram).or_insert_with(HashSet::new).insert(id);
             }
         }
 
@@ -445,6 +529,7 @@ impl Index for TrigramIndex {
                 DocumentContent {
                     title: path.as_str().to_string(),
                     content_preview: text.clone(),
+                    full_trigrams: trigrams.clone(),
                     word_count: text.split_whitespace().count(),
                     trigram_count: trigrams.len(),
                 },
@@ -547,10 +632,6 @@ impl Index for TrigramIndex {
             }
         }
 
-        // Sort by relevance (number of matching trigrams)
-        let mut results: Vec<(ValidatedDocumentId, usize)> = candidate_docs.into_iter().collect();
-        results.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by match count descending
-
         // Calculate minimum match threshold
         // For better precision, require a higher percentage of trigrams to match
         // This prevents false positives from common trigrams like "ent", "ing", etc.
@@ -567,15 +648,57 @@ impl Index for TrigramIndex {
             std::cmp::max(2, (all_query_trigrams.len() * 3) / 10)
         };
 
-        // Filter results by minimum match threshold
-        let filtered_results: Vec<ValidatedDocumentId> = results
+        // Filter by minimum threshold first
+        let filtered_candidates: Vec<ValidatedDocumentId> = candidate_docs
             .into_iter()
             .filter(|(_, match_count)| *match_count >= min_match_threshold)
+            .map(|(doc_id, _)| doc_id)
+            .collect();
+
+        // Calculate relevance scores for each candidate document
+        let document_cache = self.document_cache.read().await;
+        let mut scored_results: Vec<(ValidatedDocumentId, f64)> = Vec::new();
+
+        for doc_id in filtered_candidates {
+            if let Some(doc_content) = document_cache.get(&doc_id) {
+                // Use the full trigrams stored in the cache for accurate scoring
+                let score = Self::calculate_relevance_score(
+                    &all_query_trigrams,
+                    &doc_content.full_trigrams,
+                    doc_content.word_count,
+                );
+
+                // Debug logging to understand scoring
+                #[cfg(test)]
+                {
+                    eprintln!(
+                        "Doc {:?}: score={:.4}, word_count={}, trigram_count={}",
+                        doc_id, score, doc_content.word_count, doc_content.trigram_count
+                    );
+                }
+
+                scored_results.push((doc_id, score));
+            }
+        }
+
+        // Sort by relevance score (higher scores first)
+        scored_results.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    // For equal scores, sort by document ID for deterministic ordering
+                    a.0.as_uuid().cmp(&b.0.as_uuid())
+                })
+        });
+
+        // Return the top results up to the query limit
+        let final_results: Vec<ValidatedDocumentId> = scored_results
+            .into_iter()
             .take(query.limit.get())
             .map(|(doc_id, _)| doc_id)
             .collect();
 
-        Ok(filtered_results)
+        Ok(final_results)
     }
 
     /// Sync changes to persistent storage
@@ -646,14 +769,12 @@ impl Index for TrigramIndex {
             was_new_document = !cache.contains_key(&id);
         }
 
-        // Update trigram index
+        // Update trigram index (use unique trigrams for the index)
         {
             let mut index = self.trigram_index.write().await;
-            for trigram in &trigrams {
-                index
-                    .entry(trigram.clone())
-                    .or_insert_with(HashSet::new)
-                    .insert(id);
+            let unique_trigrams: HashSet<String> = trigrams.iter().cloned().collect();
+            for trigram in unique_trigrams {
+                index.entry(trigram).or_insert_with(HashSet::new).insert(id);
             }
         }
 
@@ -678,6 +799,7 @@ impl Index for TrigramIndex {
                 DocumentContent {
                     title: title.to_string(),
                     content_preview,
+                    full_trigrams: trigrams.clone(),
                     word_count: searchable_text.split_whitespace().count(),
                     trigram_count: trigrams.len(),
                 },
@@ -759,13 +881,14 @@ mod tests {
         let text = "hello world";
         let trigrams = TrigramIndex::extract_trigrams(text);
 
-        // Expected: ["hel", "ell", "llo", "wor", "orl", "rld"]
-        assert!(trigrams.contains(&"hel".to_string()));
-        assert!(trigrams.contains(&"ell".to_string()));
-        assert!(trigrams.contains(&"llo".to_string()));
-        assert!(trigrams.contains(&"wor".to_string()));
-        assert!(trigrams.contains(&"orl".to_string()));
-        assert!(trigrams.contains(&"rld".to_string()));
+        // Expected trigrams with proper frequency
+        let unique_trigrams: HashSet<String> = trigrams.into_iter().collect();
+        assert!(unique_trigrams.contains("hel"));
+        assert!(unique_trigrams.contains("ell"));
+        assert!(unique_trigrams.contains("llo"));
+        assert!(unique_trigrams.contains("wor"));
+        assert!(unique_trigrams.contains("orl"));
+        assert!(unique_trigrams.contains("rld"));
     }
 
     #[test]
@@ -779,12 +902,13 @@ mod tests {
     fn test_trigram_extraction_normalization() {
         let text = "Hello WORLD";
         let trigrams = TrigramIndex::extract_trigrams(text);
+        let unique_trigrams: HashSet<String> = trigrams.into_iter().collect();
 
         // Should be lowercase
-        assert!(trigrams.contains(&"hel".to_string()));
-        assert!(trigrams.contains(&"wor".to_string()));
-        assert!(!trigrams.contains(&"HEL".to_string()));
-        assert!(!trigrams.contains(&"WOR".to_string()));
+        assert!(unique_trigrams.contains("hel"));
+        assert!(unique_trigrams.contains("wor"));
+        assert!(!unique_trigrams.contains("HEL"));
+        assert!(!unique_trigrams.contains("WOR"));
     }
 
     #[tokio::test]
