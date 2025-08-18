@@ -39,22 +39,40 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async cleanup(): Promise<void> {
-    if (this.process) {
-      this.process.kill('SIGTERM');
-      // Wait for process to exit gracefully
-      await new Promise<void>((resolve) => {
-        if (!this.process) {
-          resolve();
-          return;
-        }
-        this.process.on('exit', () => resolve());
-        setTimeout(() => {
-          if (this.process && !this.process.killed) {
-            this.process.kill('SIGKILL');
+    if (this.process && !this.process.killed) {
+      try {
+        // More robust process cleanup to prevent Jest hanging
+        this.process.kill('SIGTERM');
+        
+        // Wait for process to exit with proper timeout handling
+        await new Promise<void>((resolve) => {
+          if (!this.process || this.process.killed) {
+            resolve();
+            return;
           }
-          resolve();
-        }, 2000);
-      });
+          
+          let resolved = false;
+          const resolveOnce = () => {
+            if (!resolved) {
+              resolved = true;
+              resolve();
+            }
+          };
+          
+          this.process.on('exit', resolveOnce);
+          this.process.on('close', resolveOnce);
+          
+          // Force kill after timeout to prevent Jest hanging
+          setTimeout(() => {
+            if (this.process && !this.process.killed) {
+              this.process.kill('SIGKILL');
+            }
+            resolveOnce();
+          }, 1500);
+        });
+      } catch (error) {
+        console.warn('Error during process cleanup:', error);
+      }
       this.process = null;
     }
 
