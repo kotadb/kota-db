@@ -203,37 +203,28 @@ impl DocumentationVerifier {
         info!("Verifying client library documentation claims");
 
         // Python Client
-        let python_exists = std::path::Path::new("clients/python").exists();
-        let python_published = self.check_pypi_package("kotadb-client").unwrap_or(false);
+        let python_exists = self.check_local_python_client().unwrap_or(false);
 
         self.report.add_check(VerificationCheck {
             feature: "Python Client Library".to_string(),
-            status: if python_exists && python_published {
+            status: if python_exists {
                 VerificationStatus::Verified
-            } else if python_exists {
-                VerificationStatus::Partial
             } else {
                 VerificationStatus::Missing
             },
-            documented_claim: "pip install kotadb-client".to_string(),
+            documented_claim: "pip install kotadb-client (local client structure)".to_string(),
             actual_implementation: if python_exists {
-                if python_published {
-                    "Python client exists and is published to PyPI".to_string()
-                } else {
-                    "Python client exists locally but may not be published to PyPI".to_string()
-                }
+                "Python client exists with proper local structure".to_string()
             } else {
-                "Python client directory not found".to_string()
+                "Python client directory not found or incomplete".to_string()
             },
             severity: if !python_exists {
                 Severity::Critical
             } else {
-                Severity::Medium
+                Severity::Low
             },
             recommendation: if !python_exists {
                 Some("Implement Python client or remove from documentation".to_string())
-            } else if !python_published {
-                Some("Verify PyPI publication status".to_string())
             } else {
                 None
             },
@@ -241,37 +232,28 @@ impl DocumentationVerifier {
         });
 
         // TypeScript Client
-        let typescript_exists = std::path::Path::new("clients/typescript").exists();
-        let npm_published = self.check_npm_package("kotadb-client").unwrap_or(false);
+        let typescript_exists = self.check_local_typescript_client().unwrap_or(false);
 
         self.report.add_check(VerificationCheck {
             feature: "TypeScript Client Library".to_string(),
-            status: if typescript_exists && npm_published {
+            status: if typescript_exists {
                 VerificationStatus::Verified
-            } else if typescript_exists {
-                VerificationStatus::Partial
             } else {
                 VerificationStatus::Missing
             },
-            documented_claim: "npm install kotadb-client".to_string(),
+            documented_claim: "npm install kotadb-client (local client structure)".to_string(),
             actual_implementation: if typescript_exists {
-                if npm_published {
-                    "TypeScript client exists and is published to npm".to_string()
-                } else {
-                    "TypeScript client exists locally but may not be published to npm".to_string()
-                }
+                "TypeScript client exists with proper local structure".to_string()
             } else {
-                "TypeScript client directory not found".to_string()
+                "TypeScript client directory not found or incomplete".to_string()
             },
             severity: if !typescript_exists {
                 Severity::Critical
             } else {
-                Severity::Medium
+                Severity::Low
             },
             recommendation: if !typescript_exists {
                 Some("Implement TypeScript client or remove from documentation".to_string())
-            } else if !npm_published {
-                Some("Verify npm publication status".to_string())
             } else {
                 None
             },
@@ -509,7 +491,15 @@ impl DocumentationVerifier {
     }
 
     /// Get documented API endpoints from documentation
+    ///
+    /// TECHNICAL DEBT: This list is currently hardcoded and requires manual maintenance
+    /// when API endpoints change. Future improvement: parse documentation files dynamically
+    /// or maintain a single source of truth (e.g., OpenAPI spec).
+    ///
+    /// See issue tracker for "dynamic endpoint verification" enhancement.
     fn get_documented_endpoints(&self) -> Vec<(String, String, String)> {
+        // NOTE: Update this list when API endpoints change in documentation
+        // Last updated: 2025-08-18 for PR #246
         vec![
             (
                 "POST".to_string(),
@@ -545,9 +535,13 @@ impl DocumentationVerifier {
     }
 
     /// Get actual HTTP endpoints from server implementation
+    ///
+    /// TECHNICAL DEBT: This currently returns a hardcoded list based on manual analysis
+    /// of src/http_server.rs. Future improvement: automatically parse route definitions
+    /// from the actual HTTP server code using AST parsing or reflection.
     fn get_actual_endpoints(&self) -> Result<HashMap<String, String>> {
-        // This would require parsing the HTTP server routes
-        // For now, return the known routes from our analysis
+        // NOTE: Update this list when routes change in src/http_server.rs
+        // Last updated: 2025-08-18 for PR #246
         let mut endpoints = HashMap::new();
 
         endpoints.insert("GET /health".to_string(), "health_check".to_string());
@@ -591,23 +585,59 @@ impl DocumentationVerifier {
         Ok(endpoints)
     }
 
-    /// Check if a package exists on PyPI
-    fn check_pypi_package(&self, package_name: &str) -> Result<bool> {
-        // This would require making HTTP requests to PyPI
-        // For this verification, we'll assume packages exist if client directories exist
-        // and have proper packaging files
+    /// Check if Python client exists locally with proper packaging
+    /// Note: This validates local client structure, not actual PyPI publication
+    fn check_local_python_client(&self) -> Result<bool> {
         let python_dir = std::path::Path::new("clients/python");
-        let has_setup =
-            python_dir.join("pyproject.toml").exists() || python_dir.join("setup.py").exists();
-        Ok(python_dir.exists() && has_setup)
+
+        if !python_dir.exists() {
+            return Ok(false);
+        }
+
+        // Batch filesystem checks to reduce I/O operations
+        let pyproject_path = python_dir.join("pyproject.toml");
+        let setup_path = python_dir.join("setup.py");
+        let src_path = python_dir.join("src");
+        let package_path = python_dir.join("kotadb_client");
+
+        let has_setup = pyproject_path.exists() || setup_path.exists();
+        let has_source = src_path.exists() || package_path.exists();
+
+        if !has_setup {
+            info!("Python client missing setup files (pyproject.toml or setup.py)");
+        }
+        if !has_source {
+            info!("Python client missing source directory (src/ or kotadb_client/)");
+        }
+
+        Ok(has_setup && has_source)
     }
 
-    /// Check if a package exists on npm  
-    fn check_npm_package(&self, package_name: &str) -> Result<bool> {
-        // Similar to PyPI check
+    /// Check if TypeScript client exists locally with proper packaging
+    /// Note: This validates local client structure, not actual npm publication
+    fn check_local_typescript_client(&self) -> Result<bool> {
         let ts_dir = std::path::Path::new("clients/typescript");
-        let has_package = ts_dir.join("package.json").exists();
-        Ok(ts_dir.exists() && has_package)
+
+        if !ts_dir.exists() {
+            return Ok(false);
+        }
+
+        // Batch filesystem checks to reduce I/O operations
+        let package_json_path = ts_dir.join("package.json");
+        let src_path = ts_dir.join("src");
+        let dist_path = ts_dir.join("dist");
+
+        let has_package_json = package_json_path.exists();
+        let has_source = src_path.exists() || dist_path.exists();
+
+        if !has_package_json {
+            info!("TypeScript client missing package.json");
+        }
+        if !has_source {
+            info!("TypeScript client missing source directory (src/ or dist/)");
+        }
+
+        Ok(has_package_json && has_source)
     }
 
     /// Run all verification checks and return the report
@@ -705,5 +735,44 @@ mod tests {
         assert_eq!(report.critical_issues.len(), 1);
         assert_eq!(report.recommendations.len(), 1);
         assert!(!report.is_acceptable()); // Has critical issues
+    }
+
+    #[test]
+    fn test_client_verification_methods() {
+        let verifier = DocumentationVerifier::new();
+
+        // Test Python client verification (will be false for most test environments)
+        let python_result = verifier.check_local_python_client();
+        assert!(
+            python_result.is_ok(),
+            "Python client check should not error"
+        );
+
+        // Test TypeScript client verification
+        let ts_result = verifier.check_local_typescript_client();
+        assert!(
+            ts_result.is_ok(),
+            "TypeScript client check should not error"
+        );
+    }
+
+    #[test]
+    fn test_hardcoded_endpoints_structure() {
+        let verifier = DocumentationVerifier::new();
+        let endpoints = verifier.get_documented_endpoints();
+
+        // Verify structure is consistent
+        assert!(!endpoints.is_empty(), "Should have documented endpoints");
+
+        for (method, path, description) in endpoints {
+            assert!(!method.is_empty(), "Method should not be empty");
+            assert!(!path.is_empty(), "Path should not be empty");
+            assert!(!description.is_empty(), "Description should not be empty");
+            assert!(
+                method == "GET" || method == "POST" || method == "PUT" || method == "DELETE",
+                "Method should be valid HTTP method"
+            );
+            assert!(path.starts_with('/'), "Path should start with /");
+        }
     }
 }
