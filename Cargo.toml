@@ -29,7 +29,7 @@ axum = "0.7"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = "1.0"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -116,7 +116,7 @@ fake = "2.10"
 rand = "0.8"
 tokio-test = "0.4"
 tempfile = "3.0"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [features]
 default = ["embeddings-onnx"]
