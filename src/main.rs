@@ -96,6 +96,9 @@ enum Commands {
     /// Validate search functionality
     Validate,
 
+    /// Verify documentation accuracy against implementation
+    VerifyDocs,
+
     /// Ingest a git repository into the database
     #[cfg(feature = "git-integration")]
     IngestRepo {
@@ -781,6 +784,83 @@ async fn main() -> Result<()> {
                 if validation_result.overall_status == ValidationStatus::Failed {
                     return Err(anyhow::anyhow!("Search validation failed"));
                 }
+            }
+
+            Commands::VerifyDocs => {
+                use kotadb::DocumentationVerifier;
+
+                println!("📋 Running comprehensive documentation verification...");
+                println!("   Checking claims vs actual implementation");
+                println!();
+
+                let verifier = DocumentationVerifier::new();
+                let report = verifier.run_full_verification()?;
+
+                println!("📊 Verification Results:");
+                println!("   {}", report.summary);
+                println!();
+
+                // Show verification status
+                if report.is_acceptable() {
+                    println!("✅ Documentation accuracy is acceptable");
+                } else {
+                    println!("❌ Documentation accuracy needs improvement");
+                }
+
+                // Show detailed check results
+                println!("\n📝 Feature Verification Details:");
+                for check in &report.checks {
+                    let status_icon = match check.status {
+                        kotadb::VerificationStatus::Verified => "✅",
+                        kotadb::VerificationStatus::Missing => "❌",
+                        kotadb::VerificationStatus::Partial => "⚠️",
+                        kotadb::VerificationStatus::Undocumented => "📝",
+                    };
+
+                    let severity_badge = match check.severity {
+                        kotadb::Severity::Critical => " [CRITICAL]",
+                        kotadb::Severity::High => " [HIGH]",
+                        kotadb::Severity::Medium => " [MEDIUM]",
+                        _ => "",
+                    };
+
+                    println!("   {} {}{}", status_icon, check.feature, severity_badge);
+                    println!("      Claim: {}", check.documented_claim);
+                    println!("      Reality: {}", check.actual_implementation);
+
+                    if let Some(ref rec) = check.recommendation {
+                        println!("      💡 Recommendation: {}", rec);
+                    }
+                    println!();
+                }
+
+                // Show critical issues
+                if !report.critical_issues.is_empty() {
+                    println!("🚨 Critical Issues Found:");
+                    for issue in &report.critical_issues {
+                        println!("   - {}", issue);
+                    }
+                    println!();
+                }
+
+                // Show recommendations
+                if !report.recommendations.is_empty() {
+                    println!("💡 Recommendations:");
+                    for rec in &report.recommendations {
+                        println!("   • {}", rec);
+                    }
+                    println!();
+                }
+
+                // Exit with error code if documentation is unacceptable
+                if !report.is_acceptable() {
+                    return Err(anyhow::anyhow!(
+                        "Documentation verification failed. {} critical issues found.",
+                        report.critical_issues.len()
+                    ));
+                }
+
+                println!("✨ Documentation verification completed successfully!");
             }
 
             #[cfg(feature = "git-integration")]
