@@ -106,7 +106,7 @@ hnsw = { version = "0.11", optional = true }     # Vector search
 # Embedding and AI dependencies
 ort = { version = "2.0.0-rc.10", features = ["ndarray"], optional = true }  # ONNX Runtime
 tokenizers = { version = "0.20", optional = true }                          # Tokenization
-ndarray = { version = "0.15", optional = true }                             # N-dimensional arrays
+ndarray = { version = "0.16", optional = true }                             # N-dimensional arrays
 
 [dev-dependencies]
 criterion = "0.5"
