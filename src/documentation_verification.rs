@@ -5,14 +5,14 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// Status of a verification check
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationStatus {
-    Verified,   // Feature exists and works as documented
-    Missing,    // Feature is documented but not implemented
-    Partial,    // Feature exists but behaves differently than documented
+    Verified,     // Feature exists and works as documented
+    Missing,      // Feature is documented but not implemented
+    Partial,      // Feature exists but behaves differently than documented
     Undocumented, // Feature exists but not documented
 }
 
@@ -25,16 +25,16 @@ pub struct VerificationCheck {
     pub actual_implementation: String,
     pub severity: Severity,
     pub recommendation: Option<String>,
-    pub location: String,  // File and line where claim is made
+    pub location: String, // File and line where claim is made
 }
 
 /// Severity level for discrepancies
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
-    Critical,   // Feature completely missing or broken
-    High,       // Significant difference from documentation
-    Medium,     // Minor behavioral differences
-    Low,        // Minor documentation issues (typos, outdated details)
+    Critical, // Feature completely missing or broken
+    High,     // Significant difference from documentation
+    Medium,   // Minor behavioral differences
+    Low,      // Minor documentation issues (typos, outdated details)
 }
 
 /// Overall verification report
@@ -49,6 +49,12 @@ pub struct DocumentationVerificationReport {
     pub summary: String,
     pub critical_issues: Vec<String>,
     pub recommendations: Vec<String>,
+}
+
+impl Default for DocumentationVerificationReport {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DocumentationVerificationReport {
@@ -79,7 +85,10 @@ impl DocumentationVerificationReport {
 
         // Collect critical issues
         if check.severity == Severity::Critical {
-            self.critical_issues.push(format!("{}: {}", check.feature, check.actual_implementation));
+            self.critical_issues.push(format!(
+                "{}: {}",
+                check.feature, check.actual_implementation
+            ));
         }
 
         // Collect recommendations
@@ -140,7 +149,7 @@ impl DocumentationVerifier {
 
         for (method, path, description) in &documented_endpoints {
             let endpoint_key = format!("{} {}", method, path);
-            
+
             if actual_endpoints.contains_key(&endpoint_key) {
                 self.report.add_check(VerificationCheck {
                     feature: format!("API Endpoint: {} {}", method, path),
@@ -158,7 +167,9 @@ impl DocumentationVerifier {
                     documented_claim: description.clone(),
                     actual_implementation: "Endpoint not found in HTTP server routes".to_string(),
                     severity: Severity::Critical,
-                    recommendation: Some("Either implement the endpoint or remove it from documentation".to_string()),
+                    recommendation: Some(
+                        "Either implement the endpoint or remove it from documentation".to_string(),
+                    ),
                     location: "docs/api/api_reference.md".to_string(),
                 });
             }
@@ -197,12 +208,12 @@ impl DocumentationVerifier {
 
         self.report.add_check(VerificationCheck {
             feature: "Python Client Library".to_string(),
-            status: if python_exists && python_published { 
-                VerificationStatus::Verified 
-            } else if python_exists { 
-                VerificationStatus::Partial 
-            } else { 
-                VerificationStatus::Missing 
+            status: if python_exists && python_published {
+                VerificationStatus::Verified
+            } else if python_exists {
+                VerificationStatus::Partial
+            } else {
+                VerificationStatus::Missing
             },
             documented_claim: "pip install kotadb-client".to_string(),
             actual_implementation: if python_exists {
@@ -214,7 +225,11 @@ impl DocumentationVerifier {
             } else {
                 "Python client directory not found".to_string()
             },
-            severity: if !python_exists { Severity::Critical } else { Severity::Medium },
+            severity: if !python_exists {
+                Severity::Critical
+            } else {
+                Severity::Medium
+            },
             recommendation: if !python_exists {
                 Some("Implement Python client or remove from documentation".to_string())
             } else if !python_published {
@@ -225,18 +240,18 @@ impl DocumentationVerifier {
             location: "README.md:14-19, docs/api/api_reference.md:76-114".to_string(),
         });
 
-        // TypeScript Client  
+        // TypeScript Client
         let typescript_exists = std::path::Path::new("clients/typescript").exists();
         let npm_published = self.check_npm_package("kotadb-client").unwrap_or(false);
 
         self.report.add_check(VerificationCheck {
             feature: "TypeScript Client Library".to_string(),
-            status: if typescript_exists && npm_published { 
-                VerificationStatus::Verified 
-            } else if typescript_exists { 
-                VerificationStatus::Partial 
-            } else { 
-                VerificationStatus::Missing 
+            status: if typescript_exists && npm_published {
+                VerificationStatus::Verified
+            } else if typescript_exists {
+                VerificationStatus::Partial
+            } else {
+                VerificationStatus::Missing
             },
             documented_claim: "npm install kotadb-client".to_string(),
             actual_implementation: if typescript_exists {
@@ -248,7 +263,11 @@ impl DocumentationVerifier {
             } else {
                 "TypeScript client directory not found".to_string()
             },
-            severity: if !typescript_exists { Severity::Critical } else { Severity::Medium },
+            severity: if !typescript_exists {
+                Severity::Critical
+            } else {
+                Severity::Medium
+            },
             recommendation: if !typescript_exists {
                 Some("Implement TypeScript client or remove from documentation".to_string())
             } else if !npm_published {
@@ -263,8 +282,13 @@ impl DocumentationVerifier {
         let go_exists = std::path::Path::new("clients/go").exists();
         self.report.add_check(VerificationCheck {
             feature: "Go Client Library".to_string(),
-            status: if go_exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
-            documented_claim: "🚧 Work in Progress - Go client is currently under development".to_string(),
+            status: if go_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Missing
+            },
+            documented_claim: "🚧 Work in Progress - Go client is currently under development"
+                .to_string(),
             actual_implementation: if go_exists {
                 "Go client directory exists".to_string()
             } else {
@@ -284,10 +308,10 @@ impl DocumentationVerifier {
 
         // Storage Engine Features
         self.verify_storage_features()?;
-        
-        // Index Features  
+
+        // Index Features
         self.verify_index_features()?;
-        
+
         // Performance Claims
         self.verify_performance_claims()?;
 
@@ -304,14 +328,22 @@ impl DocumentationVerifier {
 
         self.report.add_check(VerificationCheck {
             feature: "Write-Ahead Log (WAL)".to_string(),
-            status: if wal_exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
+            status: if wal_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Missing
+            },
             documented_claim: "WAL ensures data durability".to_string(),
             actual_implementation: if wal_exists {
                 "FileStorage implementation includes WAL functionality".to_string()
             } else {
                 "WAL implementation not found".to_string()
             },
-            severity: if !wal_exists { Severity::Critical } else { Severity::Low },
+            severity: if !wal_exists {
+                Severity::Critical
+            } else {
+                Severity::Low
+            },
             recommendation: None,
             location: "README.md:256-259".to_string(),
         });
@@ -324,14 +356,22 @@ impl DocumentationVerifier {
         let btree_exists = std::path::Path::new("src/primary_index.rs").exists();
         self.report.add_check(VerificationCheck {
             feature: "B+ Tree Primary Index".to_string(),
-            status: if btree_exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
+            status: if btree_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Missing
+            },
             documented_claim: "O(log n) path-based lookups with wildcard support".to_string(),
             actual_implementation: if btree_exists {
                 "PrimaryIndex implementation exists with B+ tree structure".to_string()
             } else {
                 "Primary index implementation not found".to_string()
             },
-            severity: if !btree_exists { Severity::Critical } else { Severity::Low },
+            severity: if !btree_exists {
+                Severity::Critical
+            } else {
+                Severity::Low
+            },
             recommendation: None,
             location: "README.md:262".to_string(),
         });
@@ -340,14 +380,22 @@ impl DocumentationVerifier {
         let trigram_exists = std::path::Path::new("src/trigram_index.rs").exists();
         self.report.add_check(VerificationCheck {
             feature: "Trigram Full-Text Search".to_string(),
-            status: if trigram_exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
+            status: if trigram_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Missing
+            },
             documented_claim: "Fuzzy-tolerant full-text search with ranking".to_string(),
             actual_implementation: if trigram_exists {
                 "TrigramIndex implementation exists".to_string()
             } else {
                 "Trigram index implementation not found".to_string()
             },
-            severity: if !trigram_exists { Severity::Critical } else { Severity::Low },
+            severity: if !trigram_exists {
+                Severity::Critical
+            } else {
+                Severity::Low
+            },
             recommendation: None,
             location: "README.md:263".to_string(),
         });
@@ -356,14 +404,22 @@ impl DocumentationVerifier {
         let vector_exists = std::path::Path::new("src/vector_index.rs").exists();
         self.report.add_check(VerificationCheck {
             feature: "Vector Semantic Search (HNSW)".to_string(),
-            status: if vector_exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
+            status: if vector_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Missing
+            },
             documented_claim: "Semantic similarity search using HNSW algorithm".to_string(),
             actual_implementation: if vector_exists {
                 "VectorIndex implementation exists".to_string()
             } else {
                 "Vector index implementation not found".to_string()
             },
-            severity: if !vector_exists { Severity::Critical } else { Severity::Low },
+            severity: if !vector_exists {
+                Severity::Critical
+            } else {
+                Severity::Low
+            },
             recommendation: None,
             location: "README.md:264".to_string(),
         });
@@ -378,18 +434,30 @@ impl DocumentationVerifier {
         let bench_dir_exists = std::path::Path::new("benches").exists();
         self.report.add_check(VerificationCheck {
             feature: "Performance Benchmarks Infrastructure".to_string(),
-            status: if bench_dir_exists { VerificationStatus::Verified } else { VerificationStatus::Partial },
-            documented_claim: "Real-world benchmarks on Apple Silicon with specific latency targets".to_string(),
+            status: if bench_dir_exists {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Partial
+            },
+            documented_claim:
+                "Real-world benchmarks on Apple Silicon with specific latency targets".to_string(),
             actual_implementation: if bench_dir_exists {
                 "Benchmark directory exists for performance validation".to_string()
             } else {
-                "Performance claims documented but benchmark infrastructure may be limited".to_string()
+                "Performance claims documented but benchmark infrastructure may be limited"
+                    .to_string()
             },
             severity: Severity::Medium,
             recommendation: if !bench_dir_exists {
-                Some("Create comprehensive benchmark suite to validate performance claims".to_string())
+                Some(
+                    "Create comprehensive benchmark suite to validate performance claims"
+                        .to_string(),
+                )
             } else {
-                Some("Verify that benchmarks actually test the documented performance scenarios".to_string())
+                Some(
+                    "Verify that benchmarks actually test the documented performance scenarios"
+                        .to_string(),
+                )
             },
             location: "README.md:136-147".to_string(),
         });
@@ -409,16 +477,27 @@ impl DocumentationVerifier {
             let exists = std::path::Path::new(path).exists();
             self.report.add_check(VerificationCheck {
                 feature: format!("Example: {}", name),
-                status: if exists { VerificationStatus::Verified } else { VerificationStatus::Missing },
+                status: if exists {
+                    VerificationStatus::Verified
+                } else {
+                    VerificationStatus::Missing
+                },
                 documented_claim: format!("Production-ready {} example application", name),
                 actual_implementation: if exists {
                     format!("Example directory exists at {}", path)
                 } else {
                     format!("Example directory not found at {}", path)
                 },
-                severity: if !exists { Severity::High } else { Severity::Low },
+                severity: if !exists {
+                    Severity::High
+                } else {
+                    Severity::Low
+                },
                 recommendation: if !exists {
-                    Some(format!("Implement {} example or remove from documentation", name))
+                    Some(format!(
+                        "Implement {} example or remove from documentation",
+                        name
+                    ))
                 } else {
                     None
                 },
@@ -432,12 +511,36 @@ impl DocumentationVerifier {
     /// Get documented API endpoints from documentation
     fn get_documented_endpoints(&self) -> Vec<(String, String, String)> {
         vec![
-            ("POST".to_string(), "/documents".to_string(), "Create a new document".to_string()),
-            ("GET".to_string(), "/documents/:id".to_string(), "Retrieve a document by ID".to_string()),  
-            ("PUT".to_string(), "/documents/:id".to_string(), "Update an existing document".to_string()),
-            ("DELETE".to_string(), "/documents/:id".to_string(), "Delete a document".to_string()),
-            ("GET".to_string(), "/documents/search".to_string(), "Search for documents".to_string()),
-            ("GET".to_string(), "/health".to_string(), "Health check".to_string()),
+            (
+                "POST".to_string(),
+                "/documents".to_string(),
+                "Create a new document".to_string(),
+            ),
+            (
+                "GET".to_string(),
+                "/documents/:id".to_string(),
+                "Retrieve a document by ID".to_string(),
+            ),
+            (
+                "PUT".to_string(),
+                "/documents/:id".to_string(),
+                "Update an existing document".to_string(),
+            ),
+            (
+                "DELETE".to_string(),
+                "/documents/:id".to_string(),
+                "Delete a document".to_string(),
+            ),
+            (
+                "GET".to_string(),
+                "/documents/search".to_string(),
+                "Search for documents".to_string(),
+            ),
+            (
+                "GET".to_string(),
+                "/health".to_string(),
+                "Health check".to_string(),
+            ),
         ]
     }
 
@@ -446,21 +549,45 @@ impl DocumentationVerifier {
         // This would require parsing the HTTP server routes
         // For now, return the known routes from our analysis
         let mut endpoints = HashMap::new();
-        
+
         endpoints.insert("GET /health".to_string(), "health_check".to_string());
         endpoints.insert("POST /documents".to_string(), "create_document".to_string());
         endpoints.insert("GET /documents".to_string(), "search_documents".to_string());
-        endpoints.insert("GET /documents/search".to_string(), "search_documents".to_string());
+        endpoints.insert(
+            "GET /documents/search".to_string(),
+            "search_documents".to_string(),
+        );
         endpoints.insert("GET /documents/:id".to_string(), "get_document".to_string());
-        endpoints.insert("PUT /documents/:id".to_string(), "update_document".to_string());
-        endpoints.insert("DELETE /documents/:id".to_string(), "delete_document".to_string());
-        endpoints.insert("POST /search/semantic".to_string(), "semantic_search".to_string());
-        endpoints.insert("POST /search/hybrid".to_string(), "hybrid_search".to_string());
+        endpoints.insert(
+            "PUT /documents/:id".to_string(),
+            "update_document".to_string(),
+        );
+        endpoints.insert(
+            "DELETE /documents/:id".to_string(),
+            "delete_document".to_string(),
+        );
+        endpoints.insert(
+            "POST /search/semantic".to_string(),
+            "semantic_search".to_string(),
+        );
+        endpoints.insert(
+            "POST /search/hybrid".to_string(),
+            "hybrid_search".to_string(),
+        );
         endpoints.insert("GET /stats".to_string(), "get_aggregated_stats".to_string());
-        endpoints.insert("GET /stats/connections".to_string(), "get_connection_stats".to_string());
-        endpoints.insert("GET /stats/performance".to_string(), "get_performance_stats".to_string());
-        endpoints.insert("GET /stats/resources".to_string(), "get_resource_stats".to_string());
-        
+        endpoints.insert(
+            "GET /stats/connections".to_string(),
+            "get_connection_stats".to_string(),
+        );
+        endpoints.insert(
+            "GET /stats/performance".to_string(),
+            "get_performance_stats".to_string(),
+        );
+        endpoints.insert(
+            "GET /stats/resources".to_string(),
+            "get_resource_stats".to_string(),
+        );
+
         Ok(endpoints)
     }
 
@@ -470,14 +597,15 @@ impl DocumentationVerifier {
         // For this verification, we'll assume packages exist if client directories exist
         // and have proper packaging files
         let python_dir = std::path::Path::new("clients/python");
-        let has_setup = python_dir.join("pyproject.toml").exists() || python_dir.join("setup.py").exists();
+        let has_setup =
+            python_dir.join("pyproject.toml").exists() || python_dir.join("setup.py").exists();
         Ok(python_dir.exists() && has_setup)
     }
 
     /// Check if a package exists on npm  
     fn check_npm_package(&self, package_name: &str) -> Result<bool> {
         // Similar to PyPI check
-        let ts_dir = std::path::Path::new("clients/typescript");  
+        let ts_dir = std::path::Path::new("clients/typescript");
         let has_package = ts_dir.join("package.json").exists();
         Ok(ts_dir.exists() && has_package)
     }
@@ -488,19 +616,25 @@ impl DocumentationVerifier {
 
         self.verify_api_endpoints()
             .context("Failed to verify API endpoints")?;
-            
+
         self.verify_client_libraries()
             .context("Failed to verify client libraries")?;
-            
+
         self.verify_core_features()
             .context("Failed to verify core features")?;
 
         self.report.finalize();
-        
-        info!("Documentation verification completed: {}", self.report.summary);
-        
+
+        info!(
+            "Documentation verification completed: {}",
+            self.report.summary
+        );
+
         if !self.report.critical_issues.is_empty() {
-            error!("Critical documentation issues found: {:?}", self.report.critical_issues);
+            error!(
+                "Critical documentation issues found: {:?}",
+                self.report.critical_issues
+            );
         }
 
         Ok(self.report)
@@ -541,7 +675,7 @@ mod tests {
     #[test]
     fn test_verification_report_accuracy() {
         let mut report = DocumentationVerificationReport::new();
-        
+
         // Add some test checks
         report.add_check(VerificationCheck {
             feature: "Feature 1".to_string(),
@@ -564,7 +698,7 @@ mod tests {
         });
 
         report.finalize();
-        
+
         assert_eq!(report.total_checks, 2);
         assert_eq!(report.verified_count, 1);
         assert_eq!(report.missing_count, 1);

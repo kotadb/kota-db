@@ -121,7 +121,8 @@ pub use search_validation::{
 
 // Re-export documentation verification
 pub use documentation_verification::{
-    DocumentationVerificationReport, DocumentationVerifier, Severity, VerificationCheck, VerificationStatus,
+    DocumentationVerificationReport, DocumentationVerifier, Severity, VerificationCheck,
+    VerificationStatus,
 };
 // Re-export bulk operations
 pub use pure::{

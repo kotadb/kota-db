@@ -788,7 +788,7 @@ async fn main() -> Result<()> {
 
             Commands::VerifyDocs => {
                 use kotadb::DocumentationVerifier;
-                
+
                 println!("📋 Running comprehensive documentation verification...");
                 println!("   Checking claims vs actual implementation");
                 println!();
@@ -827,7 +827,7 @@ async fn main() -> Result<()> {
                     println!("   {} {}{}", status_icon, check.feature, severity_badge);
                     println!("      Claim: {}", check.documented_claim);
                     println!("      Reality: {}", check.actual_implementation);
-                    
+
                     if let Some(ref rec) = check.recommendation {
                         println!("      💡 Recommendation: {}", rec);
                     }
