@@ -199,11 +199,11 @@ Delete a document.
 curl -X DELETE http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000
 ```
 
-#### GET /search
+#### GET /documents/search
 Search for documents.
 
 ```bash
-curl "http://localhost:8080/search?q=rust+programming&limit=10"
+curl "http://localhost:8080/documents/search?q=rust+programming&limit=10"
 ```
 
 ## MCP Server API

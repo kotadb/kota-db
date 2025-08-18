@@ -4,6 +4,7 @@
 pub mod builders;
 pub mod connection_pool;
 pub mod contracts;
+pub mod documentation_verification;
 pub mod embedding_transformer;
 pub mod embeddings;
 pub mod file_storage;
@@ -116,6 +117,11 @@ pub use search_validation::{
     quick_search_validation, quick_search_validation_bool, validate_post_ingestion_search,
     validate_post_ingestion_search_with_config, QuickValidationResult, ValidationCheck,
     ValidationConfig, ValidationReport, ValidationStatus,
+};
+
+// Re-export documentation verification
+pub use documentation_verification::{
+    DocumentationVerificationReport, DocumentationVerifier, Severity, VerificationCheck, VerificationStatus,
 };
 // Re-export bulk operations
 pub use pure::{
