@@ -451,20 +451,20 @@ async fn get_dynamic_search_terms(
         if let Some(retrieved_doc) = storage.get(&doc.id).await? {
             // Extract and sanitize words from content with comprehensive validation
             let content_str = String::from_utf8_lossy(&retrieved_doc.content);
-            let words: Vec<&str> = content_str
-                .split_whitespace()
-                .filter(|word| word.len() >= 3 && word.len() <= 20)
-                .filter(|word| word.chars().all(|c| c.is_alphabetic()))
-                .filter(|word| !is_common_stop_word(word))
-                .filter(|word| !contains_sensitive_patterns(word))
-                .take(3)
-                .collect();
 
-            for word in words {
-                if !terms.contains(&word.to_lowercase()) {
-                    terms.push(word.to_lowercase());
-                    if terms.len() >= 4 {
-                        return Ok(terms);
+            // Apply our enhanced sanitization to the content
+            if let Ok(sanitized) = crate::query_sanitization::sanitize_search_query(&content_str) {
+                // Use sanitized terms instead of raw extraction
+                for term in sanitized.terms.iter().take(3) {
+                    let term_lower = term.to_lowercase();
+                    if !terms.contains(&term_lower)
+                        && !crate::query_sanitization::is_stop_word(&term_lower)
+                        && !contains_sensitive_patterns(&term_lower)
+                    {
+                        terms.push(term_lower);
+                        if terms.len() >= 4 {
+                            return Ok(terms);
+                        }
                     }
                 }
             }
@@ -473,13 +473,21 @@ async fn get_dynamic_search_terms(
 
     // Fallback to configured terms if we didn't find enough dynamic ones
     if terms.len() < 2 {
-        terms.extend(config.custom_search_terms.iter().cloned());
+        // Sanitize configured terms as well
+        for term in &config.custom_search_terms {
+            if let Ok(sanitized) = crate::query_sanitization::sanitize_search_query(term) {
+                if !sanitized.text.is_empty() {
+                    terms.push(sanitized.text);
+                }
+            }
+        }
     }
 
     Ok(terms)
 }
 
 /// Check if a word is a common stop word that shouldn't be used for validation
+#[allow(dead_code)]
 fn is_common_stop_word(word: &str) -> bool {
     const STOP_WORDS: &[&str] = &[
         "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one",

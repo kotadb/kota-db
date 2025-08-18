@@ -4,7 +4,7 @@
 
 use crate::contracts::{Document, Query, StorageMetrics};
 use crate::types::*;
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
@@ -153,24 +153,46 @@ impl QueryBuilder {
         }
     }
 
-    /// Add text search criteria
+    /// Add text search criteria with enhanced sanitization
     pub fn with_text(mut self, text: impl Into<String>) -> Result<Self> {
         let text = text.into();
-        ensure!(!text.trim().is_empty(), "Search text cannot be empty");
-        self.text = Some(text);
+
+        // Apply comprehensive sanitization
+        let sanitized = crate::query_sanitization::sanitize_search_query(&text)?;
+
+        // Check if query became empty after sanitization
+        if sanitized.is_empty() && text.trim() != "*" {
+            bail!("Search text became empty after sanitization");
+        }
+
+        // Log warnings if query was modified
+        if sanitized.was_modified {
+            tracing::debug!(
+                "Query sanitized: original='{}', sanitized='{}', warnings={:?}",
+                text,
+                sanitized.text,
+                sanitized.warnings
+            );
+        }
+
+        self.text = Some(sanitized.text);
         Ok(self)
     }
 
-    /// Add a tag filter
+    /// Add a tag filter with sanitization
     pub fn with_tag(mut self, tag: impl Into<String>) -> Result<Self> {
-        self.tags.push(ValidatedTag::new(tag)?);
+        let tag_str = tag.into();
+        let sanitized = crate::query_sanitization::sanitize_tag(&tag_str)?;
+        self.tags.push(ValidatedTag::new(sanitized)?);
         Ok(self)
     }
 
-    /// Add multiple tag filters
+    /// Add multiple tag filters with sanitization
     pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Result<Self> {
         for tag in tags {
-            self.tags.push(ValidatedTag::new(tag)?);
+            let tag_str = tag.into();
+            let sanitized = crate::query_sanitization::sanitize_tag(&tag_str)?;
+            self.tags.push(ValidatedTag::new(sanitized)?);
         }
         Ok(self)
     }
