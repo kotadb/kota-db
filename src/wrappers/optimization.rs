@@ -320,6 +320,16 @@ impl<T: Index + Send + Sync> Index for OptimizedIndex<T> {
             .into_inner();
         inner.close().await
     }
+
+    async fn insert_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        content: &[u8],
+    ) -> Result<()> {
+        let mut inner = self.acquire_write_lock().await?;
+        inner.insert_with_content(id, path, content).await
+    }
 }
 
 #[async_trait::async_trait]

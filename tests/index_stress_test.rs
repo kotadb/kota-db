@@ -296,7 +296,16 @@ async fn test_index_integration_stress() -> Result<()> {
     for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
         // Insert into both indices
         primary_index.insert(*doc_id, doc_path.clone()).await?;
-        trigram_index.insert(*doc_id, doc_path.clone()).await?;
+        // Create content for trigram indexing based on the path
+        let content = format!(
+            "Document {} at path {} with stress test content for indexing",
+            doc_id.as_uuid(),
+            doc_path.as_str()
+        )
+        .into_bytes();
+        trigram_index
+            .insert_with_content(*doc_id, doc_path.clone(), &content)
+            .await?;
 
         if i % 3_000 == 0 {
             println!("  📈 Inserted into both indices: {i}/{doc_count} documents");

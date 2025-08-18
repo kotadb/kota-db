@@ -241,7 +241,10 @@ impl QueryRouter {
             }
             {
                 let mut trigram = self.trigram_index.lock().await;
-                trigram.insert(doc_id, path).await?;
+                // Provide sample content for trigram indexing
+                let content = format!("Test document at {} with searchable content", path.as_str())
+                    .into_bytes();
+                trigram.insert_with_content(doc_id, path, &content).await?;
             }
 
             doc_ids.push(doc_id);
@@ -672,12 +675,22 @@ async fn test_multi_index_concurrent_access() -> Result<()> {
                 };
 
                 let trigram_result = {
+                    // Provide sample content for trigram indexing
+                    let content = format!(
+                        "Document {} with searchable content for stress testing",
+                        doc_id.as_uuid()
+                    )
+                    .into_bytes();
                     match router_clone.trigram_index.try_lock() {
-                        Ok(mut index) => index.insert(doc_id, path).await,
+                        Ok(mut index) => {
+                            index
+                                .insert_with_content(doc_id, path.clone(), &content)
+                                .await
+                        }
                         Err(_) => {
                             router_clone.stats.record_contention();
                             let mut index = router_clone.trigram_index.lock().await;
-                            index.insert(doc_id, path).await
+                            index.insert_with_content(doc_id, path, &content).await
                         }
                     }
                 };
