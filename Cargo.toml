@@ -196,6 +196,7 @@ name = "queries"
 harness = false
 required-features = ["bench"]
 
+
 [[bench]]
 name = "storage_stress"
 harness = false

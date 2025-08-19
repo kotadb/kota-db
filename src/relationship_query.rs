@@ -273,6 +273,11 @@ impl RelationshipQueryEngine {
             .resolve_symbol_name(target)
             .context("Failed to resolve target symbol")?;
 
+        // Memory and performance limits to prevent excessive resource usage
+        const MAX_DEPTH: usize = 5;
+        const MAX_INDIRECT_PATHS: usize = 1000;
+        const MAX_VISITED_NODES: usize = 10000;
+
         // Find direct dependents
         let direct_dependents = self.dependency_graph.find_dependents(symbol_id);
         let mut direct_relationships = Vec::new();
@@ -288,8 +293,8 @@ impl RelationshipQueryEngine {
             }
         }
 
-        // Find transitive dependents using BFS
-        let mut visited = HashSet::new();
+        // Find transitive dependents using BFS with memory limits
+        let mut visited = HashSet::with_capacity(MAX_VISITED_NODES);
         let mut queue = VecDeque::new();
 
         // Start with direct dependents
@@ -297,15 +302,25 @@ impl RelationshipQueryEngine {
             queue.push_back((dependent_id, vec![symbol_id, dependent_id], 1));
         }
 
+        let mut truncated = false;
         while let Some((current_id, path, distance)) = queue.pop_front() {
-            if visited.contains(&current_id) || distance > 5 {
-                continue; // Limit depth to prevent infinite recursion
+            // Memory and depth limits
+            if visited.contains(&current_id)
+                || distance > MAX_DEPTH
+                || visited.len() >= MAX_VISITED_NODES
+                || indirect_paths.len() >= MAX_INDIRECT_PATHS
+            {
+                if visited.len() >= MAX_VISITED_NODES || indirect_paths.len() >= MAX_INDIRECT_PATHS
+                {
+                    truncated = true;
+                }
+                continue;
             }
             visited.insert(current_id);
 
             let transitive_dependents = self.dependency_graph.find_dependents(current_id);
             for (transitive_id, _) in transitive_dependents {
-                if !path.contains(&transitive_id) {
+                if !path.contains(&transitive_id) && indirect_paths.len() < MAX_INDIRECT_PATHS {
                     let mut new_path = path.clone();
                     new_path.push(transitive_id);
 
@@ -335,7 +350,7 @@ impl RelationshipQueryEngine {
                 indirect_count: indirect_paths.len(),
                 symbols_analyzed: visited.len(),
                 execution_time_ms: 0,
-                truncated: false,
+                truncated,
             },
             summary,
         })
@@ -662,23 +677,110 @@ impl RelationshipQueryEngine {
         })
     }
 
-    /// Resolve a symbol name to its UUID
+    /// Resolve a symbol name to its UUID using advanced fuzzy matching
     fn resolve_symbol_name(&self, name: &str) -> Result<Uuid> {
         // Try direct lookup first
         if let Some(&id) = self.dependency_graph.name_to_symbol.get(name) {
             return Ok(id);
         }
 
-        // Try fuzzy matching on qualified names
+        // Try exact suffix matching (highest priority)
         for (qualified_name, &id) in &self.dependency_graph.name_to_symbol {
-            if qualified_name.ends_with(&format!("::{}", name))
-                || qualified_name.contains(&format!("{}::", name))
-            {
+            if qualified_name.ends_with(&format!("::{}", name)) {
                 return Ok(id);
             }
         }
 
-        anyhow::bail!("Symbol '{}' not found in dependency graph", name)
+        // Try prefix matching for qualified names
+        for (qualified_name, &id) in &self.dependency_graph.name_to_symbol {
+            if qualified_name.contains(&format!("{}::", name)) {
+                return Ok(id);
+            }
+        }
+
+        // Try case-insensitive matching
+        let name_lower = name.to_lowercase();
+        for (qualified_name, &id) in &self.dependency_graph.name_to_symbol {
+            if qualified_name.to_lowercase() == name_lower {
+                return Ok(id);
+            }
+        }
+
+        // Try substring matching with ranking by length similarity
+        let mut candidates = Vec::new();
+        for (qualified_name, &id) in &self.dependency_graph.name_to_symbol {
+            let simple_name = qualified_name.split("::").last().unwrap_or(qualified_name);
+            if simple_name.to_lowercase().contains(&name_lower)
+                || name_lower.contains(&simple_name.to_lowercase())
+            {
+                let score = self.calculate_similarity_score(name, simple_name);
+                candidates.push((id, score, qualified_name.clone()));
+            }
+        }
+
+        // Sort by similarity score (higher is better)
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((id, score, qualified_name)) = candidates.first() {
+            if *score > 0.3 {
+                // Minimum similarity threshold
+                debug!(
+                    "Fuzzy matched '{}' to '{}' with score {:.2}",
+                    name, qualified_name, score
+                );
+                return Ok(*id);
+            }
+        }
+
+        anyhow::bail!(
+            "Symbol '{}' not found in dependency graph (tried {} candidates)",
+            name,
+            candidates.len()
+        )
+    }
+
+    /// Calculate similarity score between two strings using a combination of metrics
+    fn calculate_similarity_score(&self, a: &str, b: &str) -> f32 {
+        if a == b {
+            return 1.0;
+        }
+
+        let a_lower = a.to_lowercase();
+        let b_lower = b.to_lowercase();
+
+        if a_lower == b_lower {
+            return 0.95;
+        }
+
+        // Jaro-Winkler-like similarity
+        let max_len = a.len().max(b.len()) as f32;
+        if max_len == 0.0 {
+            return 0.0;
+        }
+
+        // Count common characters
+        let mut common = 0;
+        let min_len = a.len().min(b.len());
+        for i in 0..min_len {
+            if a_lower.chars().nth(i) == b_lower.chars().nth(i) {
+                common += 1;
+            } else {
+                break; // Only count prefix matches for this simple version
+            }
+        }
+
+        // Length-normalized similarity with bonus for prefix matches
+        let prefix_bonus = if common > 0 { 0.1 } else { 0.0 };
+        let base_similarity = common as f32 / max_len;
+
+        // Substring bonus
+        let substring_bonus = if a_lower.contains(&b_lower) || b_lower.contains(&a_lower) {
+            0.2
+        } else {
+            0.0
+        };
+
+        (base_similarity + prefix_bonus + substring_bonus).min(1.0)
     }
 
     /// Create a relationship match from symbol IDs and metadata
