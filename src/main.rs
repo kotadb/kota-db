@@ -7,6 +7,14 @@ use kotadb::{
     DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
     ValidationStatus,
 };
+
+#[cfg(feature = "tree-sitter-parsing")]
+use kotadb::{
+    relationship_query::{
+        parse_natural_language_relationship_query, RelationshipQueryEngine, RelationshipQueryType,
+    },
+    symbol_storage::SymbolStorage,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -116,6 +124,27 @@ enum Commands {
         /// Maximum file size to ingest (in MB)
         #[arg(long, default_value = "10")]
         max_file_size_mb: usize,
+    },
+
+    /// Find symbols that call or use a target symbol - reverse dependency analysis
+    #[cfg(feature = "tree-sitter-parsing")]
+    FindCallers {
+        /// Name or qualified name of the target symbol to find callers for
+        target: String,
+    },
+
+    /// Analyze what would break if you change a symbol - impact analysis for safe refactoring
+    #[cfg(feature = "tree-sitter-parsing")]
+    ImpactAnalysis {
+        /// Name or qualified name of the target symbol to analyze impact for
+        target: String,
+    },
+
+    /// Natural language relationship queries - ask questions about code relationships
+    #[cfg(feature = "tree-sitter-parsing")]
+    RelationshipQuery {
+        /// Natural language query about relationships (e.g., 'what calls FileStorage?', 'what would break if I change StorageError?')
+        query: String,
     },
 }
 
@@ -558,6 +587,67 @@ mod tests {
 
         Ok(())
     }
+}
+
+/// Create a relationship query engine for the given database path
+#[cfg(feature = "tree-sitter-parsing")]
+async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
+    // TODO: For now, create mock objects until the full pipeline is ready
+    // In a real implementation, this would:
+    // 1. Load or build the dependency graph from the database
+    // 2. Load or build the symbol storage from the database
+    // 3. Return a fully configured RelationshipQueryEngine
+
+    use kotadb::dependency_extractor::{DependencyGraph, GraphStats};
+    use petgraph::graph::DiGraph;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    println!("⚠️  Note: Using minimal relationship engine for dogfooding");
+    println!("   Full integration with dependency extraction is pending");
+
+    // Create minimal dependency graph for testing
+    let dependency_graph = DependencyGraph {
+        graph: DiGraph::new(),
+        symbol_to_node: HashMap::new(),
+        name_to_symbol: {
+            let mut map = HashMap::new();
+            // Add some test symbols that might be in the KotaDB codebase
+            map.insert("FileStorage".to_string(), Uuid::new_v4());
+            map.insert("StorageError".to_string(), Uuid::new_v4());
+            map.insert("Document".to_string(), Uuid::new_v4());
+            map.insert("ValidatedPath".to_string(), Uuid::new_v4());
+            map.insert("create_file_storage".to_string(), Uuid::new_v4());
+            map
+        },
+        file_imports: HashMap::new(),
+        stats: GraphStats {
+            node_count: 5,
+            edge_count: 0,
+            file_count: 0,
+            import_count: 0,
+            scc_count: 0,
+            max_depth: 0,
+            avg_dependencies: 0.0,
+        },
+    };
+
+    // Create minimal symbol storage (need a Storage implementation)
+    let storage_path = db_path.join("storage");
+    let file_storage = create_file_storage(
+        storage_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid storage path: {:?}", storage_path))?,
+        Some(100), // Cache size
+    )
+    .await?;
+
+    let symbol_storage = SymbolStorage::new(Box::new(file_storage)).await?;
+
+    Ok(RelationshipQueryEngine::new(
+        dependency_graph,
+        symbol_storage,
+    ))
 }
 
 #[tokio::main]
@@ -1023,6 +1113,55 @@ async fn main() -> Result<()> {
                     validation_result.passed_checks,
                     validation_result.total_checks
                 );
+            }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::FindCallers { target } => {
+                println!("🔍 Finding callers of '{}'...", target);
+
+                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                let query_type = RelationshipQueryType::FindCallers {
+                    target: target.clone(),
+                };
+
+                let result = relationship_engine.execute_query(query_type).await?;
+
+                println!("📊 Results:");
+                println!("{}", result.to_markdown());
+            }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::ImpactAnalysis { target } => {
+                println!("🎯 Analyzing impact of changing '{}'...", target);
+
+                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                let query_type = RelationshipQueryType::ImpactAnalysis {
+                    target: target.clone(),
+                };
+
+                let result = relationship_engine.execute_query(query_type).await?;
+
+                println!("📊 Impact Analysis Results:");
+                println!("{}", result.to_markdown());
+            }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::RelationshipQuery { query } => {
+                println!("🤖 Processing natural language query: '{}'", query);
+
+                if let Some(query_type) = parse_natural_language_relationship_query(&query) {
+                    let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                    let result = relationship_engine.execute_query(query_type).await?;
+
+                    println!("📊 Query Results:");
+                    println!("{}", result.to_markdown());
+                } else {
+                    println!("❌ Could not parse relationship query: '{}'", query);
+                    println!("💡 Try queries like:");
+                    println!("   • 'what calls FileStorage?'");
+                    println!("   • 'what would break if I change StorageError?'");
+                    println!("   • 'find unused functions'");
+                }
             }
         }
 
