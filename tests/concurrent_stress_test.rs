@@ -739,8 +739,10 @@ async fn test_concurrent_index_operations() -> Result<()> {
                         let index_start = Instant::now();
                         {
                             let mut trigram_guard = trigram_ref.lock().await;
-                            // TrigramIndex expects path-based trigram extraction
-                            trigram_guard.insert(doc.id, doc.path.clone()).await?;
+                            // Provide content for trigram indexing
+                            trigram_guard
+                                .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                                .await?;
                         }
                         let index_time = index_start.elapsed();
                         indexer_results.trigram_operations += 1;
@@ -769,7 +771,9 @@ async fn test_concurrent_index_operations() -> Result<()> {
                         let trigram_start = Instant::now();
                         {
                             let mut trigram_guard = trigram_ref.lock().await;
-                            trigram_guard.insert(doc.id, doc.path.clone()).await?;
+                            trigram_guard
+                                .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                                .await?;
                         }
                         let trigram_time = trigram_start.elapsed();
                         indexer_results.trigram_operations += 1;

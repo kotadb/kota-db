@@ -930,6 +930,19 @@ impl<I: Index> Index for MeteredIndex<I> {
         result
     }
 
+    async fn update_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        content: &[u8],
+    ) -> Result<()> {
+        let start = Instant::now();
+        let result = self.inner.update_with_content(id, path, content).await;
+        self.record_timing("update_with_content", start.elapsed())
+            .await;
+        result
+    }
+
     async fn close(self) -> Result<()> {
         let timing_stats = self.timing_stats().await;
         for (op, (min, avg, max)) in timing_stats {

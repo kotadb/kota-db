@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Critical trigram index bug where insert() method was not indexing actual document content (#249)
+  - Changed insert() to return error directing users to insert_with_content()
+  - Fixed unit test to use insert_with_content() for proper content indexing
+  - Added comprehensive test to validate the error behavior
+  - This fixes full-text search which was completely broken due to placeholder indexing
+
 ### Security
 - Enhanced input sanitization for search queries (#202)
   - Added comprehensive query sanitization module to prevent injection attacks

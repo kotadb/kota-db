@@ -298,3 +298,59 @@ async fn test_large_content_memory_safety() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_trigram_insert_requires_content() -> Result<()> {
+    // Test that trigram index's insert() method properly rejects calls without content (Issue #249)
+    let temp_dir = TempDir::new()?;
+    let trigram_path = temp_dir.path().join("trigram");
+
+    let mut trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
+
+    // Try to use the regular insert() method without content
+    let doc_id = kotadb::types::ValidatedDocumentId::new();
+    let doc_path = kotadb::types::ValidatedPath::new("test/document.md")?;
+
+    // This should fail with a clear error message
+    let result = trigram_index.insert(doc_id, doc_path.clone()).await;
+
+    assert!(
+        result.is_err(),
+        "insert() without content should fail for trigram index"
+    );
+
+    let error_message = result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("insert_with_content"),
+        "Error message should direct users to use insert_with_content(), got: {}",
+        error_message
+    );
+    assert!(
+        error_message.contains("content"),
+        "Error message should mention content requirement, got: {}",
+        error_message
+    );
+
+    // Verify that insert_with_content() works correctly with the same data
+    let content = b"Test document content for indexing";
+    let result = trigram_index
+        .insert_with_content(doc_id, doc_path, content)
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "insert_with_content() should succeed: {:?}",
+        result
+    );
+
+    // Verify the document was properly indexed by searching for its content
+    let query = QueryBuilder::new().with_text("indexing")?.build()?;
+    let search_results = trigram_index.search(&query).await?;
+
+    assert!(
+        !search_results.is_empty(),
+        "Document content should be searchable after insert_with_content()"
+    );
+
+    Ok(())
+}

@@ -492,70 +492,23 @@ impl Index for TrigramIndex {
     }
 
     /// Insert a document into the trigram index
-    async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()> {
-        // Note: This is a simplified implementation that only indexes the path
-        // In a full implementation, we would need access to the document content
-        // For now, we'll extract trigrams from the path and placeholder content
-
-        let text = format!("Document at path: {}", path.as_str());
-        let trigrams = Self::extract_trigrams(&text);
-
-        if trigrams.is_empty() {
-            return Ok(()); // Nothing to index
-        }
-
-        let was_new_document;
-
-        // Check if document already exists
-        {
-            let cache = self.document_cache.read().await;
-            was_new_document = !cache.contains_key(&id);
-        }
-
-        // Update trigram index (use unique trigrams for the index)
-        {
-            let mut index = self.trigram_index.write().await;
-            let unique_trigrams: HashSet<String> = trigrams.iter().cloned().collect();
-            for trigram in unique_trigrams {
-                index.entry(trigram).or_insert_with(HashSet::new).insert(id);
-            }
-        }
-
-        // Update document cache
-        {
-            let mut cache = self.document_cache.write().await;
-            cache.insert(
-                id,
-                DocumentContent {
-                    title: path.as_str().to_string(),
-                    content_preview: text.clone(),
-                    full_trigrams: trigrams.clone(),
-                    word_count: text.split_whitespace().count(),
-                    trigram_count: trigrams.len(),
-                },
-            );
-        }
-
-        // Update metadata
-        let trigram_delta = if was_new_document {
-            trigrams.len() as i32
-        } else {
-            0
-        };
-        self.update_metadata(
-            if was_new_document { 1 } else { 0 },
-            trigram_delta,
-            trigrams.len() as i32,
+    async fn insert(&mut self, _id: ValidatedDocumentId, _path: ValidatedPath) -> Result<()> {
+        // Trigram index requires document content to function properly.
+        // The insert() method from the Index trait doesn't provide content,
+        // so we return an error directing callers to use insert_with_content() instead.
+        bail!(
+            "Trigram index requires document content. Use insert_with_content() instead of insert()"
         )
-        .await?;
-
-        Ok(())
     }
 
     /// Update an existing entry in the trigram index
-    async fn update(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()> {
-        // For trigram index, update is the same as insert (it replaces the content)
-        self.insert(id, path).await
+    async fn update(&mut self, _id: ValidatedDocumentId, _path: ValidatedPath) -> Result<()> {
+        // Trigram index requires document content to function properly.
+        // The update() method from the Index trait doesn't provide content,
+        // so we return an error directing callers to use update_with_content() or insert_with_content() instead.
+        bail!(
+            "Trigram index requires document content. Use update_with_content() or insert_with_content() instead of update()"
+        )
     }
 
     /// Delete an entry from the trigram index
@@ -918,11 +871,12 @@ mod tests {
 
         let mut index = TrigramIndex::open(&test_dir).await?;
 
-        // Test insertion
+        // Test insertion with content (required for trigram index)
         let doc_id = ValidatedDocumentId::new();
         let doc_path = ValidatedPath::new("test/document.md")?;
+        let content = b"Test document with searchable content for trigram indexing";
 
-        index.insert(doc_id, doc_path).await?;
+        index.insert_with_content(doc_id, doc_path, content).await?;
 
         // Test that metadata was updated
         {
