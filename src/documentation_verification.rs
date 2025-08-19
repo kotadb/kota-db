@@ -598,7 +598,7 @@ impl DocumentationVerifier {
         let pyproject_path = python_dir.join("pyproject.toml");
         let setup_path = python_dir.join("setup.py");
         let src_path = python_dir.join("src");
-        let package_path = python_dir.join("kotadb_client");
+        let package_path = python_dir.join("kotadb");
 
         let has_setup = pyproject_path.exists() || setup_path.exists();
         let has_source = src_path.exists() || package_path.exists();
@@ -607,7 +607,7 @@ impl DocumentationVerifier {
             info!("Python client missing setup files (pyproject.toml or setup.py)");
         }
         if !has_source {
-            info!("Python client missing source directory (src/ or kotadb_client/)");
+            info!("Python client missing source directory (src/ or kotadb/)");
         }
 
         Ok(has_setup && has_source)
