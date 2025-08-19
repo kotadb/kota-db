@@ -5,6 +5,10 @@
 pub mod document_tools;
 pub mod search_tools;
 
+/// Relationship query tools - the killer feature for LLM code understanding
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod relationship_tools;
+
 use crate::mcp::types::*;
 use anyhow::Result;
 use std::sync::Arc;
@@ -24,6 +28,8 @@ pub trait MCPToolHandler {
 pub struct MCPToolRegistry {
     pub document_tools: Option<Arc<document_tools::DocumentTools>>,
     pub search_tools: Option<Arc<search_tools::SearchTools>>,
+    #[cfg(feature = "tree-sitter-parsing")]
+    pub relationship_tools: Option<Arc<relationship_tools::RelationshipTools>>,
 }
 
 impl Default for MCPToolRegistry {
@@ -37,6 +43,8 @@ impl MCPToolRegistry {
         Self {
             document_tools: None,
             search_tools: None,
+            #[cfg(feature = "tree-sitter-parsing")]
+            relationship_tools: None,
         }
     }
 
@@ -52,6 +60,16 @@ impl MCPToolRegistry {
         self
     }
 
+    /// Register relationship tools
+    #[cfg(feature = "tree-sitter-parsing")]
+    pub fn with_relationship_tools(
+        mut self,
+        tools: Arc<relationship_tools::RelationshipTools>,
+    ) -> Self {
+        self.relationship_tools = Some(tools);
+        self
+    }
+
     /// Get all available tool definitions
     pub fn get_all_tool_definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = Vec::new();
@@ -60,6 +78,10 @@ impl MCPToolRegistry {
             definitions.extend(tools.get_tool_definitions());
         }
         if let Some(tools) = &self.search_tools {
+            definitions.extend(tools.get_tool_definitions());
+        }
+        #[cfg(feature = "tree-sitter-parsing")]
+        if let Some(tools) = &self.relationship_tools {
             definitions.extend(tools.get_tool_definitions());
         }
 
@@ -86,12 +108,29 @@ impl MCPToolRegistry {
             m if m.starts_with("kotadb://text_search")
                 || m.starts_with("kotadb://semantic_search")
                 || m.starts_with("kotadb://hybrid_search")
-                || m.starts_with("kotadb://find_similar") =>
+                || m.starts_with("kotadb://find_similar")
+                || m.starts_with("kotadb://llm_optimized_search") =>
             {
                 if let Some(tools) = &self.search_tools {
                     tools.handle_call(method, params).await
                 } else {
                     Err(anyhow::anyhow!("Search tools not enabled"))
+                }
+            }
+            #[cfg(feature = "tree-sitter-parsing")]
+            m if m.starts_with("kotadb://find_callers")
+                || m.starts_with("kotadb://find_callees")
+                || m.starts_with("kotadb://impact_analysis")
+                || m.starts_with("kotadb://call_chain")
+                || m.starts_with("kotadb://circular_dependencies")
+                || m.starts_with("kotadb://unused_symbols")
+                || m.starts_with("kotadb://hot_paths")
+                || m.starts_with("kotadb://relationship_query") =>
+            {
+                if let Some(tools) = &self.relationship_tools {
+                    tools.handle_call(method, params).await
+                } else {
+                    Err(anyhow::anyhow!("Relationship tools not enabled"))
                 }
             }
             _ => Err(anyhow::anyhow!("Unknown method: {}", method)),

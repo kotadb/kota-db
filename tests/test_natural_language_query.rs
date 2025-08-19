@@ -16,7 +16,9 @@ mod natural_language_tests {
         let processor = NaturalLanguageQueryProcessor::new();
 
         // Parse the query
-        let intent = processor.parse_query("find all error handling patterns")?;
+        let intent = processor
+            .parse_query("find all error handling patterns")
+            .await?;
 
         // Verify correct intent
         match intent {
@@ -34,7 +36,9 @@ mod natural_language_tests {
         let processor = NaturalLanguageQueryProcessor::new();
 
         // Parse the query
-        let intent = processor.parse_query("find function named create_storage")?;
+        let intent = processor
+            .parse_query("find function named create_storage")
+            .await?;
 
         // Verify correct intent
         match intent {
@@ -52,7 +56,7 @@ mod natural_language_tests {
         let processor = NaturalLanguageQueryProcessor::new();
 
         // Parse the query
-        let intent = processor.parse_query("what calls FileStorage")?;
+        let intent = processor.parse_query("what calls FileStorage").await?;
 
         // Verify correct intent
         match intent {
@@ -78,7 +82,7 @@ mod natural_language_tests {
         ];
 
         for (query, description) in queries {
-            let intent = processor.parse_query(query)?;
+            let intent = processor.parse_query(query).await?;
             match intent {
                 QueryIntent::FindPatterns { .. } => {
                     // Expected pattern query
@@ -95,7 +99,9 @@ mod natural_language_tests {
         let processor = NaturalLanguageQueryProcessor::new();
 
         // Test quoted patterns
-        let intent = processor.parse_query("find functions matching \"validate_*\"")?;
+        let intent = processor
+            .parse_query("find functions matching \"validate_*\"")
+            .await?;
 
         match intent {
             QueryIntent::FindSymbols { name_pattern, .. } => {
@@ -112,7 +118,7 @@ mod natural_language_tests {
         let processor = NaturalLanguageQueryProcessor::new();
 
         // Test that symbol names preserve case
-        let intent = processor.parse_query("what calls FileStorage")?;
+        let intent = processor.parse_query("what calls FileStorage").await?;
 
         match intent {
             QueryIntent::FindDependencies { target, .. } => {
@@ -168,7 +174,7 @@ mod natural_language_tests {
         ];
 
         for query in queries {
-            let intent = processor.parse_query(query)?;
+            let intent = processor.parse_query(query).await?;
             // Verify parsing succeeded
             match intent {
                 QueryIntent::FindPatterns { .. }

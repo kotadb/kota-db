@@ -161,7 +161,7 @@ mod tests {
     // Step 4: Natural language queries
     let nlp = NaturalLanguageQueryProcessor::new();
     let nl_query = "find functions that store data";
-    let intent = nlp.parse_query(nl_query)?;
+    let intent = nlp.parse_query(nl_query).await?;
 
     // Convert natural language to structured query
     let structured_query = CodeQuery::SymbolSearch {
@@ -380,7 +380,7 @@ pub async fn fetch_data(url: &str) -> Result<String> {
     ];
 
     for query_text in test_queries {
-        let intent = nlp.parse_query(query_text)?;
+        let intent = nlp.parse_query(query_text).await?;
         // For now, create a simple search query since intent_to_query may not exist
         let query = CodeQuery::SymbolSearch {
             name: "".to_string(), // Search all symbols
@@ -638,7 +638,7 @@ async fn test_integration_with_existing_queries() -> Result<()> {
     ];
 
     for query_text in dogfooding_queries {
-        let intent = nlp.parse_query(query_text)?;
+        let intent = nlp.parse_query(query_text).await?;
         // Create a simple search query for demonstration
         let query = CodeQuery::SymbolSearch {
             name: "".to_string(), // Search all symbols
