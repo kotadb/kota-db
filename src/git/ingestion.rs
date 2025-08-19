@@ -11,6 +11,12 @@ use crate::git::types::{CommitInfo, FileEntry, IngestionOptions};
 use crate::Document;
 use crate::Storage;
 
+// Symbol extraction imports
+#[cfg(feature = "tree-sitter-parsing")]
+use crate::parsing::{CodeParser, SupportedLanguage};
+#[cfg(feature = "tree-sitter-parsing")]
+use crate::symbol_storage::SymbolStorage;
+
 /// Progress update callback type
 pub type ProgressCallback = Box<dyn Fn(&str) + Send + Sync>;
 
@@ -85,8 +91,283 @@ impl RepositoryIngester {
     }
 
     /// Ingest a git repository into KotaDB storage with progress reporting
+    #[cfg(not(feature = "tree-sitter-parsing"))]
     #[instrument(skip(self, storage, repo_path, progress_callback))]
     pub async fn ingest_with_progress<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        progress_callback: Option<ProgressCallback>,
+    ) -> Result<IngestResult> {
+        self.ingest_internal(repo_path, storage, progress_callback)
+            .await
+    }
+
+    /// Ingest a git repository into KotaDB storage with progress reporting and optional symbol extraction
+    #[cfg(feature = "tree-sitter-parsing")]
+    #[instrument(skip(self, storage, repo_path, progress_callback))]
+    pub async fn ingest_with_progress<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        progress_callback: Option<ProgressCallback>,
+    ) -> Result<IngestResult> {
+        self.ingest_internal(repo_path, storage, progress_callback, None, None)
+            .await
+    }
+
+    /// Ingest a git repository into KotaDB storage with symbol extraction and progress reporting
+    #[cfg(feature = "tree-sitter-parsing")]
+    #[instrument(skip(
+        self,
+        storage,
+        repo_path,
+        progress_callback,
+        symbol_storage,
+        code_parser
+    ))]
+    pub async fn ingest_with_symbols<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        progress_callback: Option<ProgressCallback>,
+        symbol_storage: &mut SymbolStorage,
+        code_parser: &mut CodeParser,
+    ) -> Result<IngestResult> {
+        self.ingest_internal(
+            repo_path,
+            storage,
+            progress_callback,
+            Some(symbol_storage),
+            Some(code_parser),
+        )
+        .await
+    }
+
+    /// Internal ingestion method that handles both cases
+    #[cfg(feature = "tree-sitter-parsing")]
+    #[instrument(skip(
+        self,
+        storage,
+        repo_path,
+        progress_callback,
+        symbol_storage,
+        code_parser
+    ))]
+    async fn ingest_internal<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        progress_callback: Option<ProgressCallback>,
+        mut symbol_storage: Option<&mut SymbolStorage>,
+        mut code_parser: Option<&mut CodeParser>,
+    ) -> Result<IngestResult> {
+        let repo_path = repo_path.as_ref();
+        info!("Starting repository ingestion from: {:?}", repo_path);
+
+        // Helper function to report progress
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+        };
+
+        report_progress("Opening repository...");
+
+        // Open the repository
+        let repo = GitRepository::open(repo_path, self.config.options.clone())
+            .context("Failed to open git repository")?;
+
+        report_progress("Analyzing repository metadata...");
+
+        // Get repository metadata
+        let metadata = repo
+            .metadata()
+            .context("Failed to get repository metadata")?;
+
+        let safe_repo_name = Self::sanitize_name(&metadata.name);
+        info!(
+            "Repository: {} ({} commits) - using safe name: {}",
+            metadata.name, metadata.commit_count, safe_repo_name
+        );
+
+        let mut result = IngestResult::default();
+
+        // Initialize file organization manager if configured
+        let _file_org_manager = self
+            .config
+            .organization_config
+            .as_ref()
+            .map(|org_config| FileOrganizationManager::new(org_config.clone()));
+
+        // Create repository index document if requested
+        if self.config.create_index {
+            report_progress("Creating repository index document...");
+            let index_doc = self.create_index_document(&metadata, &safe_repo_name)?;
+            storage
+                .insert(index_doc)
+                .await
+                .context("Failed to insert repository index document")?;
+            result.documents_created += 1;
+        }
+
+        // Ingest files
+        if self.config.options.include_file_contents {
+            report_progress("Discovering repository files...");
+            let files = repo
+                .list_files()
+                .context("Failed to list repository files")?;
+
+            info!("Found {} files to ingest", files.len());
+
+            if !files.is_empty() {
+                report_progress(&format!("Processing {} files...", files.len()));
+
+                let mut last_progress_time = std::time::Instant::now();
+                let progress_throttle = std::time::Duration::from_millis(250); // Update every 250ms max
+
+                for (index, file) in files.iter().enumerate() {
+                    let now = std::time::Instant::now();
+                    let should_report = index % 50 == 0 || // Every 50 files
+                        index + 1 == files.len() || // Last file
+                        now.duration_since(last_progress_time) >= progress_throttle; // Time-based throttle
+
+                    if should_report {
+                        let progress = ((index + 1) as f64 / files.len() as f64 * 100.0) as u32;
+                        report_progress(&format!(
+                            "Processing files: {}/{} ({}%)",
+                            index + 1,
+                            files.len(),
+                            progress
+                        ));
+                        last_progress_time = now;
+                    }
+
+                    match self.create_file_document(&safe_repo_name, file) {
+                        Ok(doc) => {
+                            if let Err(e) = storage.insert(doc).await {
+                                warn!("Failed to insert file document {}: {}", file.path, e);
+                                result.errors += 1;
+                            } else {
+                                result.documents_created += 1;
+                                result.files_ingested += 1;
+
+                                // Extract symbols if enabled and this is a supported file type
+                                if self.config.options.extract_symbols {
+                                    if let (Some(symbol_storage), Some(code_parser)) =
+                                        (symbol_storage.as_mut(), code_parser.as_mut())
+                                    {
+                                        if let Some(symbols_extracted) =
+                                            Self::extract_symbols_from_file(
+                                                file,
+                                                &safe_repo_name,
+                                                symbol_storage,
+                                                code_parser,
+                                            )
+                                            .await
+                                        {
+                                            result.symbols_extracted += symbols_extracted;
+                                            result.files_with_symbols += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to create document for {}: {}", file.path, e);
+                            result.errors += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ingest commit history
+        if self.config.options.include_commit_history {
+            report_progress("Loading commit history...");
+            let commits = repo
+                .get_commits(None)
+                .context("Failed to get repository commits")?;
+
+            info!("Processing {} commits", commits.len());
+
+            if !commits.is_empty() {
+                report_progress(&format!("Processing {} commits...", commits.len()));
+
+                let mut last_progress_time = std::time::Instant::now();
+                let progress_throttle = std::time::Duration::from_millis(250); // Update every 250ms max
+
+                for (index, commit) in commits.iter().enumerate() {
+                    let now = std::time::Instant::now();
+                    let should_report = index % 20 == 0 || // Every 20 commits  
+                        index + 1 == commits.len() || // Last commit
+                        now.duration_since(last_progress_time) >= progress_throttle; // Time-based throttle
+
+                    if should_report {
+                        let progress = ((index + 1) as f64 / commits.len() as f64 * 100.0) as u32;
+                        report_progress(&format!(
+                            "Processing commits: {}/{} ({}%)",
+                            index + 1,
+                            commits.len(),
+                            progress
+                        ));
+                        last_progress_time = now;
+                    }
+
+                    match self.create_commit_document(&safe_repo_name, commit) {
+                        Ok(doc) => {
+                            if let Err(e) = storage.insert(doc).await {
+                                warn!("Failed to insert commit document {}: {}", commit.sha, e);
+                                result.errors += 1;
+                            } else {
+                                result.documents_created += 1;
+                                result.commits_ingested += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to create document for commit {}: {}", commit.sha, e);
+                            result.errors += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        report_progress("Finalizing ingestion...");
+
+        // Build dependency graph if symbols were extracted
+        if result.symbols_extracted > 0 {
+            if let (Some(symbol_storage), _) = (symbol_storage.as_mut(), code_parser.as_mut()) {
+                report_progress("Building dependency graph...");
+                match symbol_storage.build_dependency_graph().await {
+                    Ok(()) => {
+                        let stats = symbol_storage.get_dependency_stats();
+                        info!(
+                            "Dependency graph built: {} relationships between {} symbols",
+                            stats.total_relationships, stats.total_symbols
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to build dependency graph: {}", e);
+                        result.errors += 1;
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Ingestion complete: {} documents created ({} files, {} commits), {} symbols extracted from {} files, {} errors",
+            result.documents_created, result.files_ingested, result.commits_ingested,
+            result.symbols_extracted, result.files_with_symbols, result.errors
+        );
+
+        Ok(result)
+    }
+
+    /// Internal ingestion method that handles both cases
+    #[cfg(not(feature = "tree-sitter-parsing"))]
+    #[instrument(skip(self, storage, repo_path, progress_callback))]
+    async fn ingest_internal<S: Storage + ?Sized>(
         &self,
         repo_path: impl AsRef<Path>,
         storage: &mut S,
@@ -181,6 +462,27 @@ impl RepositoryIngester {
                             } else {
                                 result.documents_created += 1;
                                 result.files_ingested += 1;
+
+                                // Extract symbols if enabled and this is a supported file type
+                                #[cfg(feature = "tree-sitter-parsing")]
+                                if self.config.options.extract_symbols {
+                                    if let (Some(symbol_storage), Some(code_parser)) =
+                                        (symbol_storage.as_mut(), code_parser.as_mut())
+                                    {
+                                        if let Some(symbols_extracted) =
+                                            Self::extract_symbols_from_file(
+                                                file,
+                                                &safe_repo_name,
+                                                symbol_storage,
+                                                code_parser,
+                                            )
+                                            .await
+                                        {
+                                            result.symbols_extracted += symbols_extracted;
+                                            result.files_with_symbols += 1;
+                                        }
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -246,8 +548,9 @@ impl RepositoryIngester {
         report_progress("Finalizing ingestion...");
 
         info!(
-            "Ingestion complete: {} documents created ({} files, {} commits), {} errors",
-            result.documents_created, result.files_ingested, result.commits_ingested, result.errors
+            "Ingestion complete: {} documents created ({} files, {} commits), {} symbols extracted from {} files, {} errors",
+            result.documents_created, result.files_ingested, result.commits_ingested,
+            result.symbols_extracted, result.files_with_symbols, result.errors
         );
 
         Ok(result)
@@ -397,6 +700,60 @@ impl RepositoryIngester {
         builder = builder.tag(&sanitized_author)?;
         builder.build()
     }
+
+    /// Extract symbols from a file if it's a supported language
+    #[cfg(feature = "tree-sitter-parsing")]
+    async fn extract_symbols_from_file(
+        file: &FileEntry,
+        repository_name: &str,
+        symbol_storage: &mut SymbolStorage,
+        code_parser: &mut CodeParser,
+    ) -> Option<usize> {
+        // Skip binary files
+        if file.is_binary {
+            return None;
+        }
+
+        // Get file extension
+        let extension = file.extension.as_ref()?;
+
+        // Check if language is supported
+        let language = SupportedLanguage::from_extension(extension)?;
+
+        // Convert content to string
+        let content = match String::from_utf8(file.content.clone()) {
+            Ok(content) => content,
+            Err(e) => {
+                warn!("Failed to decode file {} as UTF-8: {}", file.path, e);
+                return None;
+            }
+        };
+
+        // Parse the file content
+        let parsed_code = match code_parser.parse_content(&content, language) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                warn!("Failed to parse file {}: {}", file.path, e);
+                return None;
+            }
+        };
+
+        // Extract symbols and store them
+        let file_path = Path::new(&file.path);
+        match symbol_storage
+            .extract_symbols(file_path, parsed_code, Some(repository_name.to_string()))
+            .await
+        {
+            Ok(symbol_ids) => {
+                info!("Extracted {} symbols from {}", symbol_ids.len(), file.path);
+                Some(symbol_ids.len())
+            }
+            Err(e) => {
+                warn!("Failed to extract symbols from {}: {}", file.path, e);
+                None
+            }
+        }
+    }
 }
 
 /// Result of repository ingestion
@@ -408,6 +765,10 @@ pub struct IngestResult {
     pub files_ingested: usize,
     /// Number of commits ingested
     pub commits_ingested: usize,
+    /// Number of symbols extracted from code files
+    pub symbols_extracted: usize,
+    /// Number of files that had symbol extraction attempted
+    pub files_with_symbols: usize,
     /// Number of errors encountered
     pub errors: usize,
 }

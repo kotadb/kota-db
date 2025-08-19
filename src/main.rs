@@ -592,47 +592,9 @@ mod tests {
 /// Create a relationship query engine for the given database path
 #[cfg(feature = "tree-sitter-parsing")]
 async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
-    // TODO: For now, create mock objects until the full pipeline is ready
-    // In a real implementation, this would:
-    // 1. Load or build the dependency graph from the database
-    // 2. Load or build the symbol storage from the database
-    // 3. Return a fully configured RelationshipQueryEngine
+    println!("🔧 Loading relationship query engine with real symbol data...");
 
-    use kotadb::dependency_extractor::{DependencyGraph, GraphStats};
-    use petgraph::graph::DiGraph;
-    use std::collections::HashMap;
-    use uuid::Uuid;
-
-    println!("⚠️  Note: Using minimal relationship engine for dogfooding");
-    println!("   Full integration with dependency extraction is pending");
-
-    // Create minimal dependency graph for testing
-    let dependency_graph = DependencyGraph {
-        graph: DiGraph::new(),
-        symbol_to_node: HashMap::new(),
-        name_to_symbol: {
-            let mut map = HashMap::new();
-            // Add some test symbols that might be in the KotaDB codebase
-            map.insert("FileStorage".to_string(), Uuid::new_v4());
-            map.insert("StorageError".to_string(), Uuid::new_v4());
-            map.insert("Document".to_string(), Uuid::new_v4());
-            map.insert("ValidatedPath".to_string(), Uuid::new_v4());
-            map.insert("create_file_storage".to_string(), Uuid::new_v4());
-            map
-        },
-        file_imports: HashMap::new(),
-        stats: GraphStats {
-            node_count: 5,
-            edge_count: 0,
-            file_count: 0,
-            import_count: 0,
-            scc_count: 0,
-            max_depth: 0,
-            avg_dependencies: 0.0,
-        },
-    };
-
-    // Create minimal symbol storage (need a Storage implementation)
+    // Load real symbol storage and dependency graph from the database
     let storage_path = db_path.join("storage");
     let file_storage = create_file_storage(
         storage_path
@@ -642,7 +604,32 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
     )
     .await?;
 
+    // Create symbol storage and load existing symbols
     let symbol_storage = SymbolStorage::new(Box::new(file_storage)).await?;
+
+    // Load statistics to check if we have data
+    let stats = symbol_storage.get_stats();
+    let relationships_count = symbol_storage.get_relationships_count();
+    println!(
+        "📊 Loaded symbol storage: {} symbols, {} relationships",
+        stats.total_symbols, relationships_count
+    );
+
+    // If no symbols exist, warn the user they need to run git ingestion first
+    if stats.total_symbols == 0 {
+        println!("⚠️  No symbols found in database. Run 'git-ingest' command first to populate symbol data.");
+        println!(
+            "   Example: cargo run --features tree-sitter-parsing -- ingest-repo /path/to/repo"
+        );
+    }
+
+    // Build dependency graph from existing symbol relationships
+    let dependency_graph = symbol_storage.to_dependency_graph().await?;
+    let graph_stats = &dependency_graph.stats;
+    println!(
+        "🔗 Loaded dependency graph: {} nodes, {} edges",
+        graph_stats.node_count, graph_stats.edge_count
+    );
 
     Ok(RelationshipQueryEngine::new(
         dependency_graph,
@@ -1000,8 +987,37 @@ async fn main() -> Result<()> {
                 });
 
                 // Create ingester and run ingestion with progress
-                let ingester = RepositoryIngester::new(config);
+                let ingester = RepositoryIngester::new(config.clone());
                 let mut storage = db.storage.lock().await;
+
+                #[cfg(feature = "tree-sitter-parsing")]
+                let result = if config.options.extract_symbols {
+                    // Create separate storage for symbol extraction
+                    let symbol_storage_path = cli.db_path.join("symbol_storage");
+                    std::fs::create_dir_all(&symbol_storage_path)?;
+                    let symbol_storage_backend = create_file_storage(
+                        symbol_storage_path.to_str().ok_or_else(|| {
+                            anyhow::anyhow!("Invalid symbol storage path: {:?}", symbol_storage_path)
+                        })?,
+                        Some(1000),
+                    )
+                    .await?;
+
+                    let mut symbol_storage = kotadb::symbol_storage::SymbolStorage::new(Box::new(symbol_storage_backend)).await?;
+                    let mut code_parser = kotadb::parsing::CodeParser::new()?;
+
+                    ingester.ingest_with_symbols(
+                        &repo_path,
+                        &mut **storage,
+                        Some(progress_callback),
+                        &mut symbol_storage,
+                        &mut code_parser,
+                    ).await?
+                } else {
+                    ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?
+                };
+
+                #[cfg(not(feature = "tree-sitter-parsing"))]
                 let result = ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?;
 
                 progress_bar.finish_with_message("✅ Ingestion complete");
@@ -1103,6 +1119,9 @@ async fn main() -> Result<()> {
                 println!("   Documents created: {}", result.documents_created);
                 println!("   Files ingested: {}", result.files_ingested);
                 println!("   Commits ingested: {}", result.commits_ingested);
+                if result.symbols_extracted > 0 {
+                    println!("   Symbols extracted: {} from {} files", result.symbols_extracted, result.files_with_symbols);
+                }
                 if result.errors > 0 {
                     println!("   ⚠️ Errors encountered: {}", result.errors);
                 }

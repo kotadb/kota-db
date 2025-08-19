@@ -74,6 +74,8 @@ pub struct IngestionOptions {
     pub include_file_contents: bool,
     /// Include commit history
     pub include_commit_history: bool,
+    /// Extract symbols from source code files during ingestion
+    pub extract_symbols: bool,
     /// Maximum file size to ingest (in bytes)
     pub max_file_size: usize,
     /// File extensions to include (empty = all)
@@ -93,6 +95,7 @@ impl Default for IngestionOptions {
         Self {
             include_file_contents: true,
             include_commit_history: true,
+            extract_symbols: true, // Enable symbol extraction by default
             max_file_size: 10 * 1024 * 1024, // 10MB
             include_extensions: vec![],
             exclude_extensions: vec![
@@ -127,6 +130,7 @@ mod tests {
         let options = IngestionOptions::default();
         assert!(options.include_file_contents);
         assert!(options.include_commit_history);
+        assert!(options.extract_symbols);
         assert_eq!(options.max_file_size, 10 * 1024 * 1024);
         assert!(!options.exclude_extensions.is_empty());
     }
