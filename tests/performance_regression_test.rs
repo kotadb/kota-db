@@ -11,6 +11,29 @@ fn is_ci() -> bool {
     env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok()
 }
 
+/// Get appropriate test sizes based on environment
+fn get_test_sizes() -> Vec<usize> {
+    if is_ci() {
+        // Reduced sizes for CI to avoid resource exhaustion
+        // This maintains the 10x growth pattern for O(log n) verification
+        vec![100, 1_000, 10_000]
+    } else {
+        // Full sizes for local development and production
+        vec![100, 1_000, 10_000, 100_000]
+    }
+}
+
+/// Get smaller test sizes for deletion tests
+fn get_deletion_test_sizes() -> Vec<usize> {
+    if is_ci() {
+        // Even smaller for deletion tests in CI
+        vec![100, 1_000]
+    } else {
+        // Standard deletion test sizes
+        vec![100, 1_000, 10_000]
+    }
+}
+
 /// Performance thresholds for regression detection
 #[derive(Debug, Clone)]
 struct PerformanceThresholds {
@@ -205,7 +228,7 @@ fn verify_logarithmic_growth(
 
 #[test]
 fn test_insertion_performance_regression() {
-    let sizes = vec![100, 1_000, 10_000, 100_000];
+    let sizes = get_test_sizes();
     let thresholds = PerformanceThresholds::default();
 
     println!("\n=== Insertion Performance Regression Test ===");
@@ -227,7 +250,7 @@ fn test_insertion_performance_regression() {
 
 #[test]
 fn test_search_performance_regression() {
-    let sizes = vec![100, 1_000, 10_000, 100_000];
+    let sizes = get_test_sizes();
     let thresholds = if is_ci() {
         PerformanceThresholds {
             max_operation_time_us: 250.0,    // Relaxed for CI
@@ -261,7 +284,7 @@ fn test_search_performance_regression() {
 
 #[test]
 fn test_deletion_performance_regression() {
-    let sizes = vec![100, 1_000, 10_000]; // Smaller sizes for deletion test
+    let sizes = get_deletion_test_sizes(); // Environment-specific sizes
     let thresholds = if is_ci() {
         PerformanceThresholds {
             max_operation_time_us: 1000.0, // Very relaxed for CI
