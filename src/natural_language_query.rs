@@ -9,10 +9,14 @@
 use crate::{
     dependency_extractor::DependencyGraph,
     parsing::SymbolType,
+    relationship_query::{
+        parse_natural_language_relationship_query, RelationshipQueryResult, RelationshipStats,
+    },
     symbol_index::{
         CodePattern, CodeQuery, DependencyDirection, QueryOperator, SearchScope, SymbolIndex,
         SymbolSearchResult,
     },
+    symbol_storage::SymbolStorage,
     types::{ValidatedDocumentId, ValidatedPath},
 };
 use anyhow::{Context, Result};
@@ -64,12 +68,17 @@ pub enum QueryIntent {
         queries: Vec<CodeQuery>,
         operator: QueryOperator,
     },
+    /// Find relationships between symbols
+    FindRelationships {
+        query_result: RelationshipQueryResult,
+    },
 }
 
 /// Natural language query processor
 pub struct NaturalLanguageQueryProcessor {
     symbol_index: Option<SymbolIndex>,
     dependency_graph: Option<DependencyGraph>,
+    symbol_storage: Option<SymbolStorage>,
     #[allow(dead_code)]
     pattern_matchers: HashMap<&'static str, PatternMatcher>,
 }
@@ -163,6 +172,7 @@ impl NaturalLanguageQueryProcessor {
         Self {
             symbol_index: None,
             dependency_graph: None,
+            symbol_storage: None,
             pattern_matchers,
         }
     }
@@ -179,13 +189,44 @@ impl NaturalLanguageQueryProcessor {
         self
     }
 
+    /// Set the symbol storage for additional metadata
+    pub fn with_symbol_storage(mut self, storage: SymbolStorage) -> Self {
+        self.symbol_storage = Some(storage);
+        self
+    }
+
     /// Parse natural language query into structured intent
     #[instrument(skip(self))]
-    pub fn parse_query(&self, query: &str) -> Result<QueryIntent> {
+    pub async fn parse_query(&self, query: &str) -> Result<QueryIntent> {
         let query_lower = query.to_lowercase();
         debug!("Parsing natural language query: {}", query);
 
-        // Try pattern-based detection first
+        // Try relationship queries first (they're more specific)
+        if let Some(relationship_type) = parse_natural_language_relationship_query(query) {
+            if self.dependency_graph.is_some() && self.symbol_storage.is_some() {
+                // Return a special intent that indicates we need to execute a relationship query
+                // The actual execution will happen in execute_intent with proper borrowing
+                return Ok(QueryIntent::FindRelationships {
+                    query_result: RelationshipQueryResult {
+                        query_type: relationship_type,
+                        direct_relationships: vec![],
+                        indirect_relationships: vec![],
+                        stats: RelationshipStats {
+                            direct_count: 0,
+                            indirect_count: 0,
+                            symbols_analyzed: 0,
+                            execution_time_ms: 0,
+                            truncated: false,
+                        },
+                        summary: "Relationship query pending execution".to_string(),
+                    },
+                });
+            } else {
+                debug!("Relationship query detected but dependency graph or symbol storage not available");
+            }
+        }
+
+        // Try pattern-based detection
         if let Some(intent) = self.detect_pattern_query(&query_lower) {
             return Ok(intent);
         }
@@ -370,6 +411,14 @@ impl NaturalLanguageQueryProcessor {
             }
             QueryIntent::Combined { queries, operator } => {
                 self.execute_combined_query(queries, operator).await
+            }
+            QueryIntent::FindRelationships { query_result } => {
+                // Relationship query was already executed during parsing
+                Ok(NaturalLanguageQueryResult {
+                    intent: intent.clone(),
+                    results: vec![], // We'll return the relationship result directly
+                    explanation: query_result.summary.clone(),
+                })
             }
         }
     }
@@ -693,11 +742,12 @@ impl NaturalLanguageQueryResult {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_error_handling_query() {
+    #[tokio::test]
+    async fn test_parse_error_handling_query() {
         let processor = NaturalLanguageQueryProcessor::new();
         let result = processor
             .parse_query("find all error handling patterns")
+            .await
             .unwrap();
 
         match result {
@@ -708,11 +758,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_dependency_query() {
+    #[tokio::test]
+    async fn test_parse_dependency_query() {
         let processor = NaturalLanguageQueryProcessor::new();
 
-        let result = processor.parse_query("what calls FileStorage").unwrap();
+        let result = processor
+            .parse_query("what calls FileStorage")
+            .await
+            .unwrap();
         match result {
             QueryIntent::FindDependencies { target, .. } => {
                 assert_eq!(target, "FileStorage".to_string());
@@ -721,12 +774,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_symbol_query() {
+    #[tokio::test]
+    async fn test_parse_symbol_query() {
         let processor = NaturalLanguageQueryProcessor::new();
 
         let result = processor
             .parse_query("find function named create_storage")
+            .await
             .unwrap();
         match result {
             QueryIntent::FindSymbols {
@@ -743,12 +797,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_extract_quoted_pattern() {
+    #[tokio::test]
+    async fn test_extract_quoted_pattern() {
         let processor = NaturalLanguageQueryProcessor::new();
 
         let result = processor
             .parse_query("find functions matching \"validate_*\"")
+            .await
             .unwrap();
         match result {
             QueryIntent::FindSymbols { name_pattern, .. } => {

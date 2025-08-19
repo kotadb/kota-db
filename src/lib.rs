@@ -46,6 +46,10 @@ pub mod dependency_extractor;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod natural_language_query;
 
+// Relationship query interface for dependency graph navigation
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod relationship_query;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
