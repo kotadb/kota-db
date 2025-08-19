@@ -107,13 +107,15 @@ The release process automatically:
 cargo build
 cargo build --release  # Production build
 
-# Run the main server with configuration
-cargo run -- --config kotadb-dev.toml
+# Run the main binary with custom database path
+cargo run --bin kotadb -- -d ./kota-db-data stats    # Show database statistics
+cargo run --bin kotadb -- -d ./kota-db-data search "rust"   # Full-text search (trigram index)
+cargo run --bin kotadb -- -d ./kota-db-data search "*"      # Wildcard search (primary index)
 
-# Run with specific commands
-cargo run stats              # Show database statistics
-cargo run search "rust"      # Full-text search (trigram index)
-cargo run search "*"         # Wildcard search (primary index)
+# Repository ingestion with symbol extraction
+cargo run --bin kotadb -- -d ./kota-db-data ingest-repo .   # Default: extracts symbols
+cargo run --bin kotadb -- -d ./kota-db-data ingest-repo . --no-symbols  # Skip symbol extraction
+cargo run --bin kotadb -- -d ./kota-db-data symbol-stats    # Check extracted symbols
 
 # Development server with auto-reload
 just dev                     # Uses cargo watch for auto-reload
@@ -240,12 +242,13 @@ Model Context Protocol server for LLM integration:
 
 ### Dogfooding for Validation
 When working on search, indexing, or git features, test on KotaDB itself:
-- **Create temporary config**: Copy existing config to `kotadb-dogfood.toml`
-- **Use separate data**: Set data directory to `data/analysis/` in config
-- **Test real complexity**: `cargo run -- --config kotadb-dogfood.toml git-ingest .`
+- **Use separate data directory**: Create a dedicated directory for analysis
+- **Test real complexity**: `cargo run --bin kotadb -- -d ./data/analysis ingest-repo .`
+- **Validate symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
+- **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
 - **Validate your changes**: Run searches and performance tests on actual codebase
 - **Document issues found**: Create GitHub issues for any problems discovered
-- **Clean up artifacts**: Delete config and analysis data (never commit)
+- **Clean up artifacts**: Delete analysis data directory when done (never commit)
 
 This approach has consistently revealed integration issues missed by unit tests (see issues #191, #196, #184).
 

@@ -215,12 +215,13 @@ just docker-shell      # Connect to development container
 When working on search, indexing, or git features, consider testing on KotaDB itself:
 
 ### Quick Setup
-1. **Create temporary config**: Copy `kotadb-dev.toml` to `kotadb-dogfood.toml`
-2. **Change data directory**: Set data path to `data/analysis/` in the config
-3. **Test on real codebase**: `cargo run -- --config kotadb-dogfood.toml git-ingest .`
-4. **Validate functionality**: Run searches and queries to test your changes
-5. **Document findings**: Create GitHub issues for any problems discovered
-6. **Clean up**: Delete config and data directory when done
+1. **Use separate data directory**: Create `data/analysis/` for dogfooding tests
+2. **Test on real codebase**: `cargo run --bin kotadb -- -d ./data/analysis ingest-repo .`
+3. **Verify symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
+4. **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
+5. **Validate functionality**: Run searches and queries to test your changes
+6. **Document findings**: Create GitHub issues for any problems discovered
+7. **Clean up**: Delete analysis data directory when done
 
 ### Why Dogfood?
 Real-world testing on KotaDB's own codebase consistently reveals integration issues that unit tests miss:
