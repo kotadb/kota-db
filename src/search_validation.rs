@@ -571,8 +571,17 @@ async fn validate_index_document_coverage(
     }
 
     // Get document IDs from indices with configurable limits
-    let search_limit = std::cmp::min(report.config.max_search_results, 1000);
+    // Use the actual storage count to ensure we can validate all documents
+    let search_limit = std::cmp::max(storage_docs.len(), report.config.max_search_results);
     let wildcard_query = QueryBuilder::new().with_limit(search_limit)?.build()?;
+
+    // Add warning if we're using a very high limit
+    if search_limit > 5000 {
+        report.add_warning(format!(
+            "Using high search limit ({}) for comprehensive coverage validation. This may impact performance.",
+            search_limit
+        ));
+    }
 
     let primary_ids: HashSet<ValidatedDocumentId> = primary_index
         .search(&wildcard_query)
