@@ -26,8 +26,8 @@ use uuid::Uuid;
 pub struct RelationshipQueryEngine {
     /// The dependency graph containing all code relationships
     dependency_graph: DependencyGraph,
-    /// Symbol storage for additional metadata (reserved for future use)
-    #[allow(dead_code)]
+    /// Symbol storage for additional metadata and symbol management
+    #[allow(dead_code)] // Will be used in future enhancements
     symbol_storage: SymbolStorage,
 }
 

@@ -97,6 +97,36 @@ pub struct SymbolIndexStats {
     pub last_updated: DateTime<Utc>,
 }
 
+/// Statistics about the dependency graph
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyGraphStats {
+    /// Total number of symbols
+    pub total_symbols: usize,
+    /// Total number of relationships
+    pub total_relationships: usize,
+    /// Number of symbols that have dependencies
+    pub symbols_with_dependencies: usize,
+    /// Number of symbols that have dependents
+    pub symbols_with_dependents: usize,
+    /// Count of each relationship type
+    pub relationship_type_counts: HashMap<String, usize>,
+}
+
+/// Analysis results for the dependency graph
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyAnalysis {
+    /// Circular dependency chains detected
+    pub cycles: Vec<Vec<Uuid>>,
+    /// Symbols with no relationships (potential dead code)
+    pub orphaned_symbols: Vec<Uuid>,
+    /// Symbols with high coupling (many relationships)
+    pub highly_coupled_symbols: Vec<(Uuid, usize)>,
+    /// Total symbols analyzed
+    pub total_symbols: usize,
+    /// Total relationships analyzed
+    pub total_relationships: usize,
+}
+
 /// Configuration for symbol storage
 pub struct SymbolStorageConfig {
     /// Maximum number of symbols to keep in memory (default: 100,000)
@@ -420,15 +450,243 @@ impl SymbolStorage {
         // For imports, extract the imported module/symbol
         if symbol.symbol_type == SymbolType::Import {
             // Parse import statement to extract dependency
-            // This is a simplified version - real implementation would parse properly
             if let Some(import_path) = self.parse_import_statement(&symbol.text) {
                 deps.push(import_path);
             }
         }
 
-        // TODO: Extract function calls, type references, etc.
+        // Extract function calls, type references, and other dependencies from symbol text
+        deps.extend(self.extract_code_dependencies(&symbol.text, &symbol.symbol_type));
 
         deps
+    }
+
+    /// Extract dependencies from code content (function calls, type references, etc.)
+    fn extract_code_dependencies(&self, text: &str, symbol_type: &SymbolType) -> Vec<String> {
+        let mut deps = Vec::new();
+
+        // Skip import symbols as they're handled separately
+        if *symbol_type == SymbolType::Import {
+            return deps;
+        }
+
+        // Extract function calls (basic pattern matching)
+        deps.extend(self.extract_function_calls(text));
+
+        // Extract type references
+        deps.extend(self.extract_type_references(text));
+
+        // Extract macro usage (for Rust)
+        deps.extend(self.extract_macro_usage(text));
+
+        // Remove duplicates and clean up
+        deps.sort();
+        deps.dedup();
+        deps
+    }
+
+    /// Extract function calls from code text
+    fn extract_function_calls(&self, text: &str) -> Vec<String> {
+        let mut calls = Vec::new();
+
+        // Pattern for function calls: identifier(
+        // This is a simple regex-like approach - could be enhanced with proper parsing
+        let lines: Vec<&str> = text.lines().collect();
+
+        for line in lines {
+            let trimmed = line.trim();
+
+            // Skip comments and empty lines
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.is_empty() {
+                continue;
+            }
+
+            // Look for patterns like: function_name( or module::function(
+            if let Some(call) = self.extract_call_from_line(trimmed) {
+                calls.push(call);
+            }
+        }
+
+        calls
+    }
+
+    /// Extract a single function call from a line of code
+    fn extract_call_from_line(&self, line: &str) -> Option<String> {
+        // Look for patterns ending with '('
+        if let Some(paren_pos) = line.find('(') {
+            let before_paren = &line[..paren_pos];
+
+            // Find the last word/identifier before the parenthesis
+            if let Some(last_space) = before_paren.rfind([' ', '\t', '=', '{', ';', ',', '!']) {
+                let potential_call = &before_paren[last_space + 1..];
+                if self.is_valid_identifier(potential_call) {
+                    return Some(potential_call.to_string());
+                }
+            } else if self.is_valid_identifier(before_paren) {
+                return Some(before_paren.to_string());
+            }
+        }
+        None
+    }
+
+    /// Extract type references from code text  
+    fn extract_type_references(&self, text: &str) -> Vec<String> {
+        let mut types = Vec::new();
+
+        // Look for type annotations and declarations
+        let lines: Vec<&str> = text.lines().collect();
+
+        for line in lines {
+            let trimmed = line.trim();
+
+            // Skip comments
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                continue;
+            }
+
+            // Extract types from various patterns
+            types.extend(self.extract_types_from_line(trimmed));
+        }
+
+        types
+    }
+
+    /// Extract type references from a single line
+    fn extract_types_from_line(&self, line: &str) -> Vec<String> {
+        let mut types = Vec::new();
+
+        // Rust type patterns: : Type, -> Type, <Type>, Vec<Type>
+        if line.contains(':') {
+            // Variable declarations: let x: Type
+            if let Some(colon_pos) = line.find(':') {
+                let after_colon = &line[colon_pos + 1..];
+                if let Some(type_name) = self.extract_type_from_annotation(after_colon) {
+                    types.push(type_name);
+                }
+            }
+        }
+
+        // Return types: -> Type
+        if line.contains("->") {
+            if let Some(arrow_pos) = line.find("->") {
+                let after_arrow = &line[arrow_pos + 2..];
+                if let Some(type_name) = self.extract_type_from_annotation(after_arrow) {
+                    types.push(type_name);
+                }
+            }
+        }
+
+        types
+    }
+
+    /// Extract type name from a type annotation
+    fn extract_type_from_annotation(&self, annotation: &str) -> Option<String> {
+        let trimmed = annotation.trim();
+
+        // Handle generic types like Vec<T> - extract the base type
+        if let Some(generic_pos) = trimmed.find('<') {
+            let base_type = &trimmed[..generic_pos];
+            if self.is_valid_identifier(base_type) {
+                return Some(base_type.to_string());
+            }
+        }
+
+        // Simple type reference
+        let first_word = trimmed.split_whitespace().next().unwrap_or("");
+        let clean_type = first_word.trim_end_matches([',', ';', '{', ')', '}']);
+
+        if self.is_valid_identifier(clean_type) && !self.is_primitive_type(clean_type) {
+            Some(clean_type.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Extract macro usage from code text (Rust-specific)
+    fn extract_macro_usage(&self, text: &str) -> Vec<String> {
+        let mut macros = Vec::new();
+
+        let lines: Vec<&str> = text.lines().collect();
+
+        for line in lines {
+            let trimmed = line.trim();
+
+            // Look for macro calls: macro_name!
+            if let Some(macro_name) = self.extract_macro_from_line(trimmed) {
+                macros.push(macro_name);
+            }
+        }
+
+        macros
+    }
+
+    /// Extract macro call from a line
+    fn extract_macro_from_line(&self, line: &str) -> Option<String> {
+        if let Some(excl_pos) = line.find('!') {
+            let before_excl = &line[..excl_pos];
+
+            // Find the macro name before the !
+            if let Some(last_space) = before_excl.rfind([' ', '\t', '(', '{', ';']) {
+                let potential_macro = &before_excl[last_space + 1..];
+                if self.is_valid_identifier(potential_macro) {
+                    return Some(potential_macro.to_string());
+                }
+            } else if self.is_valid_identifier(before_excl) {
+                return Some(before_excl.to_string());
+            }
+        }
+        None
+    }
+
+    /// Check if a string is a valid identifier
+    fn is_valid_identifier(&self, s: &str) -> bool {
+        if s.is_empty() {
+            return false;
+        }
+
+        // Must start with letter or underscore
+        let first_char = s.chars().next().unwrap();
+        if !first_char.is_alphabetic() && first_char != '_' {
+            return false;
+        }
+
+        // Rest can be alphanumeric, underscore, or ::
+        s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+    }
+
+    /// Check if a type is a primitive type that we don't need to track
+    fn is_primitive_type(&self, type_name: &str) -> bool {
+        matches!(
+            type_name,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "f32"
+                | "f64"
+                | "bool"
+                | "char"
+                | "str"
+                | "String"
+                | "Option"
+                | "Result"
+                | "Vec"
+                | "HashMap"
+                | "int"
+                | "float"
+                | "string"
+                | "boolean"
+                | "void"
+                | "null"
+        )
     }
 
     /// Parse an import statement to extract the imported path
@@ -590,12 +848,366 @@ impl SymbolStorage {
         Ok(())
     }
 
+    /// Build dependency graph by analyzing relationships between all symbols
+    pub async fn build_dependency_graph(&mut self) -> Result<()> {
+        info!(
+            "Building dependency graph from {} symbols",
+            self.symbol_index.len()
+        );
+
+        let mut new_relationships = Vec::new();
+        let symbol_ids: Vec<Uuid> = self.symbol_index.keys().cloned().collect();
+
+        for symbol_id in symbol_ids {
+            let symbol = match self.symbol_index.get(&symbol_id) {
+                Some(s) => s.clone(), // Clone to avoid borrowing issues
+                None => continue,
+            };
+
+            // Build relationships for this symbol
+            let relationships = self.build_relationships_for_symbol(&symbol).await?;
+            new_relationships.extend(relationships);
+        }
+
+        // Add all new relationships
+        for relation in new_relationships {
+            self.add_relationship(relation)?;
+        }
+
+        info!(
+            "Built dependency graph with {} relationships",
+            self.relationships.len()
+        );
+        Ok(())
+    }
+
+    /// Build relationships for a single symbol based on its dependencies
+    async fn build_relationships_for_symbol(
+        &self,
+        symbol: &SymbolEntry,
+    ) -> Result<Vec<SymbolRelation>> {
+        let mut relationships = Vec::new();
+
+        // Process each dependency string to find actual symbol relationships
+        for dependency in &symbol.dependencies {
+            if let Some(target_ids) = self.find_symbols_by_name_pattern(dependency) {
+                for target_id in target_ids {
+                    // Determine relationship type based on symbol types and context
+                    let relation_type =
+                        self.determine_relationship_type(symbol, dependency, &target_id);
+
+                    let relation = SymbolRelation {
+                        from_id: symbol.id,
+                        to_id: target_id,
+                        relation_type,
+                        metadata: self.build_relationship_metadata(symbol, dependency),
+                    };
+
+                    relationships.push(relation);
+                }
+            }
+        }
+
+        Ok(relationships)
+    }
+
+    /// Find symbols that match a dependency name pattern
+    fn find_symbols_by_name_pattern(&self, pattern: &str) -> Option<Vec<Uuid>> {
+        let mut matches = Vec::new();
+
+        // Try exact name match first
+        if let Some(ids) = self.name_index.get(pattern) {
+            matches.extend(ids.clone());
+        }
+
+        // Try to match against symbol names (for function calls, type references)
+        for (id, symbol) in &self.symbol_index {
+            // Check if symbol name matches the dependency
+            if symbol.symbol.name == pattern {
+                matches.push(*id);
+            }
+
+            // Check if the dependency is a qualified reference to this symbol
+            if symbol.qualified_name.ends_with(&format!("::{}", pattern)) {
+                matches.push(*id);
+            }
+
+            // For module/namespace references
+            if pattern.contains("::") {
+                let parts: Vec<&str> = pattern.split("::").collect();
+                if let Some(last_part) = parts.last() {
+                    if symbol.symbol.name == *last_part {
+                        matches.push(*id);
+                    }
+                }
+            }
+        }
+
+        if matches.is_empty() {
+            None
+        } else {
+            // Remove duplicates
+            matches.sort();
+            matches.dedup();
+            Some(matches)
+        }
+    }
+
+    /// Determine the type of relationship based on context
+    fn determine_relationship_type(
+        &self,
+        from_symbol: &SymbolEntry,
+        dependency: &str,
+        _to_id: &Uuid,
+    ) -> RelationType {
+        // If the from_symbol is an import, this is an import relationship
+        if from_symbol.symbol.symbol_type == SymbolType::Import {
+            return RelationType::Imports;
+        }
+
+        // Check the symbol text to determine relationship type
+        let text = &from_symbol.symbol.text;
+
+        // Look for inheritance patterns
+        if (text.contains("extends") || text.contains("impl")) && text.contains(dependency) {
+            if text.contains("extends") {
+                return RelationType::Extends;
+            } else if text.contains("impl") {
+                return RelationType::Implements;
+            }
+        }
+
+        // Look for function call patterns
+        if text.contains(&format!("{}(", dependency)) || text.contains(&format!("{} (", dependency))
+        {
+            return RelationType::Calls;
+        }
+
+        // Default to a general usage relationship
+        RelationType::Custom("Uses".to_string())
+    }
+
+    /// Build metadata for a relationship
+    fn build_relationship_metadata(
+        &self,
+        from_symbol: &SymbolEntry,
+        dependency: &str,
+    ) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+
+        metadata.insert("dependency_name".to_string(), dependency.to_string());
+        metadata.insert(
+            "from_file".to_string(),
+            from_symbol.file_path.to_string_lossy().to_string(),
+        );
+        metadata.insert(
+            "from_line".to_string(),
+            from_symbol.symbol.start_line.to_string(),
+        );
+
+        if let Some(repo) = &from_symbol.repository {
+            metadata.insert("repository".to_string(), repo.clone());
+        }
+
+        metadata
+    }
+
+    /// Get dependency graph statistics
+    pub fn get_dependency_stats(&self) -> DependencyGraphStats {
+        let mut relation_counts = HashMap::new();
+        let mut symbols_with_deps = 0;
+        let mut symbols_with_dependents = 0;
+
+        for relation in &self.relationships {
+            let rel_type = format!("{:?}", relation.relation_type);
+            *relation_counts.entry(rel_type).or_insert(0) += 1;
+        }
+
+        for symbol in self.symbol_index.values() {
+            if !symbol.dependencies.is_empty() {
+                symbols_with_deps += 1;
+            }
+            if !symbol.dependents.is_empty() {
+                symbols_with_dependents += 1;
+            }
+        }
+
+        DependencyGraphStats {
+            total_symbols: self.symbol_index.len(),
+            total_relationships: self.relationships.len(),
+            symbols_with_dependencies: symbols_with_deps,
+            symbols_with_dependents,
+            relationship_type_counts: relation_counts,
+        }
+    }
+
+    /// Find all symbols that depend on a given symbol (reverse dependencies)
+    pub fn find_dependents(&self, target_symbol_id: &Uuid) -> Vec<&SymbolEntry> {
+        let mut dependents = Vec::new();
+
+        for relation in &self.relationships {
+            if relation.to_id == *target_symbol_id {
+                if let Some(dependent_symbol) = self.symbol_index.get(&relation.from_id) {
+                    dependents.push(dependent_symbol);
+                }
+            }
+        }
+
+        dependents
+    }
+
+    /// Find all symbols that a given symbol depends on (forward dependencies)
+    pub fn find_dependencies(&self, source_symbol_id: &Uuid) -> Vec<&SymbolEntry> {
+        let mut dependencies = Vec::new();
+
+        for relation in &self.relationships {
+            if relation.from_id == *source_symbol_id {
+                if let Some(dependency_symbol) = self.symbol_index.get(&relation.to_id) {
+                    dependencies.push(dependency_symbol);
+                }
+            }
+        }
+
+        dependencies
+    }
+
+    /// Perform dependency graph analysis to find cycles, orphans, etc.
+    pub fn analyze_dependency_graph(&self) -> DependencyAnalysis {
+        let cycles = Vec::new();
+        let mut orphaned_symbols = Vec::new();
+        let mut highly_coupled_symbols = Vec::new();
+
+        // Find symbols with no dependencies and no dependents (potential orphans)
+        for (id, symbol) in &self.symbol_index {
+            let has_deps = self.relationships.iter().any(|r| r.from_id == *id);
+            let has_dependents = self.relationships.iter().any(|r| r.to_id == *id);
+
+            if !has_deps && !has_dependents && symbol.symbol.symbol_type != SymbolType::Import {
+                orphaned_symbols.push(*id);
+            }
+        }
+
+        // Find highly coupled symbols (symbols with many relationships)
+        for id in self.symbol_index.keys() {
+            let relationship_count = self
+                .relationships
+                .iter()
+                .filter(|r| r.from_id == *id || r.to_id == *id)
+                .count();
+
+            if relationship_count > 10 {
+                // Threshold for high coupling
+                highly_coupled_symbols.push((*id, relationship_count));
+            }
+        }
+
+        // TODO: Implement cycle detection using DFS
+
+        DependencyAnalysis {
+            cycles,
+            orphaned_symbols,
+            highly_coupled_symbols,
+            total_symbols: self.symbol_index.len(),
+            total_relationships: self.relationships.len(),
+        }
+    }
+
+    /// Convert symbol storage data into a dependency graph structure
+    pub async fn to_dependency_graph(
+        &self,
+    ) -> Result<crate::dependency_extractor::DependencyGraph> {
+        use crate::dependency_extractor::{
+            DependencyEdge, DependencyGraph, GraphStats, SymbolNode,
+        };
+        use petgraph::graph::DiGraph;
+        use std::collections::HashMap;
+
+        let mut graph = DiGraph::new();
+        let mut symbol_to_node = HashMap::new();
+        let mut name_to_symbol = HashMap::new();
+
+        // Add all symbols as nodes
+        for (symbol_id, symbol_entry) in &self.symbol_index {
+            let symbol_node = SymbolNode {
+                symbol_id: *symbol_id,
+                qualified_name: symbol_entry.qualified_name.clone(),
+                symbol_type: symbol_entry.symbol.symbol_type.clone(),
+                file_path: symbol_entry.file_path.clone(),
+                in_degree: 0,  // Will be calculated later
+                out_degree: 0, // Will be calculated later
+            };
+
+            let node_idx = graph.add_node(symbol_node);
+            symbol_to_node.insert(*symbol_id, node_idx);
+            name_to_symbol.insert(symbol_entry.qualified_name.clone(), *symbol_id);
+        }
+
+        // Add relationships as edges
+        for relationship in &self.relationships {
+            if let (Some(&from_node), Some(&to_node)) = (
+                symbol_to_node.get(&relationship.from_id),
+                symbol_to_node.get(&relationship.to_id),
+            ) {
+                let edge = DependencyEdge {
+                    relation_type: relationship.relation_type.clone(),
+                    line_number: 0,   // Not available in current SymbolRelation
+                    column_number: 0, // Not available in current SymbolRelation
+                    context: None,    // Not available in current SymbolRelation
+                };
+                graph.add_edge(from_node, to_node, edge);
+            }
+        }
+
+        // Calculate node degrees
+        for node_idx in graph.node_indices() {
+            let in_degree = graph
+                .edges_directed(node_idx, petgraph::Direction::Incoming)
+                .count();
+            let out_degree = graph
+                .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                .count();
+
+            if let Some(node) = graph.node_weight_mut(node_idx) {
+                node.in_degree = in_degree;
+                node.out_degree = out_degree;
+            }
+        }
+
+        // Calculate statistics
+        let stats = GraphStats {
+            node_count: graph.node_count(),
+            edge_count: graph.edge_count(),
+            file_count: self.file_symbols.len(),
+            import_count: 0, // Not tracked in current implementation
+            scc_count: petgraph::algo::kosaraju_scc(&graph).len(),
+            max_depth: 0, // TODO: Calculate if needed
+            avg_dependencies: if graph.node_count() > 0 {
+                graph.edge_count() as f64 / graph.node_count() as f64
+            } else {
+                0.0
+            },
+        };
+
+        Ok(DependencyGraph {
+            graph,
+            symbol_to_node,
+            name_to_symbol,
+            file_imports: HashMap::new(), // Not implemented in current SymbolStorage
+            stats,
+        })
+    }
+
     /// Get relationships for a symbol
     pub fn get_relationships(&self, symbol_id: &Uuid) -> Vec<&SymbolRelation> {
         self.relationships
             .iter()
             .filter(|r| r.from_id == *symbol_id || r.to_id == *symbol_id)
             .collect()
+    }
+
+    /// Get the total number of relationships
+    pub fn get_relationships_count(&self) -> usize {
+        self.relationships.len()
     }
 
     /// Perform incremental update for a file with atomic rollback on failure
