@@ -22,6 +22,27 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{debug, instrument, warn};
 use uuid::Uuid;
 
+/// Configuration for relationship query engine
+#[derive(Debug, Clone)]
+pub struct RelationshipQueryConfig {
+    /// Maximum depth for transitive queries (default: 5)
+    pub max_depth: usize,
+    /// Maximum number of indirect paths to find (default: 1000)
+    pub max_indirect_paths: usize,
+    /// Maximum number of nodes to visit in a single query (default: 10000)
+    pub max_visited_nodes: usize,
+}
+
+impl Default for RelationshipQueryConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: 5,
+            max_indirect_paths: 1000,
+            max_visited_nodes: 10000,
+        }
+    }
+}
+
 /// Core relationship query engine that operates on dependency graphs
 pub struct RelationshipQueryEngine {
     /// The dependency graph containing all code relationships
@@ -29,6 +50,8 @@ pub struct RelationshipQueryEngine {
     /// Symbol storage for additional metadata and symbol management
     #[allow(dead_code)] // Will be used in future enhancements
     symbol_storage: SymbolStorage,
+    /// Configuration for query limits
+    config: RelationshipQueryConfig,
 }
 
 /// Types of relationship queries supported
@@ -131,11 +154,25 @@ pub struct RelationshipStats {
 }
 
 impl RelationshipQueryEngine {
-    /// Create a new relationship query engine
+    /// Create a new relationship query engine with default configuration
     pub fn new(dependency_graph: DependencyGraph, symbol_storage: SymbolStorage) -> Self {
+        Self::with_config(
+            dependency_graph,
+            symbol_storage,
+            RelationshipQueryConfig::default(),
+        )
+    }
+
+    /// Create a new relationship query engine with custom configuration
+    pub fn with_config(
+        dependency_graph: DependencyGraph,
+        symbol_storage: SymbolStorage,
+        config: RelationshipQueryConfig,
+    ) -> Self {
         Self {
             dependency_graph,
             symbol_storage,
+            config,
         }
     }
 
@@ -273,10 +310,10 @@ impl RelationshipQueryEngine {
             .resolve_symbol_name(target)
             .context("Failed to resolve target symbol")?;
 
-        // Memory and performance limits to prevent excessive resource usage
-        const MAX_DEPTH: usize = 5;
-        const MAX_INDIRECT_PATHS: usize = 1000;
-        const MAX_VISITED_NODES: usize = 10000;
+        // Use configurable limits to prevent excessive resource usage
+        let max_depth = self.config.max_depth;
+        let max_indirect_paths = self.config.max_indirect_paths;
+        let max_visited_nodes = self.config.max_visited_nodes;
 
         // Find direct dependents
         let direct_dependents = self.dependency_graph.find_dependents(symbol_id);
@@ -294,7 +331,7 @@ impl RelationshipQueryEngine {
         }
 
         // Find transitive dependents using BFS with memory limits
-        let mut visited = HashSet::with_capacity(MAX_VISITED_NODES);
+        let mut visited = HashSet::with_capacity(max_visited_nodes);
         let mut queue = VecDeque::new();
 
         // Start with direct dependents
@@ -306,11 +343,11 @@ impl RelationshipQueryEngine {
         while let Some((current_id, path, distance)) = queue.pop_front() {
             // Memory and depth limits
             if visited.contains(&current_id)
-                || distance > MAX_DEPTH
-                || visited.len() >= MAX_VISITED_NODES
-                || indirect_paths.len() >= MAX_INDIRECT_PATHS
+                || distance > max_depth
+                || visited.len() >= max_visited_nodes
+                || indirect_paths.len() >= max_indirect_paths
             {
-                if visited.len() >= MAX_VISITED_NODES || indirect_paths.len() >= MAX_INDIRECT_PATHS
+                if visited.len() >= max_visited_nodes || indirect_paths.len() >= max_indirect_paths
                 {
                     truncated = true;
                 }
@@ -320,14 +357,14 @@ impl RelationshipQueryEngine {
 
             let transitive_dependents = self.dependency_graph.find_dependents(current_id);
             for (transitive_id, _) in transitive_dependents {
-                if !path.contains(&transitive_id) && indirect_paths.len() < MAX_INDIRECT_PATHS {
+                if !path.contains(&transitive_id) && indirect_paths.len() < max_indirect_paths {
                     let mut new_path = path.clone();
                     new_path.push(transitive_id);
 
                     let call_path = self.create_call_path(new_path.clone()).await?;
                     indirect_paths.push(call_path);
 
-                    queue.push_back((transitive_id, new_path, distance + 1));
+                    queue.push_back((transitive_id, new_path, distance.saturating_add(1)));
                 }
             }
         }
@@ -893,7 +930,8 @@ impl RelationshipQueryEngine {
                 if let (Some(&pred_dist), Some(&curr_dist)) =
                     (distances.get(&pred), distances.get(&current))
                 {
-                    if pred_dist + 1 == curr_dist {
+                    // Use saturating arithmetic to prevent overflow
+                    if pred_dist.saturating_add(1) == curr_dist {
                         path.push(pred);
                         current = pred;
                         found_predecessor = true;

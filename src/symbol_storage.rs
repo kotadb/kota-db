@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -191,6 +191,10 @@ pub struct SymbolStorage {
     config: SymbolStorageConfig,
     /// Current estimated memory usage
     estimated_memory_usage: usize,
+    /// LRU queue for symbol eviction - tracks access order
+    lru_queue: VecDeque<Uuid>,
+    /// Track which symbols are in the LRU to avoid duplicates
+    lru_set: HashSet<Uuid>,
 }
 
 impl SymbolStorage {
@@ -213,6 +217,8 @@ impl SymbolStorage {
             repository_files: HashMap::new(),
             config,
             estimated_memory_usage: 0,
+            lru_queue: VecDeque::new(),
+            lru_set: HashSet::new(),
         };
 
         // Load existing symbols from storage
@@ -272,6 +278,9 @@ impl SymbolStorage {
         let mut symbol_ids = Vec::new();
         let mut parent_stack: Vec<(Uuid, usize)> = Vec::new(); // (id, end_line)
 
+        // Maximum nesting depth to prevent stack overflow
+        const MAX_NESTING_DEPTH: usize = 50;
+
         for symbol in parsed_code.symbols {
             // Determine parent based on nesting
             let parent_id = parent_stack
@@ -314,7 +323,7 @@ impl SymbolStorage {
             let symbol_id = entry.id;
             symbol_ids.push(symbol_id);
 
-            // Update stack for nested symbols
+            // Update stack for nested symbols with depth limit
             if matches!(
                 symbol.symbol_type,
                 SymbolType::Function
@@ -323,7 +332,17 @@ impl SymbolStorage {
                     | SymbolType::Module
                     | SymbolType::Enum
             ) {
-                parent_stack.push((symbol_id, symbol.end_line));
+                // Check nesting depth to prevent stack overflow
+                if parent_stack.len() < MAX_NESTING_DEPTH {
+                    parent_stack.push((symbol_id, symbol.end_line));
+                } else {
+                    tracing::warn!(
+                        "Maximum nesting depth ({}) reached at {} in {}. Symbol will be indexed but parent relationship may be incorrect.",
+                        MAX_NESTING_DEPTH,
+                        symbol.name,
+                        file_path.display()
+                    );
+                }
             }
 
             // Clean up stack - remove completed scopes
@@ -362,38 +381,70 @@ impl SymbolStorage {
         Ok(())
     }
 
-    /// Index a symbol in memory for fast lookups with memory limits
+    /// Index a symbol in memory for fast lookups with LRU eviction
     fn index_symbol(&mut self, entry: SymbolEntry) -> Result<()> {
-        // Check memory limits
+        // Check memory limits and evict if necessary
         let entry_size = self.estimate_symbol_size(&entry);
+        let entry_id = entry.id;
 
-        if self.symbol_index.len() >= self.config.max_symbols {
-            tracing::warn!(
-                "Symbol limit reached ({} symbols), skipping indexing",
-                self.config.max_symbols
-            );
-            return Ok(());
-        }
+        // Evict symbols if we're at capacity
+        while self.symbol_index.len() >= self.config.max_symbols
+            || self.estimated_memory_usage + entry_size > self.config.max_memory_bytes
+        {
+            // Evict the least recently used symbol
+            if let Some(evicted_id) = self.lru_queue.pop_front() {
+                self.evict_symbol(evicted_id);
+                self.lru_set.remove(&evicted_id);
 
-        if self.estimated_memory_usage + entry_size > self.config.max_memory_bytes {
-            tracing::warn!(
-                "Memory limit reached ({} bytes), skipping indexing",
-                self.config.max_memory_bytes
-            );
-            return Ok(());
+                tracing::debug!(
+                    "Evicted symbol {} to make room (current: {} symbols, {} bytes)",
+                    evicted_id,
+                    self.symbol_index.len(),
+                    self.estimated_memory_usage
+                );
+            } else {
+                // No symbols to evict, can't proceed
+                tracing::warn!(
+                    "Cannot index symbol: no symbols to evict (symbols: {}, memory: {} bytes)",
+                    self.symbol_index.len(),
+                    self.estimated_memory_usage
+                );
+                return Ok(());
+            }
         }
 
         // Add to name index
         self.name_index
             .entry(entry.qualified_name.clone())
             .or_default()
-            .push(entry.id);
+            .push(entry_id);
 
         // Add to main index
-        self.symbol_index.insert(entry.id, entry);
+        self.symbol_index.insert(entry_id, entry);
         self.estimated_memory_usage += entry_size;
 
+        // Add to LRU tracking
+        self.lru_queue.push_back(entry_id);
+        self.lru_set.insert(entry_id);
+
         Ok(())
+    }
+
+    /// Evict a symbol from the in-memory index
+    fn evict_symbol(&mut self, symbol_id: Uuid) {
+        if let Some(entry) = self.symbol_index.remove(&symbol_id) {
+            // Remove from name index
+            if let Some(ids) = self.name_index.get_mut(&entry.qualified_name) {
+                ids.retain(|&id| id != symbol_id);
+                if ids.is_empty() {
+                    self.name_index.remove(&entry.qualified_name);
+                }
+            }
+
+            // Update memory usage
+            let entry_size = self.estimate_symbol_size(&entry);
+            self.estimated_memory_usage = self.estimated_memory_usage.saturating_sub(entry_size);
+        }
     }
 
     /// Estimate memory usage of a symbol entry
@@ -832,8 +883,20 @@ impl SymbolStorage {
             .unwrap_or_default()
     }
 
-    /// Get symbol by ID
+    /// Get symbol by ID without updating LRU (for read-only access)
     pub fn get_symbol(&self, id: &Uuid) -> Option<&SymbolEntry> {
+        self.symbol_index.get(id)
+    }
+
+    /// Get symbol by ID and update LRU order (requires mutable access)
+    pub fn get_symbol_mut(&mut self, id: &Uuid) -> Option<&SymbolEntry> {
+        // Update LRU order if symbol is in cache
+        if self.lru_set.contains(id) {
+            // Remove from current position
+            self.lru_queue.retain(|&x| x != *id);
+            // Add to back (most recently used)
+            self.lru_queue.push_back(*id);
+        }
         self.symbol_index.get(id)
     }
 
