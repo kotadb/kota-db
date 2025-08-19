@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Critical index synchronization failure during repository ingestion (#248)
+  - Fixed validation false positive showing primary index limited to 1000 documents
+    - Increased query limits from 1000 to 100,000 throughout the codebase
+    - Updated ValidationConfig defaults to handle larger repositories
+  - Fixed trigram index returning 0 documents for wildcard queries
+    - Added support for wildcard queries (empty search terms) in trigram index
+    - Trigram index now returns all indexed documents for validation queries
+  - Added comprehensive test suite to reproduce and validate the fixes
+  - This resolves issues where search validation failed for repositories with >1000 documents
 - Critical trigram index bug where insert() method was not indexing actual document content (#249)
   - Changed insert() to return error directing users to insert_with_content()
   - Fixed unit test to use insert_with_content() for proper content indexing

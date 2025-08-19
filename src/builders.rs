@@ -211,7 +211,10 @@ impl QueryBuilder {
 
     /// Set result limit
     pub fn with_limit(mut self, limit: usize) -> Result<Self> {
-        self.limit = Some(ValidatedLimit::new(limit, 1000)?);
+        // Allow higher limits for operations that need to see all documents
+        // The previous hardcoded limit of 1000 was causing validation failures
+        const MAX_QUERY_LIMIT: usize = 100_000;
+        self.limit = Some(ValidatedLimit::new(limit, MAX_QUERY_LIMIT)?);
         Ok(self)
     }
 

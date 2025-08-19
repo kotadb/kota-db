@@ -29,8 +29,8 @@ pub struct ValidationConfig {
 impl Default for ValidationConfig {
     fn default() -> Self {
         Self {
-            max_documents_check: 1000,
-            max_search_results: 1000,
+            max_documents_check: 10000, // Increased from 1000 to handle larger repositories
+            max_search_results: 10000,  // Increased from 1000 to get accurate index counts
             enable_coverage_checks: true,
             custom_search_terms: vec![
                 "function".to_string(),
@@ -235,8 +235,9 @@ pub async fn validate_post_ingestion_search_with_config(
     }
 
     // Prevent resource exhaustion with reasonable upper bounds
-    const MAX_SAFE_DOCUMENT_CHECK: usize = 10_000;
-    const MAX_SAFE_SEARCH_RESULTS: usize = 5_000;
+    // Increased limits to handle larger repositories (issue #248)
+    const MAX_SAFE_DOCUMENT_CHECK: usize = 100_000;
+    const MAX_SAFE_SEARCH_RESULTS: usize = 100_000;
 
     if config.max_documents_check > MAX_SAFE_DOCUMENT_CHECK {
         return Err(anyhow::anyhow!(
@@ -311,14 +312,16 @@ async fn validate_document_count_consistency(
     let storage_count = storage_docs.len();
 
     // For indices, we'll do a wildcard search to get indexed documents
-    let search_limit = std::cmp::min(report.config.max_search_results, 1000); // Respect API limits
+    // Use a high limit to get accurate counts - we need to see all indexed documents
+    // for proper validation. The default limit of 1000 was causing false positives.
+    let search_limit = std::cmp::max(storage_count, 10000); // Use storage count or 10k, whichever is larger
     let wildcard_query = QueryBuilder::new().with_limit(search_limit)?.build()?;
 
-    // Add warning if we're potentially missing documents due to limits
-    if storage_count > search_limit {
+    // Add warning if we're using a very high limit
+    if search_limit > 5000 {
         report.add_warning(format!(
-            "Storage has {} documents but search limited to {}. Count comparison may be incomplete.",
-            storage_count, search_limit
+            "Using high search limit ({}) for accurate validation. This may impact performance.",
+            search_limit
         ));
     }
 
