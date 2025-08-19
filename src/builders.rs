@@ -234,8 +234,21 @@ impl QueryBuilder {
 
         let limit = self.limit.map(|l| l.get()).unwrap_or(10);
 
-        // Create query with proper tags support
-        let mut query = Query::new(self.text, tags.clone(), None, limit)?;
+        // Check if the text contains wildcards and should be treated as a path pattern
+        let (query_text, path_pattern) = if let Some(ref text) = self.text {
+            if text.contains('*') {
+                // This is a wildcard pattern, use it as path pattern
+                (None, Some(text.clone()))
+            } else {
+                // Regular text search
+                (self.text.clone(), None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Create query with proper support for wildcards and tags
+        let mut query = Query::new(query_text, tags.clone(), path_pattern.clone(), limit)?;
 
         // Set tags properly since Query::new doesn't handle them correctly
         if let Some(tag_strings) = tags {
@@ -243,6 +256,11 @@ impl QueryBuilder {
                 .into_iter()
                 .map(ValidatedTag::new)
                 .collect::<Result<Vec<_>, _>>()?;
+        }
+
+        // Set path_pattern directly if it wasn't handled by Query::new
+        if let Some(pattern) = path_pattern {
+            query.path_pattern = Some(pattern);
         }
 
         Ok(query)
