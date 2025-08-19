@@ -243,7 +243,7 @@ describe('KotaDB Client Builder Integration', () => {
 
       expect(() => builder.limit(0)).toThrow(ValidationError);
       expect(() => builder.limit(-1)).toThrow(ValidationError);
-      expect(() => builder.limit(10001)).toThrow(ValidationError);
+      expect(() => builder.limit(100001)).toThrow(ValidationError); // Updated to match new 100,000 limit from issue #248
 
       expect(() => builder.offset(-1)).toThrow(ValidationError);
       expect(() => builder.offset(-100)).toThrow(ValidationError);

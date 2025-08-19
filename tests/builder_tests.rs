@@ -155,7 +155,7 @@ fn test_query_builder_validation() {
     let result = QueryBuilder::new()
         .with_text("test")
         .unwrap()
-        .with_limit(10000);
+        .with_limit(100001); // Updated to match new 100,000 limit from issue #248
     assert!(result.is_err());
 }
 

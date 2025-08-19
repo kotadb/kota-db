@@ -226,7 +226,7 @@ impl Query {
             search_terms,
             tags: Vec::new(),
             path_pattern: None,
-            limit: ValidatedLimit::new(limit, 1000)?,
+            limit: ValidatedLimit::new(limit, 100_000)?, // Increased from 1000 to handle large repositories
             offset: ValidatedPageId::new(1)?,
         })
     }
@@ -237,7 +237,7 @@ impl Query {
             search_terms: Vec::new(),
             tags: Vec::new(),
             path_pattern: None,
-            limit: ValidatedLimit::new(10, 1000).expect("Default limit values are valid"),
+            limit: ValidatedLimit::new(10, 100_000).expect("Default limit values are valid"),
             offset: ValidatedPageId::new(1).expect("Default page ID is valid"),
         }
     }

@@ -293,8 +293,8 @@ export class QueryBuilder {
     if (limit <= 0) {
       throw new ValidationError('Limit must be positive');
     }
-    if (limit > 10000) {
-      throw new ValidationError('Limit too large (max 10000)');
+    if (limit > 100000) {
+      throw new ValidationError('Limit too large (max 100000)'); // Updated to match new limit from issue #248
     }
     this._limit = limit;
     return this;
