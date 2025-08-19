@@ -318,7 +318,7 @@ class QueryBuilder:
         Raises:
             ValidationError: If limit is invalid
         """
-        max_limit = 10000
+        max_limit = 100000  # Updated to match new limit from issue #248
         if limit <= 0:
             raise ValidationError("Limit must be positive")
         if limit > max_limit:
