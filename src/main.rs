@@ -124,6 +124,14 @@ enum Commands {
         /// Maximum file size to ingest (in MB)
         #[arg(long, default_value = "10")]
         max_file_size_mb: usize,
+        /// Extract code symbols using tree-sitter parsing
+        #[cfg(feature = "tree-sitter-parsing")]
+        #[arg(long)]
+        extract_symbols: Option<bool>,
+        /// Skip symbol extraction (convenience flag)
+        #[cfg(feature = "tree-sitter-parsing")]
+        #[arg(long, conflicts_with = "extract_symbols")]
+        no_symbols: bool,
     },
 
     /// Find symbols that call or use a target symbol - reverse dependency analysis
@@ -146,6 +154,10 @@ enum Commands {
         /// Natural language query about relationships (e.g., 'what calls FileStorage?', 'what would break if I change StorageError?')
         query: String,
     },
+
+    /// Display statistics about extracted symbols
+    #[cfg(feature = "tree-sitter-parsing")]
+    SymbolStats,
 }
 
 struct Database {
@@ -595,7 +607,8 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
     println!("🔧 Loading relationship query engine with real symbol data...");
 
     // Load real symbol storage and dependency graph from the database
-    let storage_path = db_path.join("storage");
+    // Note: Symbols are stored in symbol_storage subdirectory, not storage
+    let storage_path = db_path.join("symbol_storage");
     let file_storage = create_file_storage(
         storage_path
             .to_str()
@@ -947,6 +960,10 @@ async fn main() -> Result<()> {
                 include_files,
                 include_commits,
                 max_file_size_mb,
+                #[cfg(feature = "tree-sitter-parsing")]
+                extract_symbols,
+                #[cfg(feature = "tree-sitter-parsing")]
+                no_symbols,
             } => {
                 use indicatif::{ProgressBar, ProgressStyle};
                 use kotadb::git::types::IngestionOptions;
@@ -954,13 +971,36 @@ async fn main() -> Result<()> {
 
                 println!("🔄 Ingesting git repository: {:?}", repo_path);
 
+                // Determine if symbols should be extracted
+                #[cfg(feature = "tree-sitter-parsing")]
+                let should_extract_symbols = if no_symbols {
+                    println!("⚠️  Symbol extraction disabled via --no-symbols flag");
+                    false
+                } else if let Some(extract) = extract_symbols {
+                    if extract {
+                        println!("✅ Symbol extraction enabled via --extract-symbols flag");
+                    } else {
+                        println!("⚠️  Symbol extraction disabled via --extract-symbols=false");
+                    }
+                    extract
+                } else {
+                    println!("✅ Symbol extraction enabled (default with tree-sitter feature)");
+                    true // Default to true when tree-sitter is available
+                };
+
                 // Configure ingestion options
-                let options = IngestionOptions {
+                #[allow(unused_mut)]
+                let mut options = IngestionOptions {
                     include_file_contents: include_files,
                     include_commit_history: include_commits,
                     max_file_size: max_file_size_mb * 1024 * 1024,
                     ..Default::default()
                 };
+
+                #[cfg(feature = "tree-sitter-parsing")]
+                {
+                    options.extract_symbols = should_extract_symbols;
+                }
 
                 let config = IngestionConfig {
                     path_prefix: prefix,
@@ -1180,6 +1220,70 @@ async fn main() -> Result<()> {
                     println!("   • 'what calls FileStorage?'");
                     println!("   • 'what would break if I change StorageError?'");
                     println!("   • 'find unused functions'");
+                }
+            }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::SymbolStats => {
+                println!("📊 Symbol Storage Statistics");
+                println!("═══════════════════════════════");
+
+                // Check if symbol storage exists
+                let symbol_storage_path = cli.db_path.join("symbol_storage");
+                if !symbol_storage_path.exists() {
+                    println!("❌ No symbol storage found at {:?}", symbol_storage_path);
+                    println!("💡 Run 'ingest-repo' with symbol extraction enabled to create symbol storage");
+                    return Ok(());
+                }
+
+                // Load symbol storage
+                let storage_path = symbol_storage_path.join("storage");
+                let file_storage = create_file_storage(
+                    storage_path
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid storage path: {:?}", storage_path))?,
+                    Some(100),
+                )
+                .await?;
+
+                // Create symbol storage and get stats
+                let symbol_storage = SymbolStorage::new(Box::new(file_storage)).await?;
+                let stats = symbol_storage.get_stats();
+                let dep_stats = symbol_storage.get_dependency_stats();
+
+                println!("\n📦 Symbol Storage Location:");
+                println!("   Path: {:?}", symbol_storage_path);
+
+                println!("\n🔤 Symbol Statistics:");
+                println!("   Total symbols: {}", stats.total_symbols);
+                println!("   Total files: {}", stats.file_count);
+
+                if !stats.symbols_by_type.is_empty() {
+                    println!("\n📝 Symbols by Type:");
+                    for (symbol_type, count) in &stats.symbols_by_type {
+                        println!("   {}: {}", symbol_type, count);
+                    }
+                }
+
+                if !stats.symbols_by_language.is_empty() {
+                    println!("\n🌐 Symbols by Language:");
+                    for (language, count) in &stats.symbols_by_language {
+                        println!("   {}: {}", language, count);
+                    }
+                }
+
+                println!("\n🔗 Dependency Graph:");
+                println!("   Total relationships: {}", dep_stats.total_relationships);
+                println!("   Total symbols in graph: {}", dep_stats.total_symbols);
+
+                if stats.total_symbols == 0 {
+                    println!("\n💡 Tip: Run 'ingest-repo' on a repository to extract symbols");
+                } else {
+                    println!("\n✅ Symbol storage is ready for relationship queries!");
+                    println!("💡 Try commands like:");
+                    println!("   • find-callers <symbol>");
+                    println!("   • impact-analysis <symbol>");
+                    println!("   • relationship-query \"what calls X?\"");
                 }
             }
         }
