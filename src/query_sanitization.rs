@@ -41,9 +41,9 @@ static PATH_TRAVERSAL_PATTERNS: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile path traversal regex")
 });
 
-/// LDAP injection patterns to detect and block
+/// LDAP injection patterns to detect and block (excluding asterisk for wildcard support)
 static LDAP_INJECTION_PATTERNS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[*()\\,=]").expect("Failed to compile LDAP injection regex"));
+    Lazy::new(|| Regex::new(r"[()\\,=]").expect("Failed to compile LDAP injection regex"));
 
 /// Common stop words that might be filtered in certain contexts
 static STOP_WORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
@@ -139,7 +139,9 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
             .to_string();
     }
 
-    // Step 5: Remove LDAP injection characters for safety
+    // Step 5: Remove LDAP injection characters for safety (preserving wildcards)
+    // Check if this is a wildcard query pattern before applying LDAP sanitization
+    let is_wildcard_query = sanitized.contains('*');
     if LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
         warnings.push("Special LDAP characters sanitized".to_string());
         sanitized = LDAP_INJECTION_PATTERNS
@@ -168,9 +170,22 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
     let terms: Vec<String> = sanitized
         .split_whitespace()
         .filter(|term| {
-            term.len() >= MIN_TERM_LENGTH
-                && term.len() <= MAX_TERM_LENGTH
-                && !term.chars().all(|c| c.is_numeric() || !c.is_alphanumeric())
+            // Allow wildcard patterns like *, *test, test*, *test*
+            let is_wildcard_pattern = term.contains('*');
+            let non_wildcard_chars: String = term.chars().filter(|&c| c != '*').collect();
+
+            // For wildcard patterns, check the non-wildcard portion
+            if is_wildcard_pattern {
+                // Pure wildcard "*" is always valid
+                *term == "*"
+                    || (!non_wildcard_chars.is_empty()
+                        && non_wildcard_chars.len() <= MAX_TERM_LENGTH)
+            } else {
+                // Regular term validation
+                term.len() >= MIN_TERM_LENGTH
+                    && term.len() <= MAX_TERM_LENGTH
+                    && !term.chars().all(|c| c.is_numeric() || !c.is_alphanumeric())
+            }
         })
         .take(MAX_QUERY_TERMS)
         .map(|s| s.to_string())
@@ -356,7 +371,9 @@ mod tests {
     #[test]
     fn test_ldap_injection_sanitization() {
         let result = sanitize_search_query("user*(admin)").unwrap();
-        assert!(!result.text.contains("*"));
+        // Asterisk should be preserved for wildcard support
+        assert!(result.text.contains("*"));
+        // But parentheses should still be removed
         assert!(!result.text.contains("("));
         assert!(!result.text.contains(")"));
         assert!(result.was_modified);
@@ -375,5 +392,64 @@ mod tests {
         // This should fail validation since it becomes empty
         let result = sanitize_search_query("';--");
         assert!(result.is_err() || result.unwrap().text.is_empty());
+    }
+
+    #[test]
+    fn test_wildcard_patterns_preserved() {
+        // Test various wildcard patterns that should be preserved
+        let patterns = vec![
+            ("*", "*"),
+            ("*test", "*test"),
+            ("test*", "test*"),
+            ("*test*", "*test*"),
+            ("*Controller", "*Controller"),
+            ("test_*", "test_*"),
+            ("prefix*suffix", "prefix*suffix"),
+            ("multiple*wild*cards", "multiple*wild*cards"),
+        ];
+
+        for (input, expected) in patterns {
+            let result = sanitize_search_query(input).unwrap();
+            assert_eq!(result.text, expected, "Failed for pattern: {}", input);
+            assert!(
+                !result.was_modified
+                    || result.warnings.is_empty()
+                    || !result.warnings.iter().any(|w| w.contains("LDAP")),
+                "LDAP warning should not be triggered for wildcards: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_wildcard_with_dangerous_chars() {
+        // Test that wildcards are preserved while dangerous chars are removed
+        let result = sanitize_search_query("*test<script>*").unwrap();
+        assert!(result.text.contains("*test"));
+        assert!(!result.text.contains("<script>"));
+        assert!(result.was_modified);
+    }
+
+    #[test]
+    fn test_wildcard_with_ldap_chars() {
+        // Test that asterisks are preserved but other LDAP chars are removed
+        let result = sanitize_search_query("test*(admin)=value").unwrap();
+        assert!(result.text.contains("*"));
+        assert!(!result.text.contains("("));
+        assert!(!result.text.contains(")"));
+        assert!(!result.text.contains("="));
+        assert!(result.was_modified);
+    }
+
+    #[test]
+    fn test_complex_wildcard_query() {
+        // Test a real-world wildcard query pattern
+        let result = sanitize_search_query("*Controller OR test_* AND *.rs").unwrap();
+        assert!(result.text.contains("*Controller"));
+        assert!(result.text.contains("test_*"));
+        assert!(result.text.contains("*.rs") || result.text.contains("* rs"));
+        // OR and AND should be preserved as regular terms
+        assert!(result.text.contains("OR"));
+        assert!(result.text.contains("AND"));
     }
 }
