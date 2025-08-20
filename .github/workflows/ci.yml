@@ -90,13 +90,30 @@ jobs:
   build-and-test:
     name: Build & Test (Mac Pro M2 Ultra)
     runs-on: [self-hosted, macOS, ARM64, m2-ultra]
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Debug environment
+      run: |
+        echo "Current directory: $(pwd)"
+        echo "User: $(whoami)"
+        echo "PATH: $PATH"
+        echo "Checking Rust installation..."
+        which rustup || echo "rustup not found"
+        which rustc || echo "rustc not found"
+        which cargo || echo "cargo not found"
+        echo "System info:"
+        uname -a
+        echo "Available disk space:"
+        df -h .
+        echo "Memory info:"
+        vm_stat | head -5
     
     - name: Setup Rust environment
       run: |
         # Ensure we're using stable Rust
+        export PATH="$HOME/.cargo/bin:$PATH"
         rustup default stable
         rustup update
         rustc --version
@@ -107,10 +124,13 @@ jobs:
     
     - name: Build project
       run: |
-        cargo build --all-features
+        export PATH="$HOME/.cargo/bin:$PATH"
+        cargo build --all-features --verbose
         cargo build --release --bin kotadb
       env:
         RUSTC_WRAPPER: ""  # Explicitly clear sccache
+        CARGO_TERM_COLOR: always
+        RUST_BACKTRACE: 1
     
     - name: Run unit tests
       run: |
