@@ -234,6 +234,8 @@ jobs:
     - name: Build release binary
       run: |
         echo "Building release binary..."
+        # Clean build to ensure we get the actual binary
+        cargo clean --release
         cargo build --release --bin kotadb
         echo "Build completed. Checking binary exists..."
         if [ -f target/release/kotadb ]; then
@@ -242,6 +244,8 @@ jobs:
         else
           echo "ERROR: Binary not found. Listing target/release directory:"
           ls -la target/release/ || echo "target/release directory does not exist"
+          echo "Listing entire target directory:"
+          ls -la target/ || echo "target directory does not exist"
           exit 1
         fi
     
