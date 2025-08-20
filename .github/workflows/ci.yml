@@ -66,7 +66,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15  # Increased from 10 - needs more time for cold cache
     steps:
     - uses: actions/checkout@v4
     
@@ -82,7 +82,8 @@ jobs:
     - name: Build all targets
       run: |
         cargo build --release --all-features
-        cargo test --release --no-run --all-features
+        # Note: Removed test pre-compilation to speed up build
+        # Each test job will compile what it needs with cache
     
     - name: Upload test binaries
       uses: actions/upload-artifact@v4
