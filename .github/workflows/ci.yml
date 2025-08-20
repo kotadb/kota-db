@@ -223,11 +223,28 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies  
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "performance"
+    
     - name: Build release binary
-      run: cargo build --release --bin kotadb
+      run: |
+        echo "Building release binary..."
+        cargo build --release --bin kotadb
+        echo "Build completed. Checking binary exists..."
+        ls -la target/release/kotadb
+        echo "Binary size: $(du -h target/release/kotadb | cut -f1)"
     
     - name: Test release binary performance
       run: |
+        echo "Testing binary exists and is executable..."
+        test -x ./target/release/kotadb || { echo "Binary not found or not executable"; exit 1; }
+        echo "Running version check..."
         ./target/release/kotadb --version
         ./target/release/kotadb insert test/doc.md "Test Document" "Test content"
         ./target/release/kotadb get test/doc.md
