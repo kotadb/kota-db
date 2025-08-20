@@ -19,7 +19,9 @@ env:
   RUSTUP_MAX_RETRIES: 10
   # Optimize for CI performance
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  # Let cargo use all available cores automatically
+  # Increase parallelism - removed artificial limitation
+  RUST_TEST_THREADS: 4
+  CARGO_BUILD_JOBS: 4
 
 jobs:
   # Quick format check - fails fast
@@ -55,16 +57,16 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-build"  # Share with build job
+        shared-key: "ci-build"
     
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # Quick build check - just verify it compiles
-  build:
-    name: Build
+  # Build and prepare test binaries - other jobs depend on this
+  build-and-test-prep:
+    name: Build & Test Preparation
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -75,16 +77,31 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Quick build check
-      run: cargo check --all-features
+    - name: Build all targets
+      run: |
+        cargo build --all-features --all-targets
+        cargo build --release --bin kotadb
+    
+    - name: Build test binaries
+      run: cargo test --all-features --no-run
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          target/debug/
+          target/release/kotadb
+        retention-days: 1
   
-  # Unit tests - run in parallel
+  # Unit tests - depends on build
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -95,16 +112,22 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: target/
     
     - name: Run unit tests
-      run: cargo test --lib --all-features
+      run: |
+        cargo test --lib --all-features
+        cargo test --doc --all-features
       env:
         RUST_LOG: error
         CI: true
-    
-    - name: Run doc tests
-      run: cargo test --doc --all-features
+        RUST_TEST_THREADS: 4
 
   # Security audit - can run in parallel
   security:
@@ -130,11 +153,12 @@ jobs:
       run: cargo audit
       continue-on-error: true  # Don't fail on advisories
 
-  # Storage tests
-  integration-storage:
-    name: Integration Tests (Storage)
+  # Storage and basic integration tests
+  integration-core:
+    name: Integration Tests (Core)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -145,19 +169,23 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Run storage tests
-      run: cargo test --test file_storage_integration_test --test storage_index_integration_test --test data_integrity_test
+    - name: Run core integration tests
+      run: |
+        cargo test --test file_storage_integration_test --test storage_index_integration_test --test data_integrity_test
+        cargo test --test builder_tests --test document_builder_id_test --test validated_types_tests --test unicode_handling_test
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # Builder and validation tests
-  integration-builders:
-    name: Integration Tests (Builders)
+  # Index tests (primary and btree)
+  integration-index:
+    name: Integration Tests (Index)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -168,65 +196,23 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Run builder tests
-      run: cargo test --test builder_tests --test document_builder_id_test --test validated_types_tests --test unicode_handling_test
+    - name: Run index tests
+      run: |
+        cargo test --test primary_index_tests --test primary_index_edge_cases_test --test primary_index_persistence_test
+        cargo test --test btree_algorithms_test --test btree_performance_test --test test_btree_deletion
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # Primary index tests
-  integration-primary-index:
-    name: Integration Tests (Primary Index)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Run primary index tests
-      run: cargo test --test primary_index_tests --test primary_index_edge_cases_test --test primary_index_persistence_test
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # BTree tests
-  integration-btree:
-    name: Integration Tests (BTree)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Run btree tests
-      run: cargo test --test btree_algorithms_test --test btree_performance_test --test test_btree_deletion
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # Query and bulk operation tests  
+  # Query and search tests  
   integration-query:
-    name: Integration Tests (Query)
+    name: Integration Tests (Query & Search)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -237,19 +223,24 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Run query tests
-      run: cargo test --test query_routing_stress --test bulk_operations_test --test llm_search_test --test wildcard_search_test
+    - name: Run query and search tests
+      run: |
+        cargo test --test query_routing_stress --test bulk_operations_test --test llm_search_test --test wildcard_search_test
+        cargo test --test trigram_content_search_test --test test_trigram_false_positives_221 --test test_trigram_result_differentiation_198
+        cargo test --test test_search_consistency_issue_222 --test test_natural_language_query --test test_query_sanitization
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # Concurrent tests
-  integration-concurrent:
-    name: Integration Tests (Concurrent)
+  # Concurrent and stress tests - Part 1
+  integration-stress-1:
+    name: Integration Tests (Stress Part 1)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -260,19 +251,22 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Run concurrent tests
-      run: cargo test --test concurrent_access_test --test concurrent_stress_test --test concurrent_stress_simple_test
+    - name: Run stress tests part 1
+      run: |
+        cargo test --test concurrent_access_test --test concurrent_stress_test --test concurrent_stress_simple_test
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # Stress tests
-  integration-stress:
-    name: Integration Tests (Stress)
+  # Stress tests - Part 2
+  integration-stress-2:
+    name: Integration Tests (Stress Part 2)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -283,42 +277,23 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Run stress tests
-      run: cargo test --test index_stress_test --test query_routing_stress
+    - name: Run stress tests part 2
+      run: |
+        cargo test --test index_stress_test --test query_routing_stress
+        cargo test --test chaos_tests --test adversarial_tests
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # Chaos and adversarial tests
-  integration-chaos:
-    name: Integration Tests (Chaos)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Run chaos tests
-      run: cargo test --test chaos_tests --test adversarial_tests
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # Performance and complexity tests
+  # Performance tests
   integration-performance:
     name: Integration Tests (Performance)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -329,68 +304,22 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
     - name: Run performance tests
-      run: cargo test --test performance_regression_test --test complexity_comparison_test --test write_performance_test
+      run: |
+        cargo test --test performance_regression_test --test complexity_comparison_test --test write_performance_test
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
-  # CLI and system tests
-  integration-cli:
-    name: Integration Tests (CLI)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Build release binary for CLI tests
-      run: cargo build --release --bin kotadb
-    
-    - name: Run CLI tests
-      run: cargo test --test cli_path_operations
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # HTTP and observability tests
-  integration-http:
-    name: Integration Tests (HTTP)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Run HTTP tests
-      run: cargo test --test http_server_integration_test --test observability_integration_test
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # System resilience and production tests
+  # System and production tests
   integration-system:
     name: Integration Tests (System)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -401,42 +330,30 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: target/
     
     - name: Run system tests
-      run: cargo test --test production_configuration_test --test system_resilience_test --test security_path_traversal_test
+      run: |
+        cargo test --test cli_path_operations
+        cargo test --test http_server_integration_test --test observability_integration_test
+        cargo test --test production_configuration_test --test system_resilience_test --test security_path_traversal_test
       env:
         RUST_LOG: error
         CI: true
-
-  # Trigram and search tests
-  integration-search:
-    name: Integration Tests (Search)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "ci-cache"
-    
-    - name: Run search tests
-      run: cargo test --test trigram_content_search_test --test test_trigram_false_positives_221 --test test_trigram_result_differentiation_198 --test test_search_consistency_issue_222 --test test_natural_language_query --test test_query_sanitization
-      env:
-        RUST_LOG: error
-        CI: true
+        RUST_TEST_THREADS: 4
 
   # Code analysis and relationship tests
   integration-analysis:
     name: Integration Tests (Analysis)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -447,48 +364,46 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
     - name: Run analysis tests
-      run: cargo test --test code_analysis_integration_test --test relationship_query_pipeline_test --test test_symbol_index --test test_symbol_debug
+      run: |
+        cargo test --test code_analysis_integration_test --test relationship_query_pipeline_test
+        cargo test --test test_symbol_index --test test_symbol_debug
       env:
         RUST_LOG: error
         CI: true
+        RUST_TEST_THREADS: 4
 
   # Integration tests summary - required by branch protection
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [integration-storage, integration-builders, integration-primary-index, integration-btree, integration-query, integration-concurrent, integration-stress, integration-chaos, integration-performance, integration-cli, integration-http, integration-system, integration-search, integration-analysis]
+    needs: [integration-core, integration-index, integration-query, integration-stress-1, integration-stress-2, integration-performance, integration-system, integration-analysis]
     if: always()
     timeout-minutes: 1
     steps:
     - name: Check integration test results
       run: |
-        if [[ "${{ needs.integration-storage.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-builders.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-primary-index.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-btree.result }}" == "failure" ]] || \
+        if [[ "${{ needs.integration-core.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-index.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-query.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-concurrent.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-stress.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-chaos.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-stress-1.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-stress-2.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-performance.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-cli.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-http.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-system.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-search.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-analysis.result }}" == "failure" ]]; then
           echo "One or more integration test suites failed"
           exit 1
         fi
         echo "All integration test suites passed successfully!"
 
-  # Performance tests
+  # Performance smoke test
   performance:
     name: Performance Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Needs more time for release build
+    needs: build-and-test-prep
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -499,12 +414,19 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Build and test performance
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: target/
+    
+    - name: Test release binary
       run: |
-        cargo build --release --bin kotadb
-        # Quick performance smoke test - just verify the binary works
+        # Make sure binary is executable
+        chmod +x ./target/release/kotadb
+        # Quick performance smoke test
         ./target/release/kotadb --version
         ./target/release/kotadb insert test/doc.md "Test Document" "Test content"
         ./target/release/kotadb get test/doc.md
@@ -561,7 +483,8 @@ jobs:
   mcp-integration:
     name: MCP Package Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: build-and-test-prep
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -572,10 +495,13 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "ci-cache"
+        shared-key: "ci-build"
     
-    - name: Build KotaDB binary
-      run: cargo build --release --bin kotadb
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: target/
     
     - name: Set up Node.js
       uses: actions/setup-node@v4
