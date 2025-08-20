@@ -170,13 +170,13 @@ describe('MCP Stress Testing and Performance', () => {
       const largeContent = 'Large document content. '.repeat(500); // ~10KB per document
       
       // Create documents in smaller batches to avoid overwhelming the system
-      const docs = [];
-      const batchSize = 15;
+      const docs: any[] = [];
+      const createBatchSize = 15;
       perfTimer.start();
       
-      for (let i = 0; i < numDocs; i += batchSize) {
+      for (let i = 0; i < numDocs; i += createBatchSize) {
         const batchPromises = [];
-        for (let j = i; j < Math.min(i + batchSize, numDocs); j++) {
+        for (let j = i; j < Math.min(i + createBatchSize, numDocs); j++) {
           batchPromises.push(
             client.createDocument({
               path: `/memory-stress/large-doc-${j}.md`,
@@ -196,9 +196,9 @@ describe('MCP Stress Testing and Performance', () => {
       console.log(`After creation: ${Math.round(afterCreationMemory.heapUsed / 1024 / 1024)}MB`);
       
       // Perform operations on all documents in smaller batches to avoid timeouts
-      const batchSize = 10;
-      for (let i = 0; i < docs.length; i += batchSize) {
-        const batch = docs.slice(i, i + batchSize);
+      const operationBatchSize = 10;
+      for (let i = 0; i < docs.length; i += operationBatchSize) {
+        const batch = docs.slice(i, i + operationBatchSize);
         const operationPromises = batch.map(doc => 
           Promise.all([
             client.getDocument(doc.id),
