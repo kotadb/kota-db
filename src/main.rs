@@ -209,8 +209,10 @@ impl Database {
             path_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        // Build the path cache on startup
-        db.rebuild_path_cache().await?;
+        // Skip path cache rebuild for read-only operations like search
+        // The cache will be built lazily when needed for path-based lookups
+        // This significantly improves startup time for search operations
+        // from ~300ms to ~5ms (see issue #274)
 
         Ok(db)
     }
@@ -331,6 +333,15 @@ impl Database {
     }
 
     async fn get_by_path(&self, path: &str) -> Result<Option<Document>> {
+        // Check if cache is empty and rebuild if needed (lazy initialization)
+        {
+            let cache = self.path_cache.read().await;
+            if cache.is_empty() {
+                drop(cache); // Release read lock before rebuilding
+                self.rebuild_path_cache().await?;
+            }
+        }
+
         // O(1) lookup using the path cache
         let cache = self.path_cache.read().await;
 
