@@ -165,14 +165,22 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup environment
+    - name: Setup Rust environment
       run: |
-        # Clear any sccache configuration
+        # Ensure we're using stable Rust with proper PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup default stable
+        rustup update
+        rustc --version
+        cargo --version
+        # Clear any sccache configuration that might be set
         unset RUSTC_WRAPPER
         unset SCCACHE_CACHE_SIZE
     
     - name: Run ${{ matrix.suite }} tests
       run: |
+        # Ensure cargo is in PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
         case "${{ matrix.suite }}" in
           core)
             cargo test --test file_storage_integration_test --test storage_index_integration_test --test data_integrity_test
@@ -234,14 +242,24 @@ jobs:
     
     - name: Build release binary
       run: |
+        # Ensure cargo is in PATH for self-hosted runner
+        export PATH="$HOME/.cargo/bin:$PATH"
         echo "Building release binary..."
         cargo build --release --bin kotadb
         echo "Build completed. Checking binary exists..."
-        ls -la target/release/kotadb
-        echo "Binary size: $(du -h target/release/kotadb | cut -f1)"
+        if [ -f target/release/kotadb ]; then
+          ls -la target/release/kotadb
+          echo "Binary size: $(du -h target/release/kotadb | cut -f1)"
+        else
+          echo "ERROR: Binary not found. Listing target/release directory:"
+          ls -la target/release/ || echo "target/release directory does not exist"
+          exit 1
+        fi
     
     - name: Test release binary performance
       run: |
+        # Ensure cargo is in PATH for self-hosted runner
+        export PATH="$HOME/.cargo/bin:$PATH"
         echo "Testing binary exists and is executable..."
         test -x ./target/release/kotadb || { echo "Binary not found or not executable"; exit 1; }
         echo "Running version check..."
