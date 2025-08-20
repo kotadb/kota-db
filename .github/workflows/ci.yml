@@ -91,6 +91,11 @@ jobs:
     name: Build & Test (Mac Pro M2 Ultra)
     runs-on: [self-hosted, macOS, ARM64, m2-ultra]
     timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ""  # Override any sccache configuration
+      SCCACHE_CACHE_SIZE: ""
+      CARGO_INCREMENTAL: 0
+      CARGO_NET_RETRY: 10
     steps:
     - uses: actions/checkout@v4
     
@@ -127,10 +132,6 @@ jobs:
         export PATH="$HOME/.cargo/bin:$PATH"
         cargo build --all-features --verbose
         cargo build --release --bin kotadb
-      env:
-        RUSTC_WRAPPER: ""  # Explicitly clear sccache
-        CARGO_TERM_COLOR: always
-        RUST_BACKTRACE: 1
     
     - name: Run unit tests
       run: |
@@ -146,6 +147,10 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, m2-ultra]
     needs: [format, clippy]
     timeout-minutes: 10
+    env:
+      RUSTC_WRAPPER: ""  # Override any sccache configuration
+      SCCACHE_CACHE_SIZE: ""
+      CARGO_INCREMENTAL: 0
     strategy:
       fail-fast: false
       matrix:
@@ -212,6 +217,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, m2-ultra]
     needs: build-and-test
     timeout-minutes: 5
+    env:
+      RUSTC_WRAPPER: ""  # Override any sccache configuration
+      SCCACHE_CACHE_SIZE: ""
     steps:
     - uses: actions/checkout@v4
     
@@ -276,6 +284,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, m2-ultra]
     needs: build-and-test
     timeout-minutes: 5
+    env:
+      RUSTC_WRAPPER: ""  # Override any sccache configuration
+      SCCACHE_CACHE_SIZE: ""
     steps:
     - uses: actions/checkout@v4
     
