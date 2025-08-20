@@ -101,11 +101,16 @@ jobs:
         rustup update
         rustc --version
         cargo --version
+        # Clear any sccache configuration that might be set
+        unset RUSTC_WRAPPER
+        unset SCCACHE_CACHE_SIZE
     
     - name: Build project
       run: |
         cargo build --all-features
         cargo build --release --bin kotadb
+      env:
+        RUSTC_WRAPPER: ""  # Explicitly clear sccache
     
     - name: Run unit tests
       run: |
@@ -134,6 +139,12 @@ jobs:
           - analysis
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Setup environment
+      run: |
+        # Clear any sccache configuration
+        unset RUSTC_WRAPPER
+        unset SCCACHE_CACHE_SIZE
     
     - name: Run ${{ matrix.suite }} tests
       run: |
@@ -173,6 +184,7 @@ jobs:
         RUST_LOG: error
         CI: true
         RUST_TEST_THREADS: 8  # Use more threads on Mac Pro
+        RUSTC_WRAPPER: ""  # Explicitly disable sccache
 
   # Performance validation
   performance:
