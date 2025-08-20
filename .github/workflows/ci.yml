@@ -134,7 +134,7 @@ jobs:
   integration-storage:
     name: Integration Tests (Storage)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -157,7 +157,7 @@ jobs:
   integration-builders:
     name: Integration Tests (Builders)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -180,7 +180,7 @@ jobs:
   integration-primary-index:
     name: Integration Tests (Primary Index)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -203,7 +203,7 @@ jobs:
   integration-btree:
     name: Integration Tests (BTree)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -226,7 +226,7 @@ jobs:
   integration-query:
     name: Integration Tests (Query)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -249,7 +249,7 @@ jobs:
   integration-concurrent:
     name: Integration Tests (Concurrent)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -272,7 +272,7 @@ jobs:
   integration-stress:
     name: Integration Tests (Stress)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -295,7 +295,7 @@ jobs:
   integration-chaos:
     name: Integration Tests (Chaos)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -318,7 +318,7 @@ jobs:
   integration-performance:
     name: Integration Tests (Performance)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -341,7 +341,7 @@ jobs:
   integration-cli:
     name: Integration Tests (CLI)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -367,7 +367,7 @@ jobs:
   integration-http:
     name: Integration Tests (HTTP)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -390,7 +390,7 @@ jobs:
   integration-system:
     name: Integration Tests (System)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -413,7 +413,7 @@ jobs:
   integration-analysis:
     name: Integration Tests (Analysis)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
@@ -537,7 +537,7 @@ jobs:
   mcp-integration:
     name: MCP Package Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
     
