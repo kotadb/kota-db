@@ -225,12 +225,6 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Cache dependencies  
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "performance"
-    
     - name: Build release binary
       run: |
         echo "Building release binary..."
