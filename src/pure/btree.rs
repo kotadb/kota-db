@@ -374,6 +374,11 @@ pub fn delete_from_tree(mut root: BTreeRoot, key: &ValidatedDocumentId) -> Resul
         return Ok(root); // Tree is empty, nothing to delete
     }
 
+    // Check if key exists (needed for correct behavior when key doesn't exist)
+    if search_in_tree(&root, key).is_none() {
+        return Ok(root); // Key doesn't exist, nothing to delete
+    }
+
     // Delete from tree
     let root_node = root
         .root
