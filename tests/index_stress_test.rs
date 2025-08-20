@@ -206,7 +206,16 @@ async fn test_trigram_index_large_corpus() -> Result<()> {
     let insert_start = Instant::now();
 
     for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
-        index.insert(*doc_id, doc_path.clone()).await?;
+        // Create content for trigram indexing
+        let content = format!(
+            "Large corpus document {} at path {} with stress test content for indexing",
+            doc_id.as_uuid(),
+            doc_path.as_str()
+        )
+        .into_bytes();
+        index
+            .insert_with_content(*doc_id, doc_path.clone(), &content)
+            .await?;
 
         if i % 5_000 == 0 {
             println!("  📈 Indexed {i}/{doc_count} documents");
@@ -378,7 +387,17 @@ async fn test_index_memory_pressure() -> Result<()> {
     let insert_start = Instant::now();
 
     for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
-        index.insert(*doc_id, doc_path.clone()).await?;
+        // Create large content for memory pressure testing
+        let content = format!(
+            "Large memory pressure document {} at path {} {}",
+            doc_id.as_uuid(),
+            doc_path.as_str(),
+            "with extensive content to simulate memory pressure scenarios ".repeat(100)
+        )
+        .into_bytes();
+        index
+            .insert_with_content(*doc_id, doc_path.clone(), &content)
+            .await?;
 
         if i % 1_000 == 0 {
             println!("  📈 Indexed large document: {i}/{doc_count}");
@@ -445,7 +464,16 @@ async fn test_realistic_workload_simulation() -> Result<()> {
 
     let bulk_load_start = Instant::now();
     for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
-        index.insert(*doc_id, doc_path.clone()).await?;
+        // Create content for bulk loading
+        let content = format!(
+            "Bulk load document {} at path {} with realistic workload content",
+            doc_id.as_uuid(),
+            doc_path.as_str()
+        )
+        .into_bytes();
+        index
+            .insert_with_content(*doc_id, doc_path.clone(), &content)
+            .await?;
 
         if i % 5_000 == 0 {
             println!("  📈 Bulk loading: {i}/{initial_docs} documents");
@@ -481,7 +509,16 @@ async fn test_realistic_workload_simulation() -> Result<()> {
                 // 20% inserts - new documents
                 let new_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                 let new_path = ValidatedPath::new(format!("new/workload_doc_{i}.md"))?;
-                index.insert(new_id, new_path.clone()).await?;
+                // Create content for new document
+                let content = format!(
+                    "Workload simulation document {} at path {} with mixed operation content",
+                    new_id.as_uuid(),
+                    new_path.as_str()
+                )
+                .into_bytes();
+                index
+                    .insert_with_content(new_id, new_path.clone(), &content)
+                    .await?;
                 documents.push((new_id, new_path));
                 inserts += 1;
             }
@@ -497,7 +534,17 @@ async fn test_realistic_workload_simulation() -> Result<()> {
                         i
                     ))?;
 
-                    index.update(*original_id, updated_path.clone()).await?;
+                    // Create updated content for trigram indexing
+                    let updated_content = format!(
+                        "Updated workload document {} at path {} operation {}",
+                        original_id.as_uuid(),
+                        updated_path.as_str(),
+                        i
+                    )
+                    .into_bytes();
+                    index
+                        .update_with_content(*original_id, updated_path.clone(), &updated_content)
+                        .await?;
                     documents[doc_index] = (*original_id, updated_path);
                     updates += 1;
                 }
@@ -562,7 +609,15 @@ async fn test_concurrent_index_stress() -> Result<()> {
     {
         let mut idx = index.write().await;
         for (i, (doc_id, doc_path)) in documents.iter().enumerate() {
-            idx.insert(*doc_id, doc_path.clone()).await?;
+            // Create content for trigram indexing
+            let content = format!(
+                "Stress test document {} at path {} with concurrent access content",
+                doc_id.as_uuid(),
+                doc_path.as_str()
+            )
+            .into_bytes();
+            idx.insert_with_content(*doc_id, doc_path.clone(), &content)
+                .await?;
             if i % 2_000 == 0 {
                 println!("  📈 Populated: {i}/{doc_count} documents");
             }
@@ -608,7 +663,19 @@ async fn test_concurrent_index_stress() -> Result<()> {
                     ))
                     .unwrap();
 
-                    idx.update(*original_id, updated_path).await.unwrap();
+                    // Create updated content for trigram indexing
+                    let updated_content = format!(
+                        "Updated stress test document {} at path {} by task {} operation {}",
+                        original_id.as_uuid(),
+                        updated_path.as_str(),
+                        task_id,
+                        i
+                    )
+                    .into_bytes();
+
+                    idx.update_with_content(*original_id, updated_path, &updated_content)
+                        .await
+                        .unwrap();
                 }
             }
 
