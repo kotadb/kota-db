@@ -234,18 +234,34 @@ jobs:
     - name: Build release binary
       run: |
         echo "Building release binary..."
-        # Clean build to ensure we get the actual binary
-        cargo clean --release
-        cargo build --release --bin kotadb
+        echo "Current working directory: $(pwd)"
+        echo "Rust version: $(rustc --version)"
+        echo "Cargo version: $(cargo --version)"
+        
+        # Check if Cargo.toml exists
+        if [ ! -f "Cargo.toml" ]; then
+          echo "ERROR: Cargo.toml not found in current directory"
+          ls -la
+          exit 1
+        fi
+        
+        echo "Found Cargo.toml, building..."
+        cargo build --release --bin kotadb --verbose
+        
         echo "Build completed. Checking binary exists..."
         if [ -f target/release/kotadb ]; then
           ls -la target/release/kotadb
           echo "Binary size: $(du -h target/release/kotadb | cut -f1)"
         else
-          echo "ERROR: Binary not found. Listing target/release directory:"
-          ls -la target/release/ || echo "target/release directory does not exist"
-          echo "Listing entire target directory:"
+          echo "ERROR: Binary not found. Diagnostics:"
+          echo "Current directory contents:"
+          ls -la
+          echo "Target directory check:"
           ls -la target/ || echo "target directory does not exist"
+          echo "Target release directory check:"
+          ls -la target/release/ || echo "target/release directory does not exist"
+          echo "Searching for any kotadb binaries:"
+          find . -name "kotadb" -type f 2>/dev/null || echo "No kotadb binaries found"
           exit 1
         fi
     
