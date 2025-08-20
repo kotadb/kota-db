@@ -425,6 +425,15 @@ impl Database {
     }
 
     async fn delete_by_path(&self, path: &str) -> Result<bool> {
+        // Check if cache is empty and rebuild if needed (lazy initialization)
+        {
+            let cache = self.path_cache.read().await;
+            if cache.is_empty() {
+                drop(cache); // Release read lock before rebuilding
+                self.rebuild_path_cache().await?;
+            }
+        }
+
         // First find the document by path using cache
         let doc_id = {
             let cache = self.path_cache.read().await;
