@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Symbol storage directory not being created automatically (#272)
+  - Added automatic directory creation when accessing symbol storage
+  - Fixed issue where symbol-stats and relationship commands would fail on first use
+  - Symbol storage paths are now created lazily when needed
+- Missing CLI commands for symbol analysis (#271)
+  - Enabled tree-sitter-parsing feature by default
+  - Made symbol-stats, find-callers, impact-analysis commands available by default
+  - Commands were previously hidden behind feature flag
+- Improved documentation for ingest-repo command flags (#273)
+  - Added clearer documentation for --extract-symbols and --no-symbols flags
+  - Made symbol extraction enabled by default with tree-sitter feature
+  - Improved help text to explain flag usage
+- Over-aggressive query sanitization breaking path searches (#275)
+  - Added path-aware query sanitization that preserves forward slashes
+  - Fixed issue where path-based searches were failing due to slash removal
+  - Automatically detects path queries and applies appropriate sanitization
 - Critical index synchronization failure during repository ingestion (#248)
   - Fixed validation false positive showing primary index limited to 1000 documents
     - Increased query limits from 1000 to 100,000 throughout the codebase

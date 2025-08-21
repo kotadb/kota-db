@@ -157,8 +157,17 @@ impl QueryBuilder {
     pub fn with_text(mut self, text: impl Into<String>) -> Result<Self> {
         let text = text.into();
 
-        // Apply comprehensive sanitization
-        let sanitized = crate::query_sanitization::sanitize_search_query(&text)?;
+        // Determine if this looks like a path query
+        let is_path_query = text.contains('/') || text.starts_with("*.") || text.contains("/*");
+
+        // Apply appropriate sanitization based on query type
+        let sanitized = if is_path_query {
+            // Use path-aware sanitization that preserves forward slashes
+            crate::query_sanitization::sanitize_path_aware_query(&text)?
+        } else {
+            // Use standard sanitization for text queries
+            crate::query_sanitization::sanitize_search_query(&text)?
+        };
 
         // Check if query became empty after sanitization
         if sanitized.is_empty() && text.trim() != "*" {

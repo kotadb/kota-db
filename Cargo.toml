@@ -133,7 +133,7 @@ tempfile = "3.0"
 reqwest = { version = "0.11", features = ["json"] }
 
 [features]
-default = ["embeddings-onnx", "git-integration"]
+default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing"]
 # Advanced search features
 advanced-search = ["tantivy", "hnsw"]
 # MCP Server features

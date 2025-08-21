@@ -124,11 +124,12 @@ enum Commands {
         /// Maximum file size to ingest (in MB)
         #[arg(long, default_value = "10")]
         max_file_size_mb: usize,
-        /// Extract code symbols using tree-sitter parsing
+        /// Extract code symbols using tree-sitter parsing (enabled by default)
+        /// Use --extract-symbols=false or --no-symbols to disable
         #[cfg(feature = "tree-sitter-parsing")]
-        #[arg(long)]
+        #[arg(long, default_value = "true")]
         extract_symbols: Option<bool>,
-        /// Skip symbol extraction (convenience flag)
+        /// Skip symbol extraction (convenience flag, same as --extract-symbols=false)
         #[cfg(feature = "tree-sitter-parsing")]
         #[arg(long, conflicts_with = "extract_symbols")]
         no_symbols: bool,
@@ -628,7 +629,25 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
 
     // Load real symbol storage and dependency graph from the database
     // Note: Symbols are stored in symbol_storage subdirectory, not storage
-    let storage_path = db_path.join("symbol_storage");
+    let symbol_storage_path = db_path.join("symbol_storage");
+
+    // Create the symbol storage directory if it doesn't exist
+    if !symbol_storage_path.exists() {
+        std::fs::create_dir_all(&symbol_storage_path).with_context(|| {
+            format!(
+                "Failed to create symbol storage directory: {:?}",
+                symbol_storage_path
+            )
+        })?;
+        std::fs::create_dir_all(symbol_storage_path.join("storage")).with_context(|| {
+            format!(
+                "Failed to create symbol storage subdirectory: {:?}",
+                symbol_storage_path.join("storage")
+            )
+        })?;
+    }
+
+    let storage_path = symbol_storage_path.join("storage");
     let file_storage = create_file_storage(
         storage_path
             .to_str()
@@ -1248,16 +1267,19 @@ async fn main() -> Result<()> {
                 println!("📊 Symbol Storage Statistics");
                 println!("═══════════════════════════════");
 
-                // Check if symbol storage exists
+                // Check if symbol storage exists, create if needed
                 let symbol_storage_path = cli.db_path.join("symbol_storage");
+                let storage_path = symbol_storage_path.join("storage");
+                // Create directories if they don't exist
                 if !symbol_storage_path.exists() {
-                    println!("❌ No symbol storage found at {:?}", symbol_storage_path);
-                    println!("💡 Run 'ingest-repo' with symbol extraction enabled to create symbol storage");
-                    return Ok(());
+                    std::fs::create_dir_all(&symbol_storage_path)
+                        .with_context(|| format!("Failed to create symbol storage directory: {:?}", symbol_storage_path))?;
+                    std::fs::create_dir_all(&storage_path)
+                        .with_context(|| format!("Failed to create symbol storage subdirectory: {:?}", storage_path))?;
+                    println!("📁 Created symbol storage directory at {:?}", symbol_storage_path);
                 }
 
                 // Load symbol storage
-                let storage_path = symbol_storage_path.join("storage");
                 let file_storage = create_file_storage(
                     storage_path
                         .to_str()
