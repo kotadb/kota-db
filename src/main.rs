@@ -1075,9 +1075,11 @@ async fn main() -> Result<()> {
                     // Create separate storage for symbol extraction
                     let symbol_storage_path = cli.db_path.join("symbol_storage");
                     std::fs::create_dir_all(&symbol_storage_path)?;
+                    let storage_path = symbol_storage_path.join("storage");
+                    std::fs::create_dir_all(&storage_path)?;
                     let symbol_storage_backend = create_file_storage(
-                        symbol_storage_path.to_str().ok_or_else(|| {
-                            anyhow::anyhow!("Invalid symbol storage path: {:?}", symbol_storage_path)
+                        storage_path.to_str().ok_or_else(|| {
+                            anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
                         })?,
                         Some(1000),
                     )
