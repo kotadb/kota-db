@@ -7,10 +7,11 @@
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use anyhow::{bail, Result};
 
-/// Type alias for complex insert function return type
-type InsertResult = Result<(
+/// Type alias for insert function that tracks if key existed
+type InsertResultWithExists = Result<(
     Box<BTreeNode>,
     Option<(Box<BTreeNode>, ValidatedDocumentId, Box<BTreeNode>)>,
+    bool, // true if key already existed
 )>;
 
 /// B+ Tree node types
@@ -268,15 +269,13 @@ pub fn insert_into_tree(
         return Ok(root);
     }
 
-    // Check if key already exists
-    let exists = search_in_tree(&root, &key).is_some();
-
-    // Insert into tree
+    // Insert into tree - insert_recursive will handle duplicate key detection
     let root_node = root
         .root
         .take()
         .ok_or_else(|| anyhow::anyhow!("Root node is missing"))?;
-    let (new_root, needs_new_root) = insert_recursive(root_node, key, value)?;
+    let (new_root, needs_new_root, key_existed) =
+        insert_recursive_with_exists_check(root_node, key, value)?;
 
     if let Some((left_child, median_key, right_child)) = needs_new_root {
         // Root split, create new root
@@ -296,22 +295,25 @@ pub fn insert_into_tree(
         root.root = Some(new_root);
     }
 
-    if !exists {
+    if !key_existed {
         root.total_keys += 1;
     }
 
     Ok(root)
 }
 
-/// Recursive helper for insertion
-fn insert_recursive(
+/// Recursive helper for insertion that tracks if key existed
+fn insert_recursive_with_exists_check(
     mut node: Box<BTreeNode>,
     key: ValidatedDocumentId,
     value: ValidatedPath,
-) -> InsertResult {
+) -> InsertResultWithExists {
     match node.as_mut() {
-        BTreeNode::Leaf { .. } => {
-            // Insert into leaf
+        BTreeNode::Leaf { keys, values, .. } => {
+            // Check if key already exists in this leaf
+            let key_existed = keys.binary_search(&key).is_ok();
+
+            // Insert into leaf (will update existing key or insert new one)
             *node = insert_key_value_in_leaf(*node, key, value)?;
 
             // Check if split needed
@@ -321,9 +323,10 @@ fn insert_recursive(
                 Ok((
                     Box::new(left_clone),
                     Some((Box::new(left), median, Box::new(right))),
+                    key_existed,
                 ))
             } else {
-                Ok((node, None))
+                Ok((node, None, key_existed))
             }
         }
         BTreeNode::Internal { keys, children } => {
@@ -335,7 +338,8 @@ fn insert_recursive(
 
             // Recursively insert into child
             let child = children.remove(child_index);
-            let (new_child, split_info) = insert_recursive(child, key, value)?;
+            let (new_child, split_info, key_existed) =
+                insert_recursive_with_exists_check(child, key, value)?;
 
             // Handle child split
             if let Some((left_child, median_key, right_child)) = split_info {
@@ -350,13 +354,14 @@ fn insert_recursive(
                     Ok((
                         Box::new(left_clone),
                         Some((Box::new(left), median, Box::new(right))),
+                        key_existed,
                     ))
                 } else {
-                    Ok((node, None))
+                    Ok((node, None, key_existed))
                 }
             } else {
                 children.insert(child_index, new_child);
-                Ok((node, None))
+                Ok((node, None, key_existed))
             }
         }
     }
@@ -364,7 +369,12 @@ fn insert_recursive(
 
 /// Delete a key from the tree
 pub fn delete_from_tree(mut root: BTreeRoot, key: &ValidatedDocumentId) -> Result<BTreeRoot> {
-    // Check if key exists
+    // Special case: empty tree
+    if root.root.is_none() {
+        return Ok(root); // Tree is empty, nothing to delete
+    }
+
+    // Check if key exists (needed for correct behavior when key doesn't exist)
     if search_in_tree(&root, key).is_none() {
         return Ok(root); // Key doesn't exist, nothing to delete
     }
