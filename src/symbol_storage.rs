@@ -258,6 +258,10 @@ impl SymbolStorage {
         }
 
         info!("Loaded {} symbols from storage", loaded_count);
+
+        // Reconstruct relationships from dependents fields
+        self.reconstruct_relationships_from_dependents()?;
+
         Ok(())
     }
 
@@ -937,8 +941,53 @@ impl SymbolStorage {
             self.add_relationship(relation)?;
         }
 
+        // CRITICAL FIX: Persist all symbols with updated dependents to storage
+        let mut dependents_count = 0;
+        for symbol in self.symbol_index.values() {
+            if !symbol.dependents.is_empty() {
+                dependents_count += 1;
+            }
+        }
+
+        info!("Persisting symbols with updated dependents to storage...");
+        info!(
+            "Found {} symbols with non-empty dependents",
+            dependents_count
+        );
+
+        for symbol in self.symbol_index.values() {
+            let mut doc = self.serialize_symbol(symbol)?;
+            // Update timestamp for persistence validation
+            doc.updated_at = chrono::Utc::now();
+            self.storage.update(doc).await?;
+        }
+
         info!(
             "Built dependency graph with {} relationships",
+            self.relationships.len()
+        );
+        Ok(())
+    }
+
+    /// Reconstruct the relationships vector from the dependents fields in symbols
+    fn reconstruct_relationships_from_dependents(&mut self) -> Result<()> {
+        self.relationships.clear();
+
+        for (symbol_id, symbol) in &self.symbol_index {
+            for dependent_id in &symbol.dependents {
+                // Create a relationship from dependent to this symbol
+                let relation = SymbolRelation {
+                    from_id: *dependent_id,
+                    to_id: *symbol_id,
+                    relation_type: RelationType::Calls, // Default type, could be more sophisticated
+                    metadata: HashMap::new(),
+                };
+                self.relationships.push(relation);
+            }
+        }
+
+        info!(
+            "Reconstructed {} relationships from dependents fields",
             self.relationships.len()
         );
         Ok(())
