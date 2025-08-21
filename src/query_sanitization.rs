@@ -224,6 +224,113 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
     })
 }
 
+/// Sanitize a path-aware search query that may contain file paths
+/// This is less aggressive than sanitize_search_query and preserves path characters
+pub fn sanitize_path_aware_query(query: &str) -> Result<SanitizedQuery> {
+    let ctx =
+        ValidationContext::new("sanitize_path_aware_query").with_attribute("original_query", query);
+
+    let mut warnings = Vec::new();
+    let original = query.to_string();
+
+    // Step 1: Length validation
+    if query.len() > MAX_QUERY_LENGTH {
+        bail!(
+            "Query exceeds maximum length of {} characters",
+            MAX_QUERY_LENGTH
+        );
+    }
+
+    // Step 2: Check for null bytes
+    if query.contains('\0') {
+        bail!("Query contains null bytes");
+    }
+
+    // Step 3: Normalize whitespace and trim
+    let mut sanitized = query
+        .chars()
+        .map(|c| if c.is_control() && c != ' ' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Step 4: Check for dangerous injection patterns (but not path traversal for path queries)
+    if SQL_INJECTION_PATTERNS.is_match(&sanitized) {
+        warnings.push("Potentially dangerous SQL patterns detected and removed".to_string());
+        sanitized = SQL_INJECTION_PATTERNS
+            .replace_all(&sanitized, "")
+            .to_string();
+    }
+
+    // Skip command injection pattern removal if it contains forward slashes (paths)
+    if !sanitized.contains('/') && COMMAND_INJECTION_PATTERNS.is_match(&sanitized) {
+        warnings.push("Potentially dangerous command patterns detected and removed".to_string());
+        sanitized = COMMAND_INJECTION_PATTERNS
+            .replace_all(&sanitized, "")
+            .to_string();
+    }
+
+    // Skip path traversal check for path-aware queries
+    // We still prevent ../.. but allow single forward slashes
+
+    // Step 5: Preserve wildcards and path characters
+    let is_wildcard_query = sanitized.contains('*');
+
+    // Only apply LDAP sanitization if it's not a path query
+    if !sanitized.contains('/') && LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
+        warnings.push("Special LDAP characters sanitized".to_string());
+        sanitized = LDAP_INJECTION_PATTERNS
+            .replace_all(&sanitized, " ")
+            .to_string();
+    }
+
+    // Step 6: Remove reserved/dangerous characters (but preserve / for paths)
+    let mut clean_chars = String::with_capacity(sanitized.len());
+    for c in sanitized.chars() {
+        if c == '/' || c == '*' {
+            // Preserve path and wildcard characters
+            clean_chars.push(c);
+        } else if RESERVED_CHARS.contains(&c) {
+            clean_chars.push(' ');
+            if warnings.is_empty() || !warnings.last().unwrap().contains("Reserved characters") {
+                warnings.push("Reserved characters removed from query".to_string());
+            }
+        } else {
+            clean_chars.push(c);
+        }
+    }
+    sanitized = clean_chars;
+
+    // Step 7: Normalize whitespace again after removals
+    sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Step 8: Extract terms (preserving paths)
+    let terms: Vec<String> = sanitized
+        .split_whitespace()
+        .filter(|term| {
+            // Allow paths and wildcards
+            !term.is_empty() && term.len() <= MAX_TERM_LENGTH
+        })
+        .take(MAX_QUERY_TERMS)
+        .map(|s| s.to_string())
+        .collect();
+
+    let was_modified = sanitized != original;
+    let final_text = if terms.is_empty() {
+        "*".to_string() // Default to wildcard if all terms filtered
+    } else {
+        sanitized
+    };
+
+    Ok(SanitizedQuery {
+        text: final_text,
+        terms,
+        was_modified,
+        warnings,
+    })
+}
+
 /// Sanitize a path pattern for safe file system operations
 pub fn sanitize_path_pattern(pattern: &str) -> Result<String> {
     let ctx = ValidationContext::new("sanitize_path_pattern").with_attribute("pattern", pattern);
