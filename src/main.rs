@@ -410,10 +410,11 @@ impl Database {
                 .await
                 .update(doc_id, new_validated_path.clone())
                 .await?;
+            // Use update_with_content for trigram index since it needs content
             self.trigram_index
                 .lock()
                 .await
-                .update(doc_id, new_validated_path)
+                .update_with_content(doc_id, new_validated_path, &updated_doc.content)
                 .await?;
 
             // Update cache: remove old path, add new path
