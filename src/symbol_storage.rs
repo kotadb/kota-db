@@ -6,10 +6,11 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use crate::builders::DocumentBuilder;
@@ -922,50 +923,112 @@ impl SymbolStorage {
             self.symbol_index.len()
         );
 
-        let mut new_relationships = Vec::new();
-        let symbol_ids: Vec<Uuid> = self.symbol_index.keys().cloned().collect();
+        // Use DependencyExtractor for accurate dependency analysis
+        let extractor = crate::dependency_extractor::DependencyExtractor::new()?;
+        let mut parser = crate::parsing::CodeParser::new()?;
 
-        for symbol_id in symbol_ids {
-            let symbol = match self.symbol_index.get(&symbol_id) {
-                Some(s) => s.clone(), // Clone to avoid borrowing issues
-                None => continue,
+        // Group symbols by file for efficient processing
+        let mut symbols_by_file: HashMap<PathBuf, Vec<SymbolEntry>> = HashMap::new();
+        for symbol in self.symbol_index.values() {
+            symbols_by_file
+                .entry(symbol.file_path.clone())
+                .or_default()
+                .push(symbol.clone());
+        }
+
+        let mut all_analyses = Vec::new();
+        let mut all_symbol_entries = Vec::new();
+
+        // Analyze each file with DependencyExtractor
+        for (file_path, symbols) in symbols_by_file {
+            // Read file content if available
+            if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+                // Determine language from file extension
+                let language = self.determine_language(&file_path);
+
+                // Parse the code first to get ParsedCode
+                if let Ok(parsed_code) = parser.parse_content(&content, language) {
+                    // Extract dependencies using the parsed code
+                    if let Ok(analysis) =
+                        extractor.extract_dependencies(&parsed_code, &content, &file_path)
+                    {
+                        all_analyses.push(analysis);
+                    }
+                }
+            }
+
+            all_symbol_entries.extend(symbols);
+        }
+
+        // Build the dependency graph using extracted references
+        let dep_graph = extractor.build_dependency_graph(all_analyses, &all_symbol_entries)?;
+
+        // Clear existing relationships and rebuild from dependency graph
+        self.relationships.clear();
+
+        // Convert dependency graph edges to relationships
+        for edge_ref in dep_graph.graph.edge_references() {
+            let source_node = &dep_graph.graph[edge_ref.source()];
+            let target_node = &dep_graph.graph[edge_ref.target()];
+            let edge_data = edge_ref.weight();
+
+            let relation = SymbolRelation {
+                from_id: source_node.symbol_id,
+                to_id: target_node.symbol_id,
+                relation_type: edge_data.relation_type.clone(),
+                metadata: HashMap::new(),
             };
 
-            // Build relationships for this symbol
-            let relationships = self.build_relationships_for_symbol(&symbol).await?;
-            new_relationships.extend(relationships);
-        }
+            self.relationships.push(relation.clone());
 
-        // Add all new relationships
-        for relation in new_relationships {
-            self.add_relationship(relation)?;
-        }
-
-        // CRITICAL FIX: Persist all symbols with updated dependents to storage
-        let mut dependents_count = 0;
-        for symbol in self.symbol_index.values() {
-            if !symbol.dependents.is_empty() {
-                dependents_count += 1;
+            // Update dependents set for bidirectional navigation
+            if let Some(target_symbol) = self.symbol_index.get_mut(&target_node.symbol_id) {
+                target_symbol.dependents.insert(source_node.symbol_id);
             }
         }
 
-        info!("Persisting symbols with updated dependents to storage...");
+        // Update in_degree and out_degree for all symbols
+        for node_idx in dep_graph.graph.node_indices() {
+            let node = &dep_graph.graph[node_idx];
+            if let Some(symbol) = self.symbol_index.get_mut(&node.symbol_id) {
+                // Count incoming edges (dependents)
+                let in_degree = dep_graph
+                    .graph
+                    .edges_directed(node_idx, petgraph::Direction::Incoming)
+                    .count();
+                // Count outgoing edges (dependencies)
+                let out_degree = dep_graph
+                    .graph
+                    .edges_directed(node_idx, petgraph::Direction::Outgoing)
+                    .count();
+
+                // Store these counts (you may want to add fields for these)
+                debug!(
+                    "Symbol {} has {} dependents and {} dependencies",
+                    symbol.qualified_name, in_degree, out_degree
+                );
+            }
+        }
+
+        let dependents_count = self
+            .symbol_index
+            .values()
+            .filter(|s| !s.dependents.is_empty())
+            .count();
+
         info!(
-            "Found {} symbols with non-empty dependents",
+            "Built dependency graph with {} relationships, {} symbols have dependents",
+            self.relationships.len(),
             dependents_count
         );
 
+        // Persist updated symbols with dependents to storage
         for symbol in self.symbol_index.values() {
             let mut doc = self.serialize_symbol(symbol)?;
-            // Update timestamp for persistence validation
             doc.updated_at = chrono::Utc::now();
             self.storage.update(doc).await?;
         }
 
-        info!(
-            "Built dependency graph with {} relationships",
-            self.relationships.len()
-        );
         Ok(())
     }
 
@@ -993,135 +1056,20 @@ impl SymbolStorage {
         Ok(())
     }
 
-    /// Build relationships for a single symbol based on its dependencies
-    async fn build_relationships_for_symbol(
-        &self,
-        symbol: &SymbolEntry,
-    ) -> Result<Vec<SymbolRelation>> {
-        let mut relationships = Vec::new();
+    /// Determine the language from file extension
+    fn determine_language(&self, file_path: &Path) -> SupportedLanguage {
+        // Currently only Rust is supported, but we check the extension for future expansion
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
 
-        // Process each dependency string to find actual symbol relationships
-        for dependency in &symbol.dependencies {
-            if let Some(target_ids) = self.find_symbols_by_name_pattern(dependency) {
-                for target_id in target_ids {
-                    // Determine relationship type based on symbol types and context
-                    let relation_type =
-                        self.determine_relationship_type(symbol, dependency, &target_id);
-
-                    let relation = SymbolRelation {
-                        from_id: symbol.id,
-                        to_id: target_id,
-                        relation_type,
-                        metadata: self.build_relationship_metadata(symbol, dependency),
-                    };
-
-                    relationships.push(relation);
-                }
-            }
+        match extension {
+            "rs" => SupportedLanguage::Rust,
+            // For now, we only support Rust. Other languages will need to be added
+            // to the SupportedLanguage enum and corresponding tree-sitter parsers
+            _ => SupportedLanguage::Rust, // Default to Rust for now
         }
-
-        Ok(relationships)
-    }
-
-    /// Find symbols that match a dependency name pattern
-    fn find_symbols_by_name_pattern(&self, pattern: &str) -> Option<Vec<Uuid>> {
-        let mut matches = Vec::new();
-
-        // Try exact name match first
-        if let Some(ids) = self.name_index.get(pattern) {
-            matches.extend(ids.clone());
-        }
-
-        // Try to match against symbol names (for function calls, type references)
-        for (id, symbol) in &self.symbol_index {
-            // Check if symbol name matches the dependency
-            if symbol.symbol.name == pattern {
-                matches.push(*id);
-            }
-
-            // Check if the dependency is a qualified reference to this symbol
-            if symbol.qualified_name.ends_with(&format!("::{}", pattern)) {
-                matches.push(*id);
-            }
-
-            // For module/namespace references
-            if pattern.contains("::") {
-                let parts: Vec<&str> = pattern.split("::").collect();
-                if let Some(last_part) = parts.last() {
-                    if symbol.symbol.name == *last_part {
-                        matches.push(*id);
-                    }
-                }
-            }
-        }
-
-        if matches.is_empty() {
-            None
-        } else {
-            // Remove duplicates
-            matches.sort();
-            matches.dedup();
-            Some(matches)
-        }
-    }
-
-    /// Determine the type of relationship based on context
-    fn determine_relationship_type(
-        &self,
-        from_symbol: &SymbolEntry,
-        dependency: &str,
-        _to_id: &Uuid,
-    ) -> RelationType {
-        // If the from_symbol is an import, this is an import relationship
-        if from_symbol.symbol.symbol_type == SymbolType::Import {
-            return RelationType::Imports;
-        }
-
-        // Check the symbol text to determine relationship type
-        let text = &from_symbol.symbol.text;
-
-        // Look for inheritance patterns
-        if (text.contains("extends") || text.contains("impl")) && text.contains(dependency) {
-            if text.contains("extends") {
-                return RelationType::Extends;
-            } else if text.contains("impl") {
-                return RelationType::Implements;
-            }
-        }
-
-        // Look for function call patterns
-        if text.contains(&format!("{}(", dependency)) || text.contains(&format!("{} (", dependency))
-        {
-            return RelationType::Calls;
-        }
-
-        // Default to a general usage relationship
-        RelationType::Custom("Uses".to_string())
-    }
-
-    /// Build metadata for a relationship
-    fn build_relationship_metadata(
-        &self,
-        from_symbol: &SymbolEntry,
-        dependency: &str,
-    ) -> HashMap<String, String> {
-        let mut metadata = HashMap::new();
-
-        metadata.insert("dependency_name".to_string(), dependency.to_string());
-        metadata.insert(
-            "from_file".to_string(),
-            from_symbol.file_path.to_string_lossy().to_string(),
-        );
-        metadata.insert(
-            "from_line".to_string(),
-            from_symbol.symbol.start_line.to_string(),
-        );
-
-        if let Some(repo) = &from_symbol.repository {
-            metadata.insert("repository".to_string(), repo.clone());
-        }
-
-        metadata
     }
 
     /// Get dependency graph statistics
