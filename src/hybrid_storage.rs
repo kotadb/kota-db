@@ -122,21 +122,41 @@ impl HybridStorage {
 
     /// Determine which storage backend to use for a given path
     fn determine_storage_type(&self, path: &str) -> StorageType {
+        // Validate and canonicalize path to prevent traversal attacks
+        let safe_path = self.sanitize_path(path);
+
         // Check if path matches graph patterns
         for pattern in &self.config.graph_patterns {
-            if self.matches_pattern(path, pattern) {
+            if self.matches_pattern(&safe_path, pattern) {
                 return StorageType::Graph;
             }
         }
 
         // Special cases for hybrid operations
-        if path.contains("/symbols/") && path.ends_with(".md") {
+        if safe_path.contains("/symbols/") && safe_path.ends_with(".md") {
             // Symbol documentation goes to both
             return StorageType::Both;
         }
 
         // Default to document storage
         StorageType::Document
+    }
+
+    /// Sanitize path to prevent directory traversal attacks
+    fn sanitize_path(&self, path: &str) -> String {
+        // Remove any directory traversal attempts
+        let cleaned = path
+            .replace("..", "")
+            .replace("./", "")
+            .replace("~", "")
+            .replace("\\", "/");
+
+        // Ensure path starts with /
+        if !cleaned.starts_with('/') {
+            format!("/{}", cleaned)
+        } else {
+            cleaned
+        }
     }
 
     /// Simple pattern matching (could be enhanced with glob)
@@ -495,6 +515,15 @@ impl GraphStorage for HybridStorage {
         if let Some(graph_storage) = &self.graph_storage {
             let mut storage = graph_storage.write().await;
             storage.remove_edge(from, to).await
+        } else {
+            Err(anyhow::anyhow!("Graph storage not enabled"))
+        }
+    }
+
+    async fn delete_node(&mut self, node_id: Uuid) -> Result<bool> {
+        if let Some(graph_storage) = &self.graph_storage {
+            let mut storage = graph_storage.write().await;
+            storage.delete_node(node_id).await
         } else {
             Err(anyhow::anyhow!("Graph storage not enabled"))
         }

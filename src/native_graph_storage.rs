@@ -217,8 +217,18 @@ impl NativeGraphStorage {
             return Ok(());
         }
 
-        // Parse header
-        let header: PageHeader = bincode::deserialize(&data[..std::mem::size_of::<PageHeader>()])?;
+        // Check data size to prevent memory exhaustion
+        if data.len() > MAX_DESERIALIZE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Page size {} exceeds maximum allowed size {}",
+                data.len(),
+                MAX_DESERIALIZE_SIZE
+            ));
+        }
+
+        // Parse header with bounded deserialization
+        let header_size = std::mem::size_of::<PageHeader>();
+        let header: PageHeader = bincode::deserialize(&data[..header_size])?;
 
         // Validate magic number
         if header.magic != *GRAPH_MAGIC {
@@ -245,7 +255,11 @@ impl NativeGraphStorage {
                 break;
             }
 
-            // Deserialize node record
+            // Deserialize node record with size validation
+            if size > MAX_DESERIALIZE_SIZE {
+                tracing::warn!("Skipping oversized record: {} bytes", size);
+                break;
+            }
             let record: NodeRecord = bincode::deserialize(&data[offset..offset + size])?;
             nodes.insert(record.node.id, record);
             offset += size;
@@ -323,11 +337,69 @@ impl NativeGraphStorage {
 
     /// Write to WAL for durability
     async fn write_to_wal(&self, entry: WalEntry) -> Result<()> {
-        let _data = bincode::serialize(&entry)?;
-        let _wal = self.wal.lock().await;
+        use tokio::io::AsyncWriteExt;
 
-        // Write entry size and data
-        // In production, this would handle WAL rotation and fsync
+        let data = bincode::serialize(&entry)?;
+        let mut wal = self.wal.lock().await;
+
+        // Check if we need to rotate the WAL
+        if wal.size + data.len() as u64 > wal.max_size {
+            self.rotate_wal(&mut wal).await?;
+        }
+
+        // Open or create WAL file if not exists
+        if wal.file.is_none() {
+            let wal_path = self.db_path.join("wal").join("current.wal");
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&wal_path)
+                .await?;
+            wal.file = Some(file);
+        }
+
+        if let Some(file) = &mut wal.file {
+            // Write entry size (4 bytes) and data
+            let size_bytes = (data.len() as u32).to_le_bytes();
+            file.write_all(&size_bytes).await?;
+            file.write_all(&data).await?;
+
+            // Ensure data is written to disk
+            file.sync_all().await?;
+
+            wal.size += (size_bytes.len() + data.len()) as u64;
+        }
+
+        Ok(())
+    }
+
+    /// Rotate the WAL file
+    async fn rotate_wal(&self, wal: &mut WriteAheadLog) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        // Close current WAL file
+        if let Some(mut file) = wal.file.take() {
+            file.flush().await?;
+            file.sync_all().await?;
+        }
+
+        // Rename current WAL to timestamped file
+        let timestamp = chrono::Utc::now().timestamp();
+        let current_path = self.db_path.join("wal").join("current.wal");
+        let archive_path = self
+            .db_path
+            .join("wal")
+            .join(format!("wal_{}.archive", timestamp));
+
+        if current_path.exists() {
+            fs::rename(&current_path, &archive_path).await?;
+        }
+
+        // Reset WAL size
+        wal.size = 0;
+
+        // Don't write checkpoint here to avoid recursion
+        // Checkpoint will be written on next operation
 
         Ok(())
     }
@@ -343,6 +415,9 @@ enum WalEntry {
     EdgeDelete { from: Uuid, to: Uuid },
     Checkpoint { timestamp: i64 },
 }
+
+/// Maximum size for deserialization to prevent memory exhaustion
+const MAX_DESERIALIZE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
 #[async_trait]
 impl GraphStorage for NativeGraphStorage {
@@ -504,22 +579,10 @@ impl GraphStorage for NativeGraphStorage {
     }
 
     async fn find_paths(&self, from: Uuid, to: Uuid, max_paths: usize) -> Result<Vec<GraphPath>> {
-        // Simple DFS path finding
-        let mut paths = Vec::new();
-        let mut current_path = Vec::new();
-        let mut visited = HashSet::new();
-
-        self.dfs_paths(
-            from,
-            to,
-            &mut current_path,
-            &mut visited,
-            &mut paths,
-            max_paths,
-        )
-        .await?;
-
-        Ok(paths)
+        // Use iterative implementation with depth limit to prevent stack overflow
+        let max_depth = self.config.max_traversal_depth;
+        self.find_paths_iterative(from, to, max_paths, max_depth)
+            .await
     }
 
     async fn get_nodes_by_type(&self, node_type: &str) -> Result<Vec<Uuid>> {
@@ -595,6 +658,90 @@ impl GraphStorage for NativeGraphStorage {
         Ok(removed)
     }
 
+    async fn delete_node(&mut self, node_id: Uuid) -> Result<bool> {
+        // Check if node exists
+        let exists = {
+            let nodes = self.nodes.read();
+            nodes.contains_key(&node_id)
+        };
+
+        if !exists {
+            return Ok(false);
+        }
+
+        // Remove all outgoing edges
+        {
+            let mut edges_out = self.edges_out.write();
+            if let Some(outgoing) = edges_out.remove(&node_id) {
+                // Update reverse indices for target nodes
+                let mut edges_in = self.edges_in.write();
+                for (target_id, _) in outgoing {
+                    if let Some(incoming) = edges_in.get_mut(&target_id) {
+                        incoming.retain(|(source_id, _)| *source_id != node_id);
+                    }
+                }
+            }
+        }
+
+        // Remove all incoming edges
+        {
+            let mut edges_in = self.edges_in.write();
+            if let Some(incoming) = edges_in.remove(&node_id) {
+                // Update forward indices for source nodes
+                let mut edges_out = self.edges_out.write();
+                for (source_id, _) in incoming {
+                    if let Some(outgoing) = edges_out.get_mut(&source_id) {
+                        outgoing.retain(|(target_id, _)| *target_id != node_id);
+                    }
+                }
+            }
+        }
+
+        // Remove from type index
+        let node_type = {
+            let nodes = self.nodes.read();
+            nodes.get(&node_id).map(|r| r.node.node_type.clone())
+        };
+
+        if let Some(node_type) = node_type {
+            let mut nodes_by_type = self.nodes_by_type.write();
+            if let Some(type_set) = nodes_by_type.get_mut(&node_type) {
+                type_set.remove(&node_id);
+            }
+        }
+
+        // Remove from name index
+        let qualified_name = {
+            let nodes = self.nodes.read();
+            nodes.get(&node_id).map(|r| r.node.qualified_name.clone())
+        };
+
+        if let Some(qualified_name) = qualified_name {
+            let mut nodes_by_name = self.nodes_by_name.write();
+            if let Some(name_set) = nodes_by_name.get_mut(&qualified_name) {
+                name_set.remove(&node_id);
+            }
+        }
+
+        // Remove the node itself
+        {
+            let mut nodes = self.nodes.write();
+            nodes.remove(&node_id);
+        }
+
+        // Write to WAL
+        self.write_to_wal(WalEntry::NodeDelete { id: node_id })
+            .await?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write();
+            stats.node_count = stats.node_count.saturating_sub(1);
+        }
+
+        Ok(true)
+    }
+
     async fn get_graph_stats(&self) -> Result<GraphStats> {
         let stats = self.stats.read();
         Ok(stats.clone())
@@ -615,47 +762,76 @@ impl GraphStorage for NativeGraphStorage {
     }
 }
 
-/// Helper for DFS path finding
+/// Helper for iterative path finding with cycle detection
 impl NativeGraphStorage {
-    async fn dfs_paths(
+    /// Iterative DFS implementation to prevent stack overflow
+    async fn find_paths_iterative(
         &self,
-        current: Uuid,
-        target: Uuid,
-        current_path: &mut Vec<Uuid>,
-        visited: &mut HashSet<Uuid>,
-        paths: &mut Vec<GraphPath>,
+        from: Uuid,
+        to: Uuid,
         max_paths: usize,
-    ) -> Result<()> {
-        if paths.len() >= max_paths {
-            return Ok(());
+        max_depth: usize,
+    ) -> Result<Vec<GraphPath>> {
+        use std::collections::VecDeque;
+
+        #[derive(Clone)]
+        struct SearchState {
+            current: Uuid,
+            path: Vec<Uuid>,
+            visited: HashSet<Uuid>,
         }
 
-        current_path.push(current);
-        visited.insert(current);
+        let mut paths = Vec::new();
+        let mut stack = VecDeque::new();
 
-        if current == target {
-            // Found a path
-            let path = GraphPath {
-                nodes: current_path.clone(),
-                edges: Vec::new(), // Would populate with actual edges
-                length: current_path.len(),
-            };
-            paths.push(path);
-        } else {
-            // Continue search
-            let edges = self.get_edges(current, Direction::Outgoing).await?;
-            for (next, _) in edges {
-                if !visited.contains(&next) {
-                    Box::pin(self.dfs_paths(next, target, current_path, visited, paths, max_paths))
-                        .await?;
+        // Initialize search
+        let initial_state = SearchState {
+            current: from,
+            path: vec![from],
+            visited: HashSet::from([from]),
+        };
+        stack.push_back(initial_state);
+
+        while let Some(state) = stack.pop_back() {
+            // Check if we've found enough paths
+            if paths.len() >= max_paths {
+                break;
+            }
+
+            // Check depth limit to prevent infinite loops
+            if state.path.len() > max_depth {
+                continue;
+            }
+
+            // Check if we've reached the target
+            if state.current == to {
+                paths.push(GraphPath {
+                    nodes: state.path.clone(),
+                    edges: Vec::new(), // Would populate with actual edges
+                    length: state.path.len(),
+                });
+                continue;
+            }
+
+            // Explore neighbors
+            let edges = self.get_edges(state.current, Direction::Outgoing).await?;
+            for (next_node, _edge) in edges {
+                // Skip if already visited (cycle detection)
+                if state.visited.contains(&next_node) {
+                    continue;
                 }
+
+                // Create new state for this path
+                let mut new_state = state.clone();
+                new_state.current = next_node;
+                new_state.path.push(next_node);
+                new_state.visited.insert(next_node);
+
+                stack.push_back(new_state);
             }
         }
 
-        current_path.pop();
-        visited.remove(&current);
-
-        Ok(())
+        Ok(paths)
     }
 }
 

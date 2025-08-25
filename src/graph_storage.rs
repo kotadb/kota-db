@@ -49,6 +49,9 @@ pub trait GraphStorage: Storage {
     /// Remove an edge between two nodes
     async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool>;
 
+    /// Delete a node and all its edges
+    async fn delete_node(&mut self, node_id: Uuid) -> Result<bool>;
+
     /// Get graph statistics
     async fn get_graph_stats(&self) -> Result<GraphStats>;
 
