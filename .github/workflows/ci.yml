@@ -173,6 +173,11 @@ jobs:
         rustc --version
         cargo --version
     
+    - name: Build release binary for integration tests
+      run: |
+        # Integration tests require release binary in CI environment
+        cargo build --release --bin kotadb
+    
     - name: Run ${{ matrix.suite }} tests
       shell: bash
       run: |
