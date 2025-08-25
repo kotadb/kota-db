@@ -418,9 +418,15 @@ impl SymbolStorage {
             }
         }
 
-        // Add to name index
+        // Add to name index using both qualified name and simple name
         self.name_index
             .entry(entry.qualified_name.clone())
+            .or_default()
+            .push(entry_id);
+
+        // Also index by simple name for easier searching
+        self.name_index
+            .entry(entry.symbol.name.clone())
             .or_default()
             .push(entry_id);
 
@@ -438,11 +444,19 @@ impl SymbolStorage {
     /// Evict a symbol from the in-memory index
     fn evict_symbol(&mut self, symbol_id: Uuid) {
         if let Some(entry) = self.symbol_index.remove(&symbol_id) {
-            // Remove from name index
+            // Remove from name index (qualified name)
             if let Some(ids) = self.name_index.get_mut(&entry.qualified_name) {
                 ids.retain(|&id| id != symbol_id);
                 if ids.is_empty() {
                     self.name_index.remove(&entry.qualified_name);
+                }
+            }
+
+            // Remove from name index (simple name)
+            if let Some(ids) = self.name_index.get_mut(&entry.symbol.name) {
+                ids.retain(|&id| id != symbol_id);
+                if ids.is_empty() {
+                    self.name_index.remove(&entry.symbol.name);
                 }
             }
 
