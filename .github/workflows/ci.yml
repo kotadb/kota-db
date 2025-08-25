@@ -161,14 +161,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
+    - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Setup environment
+    - name: Setup build environment
       run: |
-        # Clear any sccache configuration
-        unset RUSTC_WRAPPER
-        unset SCCACHE_CACHE_SIZE
+        # Ensure all tools are in PATH
+        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+        # Verify tools are available
+        rustc --version
+        cargo --version
     
     - name: Run ${{ matrix.suite }} tests
       run: |
@@ -274,6 +277,14 @@ jobs:
       SCCACHE_CACHE_SIZE: ""
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Setup Node.js environment
+      run: |
+        # Ensure Node.js from Homebrew is in PATH
+        export PATH="/opt/homebrew/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+        node --version
+        npm --version
     
     - name: Check if MCP package exists
       id: check_mcp
