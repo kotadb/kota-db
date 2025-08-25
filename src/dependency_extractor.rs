@@ -455,6 +455,8 @@ impl DependencyExtractor {
                 let full_path = full_path.to_string();
 
                 // Track module-like paths but skip method calls like self.data
+                // NOTE: This also filters out legitimate module names starting with "self"
+                // (e.g., self_config::Module) but such naming is extremely rare in practice
                 if full_path.contains("::")
                     && !full_path.starts_with("self")
                     && !seen_paths.contains(&full_path)
@@ -1174,6 +1176,75 @@ fn validate_result(value: i32) -> i32 {
         assert!(cycle.contains(&id_a));
         assert!(cycle.contains(&id_b));
         assert!(cycle.contains(&id_c));
+    }
+
+    #[tokio::test]
+    async fn test_inline_qualified_path_extraction() {
+        let extractor = DependencyExtractor::new().unwrap();
+
+        let rust_code = r#"
+pub struct DataStore {
+    // Inline type path in field type annotation
+    cache: std::collections::HashMap<String, Vec<u8>>,
+    mutex: std::sync::Mutex<i32>,
+}
+
+impl DataStore {
+    fn process(&self) -> std::io::Result<()> {
+        // Inline path in function call
+        let data = std::fs::read_to_string("file.txt")?;
+        // Module path in nested call
+        let parsed = crate::parser::utils::parse_data(&data);
+        Ok(())
+    }
+}
+"#;
+
+        // Parse the code first
+        let mut parser = CodeParser::new().unwrap();
+        let parsed = parser
+            .parse_content(rust_code, SupportedLanguage::Rust)
+            .unwrap();
+
+        // Extract dependencies
+        let path = PathBuf::from("test.rs");
+        let analysis = extractor
+            .extract_dependencies(&parsed, rust_code, &path)
+            .unwrap();
+
+        // Verify inline paths are detected as imports
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.path == "std::collections::HashMap"),
+            "Should detect std::collections::HashMap"
+        );
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.path == "std::sync::Mutex"),
+            "Should detect std::sync::Mutex"
+        );
+        assert!(
+            analysis.imports.iter().any(|i| i.path == "std::io::Result"),
+            "Should detect std::io::Result"
+        );
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.path == "std::fs::read_to_string"),
+            "Should detect std::fs::read_to_string"
+        );
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.path == "crate::parser::utils::parse_data"),
+            "Should detect crate::parser::utils::parse_data"
+        );
     }
 
     #[tokio::test]
