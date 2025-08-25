@@ -83,7 +83,7 @@ jsonrpc-core = { version = "18.0", optional = true }
 jsonrpc-derive = { version = "18.0", optional = true }
 jsonrpc-http-server = { version = "18.0", optional = true }
 jsonrpc-stdio-server = { version = "18.0", optional = true }
-config = { version = "0.14", optional = true }
+config = { version = "0.15", optional = true }
 mime = "0.3"
 toml = "0.8"
 
