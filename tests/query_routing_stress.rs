@@ -434,7 +434,11 @@ async fn test_index_selection_performance_analysis() -> Result<()> {
     let router = Arc::new(QueryRouter::new(&temp_dir).await?);
 
     // Populate with realistic data set (reduced for CI performance)
-    let doc_count = if std::env::var("CI").is_ok() { 2000 } else { 10000 };
+    let doc_count = if std::env::var("CI").is_ok() {
+        2000
+    } else {
+        10000
+    };
     let doc_ids = router.populate_indices(doc_count).await?;
 
     // Test different concurrency levels (reduced for CI)
@@ -480,7 +484,7 @@ async fn test_index_selection_performance_analysis() -> Result<()> {
 
             let handle = tokio::spawn(async move {
                 let mut task_times = Vec::new();
-                
+
                 // Reduce iterations in CI to prevent timeouts
                 let iterations = if std::env::var("CI").is_ok() { 10 } else { 20 };
 
