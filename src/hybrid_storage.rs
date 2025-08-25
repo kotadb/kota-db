@@ -144,18 +144,41 @@ impl HybridStorage {
 
     /// Sanitize path to prevent directory traversal attacks
     fn sanitize_path(&self, path: &str) -> String {
-        // Remove any directory traversal attempts
-        let cleaned = path
-            .replace("..", "")
-            .replace("./", "")
-            .replace("~", "")
-            .replace("\\", "/");
+        use std::path::{Component, PathBuf};
 
-        // Ensure path starts with /
-        if !cleaned.starts_with('/') {
-            format!("/{}", cleaned)
+        // Parse the path and rebuild it safely
+        let path_buf = PathBuf::from(path);
+        let mut clean_components = Vec::new();
+
+        for component in path_buf.components() {
+            match component {
+                Component::Normal(s) => {
+                    // Only allow normal path components
+                    if let Some(s_str) = s.to_str() {
+                        // Filter out dangerous patterns
+                        if !s_str.is_empty()
+                            && !s_str.contains("..")
+                            && !s_str.starts_with('.')
+                            && !s_str.contains('\0')
+                        {
+                            clean_components.push(s_str.to_string());
+                        }
+                    }
+                }
+                Component::RootDir => {
+                    // Allow root dir
+                }
+                Component::ParentDir | Component::CurDir | Component::Prefix(_) => {
+                    // Skip these - they could be used for traversal
+                }
+            }
+        }
+
+        // Rebuild path with only safe components
+        if clean_components.is_empty() {
+            "/".to_string()
         } else {
-            cleaned
+            format!("/{}", clean_components.join("/"))
         }
     }
 

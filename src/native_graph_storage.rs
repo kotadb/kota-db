@@ -30,12 +30,15 @@ const PAGE_SIZE: usize = 4096;
 /// Magic number for graph storage files
 const GRAPH_MAGIC: &[u8; 8] = b"KOTGRAPH";
 
+/// Maximum size for deserialization to prevent memory exhaustion
+const MAX_DESERIALIZE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
 /// Version of the graph storage format
 #[allow(dead_code)]
 const GRAPH_VERSION: u32 = 1;
 
-/// Type alias for edge collections
-type EdgeList = Vec<(Uuid, EdgeRecord)>;
+/// Type alias for edge collections - using HashMap for O(1) lookups
+type EdgeList = HashMap<Uuid, EdgeRecord>;
 
 /// Native graph storage implementation
 pub struct NativeGraphStorage {
@@ -155,7 +158,10 @@ impl NativeGraphStorage {
             })),
         };
 
-        // Load existing data if present
+        // Recover from WAL first
+        storage.recover_from_wal().await?;
+
+        // Then load existing data if present
         storage.load_from_disk().await?;
 
         Ok(storage)
@@ -398,9 +404,128 @@ impl NativeGraphStorage {
         // Reset WAL size
         wal.size = 0;
 
-        // Don't write checkpoint here to avoid recursion
-        // Checkpoint will be written on next operation
+        Ok(())
+    }
 
+    /// Recover from WAL on startup
+    async fn recover_from_wal(&self) -> Result<()> {
+        let wal_dir = self.db_path.join("wal");
+        if !wal_dir.exists() {
+            return Ok(());
+        }
+
+        // First process any archived WAL files
+        let mut entries = fs::read_dir(&wal_dir).await?;
+        let mut archives = Vec::new();
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("archive") {
+                archives.push(path);
+            }
+        }
+
+        // Sort archives by timestamp to apply in order
+        archives.sort();
+
+        for archive_path in archives {
+            self.apply_wal_file(&archive_path).await?;
+            fs::remove_file(&archive_path).await?;
+        }
+
+        // Then process current WAL if it exists
+        let current_wal = wal_dir.join("current.wal");
+        if current_wal.exists() {
+            self.apply_wal_file(&current_wal).await?;
+            // Rotate it to start fresh
+            let timestamp = chrono::Utc::now().timestamp();
+            let archive_path = wal_dir.join(format!("wal_{}.archive", timestamp));
+            fs::rename(&current_wal, &archive_path).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply a single WAL file
+    async fn apply_wal_file(&self, path: &Path) -> Result<()> {
+        let data = fs::read(path).await?;
+        let mut offset = 0;
+
+        while offset + 4 <= data.len() {
+            // Read entry size
+            let size_bytes: [u8; 4] = data[offset..offset + 4].try_into()?;
+            let size = u32::from_le_bytes(size_bytes) as usize;
+            offset += 4;
+
+            if offset + size > data.len() {
+                break; // Incomplete entry
+            }
+
+            // Validate size before deserializing
+            if size > MAX_DESERIALIZE_SIZE {
+                tracing::warn!("Skipping oversized WAL entry: {} bytes", size);
+                break;
+            }
+
+            // Apply entry with bounded deserialization
+            let entry_data = &data[offset..offset + size];
+            if let Ok(entry) = bincode::deserialize::<WalEntry>(entry_data) {
+                self.apply_wal_entry(entry).await?;
+            }
+            offset += size;
+        }
+
+        Ok(())
+    }
+
+    /// Apply a single WAL entry
+    async fn apply_wal_entry(&self, entry: WalEntry) -> Result<()> {
+        match entry {
+            WalEntry::NodeInsert { id, data } => {
+                if let Ok(record) = bincode::deserialize::<NodeRecord>(&data) {
+                    let mut nodes = self.nodes.write();
+                    nodes.insert(id, record);
+                }
+            }
+            WalEntry::NodeDelete { id } => {
+                let mut nodes = self.nodes.write();
+                nodes.remove(&id);
+            }
+            WalEntry::EdgeInsert { from, to, data } => {
+                if let Ok(edge) = bincode::deserialize::<GraphEdge>(&data) {
+                    let record = EdgeRecord {
+                        edge: edge.clone(),
+                        page_id: 0,
+                        page_offset: 0,
+                    };
+                    let mut edges_out = self.edges_out.write();
+                    edges_out
+                        .entry(from)
+                        .or_default()
+                        .insert(to, record.clone());
+
+                    let mut edges_in = self.edges_in.write();
+                    edges_in.entry(to).or_default().insert(from, record);
+                }
+            }
+            WalEntry::EdgeDelete { from, to } => {
+                let mut edges_out = self.edges_out.write();
+                if let Some(edges) = edges_out.get_mut(&from) {
+                    edges.remove(&to);
+                }
+
+                let mut edges_in = self.edges_in.write();
+                if let Some(edges) = edges_in.get_mut(&to) {
+                    edges.remove(&from);
+                }
+            }
+            WalEntry::NodeUpdate { .. } => {
+                // Node updates would be handled here
+            }
+            WalEntry::Checkpoint { .. } => {
+                // Checkpoint markers can be ignored during recovery
+            }
+        }
         Ok(())
     }
 }
@@ -415,9 +540,6 @@ enum WalEntry {
     EdgeDelete { from: Uuid, to: Uuid },
     Checkpoint { timestamp: i64 },
 }
-
-/// Maximum size for deserialization to prevent memory exhaustion
-const MAX_DESERIALIZE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
 #[async_trait]
 impl GraphStorage for NativeGraphStorage {
@@ -477,13 +599,13 @@ impl GraphStorage for NativeGraphStorage {
             edges_out
                 .entry(from)
                 .or_default()
-                .push((to, record.clone()));
+                .insert(to, record.clone());
         }
 
         // Update reverse index
         {
             let mut edges_in = self.edges_in.write();
-            edges_in.entry(to).or_default().push((from, record));
+            edges_in.entry(to).or_default().insert(from, record);
         }
 
         // Update stats
@@ -599,18 +721,15 @@ impl GraphStorage for NativeGraphStorage {
         to: Uuid,
         metadata: HashMap<String, String>,
     ) -> Result<()> {
-        // Update edge metadata in both indices
+        // Update edge metadata in both indices - O(1) with HashMap
         let mut updated = false;
 
         {
             let mut edges_out = self.edges_out.write();
             if let Some(edges) = edges_out.get_mut(&from) {
-                for (target, record) in edges.iter_mut() {
-                    if *target == to {
-                        record.edge.metadata = metadata.clone();
-                        updated = true;
-                        break;
-                    }
+                if let Some(record) = edges.get_mut(&to) {
+                    record.edge.metadata = metadata.clone();
+                    updated = true;
                 }
             }
         }
@@ -618,11 +737,8 @@ impl GraphStorage for NativeGraphStorage {
         if updated {
             let mut edges_in = self.edges_in.write();
             if let Some(edges) = edges_in.get_mut(&to) {
-                for (source, record) in edges.iter_mut() {
-                    if *source == from {
-                        record.edge.metadata = metadata;
-                        break;
-                    }
+                if let Some(record) = edges.get_mut(&from) {
+                    record.edge.metadata = metadata;
                 }
             }
         }
@@ -633,21 +749,19 @@ impl GraphStorage for NativeGraphStorage {
     async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool> {
         let mut removed = false;
 
-        // Remove from forward index
+        // Remove from forward index - O(1) with HashMap
         {
             let mut edges_out = self.edges_out.write();
             if let Some(edges) = edges_out.get_mut(&from) {
-                let original_len = edges.len();
-                edges.retain(|(target, _)| *target != to);
-                removed = edges.len() < original_len;
+                removed = edges.remove(&to).is_some();
             }
         }
 
-        // Remove from reverse index
+        // Remove from reverse index - O(1) with HashMap
         if removed {
             let mut edges_in = self.edges_in.write();
             if let Some(edges) = edges_in.get_mut(&to) {
-                edges.retain(|(source, _)| *source != from);
+                edges.remove(&from);
             }
 
             // Update stats
@@ -677,7 +791,7 @@ impl GraphStorage for NativeGraphStorage {
                 let mut edges_in = self.edges_in.write();
                 for (target_id, _) in outgoing {
                     if let Some(incoming) = edges_in.get_mut(&target_id) {
-                        incoming.retain(|(source_id, _)| *source_id != node_id);
+                        incoming.remove(&node_id);
                     }
                 }
             }
@@ -691,7 +805,7 @@ impl GraphStorage for NativeGraphStorage {
                 let mut edges_out = self.edges_out.write();
                 for (source_id, _) in incoming {
                     if let Some(outgoing) = edges_out.get_mut(&source_id) {
-                        outgoing.retain(|(target_id, _)| *target_id != node_id);
+                        outgoing.remove(&node_id);
                     }
                 }
             }
