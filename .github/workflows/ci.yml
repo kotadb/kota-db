@@ -137,10 +137,10 @@ jobs:
         RUST_LOG: error
         CI: true
 
-  # Integration tests - split across Mac Pro's cores
+  # Integration tests - split across parallel jobs
   integration-tests:
-    name: Integration Tests (Mac Pro M2 Ultra)
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    name: Integration Tests (${{ matrix.suite }})
+    runs-on: ${{ matrix.os }}
     needs: [format, clippy]
     timeout-minutes: 10
     env:
@@ -158,6 +158,11 @@ jobs:
           - performance
           - system
           - analysis
+        os:
+          - ubuntu-latest  # Use GitHub-hosted runners for reliability
+        # Uncomment to use self-hosted runner when fixed:
+        # os:
+        #   - [self-hosted, macOS, ARM64, m2-ultra]
     steps:
     - uses: actions/checkout@v4
     
@@ -207,7 +212,7 @@ jobs:
       env:
         RUST_LOG: error
         CI: true
-        RUST_TEST_THREADS: 8  # Use more threads on Mac Pro
+        RUST_TEST_THREADS: 4  # Reasonable default for GitHub-hosted runners
         RUSTC_WRAPPER: ""  # Explicitly disable sccache
 
   # Performance validation - DISABLED due to persistent build issues on self-hosted runner
@@ -263,17 +268,21 @@ jobs:
       env:
         RUSTDOCFLAGS: "-D warnings"
 
-  # MCP Package Tests - can run on Mac Pro for Node.js performance
+  # MCP Package Tests
   mcp-integration:
     name: MCP Package Integration Tests
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest  # Use GitHub-hosted runner with Node.js pre-installed
     needs: build-and-test
     timeout-minutes: 5
-    env:
-      RUSTC_WRAPPER: ""  # Override any sccache configuration
-      SCCACHE_CACHE_SIZE: ""
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
     - name: Check if MCP package exists
       id: check_mcp
