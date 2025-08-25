@@ -628,9 +628,9 @@ mod tests {
 async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
     println!("🔧 Loading relationship query engine with real symbol data...");
 
-    // Load real symbol storage from the main database path
-    // Symbols are now stored in the same location as other documents
-    let storage_path = db_path.to_path_buf();
+    // Load real symbol storage from the main database storage path (db_path/storage)
+    // This ensures we read symbols from the same location where they were written
+    let storage_path = db_path.join("storage");
 
     // Ensure the database directory exists
     if !storage_path.exists() {
@@ -1064,9 +1064,11 @@ async fn main() -> Result<()> {
                 let result = if config.options.extract_symbols {
                     // Use the same storage backend for symbols as the main database
                     // This ensures symbols are stored in the same location and can be found later
+                    // IMPORTANT: Use the same path as the main database storage (db_path/storage)
+                    let storage_path = cli.db_path.join("storage");
                     let symbol_storage_backend = create_file_storage(
-                        cli.db_path.to_str().ok_or_else(|| {
-                            anyhow::anyhow!("Invalid database path: {:?}", cli.db_path)
+                        storage_path.to_str().ok_or_else(|| {
+                            anyhow::anyhow!("Invalid storage path: {:?}", storage_path)
                         })?,
                         Some(1000),
                     )
@@ -1257,9 +1259,9 @@ async fn main() -> Result<()> {
                 println!("📊 Symbol Storage Statistics");
                 println!("═══════════════════════════════");
 
-                // Use the main database path for symbol storage
-                // Symbols are now stored in the same location as other documents
-                let storage_path = cli.db_path.clone();
+                // Use the main database storage path (db_path/storage)
+                // This ensures we read symbols from the same location where they were written
+                let storage_path = cli.db_path.join("storage");
 
                 // Load symbol storage from main database
                 let file_storage = create_file_storage(

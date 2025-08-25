@@ -80,6 +80,7 @@ fn helper() {
     );
 
     // Now check symbol stats to see if they persisted
+    // Note: symbol-stats now correctly uses db_path/storage for consistency
     let output = Command::new("cargo")
         .args([
             "run",

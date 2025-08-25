@@ -568,6 +568,20 @@ impl RepositoryIngester {
         Ok(result)
     }
 
+    /// Sanitize a string to be valid as a tag (alphanumeric, dash, underscore, space only)
+    fn sanitize_tag(input: &str) -> String {
+        input
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    }
+
     fn create_index_document(
         &self,
         metadata: &crate::git::types::RepositoryMetadata,
@@ -600,7 +614,9 @@ impl RepositoryIngester {
         builder = builder.content(content.as_bytes());
         builder = builder.tag("repository")?;
         builder = builder.tag("index")?;
-        builder = builder.tag(&metadata.name)?;
+        // Sanitize repository name for use as tag
+        let sanitized_name = Self::sanitize_tag(&metadata.name);
+        builder = builder.tag(&sanitized_name)?;
         builder.build()
     }
 
@@ -628,7 +644,9 @@ impl RepositoryIngester {
 
         // Add tags
         builder = builder.tag("file")?;
-        builder = builder.tag(repo_name)?;
+        // Sanitize repository name for use as tag
+        let sanitized_repo = Self::sanitize_tag(repo_name);
+        builder = builder.tag(&sanitized_repo)?;
 
         if let Some(ext) = &file.extension {
             // Sanitize extension by replacing dots with underscores for tag validation
@@ -695,20 +713,12 @@ impl RepositoryIngester {
             .title(format!("Commit: {}", &commit.sha[..8]))?;
         builder = builder.content(content.as_bytes());
         builder = builder.tag("commit")?;
-        builder = builder.tag(repo_name)?;
+        // Sanitize repository name for use as tag
+        let sanitized_repo = Self::sanitize_tag(repo_name);
+        builder = builder.tag(&sanitized_repo)?;
 
-        // Sanitize author name for use as tag - replace special characters with underscores
-        let sanitized_author = commit
-            .author_name
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
+        // Sanitize author name for use as tag
+        let sanitized_author = Self::sanitize_tag(&commit.author_name);
         builder = builder.tag(&sanitized_author)?;
         builder.build()
     }
