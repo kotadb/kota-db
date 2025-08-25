@@ -283,11 +283,17 @@ impl CodeParser {
         // Check if this node represents a symbol we care about
         let symbol_type = match node_type {
             "function_item" | "function_declaration" | "function_definition" => {
-                Some(SymbolType::Function)
+                // Check if this is inside a trait or impl block (making it a method)
+                if self.is_inside_trait_or_impl(node) {
+                    Some(SymbolType::Method)
+                } else {
+                    Some(SymbolType::Function)
+                }
             }
             "method_definition" | "method_declaration" => Some(SymbolType::Method),
             "struct_item" | "struct_declaration" => Some(SymbolType::Struct),
-            "impl_item" => Some(SymbolType::Class), // Rust impl blocks
+            "trait_item" => Some(SymbolType::Interface), // Rust traits are interfaces
+            "impl_item" => Some(SymbolType::Class),      // Rust impl blocks
             "class_declaration" | "class_definition" => Some(SymbolType::Class),
             "interface_declaration" => Some(SymbolType::Interface),
             "enum_item" | "enum_declaration" => Some(SymbolType::Enum),
@@ -333,12 +339,30 @@ impl CodeParser {
         }
     }
 
+    /// Check if a node is inside a trait or impl block
+    fn is_inside_trait_or_impl(&self, node: Node) -> bool {
+        let mut current = node.parent();
+        while let Some(parent) = current {
+            match parent.kind() {
+                "trait_item" | "impl_item" => return true,
+                _ => current = parent.parent(),
+            }
+        }
+        false
+    }
+
     /// Extract symbol name from a node (simplified implementation)
     fn extract_symbol_name(&self, node: Node, content: &str) -> Option<String> {
         // Look for identifier nodes within this node
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "identifier" || child.kind() == "name" {
+            // Handle various identifier types across different languages
+            // Rust uses "type_identifier" for structs/enums, "identifier" for functions/variables
+            // Other languages may use "name" or "identifier"
+            if child.kind() == "identifier"
+                || child.kind() == "type_identifier"
+                || child.kind() == "name"
+            {
                 if let Ok(name) = child.utf8_text(content.as_bytes()) {
                     return Some(name.to_string());
                 }
