@@ -424,7 +424,13 @@ impl GraphStorage for HybridStorage {
     async fn store_node(&mut self, node_id: Uuid, node_data: GraphNode) -> Result<()> {
         if let Some(graph_storage) = &self.graph_storage {
             let mut storage = graph_storage.write().await;
-            storage.store_node(node_id, node_data).await
+            let result = storage.store_node(node_id, node_data).await;
+
+            // Track graph operation
+            let mut stats = self.stats.write().await;
+            stats.graph_ops += 1;
+
+            result
         } else {
             Err(anyhow::anyhow!("Graph storage not enabled"))
         }
@@ -442,7 +448,13 @@ impl GraphStorage for HybridStorage {
     async fn store_edge(&mut self, from: Uuid, to: Uuid, edge: GraphEdge) -> Result<()> {
         if let Some(graph_storage) = &self.graph_storage {
             let mut storage = graph_storage.write().await;
-            storage.store_edge(from, to, edge).await
+            let result = storage.store_edge(from, to, edge).await;
+
+            // Track graph operation
+            let mut stats = self.stats.write().await;
+            stats.graph_ops += 1;
+
+            result
         } else {
             Err(anyhow::anyhow!("Graph storage not enabled"))
         }

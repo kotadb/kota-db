@@ -536,7 +536,7 @@ impl GraphStorage for NativeGraphStorage {
 
         // BFS traversal
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth || visited.contains(&node_id) {
+            if depth > max_depth || visited.contains(&node_id) {
                 continue;
             }
 
@@ -558,7 +558,7 @@ impl GraphStorage for NativeGraphStorage {
                     .or_insert_with(Vec::new)
                     .push((target, edge));
 
-                if depth + 1 < max_depth {
+                if depth < max_depth {
                     queue.push_back((target, depth + 1));
                 }
             }
@@ -799,7 +799,8 @@ impl NativeGraphStorage {
             }
 
             // Check depth limit to prevent infinite loops
-            if state.path.len() > max_depth {
+            // Allow paths up to max_depth nodes (not edges)
+            if state.path.len() > max_depth + 1 {
                 continue;
             }
 
@@ -832,6 +833,164 @@ impl NativeGraphStorage {
         }
 
         Ok(paths)
+    }
+
+    /// Persist nodes to disk in page-based format
+    async fn persist_nodes(&self) -> Result<()> {
+        let nodes_dir = self.db_path.join("nodes");
+        fs::create_dir_all(&nodes_dir).await?;
+
+        // Collect data while holding the lock
+        let page_data = {
+            let nodes = self.nodes.read();
+            if nodes.is_empty() {
+                return Ok(());
+            }
+
+            // Group nodes into pages
+            let mut page_data = Vec::new();
+            let mut current_page = Vec::new();
+
+            for (id, record) in nodes.iter() {
+                let serialized = bincode::serialize(record)?;
+                let id_bytes = id.as_bytes();
+
+                // Store ID length, ID, and serialized node record
+                let mut entry = Vec::new();
+                entry.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
+                entry.extend_from_slice(id_bytes);
+                entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
+                entry.extend_from_slice(&serialized);
+
+                if current_page.len() + entry.len() > 4096 - 8 {
+                    // Leave room for header
+                    if !current_page.is_empty() {
+                        page_data.push(current_page);
+                        current_page = Vec::new();
+                    }
+                }
+                current_page.extend_from_slice(&entry);
+            }
+
+            if !current_page.is_empty() {
+                page_data.push(current_page);
+            }
+
+            page_data
+        }; // Lock released here
+
+        // Write pages to disk
+        for (i, page) in page_data.iter().enumerate() {
+            let page_path = nodes_dir.join(format!("{:08}.page", i));
+            let mut page_bytes = Vec::new();
+
+            // Create proper page header
+            let header = PageHeader {
+                magic: *GRAPH_MAGIC,
+                page_id: i as u32,
+                record_count: 1, // Simplified - each page has variable records
+                free_offset: page.len() as u16,
+                checksum: 0, // TODO: Calculate checksum
+            };
+
+            let header_bytes = bincode::serialize(&header)?;
+            page_bytes.extend_from_slice(&header_bytes);
+            page_bytes.extend_from_slice(page);
+
+            // Pad to 4KB
+            while page_bytes.len() < 4096 {
+                page_bytes.push(0);
+            }
+
+            fs::write(&page_path, &page_bytes).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Persist edges to disk in page-based format
+    async fn persist_edges(&self) -> Result<()> {
+        let edges_dir = self.db_path.join("edges");
+        fs::create_dir_all(&edges_dir).await?;
+
+        // Collect data while holding the lock
+        let page_data = {
+            let edges_out = self.edges_out.read();
+            if edges_out.is_empty() {
+                return Ok(());
+            }
+
+            // Collect all edges
+            let mut all_edges = Vec::new();
+            for (from_id, edges) in edges_out.iter() {
+                for (to_id, edge) in edges.iter() {
+                    all_edges.push((*from_id, *to_id, edge.clone()));
+                }
+            }
+
+            // Group edges into pages
+            let mut page_data = Vec::new();
+            let mut current_page = Vec::new();
+
+            for (from_id, to_id, edge) in all_edges {
+                let serialized = bincode::serialize(&edge)?;
+                let from_bytes = from_id.as_bytes();
+                let to_bytes = to_id.as_bytes();
+
+                // Store edge entry
+                let mut entry = Vec::new();
+                entry.extend_from_slice(&(from_bytes.len() as u32).to_le_bytes());
+                entry.extend_from_slice(from_bytes);
+                entry.extend_from_slice(&(to_bytes.len() as u32).to_le_bytes());
+                entry.extend_from_slice(to_bytes);
+                entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
+                entry.extend_from_slice(&serialized);
+
+                if current_page.len() + entry.len() > 4096 - 8 {
+                    // Leave room for header
+                    if !current_page.is_empty() {
+                        page_data.push(current_page);
+                        current_page = Vec::new();
+                    }
+                }
+                current_page.extend_from_slice(&entry);
+            }
+
+            if !current_page.is_empty() {
+                page_data.push(current_page);
+            }
+
+            page_data
+        }; // Lock released here
+
+        // Write pages to disk
+        for (i, page) in page_data.iter().enumerate() {
+            let page_path = edges_dir.join(format!("{:08}.page", i));
+            let mut page_bytes = Vec::new();
+
+            // Simple page header
+            page_bytes.extend_from_slice(b"EDGE");
+            page_bytes.extend_from_slice(&(page.len() as u32).to_le_bytes());
+            page_bytes.extend_from_slice(page);
+
+            // Pad to 4KB
+            while page_bytes.len() < 4096 {
+                page_bytes.push(0);
+            }
+
+            fs::write(&page_path, &page_bytes).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush the write-ahead log
+    async fn flush_wal(&self) -> Result<()> {
+        let mut wal = self.wal.lock().await;
+        if let Some(ref mut file) = wal.file {
+            file.sync_all().await?;
+        }
+        Ok(())
     }
 }
 
@@ -878,17 +1037,27 @@ impl Storage for NativeGraphStorage {
     }
 
     async fn sync(&mut self) -> Result<()> {
-        // Sync graph data to disk
+        // Persist nodes to disk
+        self.persist_nodes().await?;
+
+        // Persist edges to disk
+        self.persist_edges().await?;
+
+        // Flush WAL
+        self.flush_wal().await?;
+
         Ok(())
     }
 
     async fn flush(&mut self) -> Result<()> {
-        // Flush any pending writes
+        // Flush WAL to ensure durability
+        self.flush_wal().await?;
         Ok(())
     }
 
-    async fn close(self) -> Result<()> {
-        // Clean shutdown
+    async fn close(mut self) -> Result<()> {
+        // Sync all data before closing
+        self.sync().await?;
         Ok(())
     }
 }
