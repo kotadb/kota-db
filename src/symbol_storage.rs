@@ -868,22 +868,43 @@ impl SymbolStorage {
     fn deserialize_symbol(&self, doc: &Document) -> Result<SymbolEntry> {
         let content = String::from_utf8(doc.content.clone())?;
 
-        // Extract JSON from markdown content
-        // The content format is: frontmatter (---\ntags\n---) followed by JSON
-        let json_content = if content.starts_with("---") {
-            // Find the end of frontmatter
-            let end_frontmatter = content.find("\n---\n").ok_or_else(|| {
-                anyhow::anyhow!("Invalid markdown format: missing frontmatter end")
-            })?;
-
-            // Extract content after frontmatter
-            content[(end_frontmatter + 5)..].trim()
+        // The file storage includes frontmatter in the content when reading files.
+        // We need to extract the JSON content that comes after the frontmatter.
+        let json_content = if content.trim().starts_with("---") {
+            // Find the end of frontmatter (second occurrence of "---")
+            if let Some(start) = content.find("---") {
+                // Find the closing --- after the opening one
+                if let Some(end) = content[start + 3..].find("---") {
+                    // Extract content after the closing --- (skip the newline too)
+                    let content_start = start + 3 + end + 3;
+                    if content_start < content.len() {
+                        content[content_start..].trim()
+                    } else {
+                        // No content after frontmatter
+                        return Err(anyhow::anyhow!("No JSON content found after frontmatter"));
+                    }
+                } else {
+                    // Malformed frontmatter - missing closing ---
+                    return Err(anyhow::anyhow!(
+                        "Malformed frontmatter: missing closing ---"
+                    ));
+                }
+            } else {
+                // Should not happen as we already checked starts_with
+                content.trim()
+            }
         } else {
-            // Fallback: assume entire content is JSON
+            // No frontmatter, treat entire content as JSON
             content.trim()
         };
 
-        serde_json::from_str(json_content).context("Failed to deserialize symbol entry")
+        // Parse the JSON content
+        serde_json::from_str(json_content).with_context(|| {
+            format!(
+                "Failed to deserialize symbol entry. Content preview: {}",
+                &json_content.chars().take(200).collect::<String>()
+            )
+        })
     }
 
     /// Query symbols by name
