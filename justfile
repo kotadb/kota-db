@@ -13,11 +13,11 @@ setup:
 
 # Run development server with auto-reload
 dev:
-  cargo watch -x 'run -- --config kotadb-dev.toml'
+  cargo watch -x 'run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml'
 
 # Start MCP server in development mode
 mcp:
-  RUST_LOG=debug cargo run -- mcp-server --config kotadb-dev.toml
+  RUST_LOG=debug cargo run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml
 
 # Watch for changes and run tests
 watch:
@@ -133,11 +133,11 @@ examples:
 # Initialize a test database
 init-db path="./test-data":
   mkdir -p {{path}}
-  KOTADB_DATA_DIR={{path}} cargo run -- init
+  KOTADB_DATA_DIR={{path}} cargo run --bin kotadb -- stats
 
 # Benchmark database operations
 db-bench:
-  cargo run --release -- benchmark --operations 10000
+  cargo bench --features bench
 
 # === Container Development ===
 
