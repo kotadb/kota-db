@@ -852,8 +852,24 @@ impl SymbolStorage {
 
     /// Deserialize a document to a symbol entry
     fn deserialize_symbol(&self, doc: &Document) -> Result<SymbolEntry> {
-        let json = String::from_utf8(doc.content.clone())?;
-        serde_json::from_str(&json).context("Failed to deserialize symbol entry")
+        let content = String::from_utf8(doc.content.clone())?;
+
+        // Extract JSON from markdown content
+        // The content format is: frontmatter (---\ntags\n---) followed by JSON
+        let json_content = if content.starts_with("---") {
+            // Find the end of frontmatter
+            let end_frontmatter = content.find("\n---\n").ok_or_else(|| {
+                anyhow::anyhow!("Invalid markdown format: missing frontmatter end")
+            })?;
+
+            // Extract content after frontmatter
+            content[(end_frontmatter + 5)..].trim()
+        } else {
+            // Fallback: assume entire content is JSON
+            content.trim()
+        };
+
+        serde_json::from_str(json_content).context("Failed to deserialize symbol entry")
     }
 
     /// Query symbols by name
