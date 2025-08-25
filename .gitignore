@@ -160,3 +160,7 @@ test-data/
 /tests/test_repos/
 *.test.kotadb
 code-analysis-bench-results/
+
+# API key test configurations (never commit)
+*openai*.toml
+*api-key*.toml

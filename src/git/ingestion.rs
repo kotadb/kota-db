@@ -352,6 +352,18 @@ impl RepositoryIngester {
                         result.errors += 1;
                     }
                 }
+
+                // Flush symbol storage to ensure all symbols are persisted
+                report_progress("Persisting symbols to storage...");
+                match symbol_storage.flush_storage().await {
+                    Ok(()) => {
+                        info!("Symbol storage flushed successfully");
+                    }
+                    Err(e) => {
+                        warn!("Failed to flush symbol storage: {}", e);
+                        result.errors += 1;
+                    }
+                }
             }
         }
 

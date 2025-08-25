@@ -628,27 +628,17 @@ mod tests {
 async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
     println!("🔧 Loading relationship query engine with real symbol data...");
 
-    // Load real symbol storage and dependency graph from the database
-    // Note: Symbols are stored in symbol_storage subdirectory, not storage
-    let symbol_storage_path = db_path.join("symbol_storage");
+    // Load real symbol storage from the main database path
+    // Symbols are now stored in the same location as other documents
+    let storage_path = db_path.to_path_buf();
 
-    // Create the symbol storage directory if it doesn't exist
-    if !symbol_storage_path.exists() {
-        std::fs::create_dir_all(&symbol_storage_path).with_context(|| {
-            format!(
-                "Failed to create symbol storage directory: {:?}",
-                symbol_storage_path
-            )
-        })?;
-        std::fs::create_dir_all(symbol_storage_path.join("storage")).with_context(|| {
-            format!(
-                "Failed to create symbol storage subdirectory: {:?}",
-                symbol_storage_path.join("storage")
-            )
-        })?;
+    // Ensure the database directory exists
+    if !storage_path.exists() {
+        std::fs::create_dir_all(&storage_path)
+            .with_context(|| format!("Failed to create database directory: {:?}", storage_path))?;
     }
 
-    let storage_path = symbol_storage_path.join("storage");
+    // Use the main database path directly
     let file_storage = create_file_storage(
         storage_path
             .to_str()
@@ -1072,14 +1062,11 @@ async fn main() -> Result<()> {
 
                 #[cfg(feature = "tree-sitter-parsing")]
                 let result = if config.options.extract_symbols {
-                    // Create separate storage for symbol extraction
-                    let symbol_storage_path = cli.db_path.join("symbol_storage");
-                    std::fs::create_dir_all(&symbol_storage_path)?;
-                    let storage_path = symbol_storage_path.join("storage");
-                    std::fs::create_dir_all(&storage_path)?;
+                    // Use the same storage backend for symbols as the main database
+                    // This ensures symbols are stored in the same location and can be found later
                     let symbol_storage_backend = create_file_storage(
-                        storage_path.to_str().ok_or_else(|| {
-                            anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
+                        cli.db_path.to_str().ok_or_else(|| {
+                            anyhow::anyhow!("Invalid database path: {:?}", cli.db_path)
                         })?,
                         Some(1000),
                     )
@@ -1270,19 +1257,11 @@ async fn main() -> Result<()> {
                 println!("📊 Symbol Storage Statistics");
                 println!("═══════════════════════════════");
 
-                // Check if symbol storage exists, create if needed
-                let symbol_storage_path = cli.db_path.join("symbol_storage");
-                let storage_path = symbol_storage_path.join("storage");
-                // Create directories if they don't exist
-                if !symbol_storage_path.exists() {
-                    std::fs::create_dir_all(&symbol_storage_path)
-                        .with_context(|| format!("Failed to create symbol storage directory: {:?}", symbol_storage_path))?;
-                    std::fs::create_dir_all(&storage_path)
-                        .with_context(|| format!("Failed to create symbol storage subdirectory: {:?}", storage_path))?;
-                    println!("📁 Created symbol storage directory at {:?}", symbol_storage_path);
-                }
+                // Use the main database path for symbol storage
+                // Symbols are now stored in the same location as other documents
+                let storage_path = cli.db_path.clone();
 
-                // Load symbol storage
+                // Load symbol storage from main database
                 let file_storage = create_file_storage(
                     storage_path
                         .to_str()
@@ -1297,7 +1276,7 @@ async fn main() -> Result<()> {
                 let dep_stats = symbol_storage.get_dependency_stats();
 
                 println!("\n📦 Symbol Storage Location:");
-                println!("   Path: {:?}", symbol_storage_path);
+                println!("   Path: {:?}", storage_path);
 
                 println!("\n🔤 Symbol Statistics:");
                 println!("   Total symbols: {}", stats.total_symbols);
