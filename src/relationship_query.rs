@@ -1070,6 +1070,28 @@ fn extract_number_from_query(query: &str) -> Option<usize> {
 }
 
 impl RelationshipQueryResult {
+    /// Limit the number of results returned
+    pub fn limit_results(&mut self, limit: usize) {
+        // Truncate direct relationships if they exceed the limit
+        if self.direct_relationships.len() > limit {
+            self.direct_relationships.truncate(limit);
+            // Update stats to reflect the truncation
+            self.stats.direct_count = limit;
+        }
+
+        // Truncate indirect relationships/call paths if they exceed the limit
+        if self.indirect_relationships.len() > limit {
+            self.indirect_relationships.truncate(limit);
+            // Update stats to reflect the truncation
+            self.stats.indirect_count = limit;
+        }
+
+        // Update summary to indicate results were limited
+        if self.stats.direct_count == limit || self.stats.indirect_count == limit {
+            self.summary = format!("{} (limited to {} results)", self.summary, limit);
+        }
+    }
+
     /// Format the result as markdown for LLM consumption
     pub fn to_markdown(&self) -> String {
         let mut output = String::new();
