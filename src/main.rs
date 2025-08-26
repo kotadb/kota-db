@@ -181,6 +181,8 @@ struct Database {
     trigram_index: Arc<Mutex<Box<dyn Index>>>,
     // Cache for path -> document ID lookups (built lazily)
     path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
+    // Coordinated deletion service to ensure index synchronization
+    deletion_service: kotadb::CoordinatedDeletionService,
 }
 
 impl Database {
@@ -232,11 +234,23 @@ impl Database {
             ) as Box<dyn Index>
         };
 
+        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
+        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+        let trigram_index_arc = Arc::new(Mutex::new(trigram_index as Box<dyn Index>));
+
+        // Create coordinated deletion service
+        let deletion_service = kotadb::CoordinatedDeletionService::new(
+            Arc::clone(&storage_arc),
+            Arc::clone(&primary_index_arc),
+            Arc::clone(&trigram_index_arc),
+        );
+
         let db = Self {
-            storage: Arc::new(Mutex::new(Box::new(storage))),
-            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-            trigram_index: Arc::new(Mutex::new(trigram_index)),
+            storage: storage_arc,
+            primary_index: primary_index_arc,
+            trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
+            deletion_service,
         };
 
         // Skip path cache rebuild for read-only operations like search
@@ -455,6 +469,29 @@ impl Database {
         Ok(())
     }
 
+    /// Centralized delete method that ensures all storage systems remain synchronized
+    /// This is the ONLY method that should be used to delete documents
+    async fn delete_document(&self, doc_id: &ValidatedDocumentId) -> Result<bool> {
+        // Use the coordinated deletion service to ensure proper synchronization
+        let deleted = self.deletion_service.delete_document(doc_id).await?;
+
+        if deleted {
+            // Remove from path cache if it exists
+            {
+                let mut cache = self.path_cache.write().await;
+                cache.retain(|_, cached_id| cached_id != doc_id);
+            }
+        }
+
+        Ok(deleted)
+    }
+
+    /// Get access to the coordinated deletion service for other modules
+    #[allow(dead_code)] // Will be used by HTTP server and MCP tools in future integration
+    pub fn get_deletion_service(&self) -> &kotadb::CoordinatedDeletionService {
+        &self.deletion_service
+    }
+
     async fn delete_by_path(&self, path: &str) -> Result<bool> {
         // Check if cache is empty and rebuild if needed (lazy initialization)
         {
@@ -472,19 +509,8 @@ impl Database {
         };
 
         if let Some(doc_id) = doc_id {
-            // Delete from storage
-            let deleted = self.storage.lock().await.delete(&doc_id).await?;
-
-            if deleted {
-                // Delete from both indices
-                self.primary_index.lock().await.delete(&doc_id).await?;
-                self.trigram_index.lock().await.delete(&doc_id).await?;
-
-                // Remove from cache
-                self.path_cache.write().await.remove(path);
-            }
-
-            Ok(deleted)
+            // Use the centralized delete method to ensure coordination
+            self.delete_document(&doc_id).await
         } else {
             Ok(false)
         }
@@ -581,11 +607,22 @@ mod tests {
 
         let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
 
+        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
+        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+
+        let deletion_service = kotadb::CoordinatedDeletionService::new(
+            Arc::clone(&storage_arc),
+            Arc::clone(&primary_index_arc),
+            Arc::clone(&trigram_index_arc),
+        );
+
         let db = Database {
-            storage: Arc::new(Mutex::new(Box::new(storage))),
-            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+            storage: storage_arc,
+            primary_index: primary_index_arc,
+            trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
+            deletion_service,
         };
 
         // Should not panic with empty storage
@@ -620,11 +657,22 @@ mod tests {
         let trigram_index =
             create_trigram_index(trigram_path.to_str().unwrap(), Some(1000)).await?;
 
+        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
+        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+
+        let deletion_service = kotadb::CoordinatedDeletionService::new(
+            Arc::clone(&storage_arc),
+            Arc::clone(&primary_index_arc),
+            Arc::clone(&trigram_index_arc),
+        );
+
         let db = Database {
-            storage: Arc::new(Mutex::new(Box::new(storage))),
-            primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+            storage: storage_arc,
+            primary_index: primary_index_arc,
+            trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
+            deletion_service,
         };
 
         // Time the rebuild operation
