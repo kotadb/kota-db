@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::builders::DocumentBuilder;
 use crate::contracts::{Document, Storage};
+use crate::graph_storage::{GraphEdge, GraphNode, GraphStorage, NodeLocation};
 use crate::parsing::{ParsedCode, ParsedSymbol, SupportedLanguage, SymbolType};
 use crate::types::ValidatedDocumentId;
 
@@ -178,6 +179,8 @@ impl Default for SearchThresholds {
 pub struct SymbolStorage {
     /// Underlying document storage
     storage: Box<dyn Storage + Send + Sync>,
+    /// Optional graph storage for relationships (O(1) lookups)
+    graph_storage: Option<Box<dyn GraphStorage + Send + Sync>>,
     /// In-memory symbol index for fast lookups
     symbol_index: HashMap<Uuid, SymbolEntry>,
     /// Symbol relationships
@@ -201,16 +204,26 @@ pub struct SymbolStorage {
 impl SymbolStorage {
     /// Create a new symbol storage instance with default configuration
     pub async fn new(storage: Box<dyn Storage + Send + Sync>) -> Result<Self> {
-        Self::with_config(storage, SymbolStorageConfig::default()).await
+        Self::with_config(storage, None, SymbolStorageConfig::default()).await
+    }
+
+    /// Create a new symbol storage instance with graph storage
+    pub async fn with_graph_storage(
+        storage: Box<dyn Storage + Send + Sync>,
+        graph_storage: Box<dyn GraphStorage + Send + Sync>,
+    ) -> Result<Self> {
+        Self::with_config(storage, Some(graph_storage), SymbolStorageConfig::default()).await
     }
 
     /// Create a new symbol storage instance with custom configuration
     pub async fn with_config(
         storage: Box<dyn Storage + Send + Sync>,
+        graph_storage: Option<Box<dyn GraphStorage + Send + Sync>>,
         config: SymbolStorageConfig,
     ) -> Result<Self> {
         let mut instance = Self {
             storage,
+            graph_storage,
             symbol_index: HashMap::new(),
             relationships: Vec::new(),
             file_symbols: HashMap::new(),
@@ -957,10 +970,31 @@ impl SymbolStorage {
     }
 
     /// Add a relationship between symbols
-    pub fn add_relationship(&mut self, relation: SymbolRelation) -> Result<()> {
+    pub async fn add_relationship(&mut self, relation: SymbolRelation) -> Result<()> {
         // Update dependent's list
         if let Some(target) = self.symbol_index.get_mut(&relation.to_id) {
             target.dependents.insert(relation.from_id);
+        }
+
+        // Store in graph storage if available (for O(1) lookups)
+        if let Some(ref mut graph) = self.graph_storage {
+            // Convert to GraphEdge for graph storage
+            let edge = GraphEdge {
+                relation_type: relation.relation_type.clone(),
+                location: NodeLocation {
+                    start_line: 0,  // These would be set from actual symbol data
+                    start_column: 0,
+                    end_line: 0,
+                    end_column: 0,
+                },
+                context: None,
+                metadata: relation.metadata.clone(),
+                created_at: chrono::Utc::now().timestamp(),
+            };
+            
+            // Store the edge in graph storage for O(1) lookups
+            graph.store_edge(relation.from_id, relation.to_id, edge).await
+                .context("Failed to store relationship in graph storage")?;
         }
 
         self.relationships.push(relation);
@@ -1017,7 +1051,45 @@ impl SymbolStorage {
         // Clear existing relationships and rebuild from dependency graph
         self.relationships.clear();
 
+        // If we have graph storage, batch insert all nodes first
+        if let Some(ref mut graph_storage) = self.graph_storage {
+            let mut nodes_to_insert = Vec::new();
+            
+            // Prepare all nodes for batch insertion
+            for node_idx in dep_graph.graph.node_indices() {
+                let node = &dep_graph.graph[node_idx];
+                
+                // Find the corresponding symbol entry
+                if let Some(symbol_entry) = self.symbol_index.get(&node.symbol_id) {
+                    let graph_node = GraphNode {
+                        id: node.symbol_id,
+                        node_type: format!("{:?}", symbol_entry.symbol.symbol_type),
+                        qualified_name: symbol_entry.qualified_name.clone(),
+                        file_path: symbol_entry.file_path.to_string_lossy().to_string(),
+                        location: NodeLocation {
+                            start_line: symbol_entry.symbol.start_line,
+                            start_column: symbol_entry.symbol.start_column,
+                            end_line: symbol_entry.symbol.end_line,
+                            end_column: symbol_entry.symbol.end_column,
+                        },
+                        metadata: HashMap::new(),
+                        updated_at: chrono::Utc::now().timestamp(),
+                    };
+                    nodes_to_insert.push((node.symbol_id, graph_node));
+                }
+            }
+            
+            // Batch insert all nodes into graph storage
+            if !nodes_to_insert.is_empty() {
+                graph_storage.batch_insert_nodes(nodes_to_insert).await
+                    .context("Failed to batch insert nodes into graph storage")?;
+                debug!("Inserted {} nodes into graph storage", dep_graph.graph.node_count());
+            }
+        }
+
         // Convert dependency graph edges to relationships
+        let mut edges_to_insert = Vec::new();
+        
         for edge_ref in dep_graph.graph.edge_references() {
             let source_node = &dep_graph.graph[edge_ref.source()];
             let target_node = &dep_graph.graph[edge_ref.target()];
@@ -1035,6 +1107,32 @@ impl SymbolStorage {
             // Update dependents set for bidirectional navigation
             if let Some(target_symbol) = self.symbol_index.get_mut(&target_node.symbol_id) {
                 target_symbol.dependents.insert(source_node.symbol_id);
+            }
+            
+            // Prepare edge for graph storage
+            if self.graph_storage.is_some() {
+                let graph_edge = GraphEdge {
+                    relation_type: edge_data.relation_type.clone(),
+                    location: NodeLocation {
+                        start_line: edge_data.line_number,
+                        start_column: edge_data.column_number,
+                        end_line: edge_data.line_number,
+                        end_column: edge_data.column_number,
+                    },
+                    context: edge_data.context.clone(),
+                    metadata: HashMap::new(),
+                    created_at: chrono::Utc::now().timestamp(),
+                };
+                edges_to_insert.push((source_node.symbol_id, target_node.symbol_id, graph_edge));
+            }
+        }
+        
+        // Batch insert all edges into graph storage
+        if let Some(ref mut graph_storage) = self.graph_storage {
+            if !edges_to_insert.is_empty() {
+                graph_storage.batch_insert_edges(edges_to_insert).await
+                    .context("Failed to batch insert edges into graph storage")?;
+                debug!("Inserted {} edges into graph storage", dep_graph.graph.edge_count());
             }
         }
 
@@ -1874,7 +1972,7 @@ mod level1 {
             search_thresholds: SearchThresholds::default(),
         };
 
-        let mut symbol_storage = SymbolStorage::with_config(storage, config).await?;
+        let mut symbol_storage = SymbolStorage::with_config(storage, None, config).await?;
 
         // Try to add many symbols
         for i in 0..10 {

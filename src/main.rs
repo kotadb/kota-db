@@ -1077,15 +1077,27 @@ async fn main() -> Result<()> {
                     std::fs::create_dir_all(&symbol_storage_path)?;
                     let storage_path = symbol_storage_path.join("storage");
                     std::fs::create_dir_all(&storage_path)?;
-                    let symbol_storage_backend = create_file_storage(
-                        storage_path.to_str().ok_or_else(|| {
-                            anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
-                        })?,
-                        Some(1000),
-                    )
-                    .await?;
+                    // Create symbol storage with dual storage architecture (document + graph)
+                    let storage_path_str = storage_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
+                    })?;
+                    
+                    // Create document storage backend
+                    let document_storage = create_file_storage(storage_path_str, Some(1000)).await?;
+                    
+                    // Create graph storage backend for O(1) relationship lookups
+                    let graph_path = storage_path.join("graph");
+                    tokio::fs::create_dir_all(&graph_path).await?;
+                    let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
+                    let graph_storage = kotadb::native_graph_storage::NativeGraphStorage::new(
+                        graph_path,
+                        graph_config
+                    ).await?;
 
-                    let mut symbol_storage = kotadb::symbol_storage::SymbolStorage::new(Box::new(symbol_storage_backend)).await?;
+                    let mut symbol_storage = kotadb::symbol_storage::SymbolStorage::with_graph_storage(
+                        Box::new(document_storage),
+                        Box::new(graph_storage),
+                    ).await?;
                     let mut code_parser = kotadb::parsing::CodeParser::new()?;
 
                     ingester.ingest_with_symbols(
