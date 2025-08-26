@@ -404,7 +404,6 @@ async fn test_edge_serialization_only() -> Result<()> {
         let from_id = nodes[from_idx].0;
         let to_id = nodes[to_idx].0;
 
-
         let edge = GraphEdge {
             relation_type: relation_type.clone(),
             location: NodeLocation {

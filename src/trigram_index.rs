@@ -40,6 +40,11 @@ struct DocumentContent {
     full_trigrams: Vec<String>, // All trigrams from the document for accurate scoring
     word_count: usize,
     trigram_count: usize,
+    /// Pre-computed trigram frequency map for faster relevance scoring
+    /// Memory trade-off: ~O(unique_trigrams) per document for O(1) scoring
+    /// Typical overhead: 50-200 entries per document (~2-8KB each)
+    /// Performance benefit: Eliminates O(n) HashMap rebuilding per query
+    trigram_freq: HashMap<String, usize>,
 }
 
 /// Metadata for the trigram index
@@ -161,6 +166,48 @@ impl TrigramIndex {
         // - Length factor: Slight preference for focused documents
         //
         // The frequency component is most important for differentiation
+        (coverage * 10.0) + frequency_score + (length_factor * 5.0)
+    }
+
+    /// Optimized relevance score calculation using pre-computed frequency map
+    pub fn calculate_relevance_score_optimized(
+        query_trigrams: &[String],
+        doc_trigram_freq: &HashMap<String, usize>,
+        word_count: usize,
+    ) -> f64 {
+        if query_trigrams.is_empty() || doc_trigram_freq.is_empty() {
+            return 0.0;
+        }
+
+        // Calculate match statistics using pre-computed frequency map
+        let mut total_matches = 0;
+        let mut unique_matches = 0;
+
+        for query_trigram in query_trigrams {
+            if let Some(&freq) = doc_trigram_freq.get(query_trigram) {
+                unique_matches += 1;
+                total_matches += freq;
+            }
+        }
+
+        if unique_matches == 0 {
+            return 0.0;
+        }
+
+        // Calculate match coverage (what % of query trigrams were found)
+        let coverage = unique_matches as f64 / query_trigrams.len() as f64;
+
+        // Calculate term frequency score (how many times query terms appear)
+        let frequency_score = total_matches as f64;
+
+        // Calculate document relevance with logarithmic length scaling
+        let length_factor = if word_count > 0 {
+            1.0 / (1.0 + (word_count as f64 / 100.0).ln())
+        } else {
+            1.0
+        };
+
+        // Final score combines coverage, frequency, and length factor
         (coverage * 10.0) + frequency_score + (length_factor * 5.0)
     }
 
@@ -311,6 +358,12 @@ impl TrigramIndex {
                                     let doc_text = format!("{} {}", title, content_preview);
                                     let full_trigrams = Self::extract_trigrams(&doc_text);
 
+                                    // Pre-compute trigram frequency map for performance
+                                    let mut trigram_freq = HashMap::new();
+                                    for trigram in &full_trigrams {
+                                        *trigram_freq.entry(trigram.clone()).or_insert(0) += 1;
+                                    }
+
                                     document_cache.insert(
                                         doc_id,
                                         DocumentContent {
@@ -319,6 +372,7 @@ impl TrigramIndex {
                                             full_trigrams,
                                             word_count,
                                             trigram_count,
+                                            trigram_freq,
                                         },
                                     );
                                 }
@@ -570,8 +624,9 @@ impl Index for TrigramIndex {
         }
 
         // Extract trigrams from all search terms
-        // Estimate ~10 trigrams per search term on average
-        let mut all_query_trigrams = Vec::with_capacity(query.search_terms.len() * 10);
+        // Estimate ~10 trigrams per search term on average, with reasonable bounds
+        let estimated_capacity = (query.search_terms.len() * 10).clamp(16, 1000);
+        let mut all_query_trigrams = Vec::with_capacity(estimated_capacity);
         for search_term in &query.search_terms {
             let term_trigrams = Self::extract_trigrams(search_term.as_str());
             all_query_trigrams.extend(term_trigrams);
@@ -616,16 +671,17 @@ impl Index for TrigramIndex {
             .map(|(doc_id, _)| doc_id)
             .collect();
 
-        // Calculate relevance scores for each candidate document
+        // Calculate relevance scores for each candidate document using optimized scoring
         let document_cache = self.document_cache.read().await;
-        let mut scored_results: Vec<(ValidatedDocumentId, f64)> = Vec::new();
+        let mut scored_results: Vec<(ValidatedDocumentId, f64)> =
+            Vec::with_capacity(filtered_candidates.len());
 
         for doc_id in filtered_candidates {
             if let Some(doc_content) = document_cache.get(&doc_id) {
-                // Use the full trigrams stored in the cache for accurate scoring
-                let score = Self::calculate_relevance_score(
+                // Use the optimized scoring with pre-computed frequency map
+                let score = Self::calculate_relevance_score_optimized(
                     &all_query_trigrams,
-                    &doc_content.full_trigrams,
+                    &doc_content.trigram_freq,
                     doc_content.word_count,
                 );
 
@@ -642,7 +698,19 @@ impl Index for TrigramIndex {
             }
         }
 
-        // Sort by relevance score (higher scores first)
+        // Use partial sort for better performance when we only need top-K results
+        let limit = query.limit.get();
+        if scored_results.len() > limit {
+            // Partial sort: only sort the top 'limit' elements
+            scored_results.select_nth_unstable_by(limit - 1, |a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.as_uuid().cmp(&b.0.as_uuid()))
+            });
+            scored_results.truncate(limit);
+        }
+
+        // Sort the top results for deterministic ordering
         scored_results.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -652,10 +720,9 @@ impl Index for TrigramIndex {
                 })
         });
 
-        // Return the top results up to the query limit
+        // Return the top results
         let final_results: Vec<ValidatedDocumentId> = scored_results
             .into_iter()
-            .take(query.limit.get())
             .map(|(doc_id, _)| doc_id)
             .collect();
 
@@ -755,6 +822,12 @@ impl Index for TrigramIndex {
                 content_str.to_string()
             };
 
+            // Pre-compute trigram frequency map for performance
+            let mut trigram_freq = HashMap::new();
+            for trigram in &trigrams {
+                *trigram_freq.entry(trigram.clone()).or_insert(0) += 1;
+            }
+
             cache.insert(
                 id,
                 DocumentContent {
@@ -763,6 +836,7 @@ impl Index for TrigramIndex {
                     full_trigrams: trigrams.clone(),
                     word_count: searchable_text.split_whitespace().count(),
                     trigram_count: trigrams.len(),
+                    trigram_freq,
                 },
             );
         }
@@ -896,6 +970,71 @@ mod tests {
         // Clean up test directory
         let _ = std::fs::remove_dir_all(&test_dir);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "Performance regression test - run with --ignored for performance validation"]
+    async fn test_search_performance_regression() -> Result<()> {
+        use std::time::Instant;
+
+        let test_dir = format!("test_data/trigram_perf_{}", Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
+
+        let mut index = TrigramIndex::open(&test_dir).await?;
+
+        // Insert multiple documents to simulate realistic load
+        for i in 0..50 {
+            let doc_id = ValidatedDocumentId::new();
+            let doc_path = ValidatedPath::new(format!("test/document_{}.rs", i))?;
+            let content = format!(
+                "Storage functionality implementation for document {}. \
+                This contains trigram indexing patterns, search algorithms, \
+                and performance optimizations for fast retrieval. \
+                Additional content with storage, indexing, search terms \
+                to create realistic trigram distributions.",
+                i
+            );
+
+            index
+                .insert_with_content(doc_id, doc_path, content.as_bytes())
+                .await?;
+        }
+
+        // Test search performance with realistic query
+        let query = crate::contracts::Query {
+            search_terms: vec![crate::types::ValidatedSearchQuery::new("storage", 1)?],
+            limit: crate::types::ValidatedLimit::new(10, 100_000)?,
+            ..Default::default()
+        };
+
+        // Warm up (first query may be slower due to cold caches)
+        let _ = index.search(&query).await?;
+
+        // Measure actual performance
+        let start = Instant::now();
+        let results = index.search(&query).await?;
+        let duration = start.elapsed();
+
+        // Performance regression check: must stay under 10ms threshold
+        assert!(
+            duration.as_millis() < 10,
+            "Search performance regression detected: {}ms > 10ms threshold. \
+            Results count: {}",
+            duration.as_millis(),
+            results.len()
+        );
+
+        // Ensure we're actually finding results
+        assert!(!results.is_empty(), "Search should find matching documents");
+
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        println!(
+            "✅ Search performance: {}ms (target: <10ms)",
+            duration.as_millis()
+        );
         Ok(())
     }
 
