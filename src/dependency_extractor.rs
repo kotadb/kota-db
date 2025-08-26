@@ -634,13 +634,29 @@ impl DependencyExtractor {
 
             for reference in &analysis.references {
                 // Try to resolve the reference to a symbol
-                if let Some(target_id) =
-                    self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol)
-                {
+                let resolved_id = self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol);
+                if resolved_id.is_none() {
+                    tracing::trace!(
+                        "Failed to resolve reference '{}' at line {} in file {:?}",
+                        reference.name,
+                        reference.line,
+                        analysis.file_path
+                    );
+                }
+                if let Some(target_id) = resolved_id {
                     // Find the source symbol (the one containing this reference)
                     if let Some(source_symbol) =
                         self.find_containing_symbol_indexed(reference.line, &symbols_by_line)
                     {
+                        tracing::debug!(
+                            "Creating edge: {} -> {} (reference: {} at line {})",
+                            source_symbol.qualified_name,
+                            name_to_symbol.iter()
+                                .find_map(|(k, v)| if v == &target_id { Some(k.as_str()) } else { None })
+                                .unwrap_or("unknown"),
+                            reference.name,
+                            reference.line
+                        );
                         if let (Some(&source_idx), Some(&target_idx)) = (
                             symbol_to_node.get(&source_symbol.id),
                             symbol_to_node.get(&target_id),

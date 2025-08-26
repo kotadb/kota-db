@@ -346,6 +346,18 @@ impl RepositoryIngester {
                             "Dependency graph built: {} relationships between {} symbols",
                             stats.total_relationships, stats.total_symbols
                         );
+                        
+                        // Flush symbol storage to ensure all symbols and relationships are persisted
+                        report_progress("Persisting symbols to storage...");
+                        match symbol_storage.flush_storage().await {
+                            Ok(()) => {
+                                info!("Symbol storage flushed successfully");
+                            }
+                            Err(e) => {
+                                warn!("Failed to flush symbol storage: {}", e);
+                                result.errors += 1;
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to build dependency graph: {}", e);

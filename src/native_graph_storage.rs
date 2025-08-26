@@ -1030,7 +1030,9 @@ impl NativeGraphStorage {
         // Collect data while holding the lock
         let page_data = {
             let edges_out = self.edges_out.read();
+            tracing::debug!("persist_edges: edges_out contains {} entries", edges_out.len());
             if edges_out.is_empty() {
+                tracing::debug!("persist_edges: no edges to persist, returning early");
                 return Ok(());
             }
 
@@ -1078,6 +1080,7 @@ impl NativeGraphStorage {
         }; // Lock released here
 
         // Write pages to disk
+        tracing::debug!("persist_edges: writing {} pages to {:?}", page_data.len(), edges_dir);
         for (i, page) in page_data.iter().enumerate() {
             let page_path = edges_dir.join(format!("{:08}.page", i));
             let mut page_bytes = Vec::new();
@@ -1092,6 +1095,7 @@ impl NativeGraphStorage {
                 page_bytes.push(0);
             }
 
+            tracing::debug!("persist_edges: writing page {} to {:?} ({} bytes)", i, page_path, page_bytes.len());
             fs::write(&page_path, &page_bytes).await?;
         }
 
@@ -1164,8 +1168,13 @@ impl Storage for NativeGraphStorage {
     }
 
     async fn flush(&mut self) -> Result<()> {
+        tracing::debug!("NativeGraphStorage::flush called");
+        // Persist nodes and edges to ensure durability
+        self.persist_nodes().await?;
+        self.persist_edges().await?;
         // Flush WAL to ensure durability
         self.flush_wal().await?;
+        tracing::debug!("NativeGraphStorage::flush completed");
         Ok(())
     }
 

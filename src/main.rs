@@ -628,27 +628,19 @@ mod tests {
 async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
     println!("🔧 Loading relationship query engine with real symbol data...");
 
-    // Load real symbol storage and dependency graph from the database
-    // Note: Symbols are stored in symbol_storage subdirectory, not storage
-    let symbol_storage_path = db_path.join("symbol_storage");
+    // Load real symbol storage from the main database storage path (db_path/storage)
+    // This ensures we read symbols from the same location where they were written
+    let storage_path = db_path.join("storage");
 
-    // Create the symbol storage directory if it doesn't exist
-    if !symbol_storage_path.exists() {
-        std::fs::create_dir_all(&symbol_storage_path).with_context(|| {
+    // Ensure the database directory exists
+    if !storage_path.exists() {
+        std::fs::create_dir_all(&storage_path).with_context(|| {
             format!(
-                "Failed to create symbol storage directory: {:?}",
-                symbol_storage_path
-            )
-        })?;
-        std::fs::create_dir_all(symbol_storage_path.join("storage")).with_context(|| {
-            format!(
-                "Failed to create symbol storage subdirectory: {:?}",
-                symbol_storage_path.join("storage")
+                "Failed to create database directory: {:?}",
+                storage_path
             )
         })?;
     }
-
-    let storage_path = symbol_storage_path.join("storage");
     let file_storage = create_file_storage(
         storage_path
             .to_str()
@@ -657,8 +649,22 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
     )
     .await?;
 
-    // Create symbol storage and load existing symbols
-    let symbol_storage = SymbolStorage::new(Box::new(file_storage)).await?;
+    // Create symbol storage with dual storage architecture (document + graph)
+    // This ensures relationships can be stored and queried efficiently
+    let graph_path = storage_path.join("graph");
+    tokio::fs::create_dir_all(&graph_path).await?;
+    let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
+    let graph_storage = kotadb::native_graph_storage::NativeGraphStorage::new(
+        graph_path,
+        graph_config,
+    )
+    .await?;
+    
+    let symbol_storage = SymbolStorage::with_graph_storage(
+        Box::new(file_storage),
+        Box::new(graph_storage),
+    )
+    .await?;
 
     // Load statistics to check if we have data
     let stats = symbol_storage.get_stats();
@@ -1072,10 +1078,10 @@ async fn main() -> Result<()> {
 
                 #[cfg(feature = "tree-sitter-parsing")]
                 let result = if config.options.extract_symbols {
-                    // Create separate storage for symbol extraction
-                    let symbol_storage_path = cli.db_path.join("symbol_storage");
-                    std::fs::create_dir_all(&symbol_storage_path)?;
-                    let storage_path = symbol_storage_path.join("storage");
+                    // Use the same storage backend for symbols as the main database
+                    // This ensures symbols are stored in the same location and can be found later
+                    // IMPORTANT: Use the same path as the main database storage (db_path/storage)
+                    let storage_path = cli.db_path.join("storage");
                     std::fs::create_dir_all(&storage_path)?;
                     // Create symbol storage with dual storage architecture (document + graph)
                     let storage_path_str = storage_path.to_str().ok_or_else(|| {
@@ -1282,16 +1288,14 @@ async fn main() -> Result<()> {
                 println!("📊 Symbol Storage Statistics");
                 println!("═══════════════════════════════");
 
-                // Check if symbol storage exists, create if needed
-                let symbol_storage_path = cli.db_path.join("symbol_storage");
-                let storage_path = symbol_storage_path.join("storage");
-                // Create directories if they don't exist
-                if !symbol_storage_path.exists() {
-                    std::fs::create_dir_all(&symbol_storage_path)
-                        .with_context(|| format!("Failed to create symbol storage directory: {:?}", symbol_storage_path))?;
+                // Use the main database storage path (db_path/storage)
+                // This ensures we read symbols from the same location where they were written
+                let storage_path = cli.db_path.join("storage");
+                // Create directory if it doesn't exist
+                if !storage_path.exists() {
                     std::fs::create_dir_all(&storage_path)
-                        .with_context(|| format!("Failed to create symbol storage subdirectory: {:?}", storage_path))?;
-                    println!("📁 Created symbol storage directory at {:?}", symbol_storage_path);
+                        .with_context(|| format!("Failed to create database directory: {:?}", storage_path))?;
+                    println!("📁 Created database directory at {:?}", storage_path);
                 }
 
                 // Load symbol storage
@@ -1303,13 +1307,27 @@ async fn main() -> Result<()> {
                 )
                 .await?;
 
-                // Create symbol storage and get stats
-                let symbol_storage = SymbolStorage::new(Box::new(file_storage)).await?;
+                // Create symbol storage with dual storage architecture (document + graph)
+                // This ensures we can properly read relationship statistics
+                let graph_path = storage_path.join("graph");
+                tokio::fs::create_dir_all(&graph_path).await?;
+                let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
+                let graph_storage = kotadb::native_graph_storage::NativeGraphStorage::new(
+                    graph_path,
+                    graph_config,
+                )
+                .await?;
+                
+                let symbol_storage = SymbolStorage::with_graph_storage(
+                    Box::new(file_storage),
+                    Box::new(graph_storage),
+                )
+                .await?;
                 let stats = symbol_storage.get_stats();
                 let dep_stats = symbol_storage.get_dependency_stats();
 
                 println!("\n📦 Symbol Storage Location:");
-                println!("   Path: {:?}", symbol_storage_path);
+                println!("   Path: {:?}", storage_path);
 
                 println!("\n🔤 Symbol Statistics:");
                 println!("   Total symbols: {}", stats.total_symbols);
