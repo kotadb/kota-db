@@ -241,9 +241,9 @@ impl NativeGraphStorage {
             return Err(anyhow::anyhow!("Invalid page magic number"));
         }
 
-        // Parse records
+        // Parse records with proper error handling and cleanup
         let mut offset = std::mem::size_of::<PageHeader>();
-        let mut nodes = self.nodes.write();
+        let mut parsed_records = Vec::new();
 
         for _ in 0..header.record_count {
             if offset >= data.len() {
@@ -266,9 +266,26 @@ impl NativeGraphStorage {
                 tracing::warn!("Skipping oversized record: {} bytes", size);
                 break;
             }
-            let record: NodeRecord = bincode::deserialize(&data[offset..offset + size])?;
-            nodes.insert(record.node.id, record);
-            offset += size;
+
+            match bincode::deserialize::<NodeRecord>(&data[offset..offset + size]) {
+                Ok(record) => {
+                    parsed_records.push(record);
+                    offset += size;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize node record at offset {}: {}", offset, e);
+                    // Continue parsing the next record instead of failing the entire page
+                    offset += size;
+                }
+            }
+        }
+
+        // Only update nodes after all parsing is complete to avoid partial state
+        if !parsed_records.is_empty() {
+            let mut nodes = self.nodes.write();
+            for record in parsed_records {
+                nodes.insert(record.node.id, record);
+            }
         }
 
         Ok(())
@@ -961,9 +978,10 @@ impl NativeGraphStorage {
                 return Ok(());
             }
 
-            // Group nodes into pages
+            // Group nodes into pages with record counting
             let mut page_data = Vec::new();
             let mut current_page = Vec::new();
+            let mut current_page_record_count = 0u16;
 
             for (id, record) in nodes.iter() {
                 let serialized = bincode::serialize(record)?;
@@ -979,30 +997,32 @@ impl NativeGraphStorage {
                 if current_page.len() + entry.len() > 4096 - 8 {
                     // Leave room for header
                     if !current_page.is_empty() {
-                        page_data.push(current_page);
+                        page_data.push((current_page, current_page_record_count));
                         current_page = Vec::new();
+                        current_page_record_count = 0;
                     }
                 }
                 current_page.extend_from_slice(&entry);
+                current_page_record_count += 1;
             }
 
             if !current_page.is_empty() {
-                page_data.push(current_page);
+                page_data.push((current_page, current_page_record_count));
             }
 
             page_data
         }; // Lock released here
 
         // Write pages to disk
-        for (i, page) in page_data.iter().enumerate() {
+        for (i, (page, record_count)) in page_data.iter().enumerate() {
             let page_path = nodes_dir.join(format!("{:08}.page", i));
             let mut page_bytes = Vec::new();
 
-            // Create proper page header
+            // Create proper page header with actual record count
             let header = PageHeader {
                 magic: *GRAPH_MAGIC,
                 page_id: i as u32,
-                record_count: 1, // Simplified - each page has variable records
+                record_count: *record_count,
                 free_offset: page.len() as u16,
                 checksum: 0, // TODO: Calculate checksum
             };
@@ -1030,7 +1050,10 @@ impl NativeGraphStorage {
         // Collect data while holding the lock
         let page_data = {
             let edges_out = self.edges_out.read();
-            tracing::debug!("persist_edges: edges_out contains {} entries", edges_out.len());
+            tracing::debug!(
+                "persist_edges: edges_out contains {} entries",
+                edges_out.len()
+            );
             if edges_out.is_empty() {
                 tracing::debug!("persist_edges: no edges to persist, returning early");
                 return Ok(());
@@ -1080,7 +1103,11 @@ impl NativeGraphStorage {
         }; // Lock released here
 
         // Write pages to disk
-        tracing::debug!("persist_edges: writing {} pages to {:?}", page_data.len(), edges_dir);
+        tracing::debug!(
+            "persist_edges: writing {} pages to {:?}",
+            page_data.len(),
+            edges_dir
+        );
         for (i, page) in page_data.iter().enumerate() {
             let page_path = edges_dir.join(format!("{:08}.page", i));
             let mut page_bytes = Vec::new();
@@ -1095,7 +1122,12 @@ impl NativeGraphStorage {
                 page_bytes.push(0);
             }
 
-            tracing::debug!("persist_edges: writing page {} to {:?} ({} bytes)", i, page_path, page_bytes.len());
+            tracing::debug!(
+                "persist_edges: writing page {} to {:?} ({} bytes)",
+                i,
+                page_path,
+                page_bytes.len()
+            );
             fs::write(&page_path, &page_bytes).await?;
         }
 
