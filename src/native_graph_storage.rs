@@ -30,6 +30,12 @@ const PAGE_SIZE: usize = 4096;
 /// Magic number for graph storage files
 const GRAPH_MAGIC: &[u8; 8] = b"KOTGRAPH";
 
+/// Magic number for edge pages
+const EDGE_MAGIC: &[u8; 4] = b"EDGE";
+
+/// UUID size in bytes
+const UUID_SIZE: usize = 16;
+
 /// Maximum size for deserialization to prevent memory exhaustion
 const MAX_DESERIALIZE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
@@ -261,7 +267,7 @@ impl NativeGraphStorage {
             offset += 4;
 
             // Validate ID length
-            if id_len > 16 || offset + id_len + 4 > data.len() {
+            if id_len > UUID_SIZE || offset + id_len + 4 > data.len() {
                 tracing::warn!("Invalid ID length: {} at offset {}", id_len, offset);
                 break;
             }
@@ -338,7 +344,7 @@ impl NativeGraphStorage {
 
         // Parse edge page header (simpler than node header)
         let magic = &data[0..4];
-        if magic != b"EDGE" {
+        if magic != EDGE_MAGIC {
             return Err(anyhow::anyhow!("Invalid edge page magic number"));
         }
 
@@ -378,7 +384,7 @@ impl NativeGraphStorage {
             offset += 4;
 
             // Validate from_id length
-            if from_len > 16 || offset + from_len > page_data.len() {
+            if from_len > UUID_SIZE || offset + from_len > page_data.len() {
                 tracing::warn!("Invalid from_id length: {} at offset {}", from_len, offset);
                 break;
             }
@@ -390,7 +396,7 @@ impl NativeGraphStorage {
                 Ok(id) => id,
                 Err(e) => {
                     tracing::warn!("Failed to parse from_id: {}", e);
-                    break;
+                    continue; // Skip this record but continue processing others
                 }
             };
 
@@ -408,7 +414,7 @@ impl NativeGraphStorage {
             offset += 4;
 
             // Validate to_id length
-            if to_len > 16 || offset + to_len > page_data.len() {
+            if to_len > UUID_SIZE || offset + to_len > page_data.len() {
                 tracing::warn!("Invalid to_id length: {} at offset {}", to_len, offset);
                 break;
             }
@@ -420,7 +426,7 @@ impl NativeGraphStorage {
                 Ok(id) => id,
                 Err(e) => {
                     tracing::warn!("Failed to parse to_id: {}", e);
-                    break;
+                    continue; // Skip this record but continue processing others
                 }
             };
 
@@ -1174,7 +1180,7 @@ impl NativeGraphStorage {
                 entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
                 entry.extend_from_slice(&serialized);
 
-                if current_page.len() + entry.len() > 4096 - 8 {
+                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
                     // Leave room for header
                     if !current_page.is_empty() {
                         page_data.push((current_page, current_page_record_count));
@@ -1212,7 +1218,7 @@ impl NativeGraphStorage {
             page_bytes.extend_from_slice(page);
 
             // Pad to 4KB
-            while page_bytes.len() < 4096 {
+            while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
 
@@ -1265,7 +1271,7 @@ impl NativeGraphStorage {
                 entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
                 entry.extend_from_slice(&serialized);
 
-                if current_page.len() + entry.len() > 4096 - 8 {
+                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
                     // Leave room for header
                     if !current_page.is_empty() {
                         page_data.push(current_page);
@@ -1298,7 +1304,7 @@ impl NativeGraphStorage {
             page_bytes.extend_from_slice(page);
 
             // Pad to 4KB
-            while page_bytes.len() < 4096 {
+            while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
 
