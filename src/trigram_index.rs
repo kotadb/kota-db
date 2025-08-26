@@ -40,7 +40,10 @@ struct DocumentContent {
     full_trigrams: Vec<String>, // All trigrams from the document for accurate scoring
     word_count: usize,
     trigram_count: usize,
-    // Pre-computed trigram frequency map for faster relevance scoring
+    /// Pre-computed trigram frequency map for faster relevance scoring
+    /// Memory trade-off: ~O(unique_trigrams) per document for O(1) scoring
+    /// Typical overhead: 50-200 entries per document (~2-8KB each)
+    /// Performance benefit: Eliminates O(n) HashMap rebuilding per query
     trigram_freq: HashMap<String, usize>,
 }
 
@@ -621,8 +624,9 @@ impl Index for TrigramIndex {
         }
 
         // Extract trigrams from all search terms
-        // Estimate ~10 trigrams per search term on average
-        let mut all_query_trigrams = Vec::with_capacity(query.search_terms.len() * 10);
+        // Estimate ~10 trigrams per search term on average, with reasonable bounds
+        let estimated_capacity = (query.search_terms.len() * 10).clamp(16, 1000);
+        let mut all_query_trigrams = Vec::with_capacity(estimated_capacity);
         for search_term in &query.search_terms {
             let term_trigrams = Self::extract_trigrams(search_term.as_str());
             all_query_trigrams.extend(term_trigrams);
@@ -966,6 +970,71 @@ mod tests {
         // Clean up test directory
         let _ = std::fs::remove_dir_all(&test_dir);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "Performance regression test - run with --ignored for performance validation"]
+    async fn test_search_performance_regression() -> Result<()> {
+        use std::time::Instant;
+
+        let test_dir = format!("test_data/trigram_perf_{}", Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
+
+        let mut index = TrigramIndex::open(&test_dir).await?;
+
+        // Insert multiple documents to simulate realistic load
+        for i in 0..50 {
+            let doc_id = ValidatedDocumentId::new();
+            let doc_path = ValidatedPath::new(format!("test/document_{}.rs", i))?;
+            let content = format!(
+                "Storage functionality implementation for document {}. \
+                This contains trigram indexing patterns, search algorithms, \
+                and performance optimizations for fast retrieval. \
+                Additional content with storage, indexing, search terms \
+                to create realistic trigram distributions.",
+                i
+            );
+
+            index
+                .insert_with_content(doc_id, doc_path, content.as_bytes())
+                .await?;
+        }
+
+        // Test search performance with realistic query
+        let query = crate::contracts::Query {
+            search_terms: vec![crate::types::ValidatedSearchQuery::new("storage", 1)?],
+            limit: crate::types::ValidatedLimit::new(10, 100_000)?,
+            ..Default::default()
+        };
+
+        // Warm up (first query may be slower due to cold caches)
+        let _ = index.search(&query).await?;
+
+        // Measure actual performance
+        let start = Instant::now();
+        let results = index.search(&query).await?;
+        let duration = start.elapsed();
+
+        // Performance regression check: must stay under 10ms threshold
+        assert!(
+            duration.as_millis() < 10,
+            "Search performance regression detected: {}ms > 10ms threshold. \
+            Results count: {}",
+            duration.as_millis(),
+            results.len()
+        );
+
+        // Ensure we're actually finding results
+        assert!(!results.is_empty(), "Search should find matching documents");
+
+        // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        println!(
+            "✅ Search performance: {}ms (target: <10ms)",
+            duration.as_millis()
+        );
         Ok(())
     }
 
