@@ -293,13 +293,14 @@ impl BinaryTrigramIndex {
         let meta_data = bincode::serialize(&serializable_meta)?;
         tokio::fs::write(&meta_path, &meta_data).await?;
 
-        // Save statistics
-        let stats = self.stats.read().await;
-        let stats_data = bincode::serialize(&*stats)?;
-        tokio::fs::write(&stats_path, &stats_data).await?;
-
-        // Update index size in stats
-        self.stats.write().await.index_size_bytes = index_data.len() as u64;
+        // Save statistics and update index size (avoid deadlock by doing both in single lock)
+        {
+            let mut stats = self.stats.write().await;
+            stats.index_size_bytes = index_data.len() as u64;
+            let stats_data = bincode::serialize(&*stats)?;
+            drop(stats); // Release lock before async I/O
+            tokio::fs::write(&stats_path, &stats_data).await?;
+        }
 
         Ok(())
     }
@@ -399,11 +400,12 @@ impl Index for BinaryTrigramIndex {
 
         self.document_meta.write().await.insert(doc_id, meta);
 
-        // Update statistics
+        // Update statistics (avoid deadlock by getting cache length first)
+        let cache_len = self.hot_cache.read().await.len();
         {
             let mut stats = self.stats.write().await;
             stats.document_count += 1;
-            stats.unique_trigrams = self.hot_cache.read().await.len();
+            stats.unique_trigrams = cache_len;
             stats.total_trigrams += trigrams.len();
         }
 
@@ -476,15 +478,37 @@ impl Index for BinaryTrigramIndex {
             return Ok(Vec::new());
         }
 
-        // Use hot cache for lookups (much faster than mmap for hot data)
-        let cache = self.hot_cache.read().await;
+        // Use hot cache first, then fall back to mmap
         let mut doc_scores: HashMap<ValidatedDocumentId, f64> = HashMap::new();
 
-        // Score documents based on trigram matches
-        for trigram in &all_query_trigrams {
-            if let Some(doc_ids) = cache.get(trigram) {
-                for doc_id in doc_ids {
-                    *doc_scores.entry(*doc_id).or_insert(0.0) += 1.0;
+        // Check hot cache first
+        {
+            let cache = self.hot_cache.read().await;
+            for trigram in &all_query_trigrams {
+                if let Some(doc_ids) = cache.get(trigram) {
+                    for doc_id in doc_ids {
+                        *doc_scores.entry(*doc_id).or_insert(0.0) += 1.0;
+                    }
+                }
+            }
+        }
+
+        // If no results in hot cache, check mmap data
+        if doc_scores.is_empty() {
+            if let Some(trigram_mmap) = self.trigram_mmap.read().await.as_ref() {
+                for trigram in &all_query_trigrams {
+                    if let Some((offset, size)) = trigram_mmap.offset_table.get(trigram) {
+                        // Read document IDs from mmap
+                        let mmap_data = &trigram_mmap.mmap[*offset..*offset + *size];
+                        for chunk in mmap_data.chunks_exact(16) {
+                            if let Ok(uuid_bytes) = <[u8; 16]>::try_from(chunk) {
+                                let uuid = uuid::Uuid::from_bytes(uuid_bytes);
+                                if let Ok(doc_id) = ValidatedDocumentId::from_uuid(uuid) {
+                                    *doc_scores.entry(doc_id).or_insert(0.0) += 1.0;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
