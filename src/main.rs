@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
     create_file_storage, create_primary_index, create_trigram_index, create_wrapped_storage,
-    init_logging, start_server, validate_post_ingestion_search, with_trace_id, Document,
+    init_logging_with_level, start_server, validate_post_ingestion_search, with_trace_id, Document,
     DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
     ValidationStatus,
 };
@@ -23,6 +23,10 @@ use tokio::sync::{Mutex, RwLock};
 #[derive(Parser)]
 #[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
 struct Cli {
+    /// Enable verbose logging (DEBUG level). Default is WARN level.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     /// Database directory path
     #[arg(short, long, default_value = "./kota-db-data")]
     db_path: PathBuf,
@@ -140,6 +144,9 @@ enum Commands {
     FindCallers {
         /// Name or qualified name of the target symbol to find callers for
         target: String,
+        /// Limit the number of results returned
+        #[arg(short, long)]
+        limit: Option<usize>,
     },
 
     /// Analyze what would break if you change a symbol - impact analysis for safe refactoring
@@ -147,6 +154,9 @@ enum Commands {
     ImpactAnalysis {
         /// Name or qualified name of the target symbol to analyze impact for
         target: String,
+        /// Limit the number of results returned
+        #[arg(short, long)]
+        limit: Option<usize>,
     },
 
     /// Natural language relationship queries - ask questions about code relationships
@@ -688,10 +698,11 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    let _ = init_logging(); // Ignore error if already initialized
-
+    // Parse CLI args first to get verbose flag
     let cli = Cli::parse();
+
+    // Initialize logging with appropriate level based on verbose flag
+    let _ = init_logging_with_level(cli.verbose); // Ignore error if already initialized
 
     // Run everything within trace context
     with_trace_id("kotadb-cli", async move {
@@ -1225,7 +1236,7 @@ async fn main() -> Result<()> {
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
-            Commands::FindCallers { target } => {
+            Commands::FindCallers { target, limit } => {
                 println!("🔍 Finding callers of '{}'...", target);
 
                 let relationship_engine = create_relationship_engine(&cli.db_path).await?;
@@ -1233,14 +1244,21 @@ async fn main() -> Result<()> {
                     target: target.clone(),
                 };
 
-                let result = relationship_engine.execute_query(query_type).await?;
+                let mut result = relationship_engine.execute_query(query_type).await?;
 
-                println!("📊 Results:");
+                // Apply limit if specified
+                if let Some(limit_value) = limit {
+                    result.limit_results(limit_value);
+                    println!("📊 Results (limited to {}):", limit_value);
+                } else {
+                    println!("📊 Results:");
+                }
+
                 println!("{}", result.to_markdown());
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
-            Commands::ImpactAnalysis { target } => {
+            Commands::ImpactAnalysis { target, limit } => {
                 println!("🎯 Analyzing impact of changing '{}'...", target);
 
                 let relationship_engine = create_relationship_engine(&cli.db_path).await?;
@@ -1248,9 +1266,16 @@ async fn main() -> Result<()> {
                     target: target.clone(),
                 };
 
-                let result = relationship_engine.execute_query(query_type).await?;
+                let mut result = relationship_engine.execute_query(query_type).await?;
 
-                println!("📊 Impact Analysis Results:");
+                // Apply limit if specified
+                if let Some(limit_value) = limit {
+                    result.limit_results(limit_value);
+                    println!("📊 Impact Analysis Results (limited to {}):", limit_value);
+                } else {
+                    println!("📊 Impact Analysis Results:");
+                }
+
                 println!("{}", result.to_markdown());
             }
 

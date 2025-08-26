@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--verbose` flag for CLI operations to enable detailed logging output (#335)
+  - Default logging level set to WARN for clean agent-friendly output
+  - Use `--verbose` or `-v` to enable INFO level logging for progress visibility
+  - RUST_LOG environment variable still overrides all settings for debugging
+- `--limit` flag for find-callers and impact-analysis commands (#335)
+  - Allows limiting the number of results returned for better readability
+  - Prevents overwhelming output when analyzing symbols with many dependencies
+
 ### Fixed
+- CLI logging verbosity issues that impacted agent/LLM workflows (#335)
+  - Changed default logging level from DEBUG to WARN for cleaner output
+  - Eliminated excessive trace output that buried useful information
+  - CLI now produces clean, parseable output by default without RUST_LOG=warn
+- Wildcard pattern matching in search functionality (#335)
+  - Fixed routing of wildcard queries (e.g., "*.rs", "*Controller.rs") to primary index
+  - Implemented proper glob pattern matching for path-based searches
+  - Wildcard patterns now correctly filter results based on file paths
 - Symbol storage directory not being created automatically (#272)
   - Added automatic directory creation when accessing symbol storage
   - Fixed issue where symbol-stats and relationship commands would fail on first use

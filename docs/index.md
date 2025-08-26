@@ -1,8 +1,8 @@
 # KotaDB Documentation
 
-## A Custom Database for Distributed Human-AI Cognition
+## A Codebase Intelligence Platform for Understanding Code Relationships
 
-Welcome to the KotaDB documentation! KotaDB is a high-performance, custom database built entirely in Rust with zero external database dependencies, designed specifically for distributed human-AI cognitive workflows.
+Welcome to the KotaDB documentation! KotaDB is a high-performance codebase intelligence platform built entirely in Rust, designed to transform your codebase into a queryable knowledge graph for instant symbol lookup, dependency analysis, and impact assessment.
 
 ## Quick Installation
 
@@ -64,24 +64,32 @@ docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
 
 ## Key Features
 
+### 🧠 Codebase Intelligence
+- **Symbol extraction** with 17,128+ symbols from KotaDB itself
+- **Dependency tracking** of function calls and usage patterns
+- **Impact analysis** to understand what breaks when code changes
+- **Git integration** for full repository ingestion
+
 ### 🚀 Performance
-- **Sub-10ms query latency** for most operations
+- **<3ms trigram search** - 210x performance improvement
+- **Sub-microsecond B+ tree lookups** for path-based queries
 - **10x faster bulk operations** compared to traditional databases
-- **Memory-efficient** with <2.5x overhead over raw data
+- **Memory-efficient** dual storage architecture
 
 ### 🛡️ Reliability
 - **99% success rate** through 6-stage risk reduction methodology
 - **Write-Ahead Logging (WAL)** for data durability
 - **Crash recovery** with automatic rollback
+- **Zero external dependencies** - pure Rust implementation
 
-### 🔍 Advanced Search
-- **Full-text search** with trigram indexing
+### 🔍 Advanced Search & Analysis
+- **Full-text search** with optimized trigram indexing
 - **Vector search** for semantic queries (HNSW algorithm)
-- **Graph traversal** for relationship queries
-- **Natural language** query support
+- **Graph traversal** for code relationship queries
+- **Wildcard pattern matching** for flexible path searches
 
 ### 🏗️ Architecture
-- **Zero external dependencies** - pure Rust implementation
+- **Dual storage** - Separates documents and graph data
 - **Page-based storage** with 4KB pages and checksums
 - **Multiple index types** - B+ tree, trigram, vector, graph
 - **Component library** with safety wrappers

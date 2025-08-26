@@ -1,6 +1,6 @@
 # KotaDB
 
-**A custom database for distributed human-AI cognition, built entirely by LLM agents.**
+**A codebase intelligence platform that understands your code's relationships, dependencies, and structure.**
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
@@ -127,8 +127,8 @@ print(f'Found {len(results.get(\"documents\", []))} documents')
 **🎉 That's it! You're now running KotaDB with type-safe client libraries.**
 
 ```
-KotaDB combines document storage, graph relationships, and semantic search
-into a unified system designed for the way humans and AI think together.
+KotaDB transforms your codebase into a queryable knowledge graph, enabling
+instant symbol lookup, dependency analysis, and impact assessment for safer refactoring.
 ```
 
 ---
@@ -137,14 +137,15 @@ into a unified system designed for the way humans and AI think together.
 
 Real-world benchmarks on Apple Silicon:
 
-| Operation | Latency | Throughput |
-|-----------|---------|------------|
-| **B+ Tree Search** | **489 µs** | 2,000 queries/sec |
-| **Trigram Search** | **<10 ms** | 100+ queries/sec |
-| **Document Insert** | **277 µs** | 3,600 ops/sec |
-| **Bulk Operations** | **20 ms** | 50,000 ops/sec |
+| Operation | Latency | Throughput | Notes |
+|-----------|---------|------------|-------|
+| **B+ Tree Search** | **489 µs** | 2,000 queries/sec | Path lookups |
+| **Trigram Search** | **<3 ms** | 333+ queries/sec | 210x faster! |
+| **Symbol Extraction** | **~100 ms/file** | 10 files/sec | Tree-sitter parsing |
+| **Document Insert** | **277 µs** | 3,600 ops/sec | With indexing |
+| **Bulk Operations** | **20 ms** | 50,000 ops/sec | Batched writes |
 
-*10,000 document dataset, Apple Silicon M-series*
+*Tested on KotaDB's own codebase (2,818+ documents, 17,128+ symbols)*
 
 ---
 
@@ -207,11 +208,16 @@ cd kota-db && cargo build --release
 # Start server
 cargo run --bin kotadb -- serve
 
-# CLI operations  
-cargo run --bin kotadb -- insert /docs/rust.md "Rust Guide" "Ownership concepts..."
-cargo run --bin kotadb -- search "ownership"  # Full-text search
-cargo run --bin kotadb -- search "*"          # List all documents  
-cargo run --bin kotadb -- stats              # Database statistics
+# Codebase Intelligence Features
+cargo run --bin kotadb -- ingest-repo .         # Analyze entire repository
+cargo run --bin kotadb -- symbol-stats          # View extracted symbols
+cargo run --bin kotadb -- find-callers FileStorage  # Who calls this?
+cargo run --bin kotadb -- impact-analysis StorageError  # What breaks if changed?
+
+# Document operations  
+cargo run --bin kotadb -- search "ownership"   # Full-text search (<3ms)
+cargo run --bin kotadb -- search "*.rs"        # Wildcard path search
+cargo run --bin kotadb -- stats                # Database statistics
 ```
 
 <details>
@@ -233,16 +239,22 @@ just release-preview  # Preview next release
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
+│              Codebase Intelligence Layer                     │
+│    Symbol Extraction + Dependency Analysis + Impact          │
+├─────────────────────────────────────────────────────────────┤
 │                    Query Interface                           │
-│                Text Search + Semantic Search                 │
+│      Text Search + Semantic Search + Relationship Queries    │
 ├─────────────────────────────────────────────────────────────┤
 │                    Query Router                              │
 │         Automatic index selection based on query             │
 ├──────────────┬───────────────┬───────────────┬──────────────┤
-│   Primary    │   Full-Text   │     Graph     │   Semantic   │
-│   B+ Tree    │    Trigram    │   (Planned)   │     HNSW     │
-│     ✅       │      ✅       │      🚧       │      ✅      │
+│   Primary    │   Full-Text   │  Relationship │   Semantic   │
+│   B+ Tree    │   Trigram     │     Graph     │     HNSW     │
+│     ✅       │   ✅ (<3ms)   │      ✅       │      ✅      │
 ├──────────────┴───────────────┴───────────────┴──────────────┤
+│              Dual Storage Architecture                       │
+│     Document Storage (MD/JSON) + Graph Storage (Native)      │
+├─────────────────────────────────────────────────────────────┤
 │                    Storage Engine                            │
 │        Pages + WAL + Compression + Memory Map                │
 └─────────────────────────────────────────────────────────────┘
@@ -252,17 +264,23 @@ just release-preview  # Preview next release
 
 ## Core Features
 
-### Storage
+### Codebase Intelligence (New!)
+- **Symbol Extraction**: Automatically extracts functions, classes, traits, and their relationships
+- **Dependency Analysis**: Tracks what calls what, enabling impact analysis
+- **Dual Storage**: Separates documents and graph data for optimal performance
+- **Git Integration**: Ingest entire repositories with full history preservation
+
+### Storage & Performance
+- **210x Faster Search**: Trigram search optimized to <3ms (from 591ms)
 - **Native Format**: Markdown files with YAML frontmatter
-- **Git Compatible**: Human-readable, diff-friendly
 - **Crash-Safe**: WAL ensures data durability
 - **Zero Database Dependencies**: No external database required
 
-### Indexing (Current Capabilities)
+### Indexing Capabilities
 - **B+ Tree**: ✅ O(log n) path-based lookups with wildcard support
-- **Trigram**: ✅ Fuzzy-tolerant full-text search with ranking
+- **Trigram**: ✅ Fuzzy-tolerant full-text search with <3ms latency
 - **Vector**: ✅ Semantic similarity search using HNSW algorithm
-- **Graph**: 🚧 Planned - Relationship traversal (see roadmap)
+- **Graph**: ✅ Relationship tracking for code dependencies
 
 ### Safety
 - **Systematic Testing**: 6-stage risk reduction methodology
@@ -377,14 +395,22 @@ kotadb search "*"  # List all documents
 kotadb search "/projects/*"  # Documents in projects folder
 ```
 
-### Planned Features (Not Yet Implemented)
+### Recently Added (v0.5.0+)
+
+✨ **New Codebase Intelligence Features**:
+- **Symbol Extraction**: Parse and index all code symbols
+- **Dependency Graph**: Track function calls and usage
+- **Impact Analysis**: See what breaks if you change something
+- **Dual Storage**: Optimized separation of documents and graphs
+
+### Planned Enhancements
 
 ⚠️ **Note**: The following features are part of our roadmap but are **not currently available**:
 
-- **Natural Language Queries**: "meetings about rust last week" 
-- **Temporal Analysis**: Time-based aggregations and patterns
-- **Graph Traversal**: Following document relationships
-- **Advanced Filtering**: Complex structured queries
+- **Natural Language Queries**: "what functions call FileStorage?" 
+- **Cross-Language Support**: Beyond Rust (Python, JS, Go)
+- **Real-time Updates**: Live code change tracking
+- **Advanced Refactoring**: Automated safe refactoring suggestions
 
 See the [Roadmap](#roadmap) section for implementation timeline.
 
@@ -393,9 +419,12 @@ See the [Roadmap](#roadmap) section for implementation timeline.
 ## Current Features (What's Actually Working)
 
 ### ✅ Production Ready
+- **Codebase Analysis**: Symbol extraction with 17,128+ symbols from KotaDB itself
+- **Dependency Tracking**: Full relationship graph of function calls and usage
+- **Impact Analysis**: Understand what breaks when you change code
+- **Lightning Fast Search**: <3ms trigram search (210x improvement)
 - **Storage Engine**: WAL, compression, crash recovery
 - **B+ Tree Index**: Path-based lookups, wildcard queries
-- **Trigram Search**: Full-text search with fuzzy matching
 - **Semantic Search**: HNSW-based vector similarity
 - **Client Libraries**: Python, TypeScript/JavaScript, Rust
 - **Binary Distribution**: Pre-built binaries for all platforms

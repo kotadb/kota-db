@@ -64,6 +64,48 @@ impl PrimaryIndex {
         }
     }
 
+    /// Match a path against a wildcard pattern
+    /// Supports patterns like "*.rs", "*Controller.rs", "test_*", etc.
+    fn matches_wildcard_pattern(path: &str, pattern: &str) -> bool {
+        // Handle pure wildcard
+        if pattern == "*" {
+            return true;
+        }
+
+        // Split pattern by '*' to get fixed parts
+        let parts: Vec<&str> = pattern.split('*').collect();
+
+        // Handle patterns with wildcards
+        let mut pos = 0;
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue; // Skip empty parts (from consecutive * or leading/trailing *)
+            }
+
+            // First part must match at beginning unless pattern starts with *
+            if i == 0 && !pattern.starts_with('*') {
+                if !path.starts_with(part) {
+                    return false;
+                }
+                pos = part.len();
+            }
+            // Last part must match at end unless pattern ends with *
+            else if i == parts.len() - 1 && !pattern.ends_with('*') {
+                if !path.ends_with(part) {
+                    return false;
+                }
+            }
+            // Middle parts or wildcard-bounded parts can appear anywhere after current position
+            else if let Some(found_pos) = path[pos..].find(part) {
+                pos += found_pos + part.len();
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Create directory structure for the index
     async fn ensure_directories(&self) -> Result<()> {
         let paths = [
@@ -414,20 +456,38 @@ impl Index for PrimaryIndex {
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
 
-        // Primary index only supports wildcard ("*") searches
-        // If there are specific search terms, return empty (no text search capability)
-        if !query.search_terms.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let btree_root = self.btree_root.read().await;
 
         // Use B+ tree traversal to get all documents (O(n) for full scan, but sorted)
         let all_pairs = extract_all_pairs(&btree_root)?;
 
-        // Extract just the document IDs for results
-        let mut results: Vec<ValidatedDocumentId> =
-            all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect();
+        // Check if we have wildcard patterns in search terms
+        let wildcard_pattern = if query.search_terms.len() == 1 {
+            let term = &query.search_terms[0];
+            if term.as_str().contains('*') {
+                Some(term.as_str().to_string())
+            } else {
+                None
+            }
+        } else if query.search_terms.is_empty() {
+            // Empty search terms means return all
+            None
+        } else {
+            // Multiple search terms not supported for wildcard patterns
+            return Ok(Vec::new());
+        };
+
+        // Filter results based on wildcard pattern if present
+        let mut results: Vec<ValidatedDocumentId> = if let Some(pattern) = wildcard_pattern {
+            all_pairs
+                .into_iter()
+                .filter(|(_, path)| Self::matches_wildcard_pattern(&path.to_string(), &pattern))
+                .map(|(doc_id, _)| doc_id)
+                .collect()
+        } else {
+            // No pattern, return all documents
+            all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect()
+        };
 
         // Apply limit from query
         let limit_value = query.limit.get();
@@ -548,6 +608,70 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_matches_wildcard_pattern() {
+        // Test pure wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern("anything", "*"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("test.rs", "*"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("", "*"));
+
+        // Test suffix wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern("test.rs", "*.rs"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("main.rs", "*.rs"));
+        assert!(!PrimaryIndex::matches_wildcard_pattern("test.tsx", "*.rs"));
+        assert!(!PrimaryIndex::matches_wildcard_pattern("test", "*.rs"));
+
+        // Test prefix wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "test_file.rs",
+            "test_*"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "test_another.tsx",
+            "test_*"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "main_test.rs",
+            "test_*"
+        ));
+
+        // Test suffix wildcard with pattern
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "UserController.rs",
+            "*Controller.rs"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "AuthController.rs",
+            "*Controller.rs"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "ControllerUser.rs",
+            "*Controller.rs"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "UserController.tsx",
+            "*Controller.rs"
+        ));
+
+        // Test complex patterns
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "UserPanel.tsx",
+            "*Panel.tsx"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "AdminPanel.tsx",
+            "*Panel.tsx"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "Panel.tsx",
+            "*Panel.tsx"
+        )); // Should match
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "UserPanel.rs",
+            "*Panel.tsx"
+        ));
+    }
 
     #[tokio::test]
     async fn test_primary_index_contract_enforcement() -> Result<()> {
