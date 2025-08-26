@@ -10,7 +10,7 @@ use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::builders::DocumentBuilder;
@@ -971,32 +971,49 @@ impl SymbolStorage {
 
     /// Add a relationship between symbols
     pub async fn add_relationship(&mut self, relation: SymbolRelation) -> Result<()> {
-        // Update dependent's list
-        if let Some(target) = self.symbol_index.get_mut(&relation.to_id) {
-            target.dependents.insert(relation.from_id);
-        }
-
-        // Store in graph storage if available (for O(1) lookups)
+        // First, try to store in graph storage if available (for O(1) lookups)
         if let Some(ref mut graph) = self.graph_storage {
-            // Convert to GraphEdge for graph storage
-            let edge = GraphEdge {
-                relation_type: relation.relation_type.clone(),
-                location: NodeLocation {
-                    start_line: 0, // These would be set from actual symbol data
+            // Get location data from the source symbol if available
+            let location = if let Some(source_symbol) = self.symbol_index.get(&relation.from_id) {
+                NodeLocation {
+                    start_line: source_symbol.symbol.start_line,
+                    start_column: source_symbol.symbol.start_column,
+                    end_line: source_symbol.symbol.end_line,
+                    end_column: source_symbol.symbol.end_column,
+                }
+            } else {
+                // Fallback if symbol not found
+                NodeLocation {
+                    start_line: 0,
                     start_column: 0,
                     end_line: 0,
                     end_column: 0,
-                },
+                }
+            };
+
+            // Convert to GraphEdge for graph storage
+            let edge = GraphEdge {
+                relation_type: relation.relation_type.clone(),
+                location,
                 context: None,
                 metadata: relation.metadata.clone(),
                 created_at: chrono::Utc::now().timestamp(),
             };
 
             // Store the edge in graph storage for O(1) lookups
+            // If this fails, we don't proceed with in-memory updates
             graph
                 .store_edge(relation.from_id, relation.to_id, edge)
                 .await
                 .context("Failed to store relationship in graph storage")?;
+        }
+
+        // Only update in-memory state after successful graph storage (or if no graph storage)
+        // This ensures consistency between storage layers
+
+        // Update dependent's list
+        if let Some(target) = self.symbol_index.get_mut(&relation.to_id) {
+            target.dependents.insert(relation.from_id);
         }
 
         self.relationships.push(relation);
@@ -1014,38 +1031,43 @@ impl SymbolStorage {
         let extractor = crate::dependency_extractor::DependencyExtractor::new()?;
         let mut parser = crate::parsing::CodeParser::new()?;
 
-        // Group symbols by file for efficient processing
-        let mut symbols_by_file: HashMap<PathBuf, Vec<SymbolEntry>> = HashMap::new();
-        for symbol in self.symbol_index.values() {
-            symbols_by_file
+        // Group symbols by file for efficient processing (memory optimized)
+        // Only store IDs to avoid cloning entire SymbolEntry objects
+        let mut symbol_ids_by_file: HashMap<PathBuf, Vec<Uuid>> = HashMap::new();
+        for (id, symbol) in &self.symbol_index {
+            symbol_ids_by_file
                 .entry(symbol.file_path.clone())
                 .or_default()
-                .push(symbol.clone());
+                .push(*id);
         }
 
         let mut all_analyses = Vec::new();
-        let mut all_symbol_entries = Vec::new();
 
         // Analyze each file with DependencyExtractor
-        for (file_path, symbols) in symbols_by_file {
+        for (file_path, symbol_ids) in &symbol_ids_by_file {
             // Read file content if available
-            if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+            if let Ok(content) = tokio::fs::read_to_string(file_path).await {
                 // Determine language from file extension
-                let language = self.determine_language(&file_path);
+                let language = self.determine_language(file_path);
 
                 // Parse the code first to get ParsedCode
                 if let Ok(parsed_code) = parser.parse_content(&content, language) {
                     // Extract dependencies using the parsed code
                     if let Ok(analysis) =
-                        extractor.extract_dependencies(&parsed_code, &content, &file_path)
+                        extractor.extract_dependencies(&parsed_code, &content, file_path)
                     {
                         all_analyses.push(analysis);
                     }
                 }
             }
-
-            all_symbol_entries.extend(symbols);
         }
+
+        // Build symbol entries vector only when needed, using references where possible
+        let all_symbol_entries: Vec<SymbolEntry> = symbol_ids_by_file
+            .into_values()
+            .flatten()
+            .filter_map(|id| self.symbol_index.get(&id).cloned())
+            .collect();
 
         // Build the dependency graph using extracted references
         let dep_graph = extractor.build_dependency_graph(all_analyses, &all_symbol_entries)?;
@@ -1134,17 +1156,43 @@ impl SymbolStorage {
             }
         }
 
-        // Batch insert all edges into graph storage
+        // Batch insert all edges into graph storage with rollback on failure
         if let Some(ref mut graph_storage) = self.graph_storage {
             if !edges_to_insert.is_empty() {
-                graph_storage
-                    .batch_insert_edges(edges_to_insert)
-                    .await
-                    .context("Failed to batch insert edges into graph storage")?;
-                debug!(
-                    "Inserted {} edges into graph storage",
-                    dep_graph.graph.edge_count()
-                );
+                // Store original relationship count for potential rollback
+                let original_relationship_count = self.relationships.len();
+
+                match graph_storage.batch_insert_edges(edges_to_insert).await {
+                    Ok(_) => {
+                        debug!(
+                            "Successfully inserted {} edges into graph storage",
+                            dep_graph.graph.edge_count()
+                        );
+                    }
+                    Err(e) => {
+                        // Rollback in-memory relationships on graph storage failure
+                        warn!(
+                            "Failed to batch insert edges into graph storage, rolling back {} relationships: {}",
+                            self.relationships.len() - original_relationship_count,
+                            e
+                        );
+                        self.relationships.truncate(original_relationship_count);
+
+                        // Also rollback dependents in symbol index
+                        for symbol in self.symbol_index.values_mut() {
+                            symbol.dependents.clear();
+                        }
+
+                        // Re-add the original dependents from remaining relationships
+                        for relation in &self.relationships {
+                            if let Some(target) = self.symbol_index.get_mut(&relation.to_id) {
+                                target.dependents.insert(relation.from_id);
+                            }
+                        }
+
+                        return Err(e).context("Failed to batch insert edges, rolled back changes");
+                    }
+                }
             }
         }
 
