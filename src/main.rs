@@ -1081,10 +1081,10 @@ async fn main() -> Result<()> {
                     let storage_path_str = storage_path.to_str().ok_or_else(|| {
                         anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
                     })?;
-                    
+
                     // Create document storage backend
                     let document_storage = create_file_storage(storage_path_str, Some(1000)).await?;
-                    
+
                     // Create graph storage backend for O(1) relationship lookups
                     let graph_path = storage_path.join("graph");
                     tokio::fs::create_dir_all(&graph_path).await?;

@@ -982,7 +982,7 @@ impl SymbolStorage {
             let edge = GraphEdge {
                 relation_type: relation.relation_type.clone(),
                 location: NodeLocation {
-                    start_line: 0,  // These would be set from actual symbol data
+                    start_line: 0, // These would be set from actual symbol data
                     start_column: 0,
                     end_line: 0,
                     end_column: 0,
@@ -991,9 +991,11 @@ impl SymbolStorage {
                 metadata: relation.metadata.clone(),
                 created_at: chrono::Utc::now().timestamp(),
             };
-            
+
             // Store the edge in graph storage for O(1) lookups
-            graph.store_edge(relation.from_id, relation.to_id, edge).await
+            graph
+                .store_edge(relation.from_id, relation.to_id, edge)
+                .await
                 .context("Failed to store relationship in graph storage")?;
         }
 
@@ -1054,11 +1056,11 @@ impl SymbolStorage {
         // If we have graph storage, batch insert all nodes first
         if let Some(ref mut graph_storage) = self.graph_storage {
             let mut nodes_to_insert = Vec::new();
-            
+
             // Prepare all nodes for batch insertion
             for node_idx in dep_graph.graph.node_indices() {
                 let node = &dep_graph.graph[node_idx];
-                
+
                 // Find the corresponding symbol entry
                 if let Some(symbol_entry) = self.symbol_index.get(&node.symbol_id) {
                     let graph_node = GraphNode {
@@ -1078,18 +1080,23 @@ impl SymbolStorage {
                     nodes_to_insert.push((node.symbol_id, graph_node));
                 }
             }
-            
+
             // Batch insert all nodes into graph storage
             if !nodes_to_insert.is_empty() {
-                graph_storage.batch_insert_nodes(nodes_to_insert).await
+                graph_storage
+                    .batch_insert_nodes(nodes_to_insert)
+                    .await
                     .context("Failed to batch insert nodes into graph storage")?;
-                debug!("Inserted {} nodes into graph storage", dep_graph.graph.node_count());
+                debug!(
+                    "Inserted {} nodes into graph storage",
+                    dep_graph.graph.node_count()
+                );
             }
         }
 
         // Convert dependency graph edges to relationships
         let mut edges_to_insert = Vec::new();
-        
+
         for edge_ref in dep_graph.graph.edge_references() {
             let source_node = &dep_graph.graph[edge_ref.source()];
             let target_node = &dep_graph.graph[edge_ref.target()];
@@ -1108,7 +1115,7 @@ impl SymbolStorage {
             if let Some(target_symbol) = self.symbol_index.get_mut(&target_node.symbol_id) {
                 target_symbol.dependents.insert(source_node.symbol_id);
             }
-            
+
             // Prepare edge for graph storage
             if self.graph_storage.is_some() {
                 let graph_edge = GraphEdge {
@@ -1126,13 +1133,18 @@ impl SymbolStorage {
                 edges_to_insert.push((source_node.symbol_id, target_node.symbol_id, graph_edge));
             }
         }
-        
+
         // Batch insert all edges into graph storage
         if let Some(ref mut graph_storage) = self.graph_storage {
             if !edges_to_insert.is_empty() {
-                graph_storage.batch_insert_edges(edges_to_insert).await
+                graph_storage
+                    .batch_insert_edges(edges_to_insert)
+                    .await
                     .context("Failed to batch insert edges into graph storage")?;
-                debug!("Inserted {} edges into graph storage", dep_graph.graph.edge_count());
+                debug!(
+                    "Inserted {} edges into graph storage",
+                    dep_graph.graph.edge_count()
+                );
             }
         }
 

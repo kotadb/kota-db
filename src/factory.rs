@@ -80,18 +80,17 @@ pub async fn create_symbol_storage_with_graph(
 ) -> Result<Arc<Mutex<SymbolStorage>>> {
     // Create document storage with all wrappers
     let document_storage = create_file_storage(data_dir, cache_size).await?;
-    
+
     // Create graph storage for relationships
     let graph_path = Path::new(data_dir).join("graph");
     tokio::fs::create_dir_all(&graph_path).await?;
     let graph_config = GraphStorageConfig::default();
     let graph_storage = NativeGraphStorage::new(graph_path, graph_config).await?;
-    
+
     // Create symbol storage with both backends
-    let symbol_storage = SymbolStorage::with_graph_storage(
-        Box::new(document_storage),
-        Box::new(graph_storage),
-    ).await?;
-    
+    let symbol_storage =
+        SymbolStorage::with_graph_storage(Box::new(document_storage), Box::new(graph_storage))
+            .await?;
+
     Ok(Arc::new(Mutex::new(symbol_storage)))
 }
