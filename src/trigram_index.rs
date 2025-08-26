@@ -40,6 +40,8 @@ struct DocumentContent {
     full_trigrams: Vec<String>, // All trigrams from the document for accurate scoring
     word_count: usize,
     trigram_count: usize,
+    // Pre-computed trigram frequency map for faster relevance scoring
+    trigram_freq: HashMap<String, usize>,
 }
 
 /// Metadata for the trigram index
@@ -161,6 +163,48 @@ impl TrigramIndex {
         // - Length factor: Slight preference for focused documents
         //
         // The frequency component is most important for differentiation
+        (coverage * 10.0) + frequency_score + (length_factor * 5.0)
+    }
+
+    /// Optimized relevance score calculation using pre-computed frequency map
+    pub fn calculate_relevance_score_optimized(
+        query_trigrams: &[String],
+        doc_trigram_freq: &HashMap<String, usize>,
+        word_count: usize,
+    ) -> f64 {
+        if query_trigrams.is_empty() || doc_trigram_freq.is_empty() {
+            return 0.0;
+        }
+
+        // Calculate match statistics using pre-computed frequency map
+        let mut total_matches = 0;
+        let mut unique_matches = 0;
+
+        for query_trigram in query_trigrams {
+            if let Some(&freq) = doc_trigram_freq.get(query_trigram) {
+                unique_matches += 1;
+                total_matches += freq;
+            }
+        }
+
+        if unique_matches == 0 {
+            return 0.0;
+        }
+
+        // Calculate match coverage (what % of query trigrams were found)
+        let coverage = unique_matches as f64 / query_trigrams.len() as f64;
+
+        // Calculate term frequency score (how many times query terms appear)
+        let frequency_score = total_matches as f64;
+
+        // Calculate document relevance with logarithmic length scaling
+        let length_factor = if word_count > 0 {
+            1.0 / (1.0 + (word_count as f64 / 100.0).ln())
+        } else {
+            1.0
+        };
+
+        // Final score combines coverage, frequency, and length factor
         (coverage * 10.0) + frequency_score + (length_factor * 5.0)
     }
 
@@ -311,6 +355,12 @@ impl TrigramIndex {
                                     let doc_text = format!("{} {}", title, content_preview);
                                     let full_trigrams = Self::extract_trigrams(&doc_text);
 
+                                    // Pre-compute trigram frequency map for performance
+                                    let mut trigram_freq = HashMap::new();
+                                    for trigram in &full_trigrams {
+                                        *trigram_freq.entry(trigram.clone()).or_insert(0) += 1;
+                                    }
+
                                     document_cache.insert(
                                         doc_id,
                                         DocumentContent {
@@ -319,6 +369,7 @@ impl TrigramIndex {
                                             full_trigrams,
                                             word_count,
                                             trigram_count,
+                                            trigram_freq,
                                         },
                                     );
                                 }
@@ -616,16 +667,17 @@ impl Index for TrigramIndex {
             .map(|(doc_id, _)| doc_id)
             .collect();
 
-        // Calculate relevance scores for each candidate document
+        // Calculate relevance scores for each candidate document using optimized scoring
         let document_cache = self.document_cache.read().await;
-        let mut scored_results: Vec<(ValidatedDocumentId, f64)> = Vec::new();
+        let mut scored_results: Vec<(ValidatedDocumentId, f64)> =
+            Vec::with_capacity(filtered_candidates.len());
 
         for doc_id in filtered_candidates {
             if let Some(doc_content) = document_cache.get(&doc_id) {
-                // Use the full trigrams stored in the cache for accurate scoring
-                let score = Self::calculate_relevance_score(
+                // Use the optimized scoring with pre-computed frequency map
+                let score = Self::calculate_relevance_score_optimized(
                     &all_query_trigrams,
-                    &doc_content.full_trigrams,
+                    &doc_content.trigram_freq,
                     doc_content.word_count,
                 );
 
@@ -642,7 +694,19 @@ impl Index for TrigramIndex {
             }
         }
 
-        // Sort by relevance score (higher scores first)
+        // Use partial sort for better performance when we only need top-K results
+        let limit = query.limit.get();
+        if scored_results.len() > limit {
+            // Partial sort: only sort the top 'limit' elements
+            scored_results.select_nth_unstable_by(limit - 1, |a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.as_uuid().cmp(&b.0.as_uuid()))
+            });
+            scored_results.truncate(limit);
+        }
+
+        // Sort the top results for deterministic ordering
         scored_results.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -652,10 +716,9 @@ impl Index for TrigramIndex {
                 })
         });
 
-        // Return the top results up to the query limit
+        // Return the top results
         let final_results: Vec<ValidatedDocumentId> = scored_results
             .into_iter()
-            .take(query.limit.get())
             .map(|(doc_id, _)| doc_id)
             .collect();
 
@@ -755,6 +818,12 @@ impl Index for TrigramIndex {
                 content_str.to_string()
             };
 
+            // Pre-compute trigram frequency map for performance
+            let mut trigram_freq = HashMap::new();
+            for trigram in &trigrams {
+                *trigram_freq.entry(trigram.clone()).or_insert(0) += 1;
+            }
+
             cache.insert(
                 id,
                 DocumentContent {
@@ -763,6 +832,7 @@ impl Index for TrigramIndex {
                     full_trigrams: trigrams.clone(),
                     word_count: searchable_text.split_whitespace().count(),
                     trigram_count: trigrams.len(),
+                    trigram_freq,
                 },
             );
         }

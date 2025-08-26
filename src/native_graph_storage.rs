@@ -720,7 +720,10 @@ impl NativeGraphStorage {
                         .push(record);
                 }
             }
-            WalEntry::EdgeDelete { from: _from, to: _to } => {
+            WalEntry::EdgeDelete {
+                from: _from,
+                to: _to,
+            } => {
                 // TODO: Fix for Vec<EdgeRecord> - temporarily disabled
                 tracing::warn!("WAL EdgeDelete temporarily disabled due to multiple edge support");
             }
