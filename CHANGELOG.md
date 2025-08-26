@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Target: Achieve <10ms query latency (previously 580ms)
 
 ### Fixed
+- CLI text search functionality for programming-related terms (#345)
+  - Fixed over-aggressive query sanitization that blocked legitimate search terms
+  - Words like "script", "javascript", "select", "insert", "create" now work correctly
+  - Made SQL injection protection more precise to target actual injection patterns
+  - Preserved security against real SQL injection and XSS attacks
 - CLI logging verbosity issues that impacted agent/LLM workflows (#335)
   - Changed default logging level from DEBUG to WARN for cleaner output
   - Eliminated excessive trace output that buried useful information
