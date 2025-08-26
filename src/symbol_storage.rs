@@ -245,37 +245,143 @@ impl SymbolStorage {
     #[instrument(skip(self))]
     async fn load_symbols(&mut self) -> Result<()> {
         info!("Loading symbols from storage");
-
-        // Get all documents and filter for symbols
-        let all_docs = self
-            .storage
-            .list_all()
-            .await
-            .context("Failed to list documents")?;
-
-        let results: Vec<Document> = all_docs
-            .into_iter()
-            .filter(|doc| doc.tags.iter().any(|tag| tag.as_str() == "symbol"))
-            .collect();
-
         let mut loaded_count = 0;
-        for doc in results {
-            match self.deserialize_symbol(&doc) {
-                Ok(entry) => {
-                    self.index_symbol(entry)?;
-                    loaded_count += 1;
+
+        // Load symbols from graph storage if available
+        if self.graph_storage.is_some() {
+            // Collect all graph data first to avoid borrow issues
+            let (entries, relationships) = {
+                let graph_storage = self.graph_storage.as_ref().unwrap();
+                let mut entries = Vec::new();
+                let mut relationships = Vec::new();
+                
+                // Get all nodes from graph storage by collecting from all types
+                let mut node_ids = Vec::new();
+                for node_type in &["Function", "Method", "Class", "Struct", "Interface", "Enum", "Variable", "Constant", "Module", "Import"] {
+                    let type_nodes = graph_storage.get_nodes_by_type(node_type).await
+                        .context(format!("Failed to list nodes of type {}", node_type))?;
+                    node_ids.extend(type_nodes);
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to deserialize symbol from {}: {}", doc.path, e);
+                
+                for node_id in node_ids {
+                    if let Some(graph_node) = graph_storage.get_node(node_id).await? {
+                        // Convert graph node back to symbol entry
+                        let symbol_type = match graph_node.node_type.as_str() {
+                            "Function" => crate::parsing::SymbolType::Function,
+                            "Method" => crate::parsing::SymbolType::Method,
+                            "Class" => crate::parsing::SymbolType::Class,
+                            "Struct" => crate::parsing::SymbolType::Struct,
+                            "Interface" => crate::parsing::SymbolType::Interface,
+                            "Enum" => crate::parsing::SymbolType::Enum,
+                            "Variable" => crate::parsing::SymbolType::Variable,
+                            "Constant" => crate::parsing::SymbolType::Constant,
+                            "Module" => crate::parsing::SymbolType::Module,
+                            "Import" => crate::parsing::SymbolType::Import,
+                            _ => crate::parsing::SymbolType::Function, // Default
+                        };
+                        
+                        // Extract name from qualified name (last component)
+                        let name = graph_node.qualified_name.split("::").last()
+                            .unwrap_or(&graph_node.qualified_name).to_string();
+                        
+                        let symbol = crate::parsing::ParsedSymbol {
+                            name,
+                            symbol_type,
+                            kind: crate::parsing::SymbolKind::Public, // Default
+                            start_line: graph_node.location.start_line,
+                            start_column: graph_node.location.start_column,
+                            end_line: graph_node.location.end_line,
+                            end_column: graph_node.location.end_column,
+                            text: String::new(), // Empty for now
+                            documentation: None,
+                        };
+                        
+                        let entry = SymbolEntry {
+                            id: node_id,
+                            document_id: ValidatedDocumentId::from_uuid(node_id)?, 
+                            symbol,
+                            qualified_name: graph_node.qualified_name,
+                            file_path: PathBuf::from(graph_node.file_path),
+                            language: crate::parsing::SupportedLanguage::Rust, // Default for now
+                            repository: None,
+                            parent_id: None, // Will be populated from edges if needed
+                            children: Vec::new(), // Will be populated from edges if needed
+                            dependencies: Vec::new(), // Will be populated from edges
+                            dependents: HashSet::new(), // Will be populated from edges
+                            extracted_at: DateTime::<Utc>::from_timestamp(graph_node.updated_at, 0)
+                                .unwrap_or_else(Utc::now),
+                            content_hash: graph_node.metadata.get("content_hash")
+                                .cloned()
+                                .unwrap_or_else(|| format!("recovered-{}", node_id)),
+                        };
+                        
+                        entries.push(entry);
+                    }
+                }
+                
+                // Load edges for all nodes
+                for entry in &entries {
+                    let edges = graph_storage.get_edges(entry.id, petgraph::Direction::Outgoing).await?;
+                    tracing::debug!("Loading edges for symbol {} (UUID: {}): found {} edges", entry.qualified_name, entry.id, edges.len());
+                    for (target_id, edge_data) in edges {
+                        tracing::debug!("Found edge: {} -> {} (type: {:?})", entry.id, target_id, edge_data.relation_type);
+                        let relation = SymbolRelation {
+                            from_id: entry.id,
+                            to_id: target_id,
+                            relation_type: edge_data.relation_type,
+                            metadata: edge_data.metadata,
+                        };
+                        relationships.push(relation);
+                    }
+                }
+                
+                (entries, relationships)
+            };
+            
+            // Now index all entries and relationships
+            for entry in entries {
+                self.index_symbol(entry)?;
+                loaded_count += 1;
+            }
+            
+            // Add relationships and update dependents
+            for relation in relationships {
+                // Update dependents
+                if let Some(target_symbol) = self.symbol_index.get_mut(&relation.to_id) {
+                    target_symbol.dependents.insert(relation.from_id);
+                }
+                self.relationships.push(relation);
+            }
+        } else {
+            // Fallback to document storage
+            let all_docs = self
+                .storage
+                .list_all()
+                .await
+                .context("Failed to list documents")?;
+
+            let results: Vec<Document> = all_docs
+                .into_iter()
+                .filter(|doc| doc.tags.iter().any(|tag| tag.as_str() == "symbol"))
+                .collect();
+
+            for doc in results {
+                match self.deserialize_symbol(&doc) {
+                    Ok(entry) => {
+                        self.index_symbol(entry)?;
+                        loaded_count += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize symbol from {}: {}", doc.path, e);
+                    }
                 }
             }
+            
+            // Reconstruct relationships from dependents fields
+            self.reconstruct_relationships_from_dependents()?;
         }
 
         info!("Loaded {} symbols from storage", loaded_count);
-
-        // Reconstruct relationships from dependents fields
-        self.reconstruct_relationships_from_dependents()?;
-
         Ok(())
     }
 
@@ -387,11 +493,41 @@ impl SymbolStorage {
 
     /// Store a symbol entry persistently
     async fn store_symbol(&mut self, entry: SymbolEntry) -> Result<()> {
-        // Serialize symbol to document
-        let doc = self.serialize_symbol(&entry)?;
-
-        // Store in underlying storage
-        self.storage.insert(doc).await?;
+        // If we have graph storage, use it as primary storage for symbols
+        if let Some(ref mut graph_storage) = self.graph_storage {
+            // Store symbol metadata in the graph node
+            let mut metadata = HashMap::new();
+            if let Some(ref repo) = entry.repository {
+                metadata.insert("repository".to_string(), repo.clone());
+            }
+            metadata.insert("language".to_string(), format!("{:?}", entry.language));
+            if let Some(parent_id) = entry.parent_id {
+                metadata.insert("parent_id".to_string(), parent_id.to_string());
+            }
+            metadata.insert("content_hash".to_string(), entry.content_hash.clone());
+            
+            let graph_node = GraphNode {
+                id: entry.id,
+                node_type: format!("{:?}", entry.symbol.symbol_type),
+                qualified_name: entry.qualified_name.clone(),
+                file_path: entry.file_path.to_string_lossy().to_string(),
+                location: NodeLocation {
+                    start_line: entry.symbol.start_line,
+                    start_column: entry.symbol.start_column,
+                    end_line: entry.symbol.end_line,
+                    end_column: entry.symbol.end_column,
+                },
+                metadata,
+                updated_at: chrono::Utc::now().timestamp(),
+            };
+            
+            graph_storage.store_node(entry.id, graph_node).await
+                .context("Failed to store symbol in graph storage")?;
+        } else {
+            // Fallback to document storage if no graph storage available
+            let doc = self.serialize_symbol(&entry)?;
+            self.storage.insert(doc).await?;
+        }
 
         // Index in memory
         self.index_symbol(entry)?;
@@ -1071,6 +1207,12 @@ impl SymbolStorage {
 
         // Build the dependency graph using extracted references
         let dep_graph = extractor.build_dependency_graph(all_analyses, &all_symbol_entries)?;
+        
+        info!(
+            "Dependency graph built: {} nodes, {} edges", 
+            dep_graph.graph.node_count(),
+            dep_graph.graph.edge_count()
+        );
 
         // Clear existing relationships and rebuild from dependency graph
         self.relationships.clear();
@@ -1152,6 +1294,7 @@ impl SymbolStorage {
                     metadata: HashMap::new(),
                     created_at: chrono::Utc::now().timestamp(),
                 };
+                tracing::debug!("Preparing edge for storage: {} -> {} (type: {:?})", source_node.symbol_id, target_node.symbol_id, edge_data.relation_type);
                 edges_to_insert.push((source_node.symbol_id, target_node.symbol_id, graph_edge));
             }
         }
@@ -1231,11 +1374,15 @@ impl SymbolStorage {
             dependents_count
         );
 
-        // Persist updated symbols with dependents to storage
-        for symbol in self.symbol_index.values() {
-            let mut doc = self.serialize_symbol(symbol)?;
-            doc.updated_at = chrono::Utc::now();
-            self.storage.update(doc).await?;
+        // For graph storage, nodes are already updated in memory and will be persisted on flush
+        // No need to update document storage since symbols are stored as graph nodes
+        if self.graph_storage.is_none() {
+            // Only update document storage if we're not using graph storage
+            for symbol in self.symbol_index.values() {
+                let mut doc = self.serialize_symbol(symbol)?;
+                doc.updated_at = chrono::Utc::now();
+                self.storage.update(doc).await?;
+            }
         }
 
         Ok(())
@@ -1600,9 +1747,17 @@ impl SymbolStorage {
         self.storage.sync().await
     }
 
-    /// Flush the underlying storage
+    /// Flush the underlying storage and graph storage
     pub async fn flush_storage(&mut self) -> Result<()> {
-        self.storage.flush().await
+        // Flush document storage
+        self.storage.flush().await?;
+        
+        // Flush graph storage if available
+        if let Some(ref mut graph_storage) = self.graph_storage {
+            graph_storage.flush().await?;
+        }
+        
+        Ok(())
     }
 
     /// Close the underlying storage
