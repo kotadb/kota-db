@@ -404,6 +404,7 @@ async fn test_edge_serialization_only() -> Result<()> {
         let from_id = nodes[from_idx].0;
         let to_id = nodes[to_idx].0;
 
+
         let edge = GraphEdge {
             relation_type: relation_type.clone(),
             location: NodeLocation {
@@ -435,12 +436,16 @@ async fn test_edge_serialization_only() -> Result<()> {
     for (from_id, to_id, expected_edge) in &expected_edges {
         let edges_from = storage2.get_edges(*from_id, Direction::Outgoing).await?;
 
-        let found_edge = edges_from.iter().find(|(target, _)| target == to_id);
+        // Find edge that matches both target node AND relationship type
+        let found_edge = edges_from.iter().find(|(target, edge)| {
+            target == to_id && edge.relation_type == expected_edge.relation_type
+        });
         assert!(
             found_edge.is_some(),
-            "Should have edge from {} to {}",
+            "Should have edge from {} to {} with RelationType::{:?}",
             from_id,
-            to_id
+            to_id,
+            expected_edge.relation_type
         );
 
         let (_, retrieved_edge) = found_edge.unwrap();

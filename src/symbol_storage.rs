@@ -52,19 +52,20 @@ pub struct SymbolEntry {
 
 /// Symbol relationship types for dependency mapping
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum RelationType {
     /// Symbol imports/uses another
-    Imports,
+    Imports = 0,
     /// Symbol extends/inherits from another
-    Extends,
+    Extends = 1,
     /// Symbol implements an interface/trait
-    Implements,
+    Implements = 2,
     /// Symbol calls/invokes another
-    Calls,
+    Calls = 3,
     /// Symbol is defined within another
-    ChildOf,
+    ChildOf = 4,
     /// Custom relationship type
-    Custom(String),
+    Custom(String) = 5,
 }
 
 /// Relationship between two symbols
