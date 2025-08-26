@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
     create_file_storage, create_primary_index, create_trigram_index, create_wrapped_storage,
-    init_logging, start_server, validate_post_ingestion_search, with_trace_id, Document,
+    init_logging_with_level, start_server, validate_post_ingestion_search, with_trace_id, Document,
     DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
     ValidationStatus,
 };
@@ -23,6 +23,10 @@ use tokio::sync::{Mutex, RwLock};
 #[derive(Parser)]
 #[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
 struct Cli {
+    /// Enable verbose logging (DEBUG level). Default is WARN level.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     /// Database directory path
     #[arg(short, long, default_value = "./kota-db-data")]
     db_path: PathBuf,
@@ -694,10 +698,11 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    let _ = init_logging(); // Ignore error if already initialized
-
+    // Parse CLI args first to get verbose flag
     let cli = Cli::parse();
+
+    // Initialize logging with appropriate level based on verbose flag
+    let _ = init_logging_with_level(cli.verbose); // Ignore error if already initialized
 
     // Run everything within trace context
     with_trace_id("kotadb-cli", async move {

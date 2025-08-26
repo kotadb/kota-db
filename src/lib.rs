@@ -59,7 +59,8 @@ pub mod factory;
 
 // Re-export key types
 pub use observability::{
-    init_logging, log_operation, record_metric, with_trace_id, MetricType, Operation,
+    init_logging, init_logging_with_level, log_operation, record_metric, with_trace_id, MetricType,
+    Operation,
 };
 
 pub use contracts::{Document, Index, PageId, Query, Storage, StorageMetrics, Transaction};

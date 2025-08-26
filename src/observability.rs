@@ -20,13 +20,24 @@ static INDEX_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Initialize the logging and tracing infrastructure
 /// This should be called once at application startup
 pub fn init_logging() -> Result<()> {
+    init_logging_with_level(false)
+}
+
+/// Initialize logging with configurable verbosity
+pub fn init_logging_with_level(verbose: bool) -> Result<()> {
     // Create a layered subscriber with:
     // 1. Environment-based filtering (RUST_LOG)
     // 2. Pretty formatted output for development
     // 3. JSON output option for production
 
+    let default_level = if verbose {
+        "kotadb=debug,info"
+    } else {
+        "kotadb=warn,warn"
+    };
+
     let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("kotadb=debug,info"));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
