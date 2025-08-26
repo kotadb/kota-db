@@ -16,7 +16,7 @@ fn bench_btree_insertion(c: &mut Criterion) {
                 .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
                 .collect();
             let paths: Vec<_> = (0..size)
-                .map(|i| ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap())
+                .map(|i| ValidatedPath::new(format!("bench/doc_{i}.md")).unwrap())
                 .collect();
 
             b.iter(|| {
@@ -45,7 +45,7 @@ fn bench_btree_search(c: &mut Criterion) {
                 .collect();
 
             for (i, key) in keys.iter().enumerate() {
-                let path = ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap();
+                let path = ValidatedPath::new(format!("bench/doc_{i}.md")).unwrap();
                 tree = btree::insert_into_tree(tree, *key, path).unwrap();
             }
 
@@ -132,7 +132,7 @@ fn bench_complexity_comparison(c: &mut Criterion) {
             .collect();
 
         for (i, key) in keys.iter().enumerate() {
-            let path = ValidatedPath::new(format!("/bench/doc_{i}.md")).unwrap();
+            let path = ValidatedPath::new(format!("bench/doc_{i}.md")).unwrap();
             tree = btree::insert_into_tree(tree, *key, path).unwrap();
         }
 

@@ -2,10 +2,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
-    create_file_storage, create_primary_index, create_trigram_index, create_wrapped_storage,
-    init_logging_with_level, start_server, validate_post_ingestion_search, with_trace_id, Document,
-    DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
-    ValidationStatus,
+    create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
+    create_wrapped_storage, init_logging_with_level, start_server, validate_post_ingestion_search,
+    with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId,
+    ValidatedPath, ValidationStatus,
 };
 
 #[cfg(feature = "tree-sitter-parsing")]
@@ -30,6 +30,10 @@ struct Cli {
     /// Database directory path
     #[arg(short, long, default_value = "./kota-db-data")]
     db_path: PathBuf,
+
+    /// Use binary format for indices (10x faster, experimental)
+    #[arg(long, global = true)]
+    binary_index: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -180,7 +184,7 @@ struct Database {
 }
 
 impl Database {
-    async fn new(db_path: &Path) -> Result<Self> {
+    async fn new(db_path: &Path, use_binary_index: bool) -> Result<Self> {
         let storage_path = db_path.join("storage");
         let primary_index_path = db_path.join("primary_index");
         let trigram_index_path = db_path.join("trigram_index");
@@ -205,18 +209,33 @@ impl Database {
             Some(1000),
         )
         .await?;
-        let trigram_index = create_trigram_index(
-            trigram_index_path.to_str().ok_or_else(|| {
-                anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
-            })?,
-            Some(1000),
-        )
-        .await?;
+        let trigram_index = if use_binary_index {
+            tracing::info!("Using binary trigram index for 10x performance");
+            Box::new(
+                create_binary_trigram_index(
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
+                    Some(1000),
+                )
+                .await?,
+            ) as Box<dyn Index>
+        } else {
+            Box::new(
+                create_trigram_index(
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
+                    Some(1000),
+                )
+                .await?,
+            ) as Box<dyn Index>
+        };
 
         let db = Self {
             storage: Arc::new(Mutex::new(Box::new(storage))),
             primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+            trigram_index: Arc::new(Mutex::new(trigram_index)),
             path_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -707,7 +726,7 @@ async fn main() -> Result<()> {
     // Run everything within trace context
     with_trace_id("kotadb-cli", async move {
         // Initialize database
-        let db = Database::new(&cli.db_path).await?;
+        let db = Database::new(&cli.db_path, cli.binary_index).await?;
 
         match cli.command {
             Commands::Serve { port } => {

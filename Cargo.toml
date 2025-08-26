@@ -55,6 +55,9 @@ lz4 = "1.28"
 # Memory mapping
 memmap2 = "0.9"
 
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
 # File watching
 notify = "6.1"
 
