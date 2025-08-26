@@ -1,0 +1,308 @@
+// Integration tests for binary trigram index
+use anyhow::Result;
+use kotadb::{BinaryTrigramIndex, Index, QueryBuilder, ValidatedDocumentId, ValidatedPath};
+use tempfile::TempDir;
+
+#[tokio::test]
+async fn test_binary_index_lifecycle() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    // Create and populate index
+    let mut index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Insert documents with content
+    let doc1_id = ValidatedDocumentId::new();
+    let doc1_path = ValidatedPath::new("test/doc1.md")?;
+    let doc1_content = b"Rust programming language is great for systems programming";
+    index
+        .insert_with_content(doc1_id, doc1_path.clone(), doc1_content)
+        .await?;
+
+    let doc2_id = ValidatedDocumentId::new();
+    let doc2_path = ValidatedPath::new("test/doc2.md")?;
+    let doc2_content = b"Database systems require careful optimization";
+    index
+        .insert_with_content(doc2_id, doc2_path.clone(), doc2_content)
+        .await?;
+
+    // Force sync to disk
+    index.sync().await?;
+
+    // Drop and reload to test persistence
+    drop(index);
+    let index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Search for documents
+    let query = QueryBuilder::new().with_text("rust programming")?.build()?;
+
+    let results = index.search(&query).await?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0], doc1_id);
+
+    // Test another search
+    let query2 = QueryBuilder::new()
+        .with_text("database optimization")?
+        .build()?;
+
+    let results2 = index.search(&query2).await?;
+    assert_eq!(results2.len(), 1);
+    assert_eq!(results2[0], doc2_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_concurrent_access() -> Result<()> {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let index = Arc::new(Mutex::new(BinaryTrigramIndex::open(index_path).await?));
+
+    // Spawn multiple tasks for concurrent writes
+    let mut handles = vec![];
+    for i in 0..10 {
+        let index_clone = Arc::clone(&index);
+        let handle = tokio::spawn(async move {
+            let doc_id = ValidatedDocumentId::new();
+            let doc_path = ValidatedPath::new(format!("test/doc_{}.md", i)).unwrap();
+            let content = format!("Document {} with test content for concurrent testing", i);
+
+            let mut index_guard = index_clone.lock().await;
+            index_guard
+                .insert_with_content(doc_id, doc_path, content.as_bytes())
+                .await
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all insertions
+    for handle in handles {
+        handle.await??;
+    }
+
+    // Verify all documents are searchable
+    let query = QueryBuilder::new()
+        .with_text("concurrent testing")?
+        .build()?;
+
+    let index_guard = index.lock().await;
+    let results = index_guard.search(&query).await?;
+    assert_eq!(results.len(), 10, "All documents should be found");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_update_operations() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let mut index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Insert a document
+    let doc_id = ValidatedDocumentId::new();
+    let doc_path = ValidatedPath::new("test/update.md")?;
+    let original_content = b"Original content with specific keywords";
+    index
+        .insert_with_content(doc_id, doc_path.clone(), original_content)
+        .await?;
+
+    // Verify it's searchable
+    let query = QueryBuilder::new()
+        .with_text("original specific")?
+        .build()?;
+    let results = index.search(&query).await?;
+    assert_eq!(results.len(), 1);
+
+    // Update the document
+    let updated_content = b"Updated content with different keywords";
+    index
+        .update_with_content(doc_id, doc_path, updated_content)
+        .await?;
+
+    // Verify old content is not found
+    let old_query = QueryBuilder::new()
+        .with_text("original specific")?
+        .build()?;
+    let old_results = index.search(&old_query).await?;
+    assert_eq!(old_results.len(), 0, "Old content should not be found");
+
+    // Verify new content is found
+    let new_query = QueryBuilder::new()
+        .with_text("updated different")?
+        .build()?;
+    let new_results = index.search(&new_query).await?;
+    assert_eq!(new_results.len(), 1, "New content should be found");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_delete_operations() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let mut index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Insert multiple documents
+    let doc1_id = ValidatedDocumentId::new();
+    let doc1_path = ValidatedPath::new("test/doc1.md")?;
+    index
+        .insert_with_content(doc1_id, doc1_path, b"First document")
+        .await?;
+
+    let doc2_id = ValidatedDocumentId::new();
+    let doc2_path = ValidatedPath::new("test/doc2.md")?;
+    index
+        .insert_with_content(doc2_id, doc2_path, b"Second document")
+        .await?;
+
+    // Verify both are searchable
+    let query = QueryBuilder::new().with_text("document")?.build()?;
+    let results = index.search(&query).await?;
+    assert_eq!(results.len(), 2);
+
+    // Delete first document
+    let deleted = index.delete(&doc1_id).await?;
+    assert!(deleted, "Document should have been deleted");
+
+    // Verify only second document is found
+    let results_after = index.search(&query).await?;
+    assert_eq!(results_after.len(), 1);
+    assert_eq!(results_after[0], doc2_id);
+
+    // Try to delete non-existent document
+    let fake_id = ValidatedDocumentId::new();
+    let not_deleted = index.delete(&fake_id).await?;
+    assert!(!not_deleted, "Non-existent document should return false");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_large_dataset() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let mut index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Insert a large number of documents
+    let mut doc_ids = vec![];
+    for i in 0..1000 {
+        let doc_id = ValidatedDocumentId::new();
+        let doc_path = ValidatedPath::new(format!("test/large_{}.md", i))?;
+        let content = format!(
+            "Document {} contains various keywords: rust database optimization search index trigram binary performance",
+            i
+        );
+
+        index
+            .insert_with_content(doc_id, doc_path, content.as_bytes())
+            .await?;
+        doc_ids.push(doc_id);
+
+        // Sync periodically to test incremental saves
+        if i % 100 == 0 {
+            index.sync().await?;
+        }
+    }
+
+    // Final sync
+    index.flush().await?;
+
+    // Test various queries
+    let queries = vec![
+        "rust optimization",
+        "database performance",
+        "binary index",
+        "trigram search",
+    ];
+
+    for query_text in queries {
+        let query = QueryBuilder::new()
+            .with_text(query_text)?
+            .with_limit(10)?
+            .build()?;
+
+        let results = index.search(&query).await?;
+        assert!(
+            !results.is_empty(),
+            "Query '{}' should return results",
+            query_text
+        );
+        assert!(results.len() <= 10, "Should respect limit");
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_special_characters() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let mut index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Test with various special characters and unicode
+    let doc_id = ValidatedDocumentId::new();
+    let doc_path = ValidatedPath::new("test/special.md")?;
+    let content = "Hello-world! Test_case #123 @mention $price 中文测试 日本語";
+
+    index
+        .insert_with_content(doc_id, doc_path, content.as_bytes())
+        .await?;
+    index.sync().await?;
+
+    // Test searching for parts with special chars
+    let test_queries = vec![
+        "hello world", // Should match despite hyphen
+        "test case",   // Should match despite underscore
+        "123",         // Numbers
+        "中文",        // Chinese
+        "日本語",      // Japanese
+    ];
+
+    for query_text in test_queries {
+        let query = QueryBuilder::new().with_text(query_text)?.build()?;
+
+        let results = index.search(&query).await?;
+        assert_eq!(
+            results.len(),
+            1,
+            "Query '{}' should find the document",
+            query_text
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_binary_index_empty_operations() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let index_path = temp_dir.path().to_str().unwrap();
+
+    let index = BinaryTrigramIndex::open(index_path).await?;
+
+    // Search on empty index
+    let query = QueryBuilder::new().with_text("nothing here")?.build()?;
+
+    let results = index.search(&query).await?;
+    assert_eq!(results.len(), 0, "Empty index should return no results");
+
+    // Test with empty query (returns all docs, which is 0 for empty index)
+    let empty_query = QueryBuilder::new().build()?;
+
+    let empty_results = index.search(&empty_query).await?;
+    assert_eq!(
+        empty_results.len(),
+        0,
+        "Empty index should return no results for empty query"
+    );
+
+    Ok(())
+}

@@ -117,8 +117,8 @@ impl BinaryTrigramIndex {
             bail!("Invalid index file: too small");
         }
 
-        let header: IndexHeader =
-            bincode::deserialize(&header_bytes[..std::mem::size_of::<IndexHeader>()])?;
+        let header_size = std::mem::size_of::<IndexHeader>();
+        let header: IndexHeader = bincode::deserialize(&header_bytes[..header_size])?;
         if &header.magic != b"KTRI" {
             bail!("Invalid index file: wrong magic bytes");
         }
@@ -128,6 +128,19 @@ impl BinaryTrigramIndex {
                 header.version,
                 BINARY_FORMAT_VERSION
             );
+        }
+
+        // Verify checksum if present (0 means no checksum for backward compatibility)
+        if header.checksum != 0 {
+            use crc32c::crc32c;
+            let data_checksum = crc32c(&header_bytes[header_size..]);
+            if data_checksum != header.checksum {
+                bail!(
+                    "Index file corrupted: checksum mismatch (expected {}, got {})",
+                    header.checksum,
+                    data_checksum
+                );
+            }
         }
 
         // Memory map the index file for zero-copy access
@@ -224,15 +237,18 @@ impl BinaryTrigramIndex {
         // Build the binary index
         let mut index_data = Vec::with_capacity(1024 * 1024); // Pre-allocate 1MB
 
-        // Write header
-        let header = IndexHeader {
+        // Create header with placeholder checksum
+        let mut header = IndexHeader {
             magic: *b"KTRI",
             version: BINARY_FORMAT_VERSION,
             flags: 0,
             created: chrono::Utc::now().timestamp(),
-            checksum: 0, // TODO: Calculate actual checksum
+            checksum: 0, // Will be calculated after building index
         };
-        index_data.extend_from_slice(&bincode::serialize(&header)?);
+
+        // Reserve space for header, we'll write it at the end with checksum
+        let header_size = std::mem::size_of::<IndexHeader>();
+        index_data.resize(header_size, 0);
 
         // Get trigram data from hot cache or existing mmap
         let hot_cache = self.hot_cache.read().await;
@@ -255,6 +271,15 @@ impl BinaryTrigramIndex {
                 index_data.extend_from_slice(doc_id.as_uuid().as_bytes());
             }
         }
+
+        // Calculate CRC32 checksum of the data (excluding header)
+        use crc32c::crc32c;
+        let data_checksum = crc32c(&index_data[header_size..]);
+        header.checksum = data_checksum;
+
+        // Write the header with checksum at the beginning
+        let header_bytes = bincode::serialize(&header)?;
+        index_data[..header_size].copy_from_slice(&header_bytes[..header_size]);
 
         // Write index file
         tokio::fs::write(&index_path, &index_data).await?;
@@ -464,9 +489,9 @@ impl Index for BinaryTrigramIndex {
             }
         }
 
-        // Sort by relevance score
+        // Sort by relevance score (handle NaN safely)
         let mut results: Vec<_> = doc_scores.into_iter().collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Apply limit
         let limit = query.limit.get();
