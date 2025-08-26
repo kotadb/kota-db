@@ -254,15 +254,28 @@ impl SymbolStorage {
                 let graph_storage = self.graph_storage.as_ref().unwrap();
                 let mut entries = Vec::new();
                 let mut relationships = Vec::new();
-                
+
                 // Get all nodes from graph storage by collecting from all types
                 let mut node_ids = Vec::new();
-                for node_type in &["Function", "Method", "Class", "Struct", "Interface", "Enum", "Variable", "Constant", "Module", "Import"] {
-                    let type_nodes = graph_storage.get_nodes_by_type(node_type).await
+                for node_type in &[
+                    "Function",
+                    "Method",
+                    "Class",
+                    "Struct",
+                    "Interface",
+                    "Enum",
+                    "Variable",
+                    "Constant",
+                    "Module",
+                    "Import",
+                ] {
+                    let type_nodes = graph_storage
+                        .get_nodes_by_type(node_type)
+                        .await
                         .context(format!("Failed to list nodes of type {}", node_type))?;
                     node_ids.extend(type_nodes);
                 }
-                
+
                 for node_id in node_ids {
                     if let Some(graph_node) = graph_storage.get_node(node_id).await? {
                         // Convert graph node back to symbol entry
@@ -279,11 +292,15 @@ impl SymbolStorage {
                             "Import" => crate::parsing::SymbolType::Import,
                             _ => crate::parsing::SymbolType::Function, // Default
                         };
-                        
+
                         // Extract name from qualified name (last component)
-                        let name = graph_node.qualified_name.split("::").last()
-                            .unwrap_or(&graph_node.qualified_name).to_string();
-                        
+                        let name = graph_node
+                            .qualified_name
+                            .split("::")
+                            .last()
+                            .unwrap_or(&graph_node.qualified_name)
+                            .to_string();
+
                         let symbol = crate::parsing::ParsedSymbol {
                             name,
                             symbol_type,
@@ -295,10 +312,10 @@ impl SymbolStorage {
                             text: String::new(), // Empty for now
                             documentation: None,
                         };
-                        
+
                         let entry = SymbolEntry {
                             id: node_id,
-                            document_id: ValidatedDocumentId::from_uuid(node_id)?, 
+                            document_id: ValidatedDocumentId::from_uuid(node_id)?,
                             symbol,
                             qualified_name: graph_node.qualified_name,
                             file_path: PathBuf::from(graph_node.file_path),
@@ -310,21 +327,35 @@ impl SymbolStorage {
                             dependents: HashSet::new(), // Will be populated from edges
                             extracted_at: DateTime::<Utc>::from_timestamp(graph_node.updated_at, 0)
                                 .unwrap_or_else(Utc::now),
-                            content_hash: graph_node.metadata.get("content_hash")
+                            content_hash: graph_node
+                                .metadata
+                                .get("content_hash")
                                 .cloned()
                                 .unwrap_or_else(|| format!("recovered-{}", node_id)),
                         };
-                        
+
                         entries.push(entry);
                     }
                 }
-                
+
                 // Load edges for all nodes
                 for entry in &entries {
-                    let edges = graph_storage.get_edges(entry.id, petgraph::Direction::Outgoing).await?;
-                    tracing::debug!("Loading edges for symbol {} (UUID: {}): found {} edges", entry.qualified_name, entry.id, edges.len());
+                    let edges = graph_storage
+                        .get_edges(entry.id, petgraph::Direction::Outgoing)
+                        .await?;
+                    tracing::debug!(
+                        "Loading edges for symbol {} (UUID: {}): found {} edges",
+                        entry.qualified_name,
+                        entry.id,
+                        edges.len()
+                    );
                     for (target_id, edge_data) in edges {
-                        tracing::debug!("Found edge: {} -> {} (type: {:?})", entry.id, target_id, edge_data.relation_type);
+                        tracing::debug!(
+                            "Found edge: {} -> {} (type: {:?})",
+                            entry.id,
+                            target_id,
+                            edge_data.relation_type
+                        );
                         let relation = SymbolRelation {
                             from_id: entry.id,
                             to_id: target_id,
@@ -334,16 +365,16 @@ impl SymbolStorage {
                         relationships.push(relation);
                     }
                 }
-                
+
                 (entries, relationships)
             };
-            
+
             // Now index all entries and relationships
             for entry in entries {
                 self.index_symbol(entry)?;
                 loaded_count += 1;
             }
-            
+
             // Add relationships and update dependents
             for relation in relationships {
                 // Update dependents
@@ -376,7 +407,7 @@ impl SymbolStorage {
                     }
                 }
             }
-            
+
             // Reconstruct relationships from dependents fields
             self.reconstruct_relationships_from_dependents()?;
         }
@@ -505,7 +536,7 @@ impl SymbolStorage {
                 metadata.insert("parent_id".to_string(), parent_id.to_string());
             }
             metadata.insert("content_hash".to_string(), entry.content_hash.clone());
-            
+
             let graph_node = GraphNode {
                 id: entry.id,
                 node_type: format!("{:?}", entry.symbol.symbol_type),
@@ -520,8 +551,10 @@ impl SymbolStorage {
                 metadata,
                 updated_at: chrono::Utc::now().timestamp(),
             };
-            
-            graph_storage.store_node(entry.id, graph_node).await
+
+            graph_storage
+                .store_node(entry.id, graph_node)
+                .await
                 .context("Failed to store symbol in graph storage")?;
         } else {
             // Fallback to document storage if no graph storage available
@@ -1207,9 +1240,9 @@ impl SymbolStorage {
 
         // Build the dependency graph using extracted references
         let dep_graph = extractor.build_dependency_graph(all_analyses, &all_symbol_entries)?;
-        
+
         info!(
-            "Dependency graph built: {} nodes, {} edges", 
+            "Dependency graph built: {} nodes, {} edges",
             dep_graph.graph.node_count(),
             dep_graph.graph.edge_count()
         );
@@ -1294,7 +1327,12 @@ impl SymbolStorage {
                     metadata: HashMap::new(),
                     created_at: chrono::Utc::now().timestamp(),
                 };
-                tracing::debug!("Preparing edge for storage: {} -> {} (type: {:?})", source_node.symbol_id, target_node.symbol_id, edge_data.relation_type);
+                tracing::debug!(
+                    "Preparing edge for storage: {} -> {} (type: {:?})",
+                    source_node.symbol_id,
+                    target_node.symbol_id,
+                    edge_data.relation_type
+                );
                 edges_to_insert.push((source_node.symbol_id, target_node.symbol_id, graph_edge));
             }
         }
@@ -1751,12 +1789,12 @@ impl SymbolStorage {
     pub async fn flush_storage(&mut self) -> Result<()> {
         // Flush document storage
         self.storage.flush().await?;
-        
+
         // Flush graph storage if available
         if let Some(ref mut graph_storage) = self.graph_storage {
             graph_storage.flush().await?;
         }
-        
+
         Ok(())
     }
 

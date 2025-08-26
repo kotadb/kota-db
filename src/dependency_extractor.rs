@@ -634,7 +634,8 @@ impl DependencyExtractor {
 
             for reference in &analysis.references {
                 // Try to resolve the reference to a symbol
-                let resolved_id = self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol);
+                let resolved_id =
+                    self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol);
                 if resolved_id.is_none() {
                     tracing::trace!(
                         "Failed to resolve reference '{}' at line {} in file {:?}",
@@ -651,8 +652,13 @@ impl DependencyExtractor {
                         tracing::debug!(
                             "Creating edge: {} -> {} (reference: {} at line {})",
                             source_symbol.qualified_name,
-                            name_to_symbol.iter()
-                                .find_map(|(k, v)| if v == &target_id { Some(k.as_str()) } else { None })
+                            name_to_symbol
+                                .iter()
+                                .find_map(|(k, v)| if v == &target_id {
+                                    Some(k.as_str())
+                                } else {
+                                    None
+                                })
                                 .unwrap_or("unknown"),
                             reference.name,
                             reference.line

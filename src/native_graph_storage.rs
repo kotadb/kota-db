@@ -30,6 +30,12 @@ const PAGE_SIZE: usize = 4096;
 /// Magic number for graph storage files
 const GRAPH_MAGIC: &[u8; 8] = b"KOTGRAPH";
 
+/// Magic number for edge pages
+const EDGE_MAGIC: &[u8; 4] = b"EDGE";
+
+/// UUID size in bytes
+const UUID_SIZE: usize = 16;
+
 /// Maximum size for deserialization to prevent memory exhaustion
 const MAX_DESERIALIZE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
@@ -246,36 +252,66 @@ impl NativeGraphStorage {
         let mut parsed_records = Vec::new();
 
         for _ in 0..header.record_count {
-            if offset >= data.len() {
+            if offset + 4 >= data.len() {
                 break;
             }
 
-            // Read record size
-            let size_bytes = &data[offset..offset + 4];
-            let size =
-                u32::from_le_bytes([size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]])
-                    as usize;
+            // Read ID length (first 4 bytes of each entry)
+            let id_len_bytes = &data[offset..offset + 4];
+            let id_len = u32::from_le_bytes([
+                id_len_bytes[0],
+                id_len_bytes[1],
+                id_len_bytes[2],
+                id_len_bytes[3],
+            ]) as usize;
             offset += 4;
 
-            if offset + size > data.len() {
+            // Validate ID length
+            if id_len > UUID_SIZE || offset + id_len + 4 > data.len() {
+                tracing::warn!("Invalid ID length: {} at offset {}", id_len, offset);
+                break;
+            }
+
+            // Read ID bytes (but we don't need to use them since NodeRecord contains its own ID)
+            offset += id_len;
+
+            // Read record size (next 4 bytes)
+            if offset + 4 > data.len() {
+                break;
+            }
+            let record_size_bytes = &data[offset..offset + 4];
+            let record_size = u32::from_le_bytes([
+                record_size_bytes[0],
+                record_size_bytes[1],
+                record_size_bytes[2],
+                record_size_bytes[3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + record_size > data.len() {
                 break;
             }
 
             // Deserialize node record with size validation
-            if size > MAX_DESERIALIZE_SIZE {
-                tracing::warn!("Skipping oversized record: {} bytes", size);
-                break;
+            if record_size > MAX_DESERIALIZE_SIZE {
+                tracing::warn!("Skipping oversized record: {} bytes", record_size);
+                offset += record_size;
+                continue;
             }
 
-            match bincode::deserialize::<NodeRecord>(&data[offset..offset + size]) {
+            match bincode::deserialize::<NodeRecord>(&data[offset..offset + record_size]) {
                 Ok(record) => {
                     parsed_records.push(record);
-                    offset += size;
+                    offset += record_size;
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to deserialize node record at offset {}: {}", offset, e);
+                    tracing::warn!(
+                        "Failed to deserialize node record at offset {}: {}",
+                        offset,
+                        e
+                    );
                     // Continue parsing the next record instead of failing the entire page
-                    offset += size;
+                    offset += record_size;
                 }
             }
         }
@@ -293,12 +329,162 @@ impl NativeGraphStorage {
 
     /// Parse edges from a page
     fn load_edges_from_page(&self, data: &[u8]) -> Result<()> {
-        if data.len() < std::mem::size_of::<PageHeader>() {
+        if data.len() < 8 {
             return Ok(());
         }
 
-        // Similar to load_nodes_from_page but for edges
-        // Parse header, validate, then deserialize edge records
+        // Check data size to prevent memory exhaustion
+        if data.len() > MAX_DESERIALIZE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Edge page size {} exceeds maximum allowed size {}",
+                data.len(),
+                MAX_DESERIALIZE_SIZE
+            ));
+        }
+
+        // Parse edge page header (simpler than node header)
+        let magic = &data[0..4];
+        if magic != EDGE_MAGIC {
+            return Err(anyhow::anyhow!("Invalid edge page magic number"));
+        }
+
+        let page_size_bytes = &data[4..8];
+        let page_size = u32::from_le_bytes([
+            page_size_bytes[0],
+            page_size_bytes[1],
+            page_size_bytes[2],
+            page_size_bytes[3],
+        ]) as usize;
+
+        if 8 + page_size > data.len() {
+            return Err(anyhow::anyhow!(
+                "Invalid edge page size: {} bytes, but only {} available",
+                page_size,
+                data.len() - 8
+            ));
+        }
+
+        // Parse edge records from the page data
+        let page_data = &data[8..8 + page_size];
+        let mut offset = 0;
+        let mut parsed_edges = Vec::new();
+
+        while offset < page_data.len() {
+            // Read from_id length
+            if offset + 4 > page_data.len() {
+                break;
+            }
+            let from_len_bytes = &page_data[offset..offset + 4];
+            let from_len = u32::from_le_bytes([
+                from_len_bytes[0],
+                from_len_bytes[1],
+                from_len_bytes[2],
+                from_len_bytes[3],
+            ]) as usize;
+            offset += 4;
+
+            // Validate from_id length
+            if from_len > UUID_SIZE || offset + from_len > page_data.len() {
+                tracing::warn!("Invalid from_id length: {} at offset {}", from_len, offset);
+                break;
+            }
+
+            // Read from_id
+            let from_id_bytes = &page_data[offset..offset + from_len];
+            offset += from_len;
+            let from_id = match Uuid::from_slice(from_id_bytes) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!("Failed to parse from_id: {}", e);
+                    continue; // Skip this record but continue processing others
+                }
+            };
+
+            // Read to_id length
+            if offset + 4 > page_data.len() {
+                break;
+            }
+            let to_len_bytes = &page_data[offset..offset + 4];
+            let to_len = u32::from_le_bytes([
+                to_len_bytes[0],
+                to_len_bytes[1],
+                to_len_bytes[2],
+                to_len_bytes[3],
+            ]) as usize;
+            offset += 4;
+
+            // Validate to_id length
+            if to_len > UUID_SIZE || offset + to_len > page_data.len() {
+                tracing::warn!("Invalid to_id length: {} at offset {}", to_len, offset);
+                break;
+            }
+
+            // Read to_id
+            let to_id_bytes = &page_data[offset..offset + to_len];
+            offset += to_len;
+            let to_id = match Uuid::from_slice(to_id_bytes) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!("Failed to parse to_id: {}", e);
+                    continue; // Skip this record but continue processing others
+                }
+            };
+
+            // Read edge data length
+            if offset + 4 > page_data.len() {
+                break;
+            }
+            let data_len_bytes = &page_data[offset..offset + 4];
+            let data_len = u32::from_le_bytes([
+                data_len_bytes[0],
+                data_len_bytes[1],
+                data_len_bytes[2],
+                data_len_bytes[3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + data_len > page_data.len() {
+                break;
+            }
+
+            // Deserialize edge data with size validation
+            if data_len > MAX_DESERIALIZE_SIZE {
+                tracing::warn!("Skipping oversized edge record: {} bytes", data_len);
+                offset += data_len;
+                continue;
+            }
+
+            match bincode::deserialize::<GraphEdge>(&page_data[offset..offset + data_len]) {
+                Ok(edge) => {
+                    parsed_edges.push((from_id, to_id, edge));
+                    offset += data_len;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize edge record at offset {}: {}",
+                        offset,
+                        e
+                    );
+                    offset += data_len;
+                }
+            }
+        }
+
+        // Only update edges after all parsing is complete to avoid partial state
+        if !parsed_edges.is_empty() {
+            let mut edges_out = self.edges_out.write();
+            for (from_id, to_id, edge) in parsed_edges {
+                let edge_record = EdgeRecord {
+                    edge,
+                    page_id: 0, // Will be updated during next persistence
+                    page_offset: 0,
+                };
+                edges_out
+                    .entry(from_id)
+                    .or_default()
+                    .insert(to_id, edge_record);
+            }
+        }
 
         Ok(())
     }
@@ -994,7 +1180,7 @@ impl NativeGraphStorage {
                 entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
                 entry.extend_from_slice(&serialized);
 
-                if current_page.len() + entry.len() > 4096 - 8 {
+                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
                     // Leave room for header
                     if !current_page.is_empty() {
                         page_data.push((current_page, current_page_record_count));
@@ -1032,7 +1218,7 @@ impl NativeGraphStorage {
             page_bytes.extend_from_slice(page);
 
             // Pad to 4KB
-            while page_bytes.len() < 4096 {
+            while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
 
@@ -1085,7 +1271,7 @@ impl NativeGraphStorage {
                 entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
                 entry.extend_from_slice(&serialized);
 
-                if current_page.len() + entry.len() > 4096 - 8 {
+                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
                     // Leave room for header
                     if !current_page.is_empty() {
                         page_data.push(current_page);
@@ -1118,7 +1304,7 @@ impl NativeGraphStorage {
             page_bytes.extend_from_slice(page);
 
             // Pad to 4KB
-            while page_bytes.len() < 4096 {
+            while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
 
