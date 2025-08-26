@@ -1,6 +1,6 @@
 # KotaDB
 
-**A custom database for distributed human-AI cognition, built entirely by LLM agents.**
+**A codebase intelligence platform that understands your code's relationships, dependencies, and structure.**
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
