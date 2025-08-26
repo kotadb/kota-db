@@ -634,12 +634,8 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
 
     // Ensure the database directory exists
     if !storage_path.exists() {
-        std::fs::create_dir_all(&storage_path).with_context(|| {
-            format!(
-                "Failed to create database directory: {:?}",
-                storage_path
-            )
-        })?;
+        std::fs::create_dir_all(&storage_path)
+            .with_context(|| format!("Failed to create database directory: {:?}", storage_path))?;
     }
     let file_storage = create_file_storage(
         storage_path
@@ -654,17 +650,11 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
     let graph_path = storage_path.join("graph");
     tokio::fs::create_dir_all(&graph_path).await?;
     let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
-    let graph_storage = kotadb::native_graph_storage::NativeGraphStorage::new(
-        graph_path,
-        graph_config,
-    )
-    .await?;
-    
-    let symbol_storage = SymbolStorage::with_graph_storage(
-        Box::new(file_storage),
-        Box::new(graph_storage),
-    )
-    .await?;
+    let graph_storage =
+        kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
+
+    let symbol_storage =
+        SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
 
     // Load statistics to check if we have data
     let stats = symbol_storage.get_stats();
@@ -875,7 +865,7 @@ async fn main() -> Result<()> {
                 println!("\n📋 Validation Results:");
                 println!("   Status: {}", match validation_result.overall_status {
                     ValidationStatus::Passed => "✅ PASSED",
-                    ValidationStatus::Warning => "⚠️ WARNING", 
+                    ValidationStatus::Warning => "⚠️ WARNING",
                     ValidationStatus::Failed => "❌ FAILED",
                 });
                 println!("   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
@@ -1227,7 +1217,7 @@ async fn main() -> Result<()> {
                 }
 
                 // Show validation summary
-                println!("   Validation: {} ({}/{})", 
+                println!("   Validation: {} ({}/{})",
                     validation_result.summary(),
                     validation_result.passed_checks,
                     validation_result.total_checks
@@ -1317,7 +1307,7 @@ async fn main() -> Result<()> {
                     graph_config,
                 )
                 .await?;
-                
+
                 let symbol_storage = SymbolStorage::with_graph_storage(
                     Box::new(file_storage),
                     Box::new(graph_storage),
