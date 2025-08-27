@@ -300,7 +300,7 @@ impl Database {
             Some(1000),
         )
         .await?;
-        let (trigram_index, trigram_index_arc): (Arc<Mutex<dyn Index>>, Arc<Mutex<dyn Index>>) = if use_binary_index {
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = if use_binary_index {
             tracing::info!("Using binary trigram index for 10x performance");
             let index = create_binary_trigram_index(
                 trigram_index_path.to_str().ok_or_else(|| {
@@ -309,8 +309,7 @@ impl Database {
                 Some(1000),
             )
             .await?;
-            let arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(index));
-            (arc.clone(), arc)
+            Arc::new(Mutex::new(index))
         } else {
             let index = create_trigram_index(
                 trigram_index_path.to_str().ok_or_else(|| {
@@ -319,17 +318,16 @@ impl Database {
                 Some(1000),
             )
             .await?;
-            let arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(index));
-            (arc.clone(), arc)
+            Arc::new(Mutex::new(index))
         };
 
         let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
         let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
-        
+
         let deletion_service = kotadb::CoordinatedDeletionService::new(
             storage_arc.clone(),
             primary_index_arc.clone(),
-            trigram_index,
+            trigram_index_arc.clone(),
         );
 
         let db = Self {
