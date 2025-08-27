@@ -121,12 +121,14 @@ async fn test_nonexistent_search_returns_empty() -> Result<()> {
     );
 
     // Test 7: Search with special characters that don't exist
-    let query = QueryBuilder::new().with_text("@#$%^&*()")?.build()?;
+    // Note: Special characters like "@#$%^&*()" get sanitized to empty,
+    // so we use alphanumeric characters with special chars that will remain after sanitization
+    let query = QueryBuilder::new().with_text("xyz@#$%")?.build()?;
     let results = trigram_index.search(&query).await?;
     assert_eq!(
         results.len(),
         0,
-        "Search for special characters should return 0 documents, got {}",
+        "Search for text with special characters should return 0 documents, got {}",
         results.len()
     );
 

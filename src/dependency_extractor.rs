@@ -15,7 +15,8 @@ use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator, Tree};
 use uuid::Uuid;
 
 use crate::parsing::{CodeParser, ParsedCode, ParsedSymbol, SupportedLanguage, SymbolType};
-use crate::symbol_storage::{RelationType, SymbolEntry};
+use crate::symbol_storage::SymbolEntry;
+use crate::types::RelationType;
 
 /// Dependency graph representation for code analysis
 #[derive(Debug, Clone)]

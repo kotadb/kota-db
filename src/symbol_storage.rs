@@ -19,6 +19,9 @@ use crate::graph_storage::{GraphEdge, GraphNode, GraphStorage, NodeLocation};
 use crate::parsing::{ParsedCode, ParsedSymbol, SupportedLanguage, SymbolType};
 use crate::types::ValidatedDocumentId;
 
+// Re-export RelationType from types for backwards compatibility
+pub use crate::types::RelationType;
+
 /// Symbol index entry with comprehensive metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolEntry {
@@ -48,24 +51,6 @@ pub struct SymbolEntry {
     pub extracted_at: DateTime<Utc>,
     /// Hash of symbol content for change detection
     pub content_hash: String,
-}
-
-/// Symbol relationship types for dependency mapping
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum RelationType {
-    /// Symbol imports/uses another
-    Imports = 0,
-    /// Symbol extends/inherits from another
-    Extends = 1,
-    /// Symbol implements an interface/trait
-    Implements = 2,
-    /// Symbol calls/invokes another
-    Calls = 3,
-    /// Symbol is defined within another
-    ChildOf = 4,
-    /// Custom relationship type
-    Custom(String) = 5,
 }
 
 /// Relationship between two symbols

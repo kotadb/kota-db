@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::contracts::Storage;
-use crate::symbol_storage::RelationType;
+use crate::types::RelationType;
 
 /// Extended storage trait for graph-specific operations
 #[async_trait]

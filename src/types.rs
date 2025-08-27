@@ -9,6 +9,28 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Represents different types of relationships between code symbols
+/// This is used throughout the codebase for dependency tracking
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RelationType {
+    /// Symbol imports/uses another
+    Imports,
+    /// Symbol extends/inherits from another
+    Extends,
+    /// Symbol implements an interface/trait
+    Implements,
+    /// Symbol calls/invokes another
+    Calls,
+    /// Symbol is defined within another
+    ChildOf,
+    /// Symbol returns another as a type
+    Returns,
+    /// Symbol references another (weak dependency)
+    References,
+    /// Custom relationship type
+    Custom(String),
+}
+
 /// A path that has been validated and is guaranteed to be safe
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ValidatedPath {

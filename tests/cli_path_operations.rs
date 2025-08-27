@@ -14,6 +14,19 @@ fn run_cli_command(db_path: &str, args: &[&str]) -> Result<String> {
         "./target/debug/kotadb"
     };
 
+    // Check if binary exists and provide helpful error
+    if !std::path::Path::new(binary_path).exists() {
+        eprintln!(
+            "Binary not found at: {}. Current dir: {:?}",
+            binary_path,
+            std::env::current_dir()
+        );
+        return Err(anyhow::anyhow!(
+            "KotaDB binary not found at {}. Please run 'cargo build --release' first.",
+            binary_path
+        ));
+    }
+
     let output = Command::new(binary_path)
         .arg("--db-path")
         .arg(db_path)
@@ -200,7 +213,11 @@ fn test_cli_multiple_documents_with_paths() -> Result<()> {
 
     // List all documents
     let output = run_cli_command(db_path, &["list"])?;
-    assert!(output.contains("3 total"));
+    assert!(
+        output.contains("Total documents: 3"),
+        "Expected 'Total documents: 3' in output: {}",
+        output
+    );
     for (path, _, _) in &paths {
         assert!(output.contains(path));
     }

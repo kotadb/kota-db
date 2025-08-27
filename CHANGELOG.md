@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI failure investigation and improvements to ensure all checks pass reliably
 - `--verbose` flag for CLI operations to enable detailed logging output (#335)
   - Default logging level set to WARN for clean agent-friendly output
   - Use `--verbose` or `-v` to enable INFO level logging for progress visibility

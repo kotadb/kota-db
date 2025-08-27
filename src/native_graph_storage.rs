@@ -21,8 +21,7 @@ use crate::graph_storage::{
     GraphEdge, GraphNode, GraphPath, GraphStats, GraphStorage, GraphStorageConfig, GraphSubset,
     QueryMetadata,
 };
-use crate::symbol_storage::RelationType;
-use crate::types::ValidatedDocumentId;
+use crate::types::{RelationType, ValidatedDocumentId};
 
 /// Page size for graph storage (4KB aligned for optimal I/O)
 #[allow(dead_code)]
