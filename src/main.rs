@@ -539,15 +539,15 @@ impl Database {
         let query = query_builder.build()?;
 
         // Route to appropriate index based on query type
-        // NOTE: Wildcard queries ("*" or empty) are explicitly routed to the primary index
-        // because trigram indices are designed for text search, not listing all documents.
-        // The trigram index will return an empty result for empty queries to prevent
-        // non-deterministic behavior (see issue #222).
-        let doc_ids = if query_text == "*" || query_text.is_empty() {
-            // Use Primary Index for wildcard queries
+        // NOTE: Wildcard queries (containing "*") are explicitly routed to the primary index
+        // because it supports pattern matching. Trigram indices are designed for full-text
+        // search and don't handle wildcard patterns. Empty queries also route to primary index
+        // to list all documents (see issue #222).
+        let doc_ids = if query_text.contains('*') || query_text.is_empty() {
+            // Use Primary Index for wildcard/pattern queries
             self.primary_index.lock().await.search(&query).await?
         } else {
-            // Use Trigram Index for text search queries
+            // Use Trigram Index for full-text search queries
             self.trigram_index.lock().await.search(&query).await?
         };
 
