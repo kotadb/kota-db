@@ -125,7 +125,15 @@ impl RepositoryIngester {
     }
 
     /// Ingest a git repository into KotaDB storage with symbol extraction and progress reporting
+    ///
+    /// **DEPRECATED**: Use `ingest_with_binary_symbols` instead for 130x better performance.
+    /// This method stores each symbol as an individual document, causing thousands of I/O operations.
+    /// Only kept for compatibility with existing tests.
     #[cfg(feature = "tree-sitter-parsing")]
+    #[deprecated(
+        since = "0.5.1",
+        note = "Use ingest_with_binary_symbols for 130x better performance"
+    )]
     #[instrument(skip(
         self,
         storage,

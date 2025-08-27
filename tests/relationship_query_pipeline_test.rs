@@ -277,6 +277,8 @@ async fn test_no_mocking_verification() -> Result<()> {
         create_file_storage(db_path.join("documents").to_str().unwrap(), Some(1000)).await?;
 
     // Real ingestion with real symbol extraction (not mocked)
+    // Note: Using legacy method for integration testing of full symbol storage pipeline
+    #[allow(deprecated)]
     let result = ingester
         .ingest_with_symbols(
             repo_path,
