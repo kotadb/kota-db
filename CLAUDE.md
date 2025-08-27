@@ -117,6 +117,11 @@ cargo run --bin kotadb -- -d ./kota-db-data ingest-repo .   # Default: extracts 
 cargo run --bin kotadb -- -d ./kota-db-data ingest-repo . --no-symbols  # Skip symbol extraction
 cargo run --bin kotadb -- -d ./kota-db-data symbol-stats    # Check extracted symbols
 
+# Performance benchmarking
+cargo run --release -- benchmark --operations 10000   # Run performance benchmarks
+cargo run --release -- benchmark -t storage -o 5000   # Benchmark storage operations
+cargo run --release -- benchmark -f json              # Output results as JSON
+
 # Development server with auto-reload
 just dev                     # Uses cargo watch for auto-reload
 ```

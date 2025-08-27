@@ -239,6 +239,29 @@ enum Commands {
     /// Show statistics about extracted code symbols (functions, classes, variables)
     #[cfg(feature = "tree-sitter-parsing")]
     SymbolStats,
+
+    /// Run performance benchmarks on database operations
+    ///
+    /// Note: Benchmark data remains in the database after completion for inspection.
+    /// Use a fresh database path to avoid data accumulation across runs.
+    Benchmark {
+        /// Number of operations to perform
+        #[arg(short, long, default_value = "10000")]
+        operations: usize,
+        /// Run only specific benchmark types (storage, index, query, all)
+        #[arg(short = 't', long, default_value = "all")]
+        benchmark_type: String,
+        /// Output format (human, json, csv)
+        #[arg(short = 'f', long, default_value = "human")]
+        format: String,
+        /// Maximum number of search queries to run (prevents excessive runtime)
+        #[arg(
+            long,
+            default_value = "100",
+            help = "Limit search operations to prevent excessive runtime"
+        )]
+        max_search_queries: usize,
+    },
 }
 
 struct Database {
@@ -1593,6 +1616,117 @@ async fn main() -> Result<()> {
                     println!("   • find-callers <symbol>");
                     println!("   • impact-analysis <symbol>");
                     println!("   • relationship-query \"what calls X?\"");
+                }
+            }
+
+            Commands::Benchmark { operations, benchmark_type, format, max_search_queries } => {
+                println!("🔬 Running KotaDB Performance Benchmarks");
+                println!("════════════════════════════════════════");
+                println!("  Operations: {}", operations);
+                println!("  Type: {}", benchmark_type);
+                println!("  Format: {}", format);
+                println!();
+
+                use std::time::Instant;
+
+                // Ensure database exists
+                let db = Database::new(&cli.db_path, cli.binary_index).await?;
+
+                let mut results = Vec::new();
+                let mut search_count = 0usize;
+
+                // Storage benchmarks
+                if benchmark_type == "all" || benchmark_type == "storage" {
+                    println!("📝 Storage Benchmarks:");
+
+                    // Insert benchmark
+                    let start = Instant::now();
+                    for i in 0..operations {
+                        let path = format!("benchmark/doc_{}.md", i);
+                        let title = format!("Benchmark Doc {}", i);
+                        let content = format!("Benchmark content {}", i);
+                        db.insert(path, title, content).await?;
+                    }
+                    let insert_duration = start.elapsed();
+                    let insert_ops_per_sec = operations as f64 / insert_duration.as_secs_f64();
+                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)", 
+                             operations, insert_duration.as_secs_f64(), insert_ops_per_sec);
+                    results.push(("insert", insert_duration, insert_ops_per_sec));
+
+                    // Search benchmark (using search as proxy for read performance)
+                    let start = Instant::now();
+                    for i in 0..operations {
+                        let path = format!("benchmark/doc_{}.md", i);
+                        let _ = db.search(&path, None, 1).await?;
+                    }
+                    let read_duration = start.elapsed();
+                    let read_ops_per_sec = operations as f64 / read_duration.as_secs_f64();
+                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)", 
+                             operations, read_duration.as_secs_f64(), read_ops_per_sec);
+                    results.push(("read_search", read_duration, read_ops_per_sec));
+                }
+
+                // Index benchmarks
+                if benchmark_type == "all" || benchmark_type == "index" {
+                    println!("\n🔍 Index Benchmarks:");
+
+                    // Search benchmark (limited to prevent excessive runtime)
+                    let start = Instant::now();
+                    let search_limit = operations.min(max_search_queries);
+                    for i in 0..search_limit {
+                        let query = format!("content {}", i);
+                        let _ = db.search(&query, None, 10).await?;
+                    }
+                    search_count = search_limit;
+                    let search_duration = start.elapsed();
+                    let search_ops_per_sec = search_count as f64 / search_duration.as_secs_f64();
+                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)", 
+                             search_count, search_duration.as_secs_f64(), search_ops_per_sec);
+                    results.push(("search", search_duration, search_ops_per_sec));
+                }
+
+                // Output results based on format
+                match format.as_str() {
+                    "json" => {
+                        let json_output = serde_json::json!({
+                            "operations": operations,
+                            "type": benchmark_type,
+                            "results": results.iter().map(|(name, duration, ops_per_sec)| {
+                                serde_json::json!({
+                                    "operation": name,
+                                    "duration_ms": duration.as_millis(),
+                                    "ops_per_sec": ops_per_sec,
+                                })
+                            }).collect::<Vec<_>>(),
+                        });
+                        println!("\n{}", serde_json::to_string_pretty(&json_output)?);
+                    }
+                    "csv" => {
+                        println!("\noperation,duration_ms,ops_per_sec");
+                        for (name, duration, ops_per_sec) in results {
+                            println!("{},{},{:.2}", name, duration.as_millis(), ops_per_sec);
+                        }
+                    }
+                    _ => {
+                        // Human format - already printed above
+                        println!("\n✅ Benchmark complete!");
+                    }
+                }
+
+                // Cleanup behavior documentation
+                // Note: The Database struct doesn't expose a delete method by design
+                // to maintain data integrity. Benchmark data is left for inspection.
+                // This is intentional - users can:
+                // 1. Inspect the benchmark data after runs
+                // 2. Use a fresh database path for clean benchmarks
+                // 3. Delete the database directory manually if needed
+                println!("\n📊 Benchmark Complete!");
+                println!("   Data remains in database for inspection at: {:?}", cli.db_path);
+                println!("   💡 Tip: Use --db-path with a fresh directory for clean benchmarks");
+
+                if search_count < operations {
+                    println!("   ℹ️ Note: Search queries were limited to {} operations", search_count);
+                    println!("      Use --max-search-queries to adjust this limit");
                 }
             }
         }
