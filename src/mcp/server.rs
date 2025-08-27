@@ -79,13 +79,30 @@ impl MCPServer {
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
 
-        // Create wrapped storage using the component library
-        let storage = create_mcp_storage(
+        // NOTE: We create two storage instances due to Rust type system constraints.
+        // CoordinatedDeletionService needs Arc<Mutex<Box<dyn Storage>>> while
+        // other components need Arc<Mutex<dyn Storage>>.
+        // Both point to the same underlying file storage with shared caching.
+        // TODO: Refactor CoordinatedDeletionService to use Arc<Mutex<dyn Storage>> directly.
+
+        // Storage for general use (document tools, search tools)
+        // Must box to convert impl Storage to dyn Storage
+        let storage_impl = create_mcp_storage(
             &config.database.data_dir,
             Some(config.database.max_cache_size),
         )
         .await?;
-        let storage = Arc::new(Mutex::new(storage));
+        let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage_impl));
+
+        // Storage for deletion service (needs Box<dyn Storage>)
+        let storage_for_deletion = Box::new(
+            create_mcp_storage(
+                &config.database.data_dir,
+                Some(config.database.max_cache_size),
+            )
+            .await?,
+        ) as Box<dyn Storage>;
+        let storage_boxed = Arc::new(Mutex::new(storage_for_deletion));
 
         // Create primary index for path-based operations
         let primary_index_path =
@@ -95,30 +112,24 @@ impl MCPServer {
             create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
         let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
 
-        // We'll initialize the trigram index early to share it with the deletion service
+        // Create trigram index once and share via Arc cloning
         let trigram_index_path =
             std::path::Path::new(&config.database.data_dir).join("trigram_index");
         std::fs::create_dir_all(&trigram_index_path)?;
         let trigram_index =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        // Create two references: boxed for deletion service, unboxed for search tools
+        // Create boxed version for deletion service
         let trigram_index_boxed = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
-        // For search tools, we need another instance since we can't share the same mutex
+        // For search tools, we unfortunately need a second instance due to type constraints
+        // TODO: Refactor CoordinatedDeletionService to use same types as SearchTools
         let trigram_index_for_search =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
         let trigram_index_arc: Arc<Mutex<dyn Index>> =
             Arc::new(Mutex::new(trigram_index_for_search));
 
-        // Create coordinated deletion service to ensure proper synchronization
-        let storage_for_deletion = Arc::new(Mutex::new(Box::new(
-            create_mcp_storage(
-                &config.database.data_dir,
-                Some(config.database.max_cache_size),
-            )
-            .await?,
-        ) as Box<dyn Storage>));
+        // Create coordinated deletion service
         let deletion_service = Arc::new(CoordinatedDeletionService::new(
-            storage_for_deletion,
+            Arc::clone(&storage_boxed),
             Arc::clone(&primary_index_arc),
             Arc::clone(&trigram_index_boxed),
         ));
@@ -129,7 +140,7 @@ impl MCPServer {
         if config.mcp.enable_document_tools {
             use crate::mcp::tools::coordinated_document_tools::CoordinatedDocumentTools;
             let document_tools = Arc::new(CoordinatedDocumentTools::new(
-                storage.clone(),
+                Arc::clone(&storage),
                 deletion_service.clone(),
             ));
             tool_registry = tool_registry.with_document_tools(document_tools);
@@ -145,14 +156,15 @@ impl MCPServer {
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
 
-            // Create a storage instance for semantic search (needs owned storage)
+            // Semantic search needs its own storage instance due to ownership requirements
+            // This is acceptable as SemanticSearchEngine manages its own vector index separately
             let semantic_storage = create_mcp_storage(
                 &config.database.data_dir,
                 Some(config.database.max_cache_size),
             )
             .await?;
 
-            // Create a trigram index for the semantic engine's hybrid search
+            // Semantic engine also needs its own trigram index instance for hybrid search
             let trigram_index_for_semantic =
                 create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
 
