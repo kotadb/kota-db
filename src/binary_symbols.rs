@@ -322,6 +322,12 @@ impl BinarySymbolReader {
     pub fn iter_symbols(&self) -> impl Iterator<Item = PackedSymbol> + '_ {
         (0..self.symbol_count()).filter_map(move |i| self.get_symbol(i))
     }
+
+    /// Find symbol by UUID (O(n) search)
+    pub fn find_symbol(&self, id: uuid::Uuid) -> Option<PackedSymbol> {
+        self.iter_symbols()
+            .find(|symbol| uuid::Uuid::from_bytes(symbol.id) == id)
+    }
 }
 
 #[cfg(test)]
