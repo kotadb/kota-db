@@ -326,11 +326,10 @@ impl Database {
         let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
         let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
 
-        // Create coordinated deletion service
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index_arc.clone(),
         );
 
         let db = Self {
@@ -621,10 +620,15 @@ impl Database {
         tags: Option<Vec<String>>,
         limit: usize,
     ) -> Result<(Vec<Document>, usize)> {
+        // Handle empty queries at the method level - return nothing
+        if query_text.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+
         // Build query
         let mut query_builder = QueryBuilder::new();
 
-        if query_text != "*" && !query_text.is_empty() {
+        if query_text != "*" {
             query_builder = query_builder.with_text(query_text)?;
         }
 
@@ -640,9 +644,8 @@ impl Database {
         // Route to appropriate index based on query type
         // NOTE: Wildcard queries (containing "*") are explicitly routed to the primary index
         // because it supports pattern matching. Trigram indices are designed for full-text
-        // search and don't handle wildcard patterns. Empty queries also route to primary index
-        // to list all documents (see issue #222).
-        let doc_ids = if query_text.contains('*') || query_text.is_empty() {
+        // search and don't handle wildcard patterns. Empty queries are handled above and return nothing.
+        let doc_ids = if query_text.contains('*') {
             // Use Primary Index for wildcard/pattern queries
             self.primary_index.lock().await.search(&query).await?
         } else {
@@ -715,9 +718,9 @@ mod tests {
         let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index_arc.clone(),
         );
 
         let db = Database {
@@ -765,9 +768,9 @@ mod tests {
         let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index_arc.clone(),
         );
 
         let db = Database {
@@ -976,6 +979,13 @@ async fn main() -> Result<()> {
             }
 
             Commands::Search { query, limit, tags } => {
+                // Handle empty query explicitly - return nothing with informative message
+                if query.is_empty() {
+                    println!("Empty search query provided. Please specify a search term.");
+                    println!("Use 'list' command to view all documents, or '*' for wildcard search.");
+                    return Ok(());
+                }
+
                 let tag_list = tags.map(|t| t.split(',').map(String::from).collect());
                 let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
 
@@ -1621,7 +1631,7 @@ async fn main() -> Result<()> {
                     }
                     let insert_duration = start.elapsed();
                     let insert_ops_per_sec = operations as f64 / insert_duration.as_secs_f64();
-                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)", 
+                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)",
                              operations, insert_duration.as_secs_f64(), insert_ops_per_sec);
                     results.push(("insert", insert_duration, insert_ops_per_sec));
 
@@ -1633,7 +1643,7 @@ async fn main() -> Result<()> {
                     }
                     let read_duration = start.elapsed();
                     let read_ops_per_sec = operations as f64 / read_duration.as_secs_f64();
-                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)", 
+                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)",
                              operations, read_duration.as_secs_f64(), read_ops_per_sec);
                     results.push(("read_search", read_duration, read_ops_per_sec));
                 }
@@ -1652,7 +1662,7 @@ async fn main() -> Result<()> {
                     search_count = search_limit;
                     let search_duration = start.elapsed();
                     let search_ops_per_sec = search_count as f64 / search_duration.as_secs_f64();
-                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)", 
+                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)",
                              search_count, search_duration.as_secs_f64(), search_ops_per_sec);
                     results.push(("search", search_duration, search_ops_per_sec));
                 }
