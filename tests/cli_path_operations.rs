@@ -213,7 +213,11 @@ fn test_cli_multiple_documents_with_paths() -> Result<()> {
 
     // List all documents
     let output = run_cli_command(db_path, &["list"])?;
-    assert!(output.contains("3 total"));
+    assert!(
+        output.contains("Total documents: 3"),
+        "Expected 'Total documents: 3' in output: {}",
+        output
+    );
     for (path, _, _) in &paths {
         assert!(output.contains(path));
     }

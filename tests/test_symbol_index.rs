@@ -62,9 +62,23 @@ impl Calculator {
         // Insert code into index
         let doc_id = ValidatedDocumentId::new();
         let path = ValidatedPath::new("test.rs")?;
+        println!("Inserting code into symbol index...");
         index
             .insert_with_content(doc_id, path, rust_code.as_bytes())
             .await?;
+        println!("Code inserted successfully");
+
+        // Debug: Try searching without type filter to see what's stored
+        let all_query = CodeQuery::SymbolSearch {
+            name: "Calculator".to_string(),
+            symbol_types: None, // No filter
+            fuzzy: false,
+        };
+        let all_results = index.search_code(&all_query).await?;
+        println!(
+            "Search for 'Calculator' (no type filter): {:?}",
+            all_results
+        );
 
         // Test symbol search
         let query = CodeQuery::SymbolSearch {
@@ -91,17 +105,19 @@ impl Calculator {
             "Should find at least one function with 'calculate' in the name"
         );
 
-        // Test struct search - note that tree-sitter may not extract actual struct name correctly
+        // Test struct search - search for actual struct name, not the keyword
         let struct_query = CodeQuery::SymbolSearch {
-            name: "struct".to_string(), // Search more broadly since tree-sitter names are tricky
+            name: "Calc".to_string(), // Search for part of "Calculator" with fuzzy matching
             symbol_types: Some(vec![SymbolType::Struct]),
             fuzzy: true,
         };
 
         let struct_results = index.search_code(&struct_query).await?;
+        println!("Struct search results: {:?}", struct_results);
         assert!(
             !struct_results.is_empty(),
-            "Should find at least one struct"
+            "Should find at least one struct. Found: {:?}",
+            struct_results
         );
         println!(
             "Found structs: {:?}",
