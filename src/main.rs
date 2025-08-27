@@ -1,4 +1,4 @@
-// KotaDB CLI - Simple command-line interface for database operations
+// KotaDB CLI - Codebase intelligence platform for distributed human-AI cognition
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kotadb::{
@@ -21,7 +21,32 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 #[derive(Parser)]
-#[command(author, version, about = "KotaDB - A simple document database CLI", long_about = None)]
+#[command(
+    author,
+    version,
+    about = "KotaDB - A codebase intelligence platform for distributed human-AI cognition",
+    long_about = None,
+    after_help = "QUICK START:
+  1. Ingest a repository:     kotadb ingest-repo /path/to/repo
+  2. Search for code:         kotadb search 'function_name'
+  3. Find relationships:      kotadb relationship-query 'what calls MyFunction?'
+  4. Analyze impact:          kotadb impact-analysis 'StorageClass'
+
+EXAMPLES:
+  # Basic document operations
+  kotadb insert docs/readme.md \"README\" \"Content here\"
+  kotadb get docs/readme.md
+  kotadb search \"database query\"
+
+  # Codebase intelligence
+  kotadb ingest-repo ./my-project
+  kotadb find-callers FileStorage
+  kotadb relationship-query 'what would break if I change Config?'
+
+  # System management
+  kotadb stats
+  kotadb serve --port 8080"
+)]
 struct Cli {
     /// Enable verbose logging (DEBUG level). Default is WARN level.
     #[arg(short, long, global = true)]
@@ -86,13 +111,18 @@ enum Commands {
         path: String,
     },
 
-    /// Search for documents
+    /// Search for documents and symbols by content or path
     Search {
-        /// Search query text
+        /// Search query (use '*' for all, or search terms for content/symbol matching)
         #[arg(default_value = "*")]
         query: String,
-        /// Limit number of results
-        #[arg(short, long, default_value = "10")]
+        /// Maximum number of results to return
+        #[arg(
+            short,
+            long,
+            default_value = "10",
+            help = "Control number of results (increase with -l 100)"
+        )]
         limit: usize,
         /// Filter by tags (comma-separated)
         #[arg(short, long)]
@@ -143,34 +173,70 @@ enum Commands {
         no_symbols: bool,
     },
 
-    /// Find symbols that call or use a target symbol - reverse dependency analysis
+    /// Search for symbols (functions, classes, variables) by name or pattern
+    #[cfg(feature = "tree-sitter-parsing")]
+    SearchSymbols {
+        /// Symbol name or pattern to search for (supports partial matching)
+        pattern: String,
+        /// Maximum number of results to return
+        #[arg(
+            short,
+            long,
+            default_value = "25",
+            help = "Control number of results (use -l 100 for more)"
+        )]
+        limit: usize,
+        /// Show only specific symbol types (function, class, variable, etc.)
+        #[arg(short = 't', long)]
+        symbol_type: Option<String>,
+    },
+
+    /// Find all places where a symbol (function, class, variable) is called or referenced
     #[cfg(feature = "tree-sitter-parsing")]
     FindCallers {
-        /// Name or qualified name of the target symbol to find callers for
+        /// Name or qualified name of the target symbol (e.g., 'FileStorage' or 'storage::FileStorage')
         target: String,
-        /// Limit the number of results returned
-        #[arg(short, long)]
+        /// Maximum number of results to return (default: unlimited)
+        #[arg(
+            short,
+            long,
+            default_value = "50",
+            help = "Control number of results returned"
+        )]
         limit: Option<usize>,
     },
 
-    /// Analyze what would break if you change a symbol - impact analysis for safe refactoring
+    /// Analyze dependencies: what would break if you change a symbol (safe refactoring analysis)
     #[cfg(feature = "tree-sitter-parsing")]
     ImpactAnalysis {
-        /// Name or qualified name of the target symbol to analyze impact for
+        /// Name or qualified name of the target symbol (e.g., 'StorageError' or 'errors::StorageError')
         target: String,
-        /// Limit the number of results returned
-        #[arg(short, long)]
+        /// Maximum number of impacted items to show (default: unlimited)
+        #[arg(
+            short,
+            long,
+            default_value = "50",
+            help = "Control number of results returned"
+        )]
         limit: Option<usize>,
     },
 
-    /// Natural language relationship queries - ask questions about code relationships
+    /// Natural language queries about code symbols and relationships
     #[cfg(feature = "tree-sitter-parsing")]
     RelationshipQuery {
-        /// Natural language query about relationships (e.g., 'what calls FileStorage?', 'what would break if I change StorageError?')
+        /// Natural language query (e.g., 'what calls FileStorage?', 'who uses Config?', 'find unused functions')
         query: String,
+        /// Maximum number of results to return
+        #[arg(
+            short,
+            long,
+            default_value = "50",
+            help = "Control number of results returned"
+        )]
+        limit: Option<usize>,
     },
 
-    /// Display statistics about extracted symbols
+    /// Show statistics about extracted code symbols (functions, classes, variables)
     #[cfg(feature = "tree-sitter-parsing")]
     SymbolStats,
 }
@@ -516,12 +582,23 @@ impl Database {
         }
     }
 
+    #[allow(dead_code)]
     async fn search(
         &self,
         query_text: &str,
         tags: Option<Vec<String>>,
         limit: usize,
     ) -> Result<Vec<Document>> {
+        let (documents, _) = self.search_with_count(query_text, tags, limit).await?;
+        Ok(documents)
+    }
+
+    async fn search_with_count(
+        &self,
+        query_text: &str,
+        tags: Option<Vec<String>>,
+        limit: usize,
+    ) -> Result<(Vec<Document>, usize)> {
         // Build query
         let mut query_builder = QueryBuilder::new();
 
@@ -551,6 +628,9 @@ impl Database {
             self.trigram_index.lock().await.search(&query).await?
         };
 
+        // Store total count before limiting
+        let total_count = doc_ids.len();
+
         // Retrieve documents from storage
         let doc_ids_limited: Vec<_> = doc_ids.into_iter().take(limit).collect();
         let mut documents = Vec::with_capacity(doc_ids_limited.len());
@@ -562,9 +642,10 @@ impl Database {
             }
         }
 
-        Ok(documents)
+        Ok((documents, total_count))
     }
 
+    #[allow(dead_code)]
     async fn list_all(&self, limit: usize) -> Result<Vec<Document>> {
         let all_docs = self.storage.lock().await.list_all().await?;
         Ok(all_docs.into_iter().take(limit).collect())
@@ -703,8 +784,6 @@ mod tests {
 /// Create a relationship query engine for the given database path
 #[cfg(feature = "tree-sitter-parsing")]
 async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
-    println!("🔧 Loading relationship query engine with real symbol data...");
-
     // Load real symbol storage from the main database storage path (db_path/storage)
     // This ensures we read symbols from the same location where they were written
     let storage_path = db_path.join("storage");
@@ -735,27 +814,19 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
 
     // Load statistics to check if we have data
     let stats = symbol_storage.get_stats();
-    let relationships_count = symbol_storage.get_relationships_count();
-    println!(
-        "📊 Loaded symbol storage: {} symbols, {} relationships",
-        stats.total_symbols, relationships_count
-    );
 
-    // If no symbols exist, warn the user they need to run git ingestion first
+    // If no symbols exist, return error with actionable guidance
     if stats.total_symbols == 0 {
-        println!("⚠️  No symbols found in database. Run 'git-ingest' command first to populate symbol data.");
-        println!(
-            "   Example: cargo run --features tree-sitter-parsing -- ingest-repo /path/to/repo"
-        );
+        return Err(anyhow::anyhow!(
+            "No symbols found in database. Required steps:\n\
+             1. Ingest a repository with symbols: kotadb ingest-repo /path/to/repo\n\
+             2. Verify ingestion: kotadb symbol-stats\n\
+             3. Then retry this command"
+        ));
     }
 
     // Build dependency graph from existing symbol relationships
     let dependency_graph = symbol_storage.to_dependency_graph().await?;
-    let graph_stats = &dependency_graph.stats;
-    println!(
-        "🔗 Loaded dependency graph: {} nodes, {} edges",
-        graph_stats.node_count, graph_stats.edge_count
-    );
 
     Ok(RelationshipQueryEngine::new(
         dependency_graph,
@@ -884,36 +955,50 @@ async fn main() -> Result<()> {
 
             Commands::Search { query, limit, tags } => {
                 let tag_list = tags.map(|t| t.split(',').map(String::from).collect());
-                let results = db.search(&query, tag_list, limit).await?;
+                let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
 
                 if results.is_empty() {
                     println!("No documents found matching the query");
                 } else {
-                    println!("🔍 Found {} documents:", results.len());
+                    // Show clear count information for LLM agents
+                    if results.len() < total_count {
+                        println!("Showing {} of {} results", results.len(), total_count);
+                    } else {
+                        println!("Found {} documents", results.len());
+                    }
                     println!();
                     for doc in results {
-                        println!("📄 {}", doc.title.as_str());
-                        println!("   ID: {}", doc.id.as_uuid());
-                        println!("   Path: {}", doc.path.as_str());
-                        println!("   Size: {} bytes", doc.size);
+                        // Minimal output optimized for LLM consumption
+                        println!("{}", doc.path.as_str());
+                        println!("  id: {}", doc.id.as_uuid());
+                        println!("  title: {}", doc.title.as_str());
+                        println!("  size: {} bytes", doc.size);
                         println!();
                     }
                 }
             }
 
             Commands::List { limit } => {
-                let documents = db.list_all(limit).await?;
+                // Get all documents to know total, then limit
+                let all_docs = db.storage.lock().await.list_all().await?;
+                let total_count = all_docs.len();
+                let documents: Vec<_> = all_docs.into_iter().take(limit).collect();
 
                 if documents.is_empty() {
                     println!("No documents in database");
                 } else {
-                    println!("📚 Documents ({} total):", documents.len());
+                    // Clear count information for LLM agents
+                    if documents.len() < total_count {
+                        println!("Showing {} of {} documents", documents.len(), total_count);
+                    } else {
+                        println!("Total documents: {}", documents.len());
+                    }
                     println!();
                     for doc in documents {
-                        println!("📄 {}", doc.title.as_str());
-                        println!("   ID: {}", doc.id.as_uuid());
-                        println!("   Path: {}", doc.path.as_str());
-                        println!("   Size: {} bytes", doc.size);
+                        println!("{}", doc.path.as_str());
+                        println!("  id: {}", doc.id.as_uuid());
+                        println!("  title: {}", doc.title.as_str());
+                        println!("  size: {} bytes", doc.size);
                         println!();
                     }
                 }
@@ -921,11 +1006,11 @@ async fn main() -> Result<()> {
 
             Commands::Stats => {
                 let (count, total_size) = db.stats().await?;
-                println!("📊 Database Statistics:");
-                println!("   Total documents: {count}");
-                println!("   Total size: {total_size} bytes");
+                println!("Database Statistics");
+                println!("  total_documents: {count}");
+                println!("  total_size: {total_size} bytes");
                 if count > 0 {
-                    println!("   Average size: {} bytes", total_size / count);
+                    println!("  average_size: {} bytes", total_size / count);
                 }
             }
 
@@ -1303,10 +1388,87 @@ async fn main() -> Result<()> {
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
-            Commands::FindCallers { target, limit } => {
-                println!("🔍 Finding callers of '{}'...", target);
+            Commands::SearchSymbols { pattern, limit, symbol_type } => {
+                // Load symbol storage
+                let storage_path = cli.db_path.join("storage");
+                if !storage_path.exists() {
+                    eprintln!("Error: No database found. Run 'ingest-repo' first to populate symbols.");
+                    std::process::exit(1);
+                }
 
-                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                let file_storage = create_file_storage(
+                    storage_path
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid storage path"))?,
+                    Some(100),
+                )
+                .await?;
+
+                // Create symbol storage
+                let graph_path = storage_path.join("graph");
+                tokio::fs::create_dir_all(&graph_path).await?;
+                let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
+                let graph_storage =
+                    kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
+
+                let symbol_storage =
+                    SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
+
+                // Search for symbols using the built-in search
+                let mut matches = symbol_storage.search(&pattern, limit * 2); // Get extra for filtering
+
+                // Filter by type if specified
+                if let Some(ref filter_type) = symbol_type {
+                    let filter_lower = filter_type.to_lowercase();
+                    matches.retain(|entry| {
+                        format!("{:?}", entry.symbol.kind).to_lowercase().contains(&filter_lower) ||
+                        format!("{:?}", entry.symbol.symbol_type).to_lowercase().contains(&filter_lower)
+                    });
+                }
+
+                // Limit results
+                matches.truncate(limit);
+
+                if matches.is_empty() {
+                    println!("No symbols found matching '{}'", pattern);
+                    if let Some(ref st) = symbol_type {
+                        println!("  with type filter: {}", st);
+                    }
+                    if symbol_storage.get_stats().total_symbols == 0 {
+                        println!("Note: No symbols in database. Run 'ingest-repo' first.");
+                    }
+                } else {
+                    // Check if we have more results than shown
+                    let full_results = symbol_storage.search(&pattern, limit + 1);
+                    let has_more = full_results.len() > limit;
+
+                    if has_more {
+                        println!("Showing {} of {} matching symbols (use -l {} for more)",
+                                limit, full_results.len(), limit * 2);
+                    } else {
+                        println!("Found {} matching symbols", matches.len());
+                    }
+                    println!();
+
+                    for entry in matches {
+                        println!("{}", entry.qualified_name);
+                        println!("  type: {:?}", entry.symbol.symbol_type);
+                        println!("  file: {}", entry.file_path.display());
+                        println!("  line: {}", entry.symbol.start_line);
+                        println!();
+                    }
+                }
+            }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::FindCallers { target, limit } => {
+                let relationship_engine = match create_relationship_engine(&cli.db_path).await {
+                    Ok(engine) => engine,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 let query_type = RelationshipQueryType::FindCallers {
                     target: target.clone(),
                 };
@@ -1316,19 +1478,19 @@ async fn main() -> Result<()> {
                 // Apply limit if specified
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
-                    println!("📊 Results (limited to {}):", limit_value);
-                } else {
-                    println!("📊 Results:");
                 }
-
                 println!("{}", result.to_markdown());
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::ImpactAnalysis { target, limit } => {
-                println!("🎯 Analyzing impact of changing '{}'...", target);
-
-                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                let relationship_engine = match create_relationship_engine(&cli.db_path).await {
+                    Ok(engine) => engine,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 let query_type = RelationshipQueryType::ImpactAnalysis {
                     target: target.clone(),
                 };
@@ -1338,30 +1500,39 @@ async fn main() -> Result<()> {
                 // Apply limit if specified
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
-                    println!("📊 Impact Analysis Results (limited to {}):", limit_value);
-                } else {
-                    println!("📊 Impact Analysis Results:");
                 }
-
                 println!("{}", result.to_markdown());
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
-            Commands::RelationshipQuery { query } => {
-                println!("🤖 Processing natural language query: '{}'", query);
-
-                if let Some(query_type) = parse_natural_language_relationship_query(&query) {
-                    let relationship_engine = create_relationship_engine(&cli.db_path).await?;
-                    let result = relationship_engine.execute_query(query_type).await?;
-
-                    println!("📊 Query Results:");
-                    println!("{}", result.to_markdown());
-                } else {
-                    println!("❌ Could not parse relationship query: '{}'", query);
-                    println!("💡 Try queries like:");
-                    println!("   • 'what calls FileStorage?'");
-                    println!("   • 'what would break if I change StorageError?'");
-                    println!("   • 'find unused functions'");
+            Commands::RelationshipQuery { query, limit } => {
+                match parse_natural_language_relationship_query(&query) {
+                    Some(query_type) => {
+                        match create_relationship_engine(&cli.db_path).await {
+                            Ok(relationship_engine) => {
+                                let mut result = relationship_engine.execute_query(query_type).await?;
+                                if let Some(limit_value) = limit {
+                                    result.limit_results(limit_value);
+                                }
+                                println!("{}", result.to_markdown());
+                            }
+                            Err(e) => {
+                                // Provide actionable error message
+                                eprintln!("Error: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        eprintln!("Error: Could not parse query '{}'", query);
+                        eprintln!("Valid query patterns:");
+                        eprintln!("  - what calls [symbol]?");
+                        eprintln!("  - what would break if I change [symbol]?");
+                        eprintln!("  - find unused functions");
+                        eprintln!("  - who uses [symbol]?");
+                        eprintln!("  - find callers of [symbol]");
+                        std::process::exit(1);
+                    }
                 }
             }
 

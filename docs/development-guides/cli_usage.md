@@ -1,6 +1,6 @@
 # KotaDB CLI Usage Guide
 
-KotaDB provides a simple command-line interface for interacting with the document database.
+KotaDB provides a powerful command-line interface for interacting with the codebase intelligence platform.
 
 ## Building the CLI
 
