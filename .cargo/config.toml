@@ -26,6 +26,8 @@ clean-all = "clean && rm -rf target"
 [build]
 # Enable parallel compilation (auto-detect cores)
 # jobs = 0 is invalid, omit for auto-detection
+# Ensure local target directory is used (fixes Issue #296)
+target-dir = "target"
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
