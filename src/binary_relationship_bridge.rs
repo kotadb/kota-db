@@ -168,13 +168,13 @@ impl BinaryRelationshipBridge {
         Ok((symbol_map, name_map, file_map))
     }
 
-    /// Extract references from all source files
+    /// Extract references from all source files with error recovery
     fn extract_all_references(
         &self,
         files: &[(PathBuf, Vec<u8>)],
         name_map: &HashMap<String, Uuid>,
     ) -> Result<Vec<FileReferences>> {
-        // Process files in parallel
+        // Process files in parallel with error tracking
         let references: Vec<_> = files
             .par_iter()
             .filter_map(|(path, content)| {
@@ -182,13 +182,39 @@ impl BinaryRelationshipBridge {
                 if let Some(max_size) = self.config.max_file_size {
                     if content.len() > max_size {
                         debug!("Skipping large file: {}", path.display());
-                        return None;
+                        return Some(FileReferences {
+                            file_path: path.clone(),
+                            references: Vec::new(),
+                            extraction_errors: vec![format!(
+                                "File too large: {} bytes",
+                                content.len()
+                            )],
+                        });
                     }
                 }
 
                 // Detect language from extension
-                let extension = path.extension()?.to_str()?;
-                let language = SupportedLanguage::from_extension(extension)?;
+                let extension = match path.extension().and_then(|e| e.to_str()) {
+                    Some(ext) => ext,
+                    None => {
+                        return Some(FileReferences {
+                            file_path: path.clone(),
+                            references: Vec::new(),
+                            extraction_errors: vec!["No file extension".to_string()],
+                        });
+                    }
+                };
+
+                let language = match SupportedLanguage::from_extension(extension) {
+                    Some(lang) => lang,
+                    None => {
+                        return Some(FileReferences {
+                            file_path: path.clone(),
+                            references: Vec::new(),
+                            extraction_errors: vec![format!("Unsupported language: {}", extension)],
+                        });
+                    }
+                };
 
                 // Skip if language not in filter
                 if let Some(ref langs) = self.config.languages {
@@ -198,24 +224,124 @@ impl BinaryRelationshipBridge {
                 }
 
                 // Convert content to string
-                let content_str = String::from_utf8(content.clone()).ok()?;
-
-                // Extract references
-                match self.extract_file_references(path, &content_str, language) {
-                    Ok(refs) => Some(refs),
+                let content_str = match String::from_utf8(content.clone()) {
+                    Ok(s) => s,
                     Err(e) => {
+                        return Some(FileReferences {
+                            file_path: path.clone(),
+                            references: Vec::new(),
+                            extraction_errors: vec![format!("UTF-8 decode error: {}", e)],
+                        });
+                    }
+                };
+
+                // Extract references with partial success support
+                match self.extract_file_references_with_recovery(path, &content_str, language) {
+                    ExtractionResult::Success(refs) => Some(refs),
+                    ExtractionResult::PartialSuccess {
+                        references,
+                        recoverable_errors,
+                    } => {
                         warn!(
-                            "Failed to extract references from {}: {}",
+                            "Partial extraction from {}: {} errors",
                             path.display(),
-                            e
+                            recoverable_errors.len()
                         );
-                        None
+                        Some(references)
+                    }
+                    ExtractionResult::Failure(e) => {
+                        warn!("Failed to extract from {}: {}", path.display(), e);
+                        Some(FileReferences {
+                            file_path: path.clone(),
+                            references: Vec::new(),
+                            extraction_errors: vec![e],
+                        })
                     }
                 }
             })
             .collect();
 
+        // Log summary of errors
+        let files_with_errors: usize = references
+            .iter()
+            .filter(|r| !r.extraction_errors.is_empty())
+            .count();
+
+        if files_with_errors > 0 {
+            info!(
+                "Extraction completed with errors in {}/{} files",
+                files_with_errors,
+                references.len()
+            );
+        }
+
         Ok(references)
+    }
+
+    /// Extract references with recovery support
+    fn extract_file_references_with_recovery(
+        &self,
+        file_path: &Path,
+        content: &str,
+        language: SupportedLanguage,
+    ) -> ExtractionResult {
+        match self.extract_file_references(file_path, content, language) {
+            Ok(refs) => ExtractionResult::Success(refs),
+            Err(e) => {
+                // Try to recover with partial parsing
+                let mut partial_refs = Vec::new();
+                let errors = vec![e.to_string()];
+
+                // Attempt line-by-line extraction for simple references
+                for (line_num, line) in content.lines().enumerate() {
+                    // Simple heuristic: look for function calls
+                    if line.contains("(") && !line.trim().starts_with("//") {
+                        if let Some(name) = Self::extract_simple_reference(line) {
+                            partial_refs.push(CodeReference {
+                                name,
+                                ref_type: ReferenceType::FunctionCall,
+                                line: line_num + 1,
+                                column: 1,
+                                text: line.trim().to_string(),
+                            });
+                        }
+                    }
+                }
+
+                if !partial_refs.is_empty() {
+                    ExtractionResult::PartialSuccess {
+                        references: FileReferences {
+                            file_path: file_path.to_path_buf(),
+                            references: partial_refs,
+                            extraction_errors: errors,
+                        },
+                        recoverable_errors: vec!["Fell back to heuristic extraction".to_string()],
+                    }
+                } else {
+                    ExtractionResult::Failure(format!("Complete extraction failure: {}", e))
+                }
+            }
+        }
+    }
+
+    /// Simple heuristic to extract a function name from a line
+    fn extract_simple_reference(line: &str) -> Option<String> {
+        // Look for pattern: word followed by parenthesis
+        let trimmed = line.trim();
+        if let Some(paren_pos) = trimmed.find('(') {
+            if paren_pos > 0 {
+                let before_paren = &trimmed[..paren_pos];
+                // Get the last word before the parenthesis
+                if let Some(word) = before_paren.split_whitespace().last() {
+                    // Remove any leading punctuation
+                    let clean = word.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                    if !clean.is_empty() {
+                        return Some(clean.to_string());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Extract references from a single file using Tree-sitter
@@ -244,6 +370,7 @@ impl BinaryRelationshipBridge {
         Ok(FileReferences {
             file_path: file_path.to_path_buf(),
             references,
+            extraction_errors: Vec::new(),
         })
     }
 
@@ -318,23 +445,32 @@ impl BinaryRelationshipBridge {
             symbol_to_node.insert(*id, node_idx);
         }
 
+        // Build symbol hierarchies for each file for accurate containment resolution
+        let mut file_hierarchies: HashMap<PathBuf, Vec<SymbolHierarchy>> = HashMap::new();
+        for (file_path, symbol_ids) in &file_map {
+            let file_symbols: Vec<(&Uuid, &SymbolInfo)> =
+                symbol_ids.iter().map(|id| (id, &symbol_map[id])).collect();
+            let hierarchy = SymbolHierarchy::build_from_symbols(&file_symbols);
+            file_hierarchies.insert(file_path.clone(), hierarchy);
+        }
+
         // Create edges from references
         for file_refs in &all_references {
-            // Find symbols defined in this file
-            let file_symbols = file_map.get(&file_refs.file_path);
-            if file_symbols.is_none() {
-                continue;
-            }
+            // Get the symbol hierarchy for this file
+            let hierarchy = match file_hierarchies.get(&file_refs.file_path) {
+                Some(h) => h,
+                None => continue,
+            };
 
             for reference in &file_refs.references {
                 // Try to resolve the reference to a symbol
                 if let Some(&target_id) = name_map.get(&reference.name) {
-                    // Find which symbol in this file contains this reference
-                    // (simplified: use line numbers to determine containing symbol)
-                    if let Some(&source_id) = file_symbols.unwrap().iter().find(|&&id| {
-                        let info = &symbol_map[&id];
-                        reference.line >= info.start_line && reference.line <= info.end_line
-                    }) {
+                    // Find which symbol in this file contains this reference using hierarchy
+                    let source_id = hierarchy
+                        .iter()
+                        .find_map(|root| root.find_containing_symbol(reference.line));
+
+                    if let Some(source_id) = source_id {
                         // Don't create self-references
                         if source_id != target_id {
                             if let (Some(&source_node), Some(&target_node)) = (
@@ -371,14 +507,40 @@ impl BinaryRelationshipBridge {
             }
         }
 
+        // Calculate strongly connected components using Tarjan's algorithm
+        let sccs = petgraph::algo::tarjan_scc(&graph);
+        let scc_count = sccs.len();
+
+        // Calculate max depth using BFS from each node
+        let mut max_depth = 0;
+        for node in graph.node_indices() {
+            // Use BFS to find the maximum distance from this node
+            let distances = petgraph::algo::dijkstra(&graph, node, None, |_| 1);
+            if let Some(&furthest) = distances.values().max() {
+                max_depth = max_depth.max(furthest);
+            }
+        }
+
+        // Count imports by looking at cross-file edges
+        let mut import_count = 0;
+        for edge in graph.edge_indices() {
+            if let Some((source, target)) = graph.edge_endpoints(edge) {
+                let source_file = &graph[source].file_path;
+                let target_file = &graph[target].file_path;
+                if source_file != target_file {
+                    import_count += 1;
+                }
+            }
+        }
+
         // Calculate statistics
         let stats = GraphStats {
             node_count: graph.node_count(),
             edge_count: graph.edge_count(),
             file_count: file_map.len(),
-            import_count: 0, // TODO: Track imports
-            scc_count: 0,    // TODO: Calculate strongly connected components
-            max_depth: 0,    // TODO: Calculate max depth
+            import_count,
+            scc_count,
+            max_depth,
             avg_dependencies: if graph.node_count() > 0 {
                 graph.edge_count() as f64 / graph.node_count() as f64
             } else {
@@ -479,6 +641,106 @@ struct SymbolInfo {
 struct FileReferences {
     file_path: PathBuf,
     references: Vec<CodeReference>,
+    extraction_errors: Vec<String>,
+}
+
+/// Result of reference extraction with partial success support
+#[derive(Debug)]
+enum ExtractionResult {
+    Success(FileReferences),
+    PartialSuccess {
+        references: FileReferences,
+        recoverable_errors: Vec<String>,
+    },
+    Failure(String),
+}
+
+/// Hierarchical representation of symbols for accurate containment
+#[derive(Debug)]
+struct SymbolHierarchy {
+    symbol_id: Uuid,
+    start_line: usize,
+    end_line: usize,
+    children: Vec<SymbolHierarchy>,
+}
+
+impl SymbolHierarchy {
+    /// Find the deepest symbol containing the given line
+    fn find_containing_symbol(&self, line: usize) -> Option<Uuid> {
+        if line >= self.start_line && line <= self.end_line {
+            // Check children first (deepest match wins)
+            for child in &self.children {
+                if let Some(deeper_id) = child.find_containing_symbol(line) {
+                    return Some(deeper_id);
+                }
+            }
+            // No child contains it, so this symbol is the deepest container
+            return Some(self.symbol_id);
+        }
+        None
+    }
+
+    /// Build hierarchy from flat symbol list
+    fn build_from_symbols(symbols: &[(&Uuid, &SymbolInfo)]) -> Vec<SymbolHierarchy> {
+        let mut roots = Vec::new();
+        let mut processed = std::collections::HashSet::new();
+
+        // Sort symbols by start line to process in order
+        let mut sorted_symbols = symbols.to_vec();
+        sorted_symbols.sort_by_key(|(_, info)| info.start_line);
+
+        for (id, info) in sorted_symbols {
+            if processed.contains(id) {
+                continue;
+            }
+
+            // Check if this symbol is contained within any existing root
+            let mut added = false;
+            for root in &mut roots {
+                if Self::try_add_to_hierarchy(root, *id, info) {
+                    processed.insert(*id);
+                    added = true;
+                    break;
+                }
+            }
+
+            // If not contained, it's a new root
+            if !added {
+                roots.push(SymbolHierarchy {
+                    symbol_id: *id,
+                    start_line: info.start_line,
+                    end_line: info.end_line,
+                    children: Vec::new(),
+                });
+                processed.insert(*id);
+            }
+        }
+
+        roots
+    }
+
+    /// Try to add a symbol to the hierarchy (returns true if added)
+    fn try_add_to_hierarchy(hierarchy: &mut SymbolHierarchy, id: Uuid, info: &SymbolInfo) -> bool {
+        // Check if this symbol is contained within the hierarchy node
+        if info.start_line >= hierarchy.start_line && info.end_line <= hierarchy.end_line {
+            // Try to add to a child first
+            for child in &mut hierarchy.children {
+                if Self::try_add_to_hierarchy(child, id, info) {
+                    return true;
+                }
+            }
+
+            // Not contained in any child, add as direct child
+            hierarchy.children.push(SymbolHierarchy {
+                symbol_id: id,
+                start_line: info.start_line,
+                end_line: info.end_line,
+                children: Vec::new(),
+            });
+            return true;
+        }
+        false
+    }
 }
 
 #[cfg(test)]
