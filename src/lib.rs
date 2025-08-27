@@ -5,6 +5,7 @@ pub mod binary_trigram_index;
 pub mod builders;
 pub mod connection_pool;
 pub mod contracts;
+pub mod coordinated_deletion;
 pub mod documentation_verification;
 pub mod embedding_transformer;
 pub mod embeddings;
@@ -91,6 +92,9 @@ pub use wrappers::optimization::{
 
 // Re-export storage implementations
 pub use file_storage::{create_file_storage, FileStorage};
+
+// Re-export coordinated deletion service
+pub use coordinated_deletion::CoordinatedDeletionService;
 
 // Re-export HTTP server and connection pool
 pub use connection_pool::{
