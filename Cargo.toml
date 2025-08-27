@@ -23,6 +23,7 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
 futures = "0.3"
+rayon = "1.7"
 
 # HTTP Server
 axum = "0.7"

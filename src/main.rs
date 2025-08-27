@@ -1254,40 +1254,13 @@ async fn main() -> Result<()> {
 
                 #[cfg(feature = "tree-sitter-parsing")]
                 let result = if config.options.extract_symbols {
-                    // Use the same storage backend for symbols as the main database
-                    // This ensures symbols are stored in the same location and can be found later
-                    // IMPORTANT: Use the same path as the main database storage (db_path/storage)
-                    let storage_path = cli.db_path.join("storage");
-                    std::fs::create_dir_all(&storage_path)?;
-                    // Create symbol storage with dual storage architecture (document + graph)
-                    let storage_path_str = storage_path.to_str().ok_or_else(|| {
-                        anyhow::anyhow!("Invalid symbol storage path: {:?}", storage_path)
-                    })?;
-
-                    // Create document storage backend
-                    let document_storage = create_file_storage(storage_path_str, Some(1000)).await?;
-
-                    // Create graph storage backend for O(1) relationship lookups
-                    let graph_path = storage_path.join("graph");
-                    tokio::fs::create_dir_all(&graph_path).await?;
-                    let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
-                    let graph_storage = kotadb::native_graph_storage::NativeGraphStorage::new(
-                        graph_path,
-                        graph_config
-                    ).await?;
-
-                    let mut symbol_storage = kotadb::symbol_storage::SymbolStorage::with_graph_storage(
-                        Box::new(document_storage),
-                        Box::new(graph_storage),
-                    ).await?;
-                    let mut code_parser = kotadb::parsing::CodeParser::new()?;
-
-                    ingester.ingest_with_symbols(
+                    // Use binary format for efficient symbol storage
+                    let symbol_db_path = cli.db_path.join("symbols.kota");
+                    ingester.ingest_with_binary_symbols(
                         &repo_path,
                         &mut **storage,
+                        &symbol_db_path,
                         Some(progress_callback),
-                        &mut symbol_storage,
-                        &mut code_parser,
                     ).await?
                 } else {
                     ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?

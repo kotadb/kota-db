@@ -39,6 +39,10 @@ pub mod parsing;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod symbol_storage;
 
+// Binary format for efficient symbol storage
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod binary_symbols;
+
 // Symbol-aware index for code-specific searches
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod symbol_index;
