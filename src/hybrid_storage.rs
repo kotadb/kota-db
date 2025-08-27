@@ -16,8 +16,9 @@ use crate::contracts::{Document, Storage};
 use crate::file_storage::FileStorage;
 use crate::graph_storage::{GraphEdge, GraphNode, GraphStorage, GraphStorageConfig};
 use crate::native_graph_storage::NativeGraphStorage;
-use crate::symbol_storage::{RelationType, SymbolEntry};
-use crate::types::ValidatedDocumentId;
+#[cfg(feature = "tree-sitter-parsing")]
+use crate::symbol_storage::SymbolEntry;
+use crate::types::{RelationType, ValidatedDocumentId};
 
 /// Storage type identifier for routing decisions
 #[derive(Debug, Clone, PartialEq)]
@@ -221,30 +222,34 @@ impl HybridStorage {
             return Ok(None);
         }
 
-        // Parse symbol data from document content
-        let content = String::from_utf8_lossy(&doc.content);
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            // Parse symbol data from document content
+            let content = String::from_utf8_lossy(&doc.content);
 
-        // Try to deserialize as SymbolEntry
-        if let Ok(symbol_entry) = serde_json::from_str::<SymbolEntry>(&content) {
-            let node = GraphNode {
-                id: symbol_entry.id,
-                node_type: format!("{:?}", symbol_entry.symbol.symbol_type),
-                qualified_name: symbol_entry.qualified_name,
-                file_path: symbol_entry.file_path.to_string_lossy().to_string(),
-                location: crate::graph_storage::NodeLocation {
-                    start_line: symbol_entry.symbol.start_line,
-                    start_column: symbol_entry.symbol.start_column,
-                    end_line: symbol_entry.symbol.end_line,
-                    end_column: symbol_entry.symbol.end_column,
-                },
-                metadata: Default::default(),
-                updated_at: doc.updated_at.timestamp(),
-            };
+            // Try to deserialize as SymbolEntry
+            if let Ok(symbol_entry) = serde_json::from_str::<SymbolEntry>(&content) {
+                let node = GraphNode {
+                    id: symbol_entry.id,
+                    node_type: format!("{:?}", symbol_entry.symbol.symbol_type),
+                    qualified_name: symbol_entry.qualified_name,
+                    file_path: symbol_entry.file_path.to_string_lossy().to_string(),
+                    location: crate::graph_storage::NodeLocation {
+                        start_line: symbol_entry.symbol.start_line,
+                        start_column: symbol_entry.symbol.start_column,
+                        end_line: symbol_entry.symbol.end_line,
+                        end_column: symbol_entry.symbol.end_column,
+                    },
+                    metadata: Default::default(),
+                    updated_at: doc.updated_at.timestamp(),
+                };
 
-            Ok(Some((symbol_entry.id, node)))
-        } else {
-            Ok(None)
+                return Ok(Some((symbol_entry.id, node)));
+            }
         }
+
+        // If tree-sitter-parsing is not enabled or parsing fails, return None
+        Ok(None)
     }
 
     /// Get statistics about hybrid storage operations
