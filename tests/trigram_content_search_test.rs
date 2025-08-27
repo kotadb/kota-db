@@ -13,9 +13,9 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Simulate the Database structure for testing
 struct TestDatabase {
-    storage: Arc<Mutex<Box<dyn kotadb::contracts::Storage>>>,
-    primary_index: Arc<Mutex<Box<dyn kotadb::contracts::Index>>>,
-    trigram_index: Arc<Mutex<Box<dyn kotadb::contracts::Index>>>,
+    storage: Arc<Mutex<dyn kotadb::contracts::Storage>>,
+    primary_index: Arc<Mutex<dyn kotadb::contracts::Index>>,
+    trigram_index: Arc<Mutex<dyn kotadb::contracts::Index>>,
     #[allow(dead_code)]
     path_cache: Arc<RwLock<HashMap<String, kotadb::types::ValidatedDocumentId>>>,
 }
@@ -112,9 +112,9 @@ async fn test_trigram_content_indexing_basic() -> Result<()> {
     let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
 
     let db = TestDatabase {
-        storage: Arc::new(Mutex::new(Box::new(storage))),
-        primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-        trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+        storage: Arc::new(Mutex::new(storage)),
+        primary_index: Arc::new(Mutex::new(primary_index)),
+        trigram_index: Arc::new(Mutex::new(trigram_index)),
         path_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -264,9 +264,9 @@ async fn test_large_content_memory_safety() -> Result<()> {
     let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(500)).await?;
 
     let db = TestDatabase {
-        storage: Arc::new(Mutex::new(Box::new(storage))),
-        primary_index: Arc::new(Mutex::new(Box::new(primary_index))),
-        trigram_index: Arc::new(Mutex::new(Box::new(trigram_index))),
+        storage: Arc::new(Mutex::new(storage)),
+        primary_index: Arc::new(Mutex::new(primary_index)),
+        trigram_index: Arc::new(Mutex::new(trigram_index)),
         path_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 

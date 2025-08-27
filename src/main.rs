@@ -302,23 +302,25 @@ impl Database {
         .await?;
         let trigram_index_arc: Arc<Mutex<dyn Index>> = if use_binary_index {
             tracing::info!("Using binary trigram index for 10x performance");
-            let index = create_binary_trigram_index(
-                trigram_index_path.to_str().ok_or_else(|| {
-                    anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
-                })?,
-                Some(1000),
-            )
-            .await?;
-            Arc::new(Mutex::new(index))
+            Arc::new(Mutex::new(
+                create_binary_trigram_index(
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
+                    Some(1000),
+                )
+                .await?,
+            ))
         } else {
-            let index = create_trigram_index(
-                trigram_index_path.to_str().ok_or_else(|| {
-                    anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
-                })?,
-                Some(1000),
-            )
-            .await?;
-            Arc::new(Mutex::new(index))
+            Arc::new(Mutex::new(
+                create_trigram_index(
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
+                    Some(1000),
+                )
+                .await?,
+            ))
         };
 
         let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));

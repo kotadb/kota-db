@@ -255,7 +255,7 @@ mod tests {
         let primary_path = temp_dir.path().join("primary");
         let trigram_path = temp_dir.path().join("trigram");
 
-        // Create storage and indices with trait object conversion
+        // Create storage and indices
         let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(
             create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?,
         ));

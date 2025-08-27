@@ -70,6 +70,10 @@ impl SemanticSearchEngine {
         })
     }
 
+    // Note: SemanticSearchEngine requires Box<dyn Trait> types due to its ownership model
+    // This necessitates creating separate instances, which reduces memory sharing benefits
+    // A future refactor could address this by redesigning the SemanticSearchEngine API
+
     /// Insert a document with automatic embedding generation
     pub async fn insert_document(&mut self, mut document: Document) -> Result<()> {
         // Generate embedding if not provided

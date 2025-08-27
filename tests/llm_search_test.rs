@@ -11,21 +11,17 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 /// Test helper to create a test database with sample documents  
-async fn setup_test_db() -> Result<(
-    TempDir,
-    Arc<Mutex<Box<dyn Storage>>>,
-    Arc<Mutex<Box<dyn Index>>>,
-)> {
+async fn setup_test_db() -> Result<(TempDir, Arc<Mutex<dyn Storage>>, Arc<Mutex<dyn Index>>)> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().to_path_buf();
 
     // Create storage and trigram index
     let storage = create_file_storage(db_path.join("storage").to_str().unwrap(), None).await?;
-    let storage: Arc<Mutex<Box<dyn Storage>>> = Arc::new(Mutex::new(Box::new(storage)));
+    let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
 
     let trigram_index =
         create_trigram_index(db_path.join("trigram").to_str().unwrap(), None).await?;
-    let trigram_index: Arc<Mutex<Box<dyn Index>>> = Arc::new(Mutex::new(Box::new(trigram_index)));
+    let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
     // Insert sample documents for testing
     {
@@ -197,7 +193,7 @@ async fn test_llm_search_basic_functionality() -> Result<()> {
     let trigram_guard = trigram_index.lock().await;
 
     let response = search_engine
-        .search_optimized("error", &**storage_guard, &**trigram_guard, Some(10))
+        .search_optimized("error", &*storage_guard, &*trigram_guard, Some(10))
         .await?;
 
     // Verify response structure
@@ -242,8 +238,8 @@ async fn test_llm_search_relevance_ranking() -> Result<()> {
     let response = search_engine
         .search_optimized(
             "handle_storage_error",
-            &**storage_guard,
-            &**trigram_guard,
+            &*storage_guard,
+            &*trigram_guard,
             Some(10),
         )
         .await?;
@@ -295,7 +291,7 @@ async fn test_llm_search_token_optimization() -> Result<()> {
     let trigram_guard = trigram_index.lock().await;
 
     let response = search_engine
-        .search_optimized("search", &**storage_guard, &**trigram_guard, Some(10))
+        .search_optimized("search", &*storage_guard, &*trigram_guard, Some(10))
         .await?;
 
     // Verify token budget is respected
@@ -337,7 +333,7 @@ async fn test_llm_search_match_details() -> Result<()> {
     let trigram_guard = trigram_index.lock().await;
 
     let response = search_engine
-        .search_optimized("BTreeMap", &**storage_guard, &**trigram_guard, Some(10))
+        .search_optimized("BTreeMap", &*storage_guard, &*trigram_guard, Some(10))
         .await?;
 
     assert!(
@@ -384,7 +380,7 @@ async fn test_llm_search_structured_output() -> Result<()> {
     let trigram_guard = trigram_index.lock().await;
 
     let response = search_engine
-        .search_optimized("test", &**storage_guard, &**trigram_guard, Some(5))
+        .search_optimized("test", &*storage_guard, &*trigram_guard, Some(5))
         .await?;
 
     // Verify complete response structure
@@ -430,7 +426,7 @@ async fn test_llm_search_empty_query_handling() -> Result<()> {
 
     // Test empty query
     let result = search_engine
-        .search_optimized("", &**storage_guard, &**trigram_guard, Some(10))
+        .search_optimized("", &*storage_guard, &*trigram_guard, Some(10))
         .await;
 
     // Should handle empty query gracefully
@@ -470,7 +466,7 @@ async fn test_llm_search_performance() -> Result<()> {
     let start_time = std::time::Instant::now();
 
     let response = search_engine
-        .search_optimized("function", &**storage_guard, &**trigram_guard, Some(10))
+        .search_optimized("function", &*storage_guard, &*trigram_guard, Some(10))
         .await?;
 
     let elapsed = start_time.elapsed();
