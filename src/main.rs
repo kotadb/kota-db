@@ -241,6 +241,9 @@ enum Commands {
     SymbolStats,
 
     /// Run performance benchmarks on database operations
+    ///
+    /// Note: Benchmark data remains in the database after completion for inspection.
+    /// Use a fresh database path to avoid data accumulation across runs.
     Benchmark {
         /// Number of operations to perform
         #[arg(short, long, default_value = "10000")]
@@ -251,6 +254,13 @@ enum Commands {
         /// Output format (human, json, csv)
         #[arg(short = 'f', long, default_value = "human")]
         format: String,
+        /// Maximum number of search queries to run (prevents excessive runtime)
+        #[arg(
+            long,
+            default_value = "100",
+            help = "Limit search operations to prevent excessive runtime"
+        )]
+        max_search_queries: usize,
     },
 }
 
@@ -1609,7 +1619,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Commands::Benchmark { operations, benchmark_type, format } => {
+            Commands::Benchmark { operations, benchmark_type, format, max_search_queries } => {
                 println!("🔬 Running KotaDB Performance Benchmarks");
                 println!("════════════════════════════════════════");
                 println!("  Operations: {}", operations);
@@ -1623,6 +1633,7 @@ async fn main() -> Result<()> {
                 let db = Database::new(&cli.db_path, cli.binary_index).await?;
 
                 let mut results = Vec::new();
+                let mut search_count = 0usize;
 
                 // Storage benchmarks
                 if benchmark_type == "all" || benchmark_type == "storage" {
@@ -1659,13 +1670,14 @@ async fn main() -> Result<()> {
                 if benchmark_type == "all" || benchmark_type == "index" {
                     println!("\n🔍 Index Benchmarks:");
 
-                    // Search benchmark
+                    // Search benchmark (limited to prevent excessive runtime)
                     let start = Instant::now();
-                    for i in 0..operations.min(100) {
+                    let search_limit = operations.min(max_search_queries);
+                    for i in 0..search_limit {
                         let query = format!("content {}", i);
                         let _ = db.search(&query, None, 10).await?;
                     }
-                    let search_count = operations.min(100);
+                    search_count = search_limit;
                     let search_duration = start.elapsed();
                     let search_ops_per_sec = search_count as f64 / search_duration.as_secs_f64();
                     println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)", 
@@ -1701,9 +1713,21 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Note: Cleanup would require implementing delete method or recreating database
-                println!("\n💡 Note: Benchmark data remains in database for inspection");
-                println!("   Run with a fresh database path to avoid accumulation");
+                // Cleanup behavior documentation
+                // Note: The Database struct doesn't expose a delete method by design
+                // to maintain data integrity. Benchmark data is left for inspection.
+                // This is intentional - users can:
+                // 1. Inspect the benchmark data after runs
+                // 2. Use a fresh database path for clean benchmarks
+                // 3. Delete the database directory manually if needed
+                println!("\n📊 Benchmark Complete!");
+                println!("   Data remains in database for inspection at: {:?}", cli.db_path);
+                println!("   💡 Tip: Use --db-path with a fresh directory for clean benchmarks");
+
+                if search_count < operations {
+                    println!("   ℹ️ Note: Search queries were limited to {} operations", search_count);
+                    println!("      Use --max-search-queries to adjust this limit");
+                }
             }
         }
 
