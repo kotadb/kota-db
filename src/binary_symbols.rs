@@ -10,6 +10,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::mem;
 use std::path::Path;
+use tracing::info;
 
 /// Magic bytes to identify our file format
 const KOTA_MAGIC: &[u8; 4] = b"KOTA";
@@ -224,6 +225,8 @@ impl Default for BinarySymbolWriter {
 pub struct BinarySymbolReader {
     mmap: Mmap,
     header: SymbolDatabaseHeader,
+    /// Fast UUID → index mapping for O(1) lookups
+    uuid_index: std::collections::HashMap<uuid::Uuid, usize>,
 }
 
 impl BinarySymbolReader {
@@ -270,7 +273,26 @@ impl BinarySymbolReader {
             );
         }
 
-        Ok(Self { mmap, header })
+        // Build UUID index for fast lookups
+        let symbol_count = header.symbol_count as usize;
+        let mut uuid_index = std::collections::HashMap::with_capacity(symbol_count);
+
+        for i in 0..symbol_count {
+            let offset = header.symbols_offset as usize + i * PackedSymbol::SIZE;
+            let mut symbol_bytes = [0u8; PackedSymbol::SIZE];
+            symbol_bytes.copy_from_slice(&mmap[offset..offset + PackedSymbol::SIZE]);
+            let symbol = PackedSymbol::from_bytes(symbol_bytes);
+            let uuid = uuid::Uuid::from_bytes(symbol.id);
+            uuid_index.insert(uuid, i);
+        }
+
+        info!("Built UUID index for {} symbols", symbol_count);
+
+        Ok(Self {
+            mmap,
+            header,
+            uuid_index,
+        })
     }
 
     /// Get the number of symbols
@@ -323,10 +345,22 @@ impl BinarySymbolReader {
         (0..self.symbol_count()).filter_map(move |i| self.get_symbol(i))
     }
 
-    /// Find symbol by UUID (O(n) search)
+    /// Find symbol by UUID (O(1) lookup)
     pub fn find_symbol(&self, id: uuid::Uuid) -> Option<PackedSymbol> {
-        self.iter_symbols()
-            .find(|symbol| uuid::Uuid::from_bytes(symbol.id) == id)
+        let index = *self.uuid_index.get(&id)?;
+        self.get_symbol(index)
+    }
+
+    /// Find symbol by name (O(n) search - use sparingly)
+    pub fn find_symbol_by_name(&self, name: &str) -> Option<(PackedSymbol, uuid::Uuid)> {
+        self.iter_symbols().find_map(|symbol| {
+            if let Ok(symbol_name) = self.get_symbol_name(&symbol) {
+                if symbol_name == name {
+                    return Some((symbol, uuid::Uuid::from_bytes(symbol.id)));
+                }
+            }
+            None
+        })
     }
 }
 

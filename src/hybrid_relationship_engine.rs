@@ -5,7 +5,6 @@
 //! maintaining full API compatibility.
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::Path;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -33,8 +32,6 @@ pub struct HybridRelationshipEngine {
     symbol_storage: SymbolStorage,
     /// Configuration
     config: RelationshipQueryConfig,
-    /// Symbol cache for performance
-    symbol_cache: HashMap<String, Uuid>,
 }
 
 impl HybridRelationshipEngine {
@@ -88,22 +85,11 @@ impl HybridRelationshipEngine {
             None
         };
 
-        // Build symbol cache for fast lookups
-        let mut symbol_cache = HashMap::new();
-        if let Some(ref reader) = symbol_reader {
-            for symbol in reader.iter_symbols() {
-                if let Ok(name) = reader.get_symbol_name(&symbol) {
-                    symbol_cache.insert(name, Uuid::from_bytes(symbol.id));
-                }
-            }
-        }
-
         Ok(Self {
             symbol_reader,
             dependency_graph,
             symbol_storage,
             config,
-            symbol_cache,
         })
     }
 
@@ -183,25 +169,26 @@ impl HybridRelationshipEngine {
 
                 let graph = self.dependency_graph.as_ref().unwrap();
 
-                // Look up target symbol in cache
-                let target_id = self
-                    .symbol_cache
-                    .get(&target)
+                // Look up target symbol by name
+                let (_symbol, target_id) = reader
+                    .find_symbol_by_name(&target)
                     .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", target))?;
 
                 // Find all callers in the dependency graph
-                let callers = graph.find_dependents(*target_id);
+                let callers = graph.find_dependents(target_id);
 
                 // Convert to relationship matches
                 let mut direct_relationships = Vec::new();
                 for (caller_id, relation_type) in callers.iter() {
                     if let Some(symbol) = reader.find_symbol(*caller_id) {
-                        let symbol_name = reader
-                            .get_symbol_name(&symbol)
-                            .unwrap_or_else(|_| format!("symbol_{}", caller_id));
-                        let file_path = reader
-                            .get_symbol_file_path(&symbol)
-                            .unwrap_or_else(|_| "unknown".to_string());
+                        let symbol_name = reader.get_symbol_name(&symbol).unwrap_or_else(|e| {
+                            warn!("Failed to get symbol name for UUID {}: {}", caller_id, e);
+                            format!("symbol_{}", caller_id)
+                        });
+                        let file_path = reader.get_symbol_file_path(&symbol).unwrap_or_else(|e| {
+                            warn!("Failed to get file path for symbol: {}", e);
+                            "unknown".to_string()
+                        });
 
                         direct_relationships.push(RelationshipMatch {
                             symbol_id: Uuid::from_bytes(symbol.id),
@@ -259,24 +246,25 @@ impl HybridRelationshipEngine {
                 let graph = self.dependency_graph.as_ref().unwrap();
 
                 // For impact analysis, find all transitive dependencies
-                let target_id = self
-                    .symbol_cache
-                    .get(&target)
+                let (_symbol, target_id) = reader
+                    .find_symbol_by_name(&target)
                     .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", target))?;
 
                 let impacted =
-                    self.find_transitive_dependents(graph, *target_id, self.config.max_depth);
+                    self.find_transitive_dependents(graph, target_id, self.config.max_depth);
 
                 // Convert to relationship matches
                 let mut direct_relationships = Vec::new();
                 for (id, relation_type) in impacted.iter() {
                     if let Some(symbol) = reader.find_symbol(*id) {
-                        let symbol_name = reader
-                            .get_symbol_name(&symbol)
-                            .unwrap_or_else(|_| format!("symbol_{}", id));
-                        let file_path = reader
-                            .get_symbol_file_path(&symbol)
-                            .unwrap_or_else(|_| "unknown".to_string());
+                        let symbol_name = reader.get_symbol_name(&symbol).unwrap_or_else(|e| {
+                            warn!("Failed to get symbol name for UUID {}: {}", id, e);
+                            format!("symbol_{}", id)
+                        });
+                        let file_path = reader.get_symbol_file_path(&symbol).unwrap_or_else(|e| {
+                            warn!("Failed to get file path for symbol: {}", e);
+                            "unknown".to_string()
+                        });
 
                         direct_relationships.push(RelationshipMatch {
                             symbol_id: Uuid::from_bytes(symbol.id),
@@ -405,7 +393,6 @@ impl HybridRelationshipEngine {
                 .as_ref()
                 .map(|g| g.graph.node_count())
                 .unwrap_or(0),
-            cache_size: self.symbol_cache.len(),
             using_binary_path: self.symbol_reader.is_some() && self.dependency_graph.is_some(),
         }
     }
@@ -416,6 +403,5 @@ impl HybridRelationshipEngine {
 pub struct HybridEngineStats {
     pub binary_symbols_loaded: usize,
     pub graph_nodes_loaded: usize,
-    pub cache_size: usize,
     pub using_binary_path: bool,
 }
