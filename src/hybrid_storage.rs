@@ -16,7 +16,7 @@ use crate::contracts::{Document, Storage};
 use crate::file_storage::FileStorage;
 use crate::graph_storage::{GraphEdge, GraphNode, GraphStorage, GraphStorageConfig};
 use crate::native_graph_storage::NativeGraphStorage;
-use crate::symbol_storage::SymbolEntry;
+use crate::symbol_storage::{RelationType, SymbolEntry};
 use crate::types::ValidatedDocumentId;
 
 /// Storage type identifier for routing decisions
@@ -546,10 +546,41 @@ impl GraphStorage for HybridStorage {
         }
     }
 
+    async fn update_edge_metadata_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+        metadata: std::collections::HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(graph_storage) = &self.graph_storage {
+            let mut storage = graph_storage.write().await;
+            storage
+                .update_edge_metadata_by_type(from, to, relation_type, metadata)
+                .await
+        } else {
+            Err(anyhow::anyhow!("Graph storage not enabled"))
+        }
+    }
+
     async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool> {
         if let Some(graph_storage) = &self.graph_storage {
             let mut storage = graph_storage.write().await;
             storage.remove_edge(from, to).await
+        } else {
+            Err(anyhow::anyhow!("Graph storage not enabled"))
+        }
+    }
+
+    async fn remove_edge_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+    ) -> Result<bool> {
+        if let Some(graph_storage) = &self.graph_storage {
+            let mut storage = graph_storage.write().await;
+            storage.remove_edge_by_type(from, to, relation_type).await
         } else {
             Err(anyhow::anyhow!("Graph storage not enabled"))
         }

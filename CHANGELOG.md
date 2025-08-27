@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Target: Achieve <10ms query latency (previously 580ms)
 
 ### Fixed
+- Edge metadata update and removal operations for multiple edge support (#332)
+  - Restored `update_edge_metadata` and `remove_edge` methods disabled during #331 fix
+  - Added new `update_edge_metadata_by_type` and `remove_edge_by_type` methods
+  - Methods now properly handle multiple edges between same nodes with different RelationTypes
+  - Added comprehensive test coverage for edge metadata operations with multiple edges
+  - Fixed WAL (Write-Ahead Log) operations to support new edge update/delete variants
 - CLI text search functionality for programming-related terms (#345)
   - Fixed over-aggressive query sanitization that blocked legitimate search terms
   - Words like "script", "javascript", "select", "insert", "create" now work correctly

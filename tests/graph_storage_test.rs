@@ -407,6 +407,115 @@ async fn test_persistence_and_recovery() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_multiple_edges_and_metadata_operations() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let config = GraphStorageConfig::default();
+
+    let mut storage = NativeGraphStorage::new(temp_dir.path(), config).await?;
+
+    let node1 = create_test_node("test::node1", "function");
+    let node2 = create_test_node("test::node2", "class");
+
+    storage.store_node(node1.id, node1.clone()).await?;
+    storage.store_node(node2.id, node2.clone()).await?;
+
+    // Store multiple edges with different relation types
+    let mut edge_calls = create_test_edge(RelationType::Calls);
+    edge_calls
+        .metadata
+        .insert("count".to_string(), "5".to_string());
+    storage.store_edge(node1.id, node2.id, edge_calls).await?;
+
+    let mut edge_imports = create_test_edge(RelationType::Imports);
+    edge_imports
+        .metadata
+        .insert("module".to_string(), "utils".to_string());
+    storage.store_edge(node1.id, node2.id, edge_imports).await?;
+
+    let mut edge_extends = create_test_edge(RelationType::Extends);
+    edge_extends
+        .metadata
+        .insert("interface".to_string(), "Base".to_string());
+    storage.store_edge(node1.id, node2.id, edge_extends).await?;
+
+    // Verify we have 3 edges
+    let edges = storage.get_edges(node1.id, Direction::Outgoing).await?;
+    assert_eq!(edges.len(), 3);
+
+    // Test update_edge_metadata_by_type - update just the Calls edge
+    let mut new_metadata = HashMap::new();
+    new_metadata.insert("count".to_string(), "10".to_string());
+    new_metadata.insert("last_modified".to_string(), "2024-01-15".to_string());
+
+    storage
+        .update_edge_metadata_by_type(
+            node1.id,
+            node2.id,
+            RelationType::Calls,
+            new_metadata.clone(),
+        )
+        .await?;
+
+    // Verify only the Calls edge was updated
+    let edges = storage.get_edges(node1.id, Direction::Outgoing).await?;
+    assert_eq!(edges.len(), 3);
+
+    for (_, edge) in edges.iter() {
+        match edge.relation_type {
+            RelationType::Calls => {
+                assert_eq!(edge.metadata.get("count").unwrap(), "10");
+                assert_eq!(edge.metadata.get("last_modified").unwrap(), "2024-01-15");
+            }
+            RelationType::Imports => {
+                assert_eq!(edge.metadata.get("module").unwrap(), "utils");
+                assert!(!edge.metadata.contains_key("count"));
+            }
+            RelationType::Extends => {
+                assert_eq!(edge.metadata.get("interface").unwrap(), "Base");
+                assert!(!edge.metadata.contains_key("count"));
+            }
+            _ => panic!("Unexpected relation type"),
+        }
+    }
+
+    // Test remove_edge_by_type - remove just the Imports edge
+    let removed = storage
+        .remove_edge_by_type(node1.id, node2.id, RelationType::Imports)
+        .await?;
+    assert!(removed);
+
+    // Verify only 2 edges remain
+    let edges = storage.get_edges(node1.id, Direction::Outgoing).await?;
+    assert_eq!(edges.len(), 2);
+    assert!(!edges
+        .iter()
+        .any(|(_, e)| matches!(e.relation_type, RelationType::Imports)));
+
+    // Test update_edge_metadata - updates all remaining edges
+    let mut global_metadata = HashMap::new();
+    global_metadata.insert("reviewed".to_string(), "true".to_string());
+
+    storage
+        .update_edge_metadata(node1.id, node2.id, global_metadata.clone())
+        .await?;
+
+    let edges = storage.get_edges(node1.id, Direction::Outgoing).await?;
+    assert_eq!(edges.len(), 2);
+    for (_, edge) in edges.iter() {
+        assert_eq!(edge.metadata.get("reviewed").unwrap(), "true");
+    }
+
+    // Test remove_edge - removes all edges
+    let removed = storage.remove_edge(node1.id, node2.id).await?;
+    assert!(removed);
+
+    let edges = storage.get_edges(node1.id, Direction::Outgoing).await?;
+    assert!(edges.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_concurrent_operations() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let config = GraphStorageConfig::default();

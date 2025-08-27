@@ -39,6 +39,7 @@ pub trait GraphStorage: Storage {
     async fn get_nodes_by_type(&self, node_type: &str) -> Result<Vec<Uuid>>;
 
     /// Update edge metadata without recreating the edge
+    /// Updates all edges between the two nodes with the given metadata
     async fn update_edge_metadata(
         &mut self,
         from: Uuid,
@@ -46,8 +47,25 @@ pub trait GraphStorage: Storage {
         metadata: HashMap<String, String>,
     ) -> Result<()>;
 
-    /// Remove an edge between two nodes
+    /// Update edge metadata for a specific relationship type
+    async fn update_edge_metadata_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+        metadata: HashMap<String, String>,
+    ) -> Result<()>;
+
+    /// Remove all edges between two nodes
     async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool>;
+
+    /// Remove a specific edge by relationship type
+    async fn remove_edge_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+    ) -> Result<bool>;
 
     /// Delete a node and all its edges
     async fn delete_node(&mut self, node_id: Uuid) -> Result<bool>;
