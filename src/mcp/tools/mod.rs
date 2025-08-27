@@ -2,6 +2,7 @@
 ///
 /// This module contains the actual tool implementations that expose
 /// KotaDB functionality through the Model Context Protocol.
+pub mod coordinated_document_tools;
 pub mod document_tools;
 pub mod search_tools;
 
@@ -26,7 +27,7 @@ pub trait MCPToolHandler {
 
 /// Main tool registry that coordinates all MCP tools
 pub struct MCPToolRegistry {
-    pub document_tools: Option<Arc<document_tools::DocumentTools>>,
+    pub document_tools: Option<Arc<dyn MCPToolHandler + Send + Sync>>,
     pub search_tools: Option<Arc<search_tools::SearchTools>>,
     #[cfg(feature = "tree-sitter-parsing")]
     pub relationship_tools: Option<Arc<relationship_tools::RelationshipTools>>,
@@ -48,8 +49,8 @@ impl MCPToolRegistry {
         }
     }
 
-    /// Register document tools
-    pub fn with_document_tools(mut self, tools: Arc<document_tools::DocumentTools>) -> Self {
+    /// Register document tools (supports both regular and coordinated tools)
+    pub fn with_document_tools(mut self, tools: Arc<dyn MCPToolHandler + Send + Sync>) -> Self {
         self.document_tools = Some(tools);
         self
     }

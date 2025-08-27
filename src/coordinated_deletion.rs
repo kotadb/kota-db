@@ -5,7 +5,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::contracts::{Index, Storage};
 use crate::types::ValidatedDocumentId;
@@ -41,9 +41,10 @@ impl CoordinatedDeletionService {
     /// Delete a document from all storage systems in a coordinated manner
     ///
     /// This method ensures that:
-    /// 1. The document is deleted from storage first
-    /// 2. If storage deletion succeeds, indices are updated
-    /// 3. If any index update fails, it's treated as a critical error
+    /// 1. The document is retrieved and saved for potential rollback
+    /// 2. The document is deleted from storage
+    /// 3. If storage deletion succeeds, indices are updated
+    /// 4. If any index update fails, the document is restored to storage
     ///
     /// Returns true if the document was found and deleted, false if not found
     pub async fn delete_document(&self, doc_id: &ValidatedDocumentId) -> Result<bool> {
@@ -52,7 +53,23 @@ impl CoordinatedDeletionService {
             doc_id.as_uuid()
         );
 
-        // Step 1: Delete from storage first
+        // Step 1: Retrieve document for potential rollback
+        debug!("Retrieving document for rollback: {}", doc_id.as_uuid());
+        let document_backup = {
+            let storage = self.storage.lock().await;
+            storage.get(doc_id).await?
+        };
+
+        // If document doesn't exist, nothing to delete
+        let document_backup = match document_backup {
+            Some(doc) => doc,
+            None => {
+                debug!("Document not found in storage: {}", doc_id.as_uuid());
+                return Ok(false);
+            }
+        };
+
+        // Step 2: Delete from storage
         debug!("Deleting document from storage: {}", doc_id.as_uuid());
         let deleted_from_storage = {
             let mut storage = self.storage.lock().await;
@@ -60,7 +77,11 @@ impl CoordinatedDeletionService {
         };
 
         if !deleted_from_storage {
-            debug!("Document not found in storage: {}", doc_id.as_uuid());
+            // This shouldn't happen since we already checked existence, but handle gracefully
+            warn!(
+                "Document disappeared between backup and deletion: {}",
+                doc_id.as_uuid()
+            );
             return Ok(false);
         }
 
@@ -91,15 +112,39 @@ impl CoordinatedDeletionService {
                 }
             }
             Err(e) => {
-                // This is critical - storage was deleted but index update failed
+                // Rollback: Restore document to storage since index update failed
                 warn!(
-                    "CRITICAL: Primary index update failed after storage deletion: {} (doc: {})",
+                    "Primary index update failed, attempting rollback: {} (doc: {})",
                     e,
                     doc_id.as_uuid()
                 );
-                return Err(anyhow::anyhow!(
-                    "Index synchronization failure: primary index update failed after storage deletion: {}", e
-                ));
+
+                // Attempt to restore the document
+                let mut storage = self.storage.lock().await;
+                match storage.insert(document_backup.clone()).await {
+                    Ok(_) => {
+                        info!(
+                            "Successfully rolled back document {} to storage",
+                            doc_id.as_uuid()
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Deletion aborted: Primary index update failed. Document {} has been restored.", 
+                            doc_id.as_uuid()
+                        ));
+                    }
+                    Err(rollback_err) => {
+                        // This is the worst case - deletion succeeded but rollback failed
+                        error!(
+                            "CRITICAL: Rollback failed after index update failure: {} (doc: {})",
+                            rollback_err,
+                            doc_id.as_uuid()
+                        );
+                        return Err(anyhow::anyhow!(
+                            "CRITICAL: Document {} deleted but index update and rollback both failed. Manual recovery required.", 
+                            doc_id.as_uuid()
+                        ));
+                    }
+                }
             }
         }
 
@@ -125,15 +170,45 @@ impl CoordinatedDeletionService {
                 }
             }
             Err(e) => {
-                // This is critical - storage and primary were deleted but trigram update failed
+                // Rollback: Restore document to storage and primary index
                 warn!(
-                    "CRITICAL: Trigram index update failed after storage deletion: {} (doc: {})",
+                    "Trigram index update failed, attempting rollback: {} (doc: {})",
                     e,
                     doc_id.as_uuid()
                 );
-                return Err(anyhow::anyhow!(
-                    "Index synchronization failure: trigram index update failed after storage deletion: {}", e
-                ));
+
+                // First restore to storage
+                let mut storage = self.storage.lock().await;
+                let storage_rollback = storage.insert(document_backup.clone()).await;
+
+                // Then restore to primary index
+                let mut primary_index = self.primary_index.lock().await;
+                let primary_rollback = primary_index
+                    .insert(*doc_id, document_backup.path.clone())
+                    .await;
+
+                match (storage_rollback, primary_rollback) {
+                    (Ok(_), Ok(_)) => {
+                        info!(
+                            "Successfully rolled back document {} to storage and primary index",
+                            doc_id.as_uuid()
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Deletion aborted: Trigram index update failed. Document {} has been restored.", 
+                            doc_id.as_uuid()
+                        ));
+                    }
+                    _ => {
+                        error!(
+                            "CRITICAL: Partial or complete rollback failure after trigram index failure (doc: {})",
+                            doc_id.as_uuid()
+                        );
+                        return Err(anyhow::anyhow!(
+                            "CRITICAL: Document {} in inconsistent state. Manual recovery required.",
+                            doc_id.as_uuid()
+                        ));
+                    }
+                }
             }
         }
 
