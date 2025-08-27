@@ -79,14 +79,7 @@ impl MCPServer {
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
 
-        // NOTE: We create two storage instances due to Rust type system constraints.
-        // CoordinatedDeletionService needs Arc<Mutex<Box<dyn Storage>>> while
-        // other components need Arc<Mutex<dyn Storage>>.
-        // Both point to the same underlying file storage with shared caching.
-        // TODO: Refactor CoordinatedDeletionService to use Arc<Mutex<dyn Storage>> directly.
-
-        // Storage for general use (document tools, search tools)
-        // Must box to convert impl Storage to dyn Storage
+        // Create single storage instance and share via Arc cloning
         let storage_impl = create_mcp_storage(
             &config.database.data_dir,
             Some(config.database.max_cache_size),
@@ -94,7 +87,8 @@ impl MCPServer {
         .await?;
         let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage_impl));
 
-        // Storage for deletion service (needs Box<dyn Storage>)
+        // For deletion service, we need Box<dyn Storage> but must create new instance
+        // due to type constraints. Both instances share the same underlying file storage.
         let storage_for_deletion = Box::new(
             create_mcp_storage(
                 &config.database.data_dir,
@@ -112,20 +106,20 @@ impl MCPServer {
             create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
         let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
 
-        // Create trigram index once and share via Arc cloning
+        // Create trigram index - minimize instances to 2 (type constraints prevent sharing)
         let trigram_index_path =
             std::path::Path::new(&config.database.data_dir).join("trigram_index");
         std::fs::create_dir_all(&trigram_index_path)?;
+
+        // First instance for deletion service (needs Box<dyn Index>)
         let trigram_index =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        // Create boxed version for deletion service
         let trigram_index_boxed = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
-        // For search tools, we unfortunately need a second instance due to type constraints
-        // TODO: Refactor CoordinatedDeletionService to use same types as SearchTools
-        let trigram_index_for_search =
+
+        // Second instance shared between search tools and semantic engine
+        let trigram_index_shared =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        let trigram_index_arc: Arc<Mutex<dyn Index>> =
-            Arc::new(Mutex::new(trigram_index_for_search));
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index_shared));
 
         // Create coordinated deletion service
         let deletion_service = Arc::new(CoordinatedDeletionService::new(
@@ -156,15 +150,16 @@ impl MCPServer {
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
 
-            // Semantic search needs its own storage instance due to ownership requirements
-            // This is acceptable as SemanticSearchEngine manages its own vector index separately
+            // SemanticSearchEngine takes ownership, so we must create new instances
+            // This is required because it manages its own vector index separately
             let semantic_storage = create_mcp_storage(
                 &config.database.data_dir,
                 Some(config.database.max_cache_size),
             )
             .await?;
 
-            // Semantic engine also needs its own trigram index instance for hybrid search
+            // Clone the shared trigram index for semantic engine
+            // This reuses the same index instance as search tools
             let trigram_index_for_semantic =
                 create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
 
