@@ -10,9 +10,7 @@ use kotadb::{
 
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::{
-    relationship_query::{
-        parse_natural_language_relationship_query, RelationshipQueryEngine, RelationshipQueryType,
-    },
+    relationship_query::{parse_natural_language_relationship_query, RelationshipQueryType},
     symbol_storage::SymbolStorage,
 };
 use std::collections::HashMap;
@@ -806,9 +804,11 @@ mod tests {
     }
 }
 
-/// Create a relationship query engine for the given database path
+/// Create a hybrid relationship query engine for the given database path
 #[cfg(feature = "tree-sitter-parsing")]
-async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryEngine> {
+async fn create_relationship_engine(
+    db_path: &Path,
+) -> Result<kotadb::hybrid_relationship_engine::HybridRelationshipEngine> {
     // Load real symbol storage from the main database storage path (db_path/storage)
     // This ensures we read symbols from the same location where they were written
     let storage_path = db_path.join("storage");
@@ -834,14 +834,14 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
     let graph_storage =
         kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
 
-    let symbol_storage =
-        SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
+    // Create hybrid relationship engine
+    let config = kotadb::relationship_query::RelationshipQueryConfig::default();
+    let hybrid_engine =
+        kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(db_path, config).await?;
 
-    // Load statistics to check if we have data
-    let stats = symbol_storage.get_stats();
-
-    // If no symbols exist, return error with actionable guidance
-    if stats.total_symbols == 0 {
+    // Check if we have any symbols or relationships loaded
+    let stats = hybrid_engine.get_stats();
+    if !stats.using_binary_path && stats.binary_symbols_loaded == 0 {
         return Err(anyhow::anyhow!(
             "No symbols found in database. Required steps:\n\
              1. Ingest a repository with symbols: kotadb ingest-repo /path/to/repo\n\
@@ -850,13 +850,7 @@ async fn create_relationship_engine(db_path: &Path) -> Result<RelationshipQueryE
         ));
     }
 
-    // Build dependency graph from existing symbol relationships
-    let dependency_graph = symbol_storage.to_dependency_graph().await?;
-
-    Ok(RelationshipQueryEngine::new(
-        dependency_graph,
-        symbol_storage,
-    ))
+    Ok(hybrid_engine)
 }
 
 #[tokio::main]
