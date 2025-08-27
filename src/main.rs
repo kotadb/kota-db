@@ -1392,8 +1392,9 @@ async fn main() -> Result<()> {
                 // Load symbol storage
                 let storage_path = cli.db_path.join("storage");
                 if !storage_path.exists() {
-                    eprintln!("Error: No database found. Run 'ingest-repo' first to populate symbols.");
-                    std::process::exit(1);
+                    return Err(anyhow::anyhow!(
+                        "No database found. Run 'ingest-repo' first to populate symbols."
+                    ));
                 }
 
                 let file_storage = create_file_storage(
@@ -1462,13 +1463,7 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::FindCallers { target, limit } => {
-                let relationship_engine = match create_relationship_engine(&cli.db_path).await {
-                    Ok(engine) => engine,
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                };
+                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
                 let query_type = RelationshipQueryType::FindCallers {
                     target: target.clone(),
                 };
@@ -1484,13 +1479,7 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::ImpactAnalysis { target, limit } => {
-                let relationship_engine = match create_relationship_engine(&cli.db_path).await {
-                    Ok(engine) => engine,
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                };
+                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
                 let query_type = RelationshipQueryType::ImpactAnalysis {
                     target: target.clone(),
                 };
@@ -1506,34 +1495,26 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::RelationshipQuery { query, limit } => {
-                match parse_natural_language_relationship_query(&query) {
-                    Some(query_type) => {
-                        match create_relationship_engine(&cli.db_path).await {
-                            Ok(relationship_engine) => {
-                                let mut result = relationship_engine.execute_query(query_type).await?;
-                                if let Some(limit_value) = limit {
-                                    result.limit_results(limit_value);
-                                }
-                                println!("{}", result.to_markdown());
-                            }
-                            Err(e) => {
-                                // Provide actionable error message
-                                eprintln!("Error: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                    None => {
-                        eprintln!("Error: Could not parse query '{}'", query);
-                        eprintln!("Valid query patterns:");
-                        eprintln!("  - what calls [symbol]?");
-                        eprintln!("  - what would break if I change [symbol]?");
-                        eprintln!("  - find unused functions");
-                        eprintln!("  - who uses [symbol]?");
-                        eprintln!("  - find callers of [symbol]");
-                        std::process::exit(1);
-                    }
+                let query_type = parse_natural_language_relationship_query(&query)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Could not parse query '{}'\n\
+                            Valid query patterns:\n\
+                            - what calls [symbol]?\n\
+                            - what would break if I change [symbol]?\n\
+                            - find unused functions\n\
+                            - who uses [symbol]?\n\
+                            - find callers of [symbol]",
+                            query
+                        )
+                    })?;
+
+                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
+                let mut result = relationship_engine.execute_query(query_type).await?;
+                if let Some(limit_value) = limit {
+                    result.limit_results(limit_value);
                 }
+                println!("{}", result.to_markdown());
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
