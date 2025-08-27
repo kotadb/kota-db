@@ -265,9 +265,9 @@ enum Commands {
 }
 
 struct Database {
-    storage: Arc<Mutex<Box<dyn Storage>>>,
-    primary_index: Arc<Mutex<Box<dyn Index>>>,
-    trigram_index: Arc<Mutex<Box<dyn Index>>>,
+    storage: Arc<Mutex<dyn Storage>>,
+    primary_index: Arc<Mutex<dyn Index>>,
+    trigram_index: Arc<Mutex<dyn Index>>,
     // Cache for path -> document ID lookups (built lazily)
     path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
     // Coordinated deletion service to ensure index synchronization
@@ -300,38 +300,36 @@ impl Database {
             Some(1000),
         )
         .await?;
-        let trigram_index = if use_binary_index {
+        let (trigram_index, trigram_index_arc): (Arc<Mutex<dyn Index>>, Arc<Mutex<dyn Index>>) = if use_binary_index {
             tracing::info!("Using binary trigram index for 10x performance");
-            Box::new(
-                create_binary_trigram_index(
-                    trigram_index_path.to_str().ok_or_else(|| {
-                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
-                    })?,
-                    Some(1000),
-                )
-                .await?,
-            ) as Box<dyn Index>
+            let index = create_binary_trigram_index(
+                trigram_index_path.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                })?,
+                Some(1000),
+            )
+            .await?;
+            let arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(index));
+            (arc.clone(), arc)
         } else {
-            Box::new(
-                create_trigram_index(
-                    trigram_index_path.to_str().ok_or_else(|| {
-                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
-                    })?,
-                    Some(1000),
-                )
-                .await?,
-            ) as Box<dyn Index>
+            let index = create_trigram_index(
+                trigram_index_path.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                })?,
+                Some(1000),
+            )
+            .await?;
+            let arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(index));
+            (arc.clone(), arc)
         };
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(trigram_index as Box<dyn Index>));
-
-        // Create coordinated deletion service
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index,
         );
 
         let db = Self {
@@ -622,10 +620,15 @@ impl Database {
         tags: Option<Vec<String>>,
         limit: usize,
     ) -> Result<(Vec<Document>, usize)> {
+        // Handle empty queries at the method level - return nothing
+        if query_text.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+
         // Build query
         let mut query_builder = QueryBuilder::new();
 
-        if query_text != "*" && !query_text.is_empty() {
+        if query_text != "*" {
             query_builder = query_builder.with_text(query_text)?;
         }
 
@@ -641,9 +644,8 @@ impl Database {
         // Route to appropriate index based on query type
         // NOTE: Wildcard queries (containing "*") are explicitly routed to the primary index
         // because it supports pattern matching. Trigram indices are designed for full-text
-        // search and don't handle wildcard patterns. Empty queries also route to primary index
-        // to list all documents (see issue #222).
-        let doc_ids = if query_text.contains('*') || query_text.is_empty() {
+        // search and don't handle wildcard patterns. Empty queries are handled above and return nothing.
+        let doc_ids = if query_text.contains('*') {
             // Use Primary Index for wildcard/pattern queries
             self.primary_index.lock().await.search(&query).await?
         } else {
@@ -711,14 +713,14 @@ mod tests {
 
         let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index_arc.clone(),
         );
 
         let db = Database {
@@ -761,14 +763,14 @@ mod tests {
         let trigram_index =
             create_trigram_index(trigram_path.to_str().unwrap(), Some(1000)).await?;
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
-            Arc::clone(&storage_arc),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_arc),
+            storage_arc.clone(),
+            primary_index_arc.clone(),
+            trigram_index_arc.clone(),
         );
 
         let db = Database {
@@ -977,6 +979,13 @@ async fn main() -> Result<()> {
             }
 
             Commands::Search { query, limit, tags } => {
+                // Handle empty query explicitly - return nothing with informative message
+                if query.is_empty() {
+                    println!("Empty search query provided. Please specify a search term.");
+                    println!("Use 'list' command to view all documents, or '*' for wildcard search.");
+                    return Ok(());
+                }
+
                 let tag_list = tags.map(|t| t.split(',').map(String::from).collect());
                 let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
 
@@ -1044,7 +1053,7 @@ async fn main() -> Result<()> {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
                 };
 
                 // Display detailed results
@@ -1258,12 +1267,12 @@ async fn main() -> Result<()> {
                     let symbol_db_path = cli.db_path.join("symbols.kota");
                     ingester.ingest_with_binary_symbols(
                         &repo_path,
-                        &mut **storage,
+                        &mut *storage,
                         &symbol_db_path,
                         Some(progress_callback),
                     ).await?
                 } else {
-                    ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?
+                    ingester.ingest_with_progress(&repo_path, &mut *storage, Some(progress_callback)).await?
                 };
 
                 #[cfg(not(feature = "tree-sitter-parsing"))]
@@ -1319,7 +1328,7 @@ async fn main() -> Result<()> {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
                 };
 
                 validation_progress.finish_with_message("✅ Validation complete");
@@ -1622,7 +1631,7 @@ async fn main() -> Result<()> {
                     }
                     let insert_duration = start.elapsed();
                     let insert_ops_per_sec = operations as f64 / insert_duration.as_secs_f64();
-                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)", 
+                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)",
                              operations, insert_duration.as_secs_f64(), insert_ops_per_sec);
                     results.push(("insert", insert_duration, insert_ops_per_sec));
 
@@ -1634,7 +1643,7 @@ async fn main() -> Result<()> {
                     }
                     let read_duration = start.elapsed();
                     let read_ops_per_sec = operations as f64 / read_duration.as_secs_f64();
-                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)", 
+                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)",
                              operations, read_duration.as_secs_f64(), read_ops_per_sec);
                     results.push(("read_search", read_duration, read_ops_per_sec));
                 }
@@ -1653,7 +1662,7 @@ async fn main() -> Result<()> {
                     search_count = search_limit;
                     let search_duration = start.elapsed();
                     let search_ops_per_sec = search_count as f64 / search_duration.as_secs_f64();
-                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)", 
+                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)",
                              search_count, search_duration.as_secs_f64(), search_ops_per_sec);
                     results.push(("search", search_duration, search_ops_per_sec));
                 }

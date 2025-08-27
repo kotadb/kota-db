@@ -19,7 +19,7 @@ pub struct MCPServer {
     tool_registry: Arc<MCPToolRegistry>,
     storage: Arc<Mutex<dyn Storage>>,
     #[allow(dead_code)] // Will be used for path-based operations
-    primary_index: Arc<Mutex<Box<dyn Index>>>,
+    primary_index: Arc<Mutex<dyn Index>>,
     #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
     deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
@@ -87,15 +87,13 @@ impl MCPServer {
         .await?;
         let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage_impl));
 
-        // For deletion service, we need Box<dyn Storage> but must create new instance
-        // due to type constraints. Both instances share the same underlying file storage.
-        let storage_for_deletion = Box::new(
-            create_mcp_storage(
-                &config.database.data_dir,
-                Some(config.database.max_cache_size),
-            )
-            .await?,
-        ) as Box<dyn Storage>;
+        // For deletion service, create new instance due to type constraints.
+        // Both instances share the same underlying file storage.
+        let storage_for_deletion = create_mcp_storage(
+            &config.database.data_dir,
+            Some(config.database.max_cache_size),
+        )
+        .await?;
         let storage_boxed = Arc::new(Mutex::new(storage_for_deletion));
 
         // Create primary index for path-based operations
@@ -104,28 +102,28 @@ impl MCPServer {
         std::fs::create_dir_all(&primary_index_path)?;
         let primary_index =
             create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+        let primary_index_arc = Arc::new(Mutex::new(primary_index));
 
         // Create trigram index - minimize instances to 2 (type constraints prevent sharing)
         let trigram_index_path =
             std::path::Path::new(&config.database.data_dir).join("trigram_index");
         std::fs::create_dir_all(&trigram_index_path)?;
 
-        // First instance for deletion service (needs Box<dyn Index>)
+        // First instance for deletion service
         let trigram_index =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        let trigram_index_boxed = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let trigram_index_boxed = Arc::new(Mutex::new(trigram_index));
 
         // Second instance shared between search tools and semantic engine
         let trigram_index_shared =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index_shared));
+        let trigram_index_arc = Arc::new(Mutex::new(trigram_index_shared));
 
-        // Create coordinated deletion service
+        // Create coordinated deletion service with type conversions
         let deletion_service = Arc::new(CoordinatedDeletionService::new(
-            Arc::clone(&storage_boxed),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_boxed),
+            storage_boxed.clone() as Arc<Mutex<dyn Storage>>,
+            primary_index_arc.clone() as Arc<Mutex<dyn Index>>,
+            trigram_index_boxed.clone() as Arc<Mutex<dyn Index>>,
         ));
 
         // Initialize tool registry based on configuration

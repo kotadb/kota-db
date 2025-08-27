@@ -20,12 +20,12 @@ const MAX_TERM_LENGTH: usize = 100;
 /// Minimum length for a meaningful search term
 const MIN_TERM_LENGTH: usize = 1;
 
-/// Reserved characters that could be used in injection attempts
+/// Reserved characters that could be used in injection attempts (truly dangerous ones only)
 const RESERVED_CHARS: &[char] = &['<', '>', '&', '"', '\'', '\0', '\r', '\n', '\t'];
 
 /// SQL injection patterns to detect and block - targeting actual injection syntax and dangerous keywords
 static SQL_INJECTION_PATTERNS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(\bselect\b|\bunion\b|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\bcreate\b|\balter\b|\bexec\b|\bexecute\b|\bscript\b|</?script\b|</?iframe\b|</?object\b|</?embed\b|</?link\b|javascript:|onclick|onload|onerror|../|..\\|;\s*(select|insert|update|delete|drop|create|alter))")
+    Regex::new(r"(?i)(\bselect\b|\bunion\b|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\bcreate\b|\balter\b|\bexec\b|\bexecute\b|\bscript\b|</?script\b|</?iframe\b|</?object\b|</?embed\b|</?link\b|javascript:|onclick|onload|onerror|;\s*(select|insert|update|delete|drop|create|alter))")
         .expect("Failed to compile SQL injection regex")
 });
 
@@ -41,9 +41,11 @@ static PATH_TRAVERSAL_PATTERNS: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile path traversal regex")
 });
 
-/// LDAP injection patterns to detect and block
-static LDAP_INJECTION_PATTERNS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[()\\,=]").expect("Failed to compile LDAP injection regex"));
+/// LDAP injection patterns to detect and block - more targeted to avoid blocking valid path chars
+static LDAP_INJECTION_PATTERNS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\(\)|\\\\|,\s*\w*\s*=|=\s*\w*\s*,")
+        .expect("Failed to compile LDAP injection regex")
+});
 
 /// Common stop words that might be filtered in certain contexts
 static STOP_WORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
@@ -139,31 +141,16 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
             .to_string();
     }
 
-    // Step 5: Handle LDAP injection patterns - check for asterisk BEFORE removing other patterns
-    let has_ldap_patterns = LDAP_INJECTION_PATTERNS.is_match(&sanitized);
-    let has_asterisk_with_ldap = has_ldap_patterns && sanitized.contains('*');
-
-    if has_ldap_patterns {
-        warnings.push("Special LDAP characters sanitized".to_string());
+    // Step 5: Handle LDAP injection patterns
+    if LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
+        warnings.push("Suspicious LDAP injection patterns removed".to_string());
         sanitized = LDAP_INJECTION_PATTERNS
             .replace_all(&sanitized, " ")
             .to_string();
     }
 
-    // Handle asterisk for LDAP injection prevention - preserve legitimate wildcard patterns
-    // Only remove asterisks that appear to be part of specific LDAP injection patterns
-    if has_asterisk_with_ldap && original != "admin*" && original != "*" {
-        // Check if this looks like a malicious LDAP injection pattern
-        // Patterns like "admin)(password=*" or "something,password=*" are suspicious
-        // But patterns like "user*(admin)" or "test*=value" might be legitimate wildcards
-        let looks_malicious = original.contains(")(") && original.ends_with("*")
-            || original.contains(",") && original.contains("=") && original.contains("*");
-
-        if looks_malicious {
-            warnings.push("Potentially dangerous asterisk patterns removed".to_string());
-            sanitized = sanitized.replace('*', "");
-        }
-    }
+    // Asterisk handling is now done by the more targeted LDAP injection pattern above
+    // No need for additional asterisk removal since the LDAP pattern is specific enough
 
     // Step 6: Remove reserved/dangerous characters
     let mut clean_chars = String::with_capacity(sanitized.len());
@@ -293,19 +280,29 @@ pub fn sanitize_path_aware_query(query: &str) -> Result<SanitizedQuery> {
     // Step 5: Preserve wildcards and path characters - minimal sanitization for path-aware queries
     let is_wildcard_query = sanitized.contains('*');
 
-    // Only apply LDAP sanitization if it's not a path query (paths can contain legitimate chars)
-    if !sanitized.contains('/') && LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
-        warnings.push("Special LDAP characters sanitized".to_string());
+    // Apply LDAP sanitization for path-aware queries, but with more targeted patterns
+    if LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
+        warnings.push("Suspicious LDAP injection patterns removed".to_string());
         sanitized = LDAP_INJECTION_PATTERNS
             .replace_all(&sanitized, " ")
             .to_string();
     }
 
-    // Step 6: Remove reserved/dangerous characters (but preserve / and * for paths)
+    // Step 6: Remove reserved/dangerous characters (but preserve path-safe chars)
     let mut clean_chars = String::with_capacity(sanitized.len());
     for c in sanitized.chars() {
-        if c == '/' || c == '*' {
-            // Preserve path and wildcard characters
+        if c == '/'
+            || c == '*'
+            || c == '('
+            || c == ')'
+            || c == '['
+            || c == ']'
+            || c == '='
+            || c == ','
+            || c == '-'
+            || c == '_'
+        {
+            // Preserve path and wildcard characters, plus common path symbols
             clean_chars.push(c);
         } else if RESERVED_CHARS.contains(&c) {
             clean_chars.push(' ');
@@ -493,13 +490,17 @@ mod tests {
 
     #[test]
     fn test_ldap_injection_sanitization() {
-        let result = sanitize_search_query("user*(admin)").unwrap();
-        // Asterisk should be preserved for wildcard support
-        assert!(result.text.contains("*"));
-        // But parentheses should still be removed
-        assert!(!result.text.contains("("));
-        assert!(!result.text.contains(")"));
+        // Test that dangerous LDAP injection patterns are blocked
+        let result = sanitize_search_query("user=admin,ou=").unwrap();
+        // The dangerous comma-equals pattern should be removed
+        assert!(!result.text.contains(",ou="));
         assert!(result.was_modified);
+
+        // Test that normal parentheses are preserved (issue #275 fix)
+        let result2 = sanitize_search_query("function(param)").unwrap();
+        assert!(result2.text.contains("("));
+        assert!(result2.text.contains(")"));
+        assert!(!result2.was_modified); // Should not be modified for normal parentheses
     }
 
     #[test]
@@ -555,13 +556,19 @@ mod tests {
 
     #[test]
     fn test_wildcard_with_ldap_chars() {
-        // Test that asterisks are preserved but other LDAP chars are removed
-        let result = sanitize_search_query("test*(admin)=value").unwrap();
+        // Test that asterisks and normal chars are preserved, but dangerous patterns are blocked
+        let result = sanitize_search_query("test*admin,ou=evil").unwrap();
         assert!(result.text.contains("*"));
-        assert!(!result.text.contains("("));
-        assert!(!result.text.contains(")"));
-        assert!(!result.text.contains("="));
+        assert!(result.text.contains("admin")); // Normal text preserved
+        assert!(!result.text.contains(",ou=")); // Dangerous LDAP pattern removed
         assert!(result.was_modified);
+
+        // Test that normal equals and parentheses are preserved
+        let result2 = sanitize_search_query("config=value function(param)").unwrap();
+        assert!(result2.text.contains("="));
+        assert!(result2.text.contains("("));
+        assert!(result2.text.contains(")"));
+        assert!(!result2.was_modified);
     }
 
     #[test]
@@ -574,5 +581,36 @@ mod tests {
         // OR and AND should be preserved as regular terms
         assert!(result.text.contains("OR"));
         assert!(result.text.contains("AND"));
+    }
+
+    #[test]
+    fn test_issue_275_path_characters_preserved() {
+        // Test that valid path characters are not removed (issue #275)
+        let test_cases = vec![
+            ("src/main.rs", "src/main.rs"),
+            (
+                "path/with(parentheses)/file.rs",
+                "path/with(parentheses)/file.rs",
+            ),
+            ("path/with[brackets].rs", "path/with[brackets].rs"),
+            ("config=value.txt", "config=value.txt"),
+            ("file,data.csv", "file,data.csv"),
+            ("path-with-dashes.rs", "path-with-dashes.rs"),
+            ("file_with_underscores.rs", "file_with_underscores.rs"),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = sanitize_path_aware_query(input).unwrap();
+            assert_eq!(
+                result.text, expected,
+                "Path '{}' should be preserved",
+                input
+            );
+            assert!(
+                !result.was_modified,
+                "Path '{}' should not be modified",
+                input
+            );
+        }
     }
 }

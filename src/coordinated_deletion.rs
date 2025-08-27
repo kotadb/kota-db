@@ -19,17 +19,17 @@ use crate::types::ValidatedDocumentId;
 ///
 /// This prevents the critical synchronization bug reported in issue #338.
 pub struct CoordinatedDeletionService {
-    storage: Arc<Mutex<Box<dyn Storage>>>,
-    primary_index: Arc<Mutex<Box<dyn Index>>>,
-    trigram_index: Arc<Mutex<Box<dyn Index>>>,
+    storage: Arc<Mutex<dyn Storage>>,
+    primary_index: Arc<Mutex<dyn Index>>,
+    trigram_index: Arc<Mutex<dyn Index>>,
 }
 
 impl CoordinatedDeletionService {
     /// Create a new coordinated deletion service
     pub fn new(
-        storage: Arc<Mutex<Box<dyn Storage>>>,
-        primary_index: Arc<Mutex<Box<dyn Index>>>,
-        trigram_index: Arc<Mutex<Box<dyn Index>>>,
+        storage: Arc<Mutex<dyn Storage>>,
+        primary_index: Arc<Mutex<dyn Index>>,
+        trigram_index: Arc<Mutex<dyn Index>>,
     ) -> Self {
         Self {
             storage,
@@ -223,17 +223,17 @@ impl CoordinatedDeletionService {
     ///
     /// This should ONLY be used for read operations (get, list, search).
     /// For deletion, always use delete_document() to ensure coordination.
-    pub fn get_storage(&self) -> Arc<Mutex<Box<dyn Storage>>> {
+    pub fn get_storage(&self) -> Arc<Mutex<dyn Storage>> {
         Arc::clone(&self.storage)
     }
 
     /// Get a shared reference to the primary index for read operations
-    pub fn get_primary_index(&self) -> Arc<Mutex<Box<dyn Index>>> {
+    pub fn get_primary_index(&self) -> Arc<Mutex<dyn Index>> {
         Arc::clone(&self.primary_index)
     }
 
     /// Get a shared reference to the trigram index for read operations  
-    pub fn get_trigram_index(&self) -> Arc<Mutex<Box<dyn Index>>> {
+    pub fn get_trigram_index(&self) -> Arc<Mutex<dyn Index>> {
         Arc::clone(&self.trigram_index)
     }
 }
@@ -255,18 +255,18 @@ mod tests {
         let primary_path = temp_dir.path().join("primary");
         let trigram_path = temp_dir.path().join("trigram");
 
-        // Create storage and indices
-        let storage = Arc::new(Mutex::new(Box::new(
+        // Create storage and indices with trait object conversion
+        let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(
             create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Storage>));
+        ));
 
-        let primary_index = Arc::new(Mutex::new(Box::new(
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(
             create_primary_index(primary_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Index>));
+        ));
 
-        let trigram_index = Arc::new(Mutex::new(Box::new(
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(
             create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Index>));
+        ));
 
         // Create coordinated deletion service
         let deletion_service = CoordinatedDeletionService::new(
@@ -323,17 +323,17 @@ mod tests {
         let primary_path = temp_dir.path().join("primary");
         let trigram_path = temp_dir.path().join("trigram");
 
-        let storage = Arc::new(Mutex::new(Box::new(
+        let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(
             create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Storage>));
+        ));
 
-        let primary_index = Arc::new(Mutex::new(Box::new(
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(
             create_primary_index(primary_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Index>));
+        ));
 
-        let trigram_index = Arc::new(Mutex::new(Box::new(
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(
             create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?,
-        ) as Box<dyn Index>));
+        ));
 
         let deletion_service =
             CoordinatedDeletionService::new(storage, primary_index, trigram_index);
