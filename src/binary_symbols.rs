@@ -226,6 +226,10 @@ pub struct BinarySymbolReader {
     mmap: Mmap,
     header: SymbolDatabaseHeader,
     /// Fast UUID → index mapping for O(1) lookups
+    ///
+    /// Trade-off: This consumes ~24 bytes per symbol (UUID + usize) for O(1) performance.
+    /// For 20k symbols = ~480KB overhead. Alternative: lazy-load from mmap with O(log n) binary search.
+    /// Current design prioritizes sub-microsecond lookups over memory efficiency.
     uuid_index: std::collections::HashMap<uuid::Uuid, usize>,
 }
 
@@ -277,6 +281,10 @@ impl BinarySymbolReader {
         let symbol_count = header.symbol_count as usize;
         let mut uuid_index = std::collections::HashMap::with_capacity(symbol_count);
 
+        // TODO: For very large databases (>100k symbols), consider:
+        // 1. Memory-mapped B-tree index stored separately
+        // 2. Bloom filter for existence checks before lookup
+        // 3. LRU cache for frequently accessed symbols
         for i in 0..symbol_count {
             let offset = header.symbols_offset as usize + i * PackedSymbol::SIZE;
             let mut symbol_bytes = [0u8; PackedSymbol::SIZE];
@@ -286,7 +294,12 @@ impl BinarySymbolReader {
             uuid_index.insert(uuid, i);
         }
 
-        info!("Built UUID index for {} symbols", symbol_count);
+        let index_memory = symbol_count * std::mem::size_of::<(uuid::Uuid, usize)>();
+        info!(
+            "Built UUID index for {} symbols (~{:.2} MB memory)",
+            symbol_count,
+            index_memory as f64 / (1024.0 * 1024.0)
+        );
 
         Ok(Self {
             mmap,

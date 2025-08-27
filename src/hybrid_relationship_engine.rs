@@ -33,10 +33,7 @@ pub struct HybridRelationshipEngine {
 impl HybridRelationshipEngine {
     /// Create a new hybrid engine from database paths
     #[instrument]
-    pub async fn new(
-        db_path: &Path,
-        config: RelationshipQueryConfig,
-    ) -> Result<Self> {
+    pub async fn new(db_path: &Path, config: RelationshipQueryConfig) -> Result<Self> {
         info!("Initializing hybrid relationship engine");
 
         // Try to load binary symbols if available
@@ -354,46 +351,49 @@ impl HybridRelationshipEngine {
     pub fn save_dependency_graph(graph: &DependencyGraph, path: &Path) -> Result<()> {
         use std::fs::File;
         use std::io::BufWriter;
-        
-        info!("Saving dependency graph with {} nodes to: {:?}", graph.graph.node_count(), path);
-        
+
+        info!(
+            "Saving dependency graph with {} nodes to: {:?}",
+            graph.graph.node_count(),
+            path
+        );
+
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory: {:?}", parent))?;
         }
-        
+
         let file = File::create(path)
             .with_context(|| format!("Failed to create dependency graph file: {:?}", path))?;
         let writer = BufWriter::new(file);
-        
+
         // Convert to serializable format
         let serializable = graph.to_serializable();
-        
+
         // Serialize using bincode for efficiency
         bincode::serialize_into(writer, &serializable)
             .context("Failed to serialize dependency graph")?;
-        
+
         info!("Successfully saved dependency graph to: {:?}", path);
         Ok(())
     }
-    
+
     /// Load dependency graph from binary file
     fn load_dependency_graph(path: &Path) -> Result<DependencyGraph> {
         use std::fs::File;
         use std::io::BufReader;
-        
+
         debug!("Loading dependency graph from: {:?}", path);
-        
+
         let file = File::open(path)
             .with_context(|| format!("Failed to open dependency graph file: {:?}", path))?;
         let reader = BufReader::new(file);
-        
+
         // Deserialize using bincode for efficiency
-        let serializable: crate::dependency_extractor::SerializableDependencyGraph = 
-            bincode::deserialize_from(reader)
-                .context("Failed to deserialize dependency graph")?;
-        
+        let serializable: crate::dependency_extractor::SerializableDependencyGraph =
+            bincode::deserialize_from(reader).context("Failed to deserialize dependency graph")?;
+
         // Convert from serializable format
         DependencyGraph::from_serializable(serializable)
             .context("Failed to reconstruct dependency graph from serialized data")

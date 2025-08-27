@@ -834,11 +834,8 @@ async fn create_relationship_engine(
 
     // Create hybrid relationship engine
     let config = kotadb::relationship_query::RelationshipQueryConfig::default();
-    let hybrid_engine = kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(
-        db_path,
-        config,
-    )
-    .await?;
+    let hybrid_engine =
+        kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(db_path, config).await?;
 
     // Check if we have any symbols or relationships loaded
     let stats = hybrid_engine.get_stats();
