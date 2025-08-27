@@ -265,9 +265,9 @@ enum Commands {
 }
 
 struct Database {
-    storage: Arc<Mutex<Box<dyn Storage>>>,
-    primary_index: Arc<Mutex<Box<dyn Index>>>,
-    trigram_index: Arc<Mutex<Box<dyn Index>>>,
+    storage: Arc<Mutex<dyn Storage>>,
+    primary_index: Arc<Mutex<dyn Index>>,
+    trigram_index: Arc<Mutex<dyn Index>>,
     // Cache for path -> document ID lookups (built lazily)
     path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
     // Coordinated deletion service to ensure index synchronization
@@ -300,9 +300,9 @@ impl Database {
             Some(1000),
         )
         .await?;
-        let trigram_index = if use_binary_index {
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = if use_binary_index {
             tracing::info!("Using binary trigram index for 10x performance");
-            Box::new(
+            Arc::new(Mutex::new(
                 create_binary_trigram_index(
                     trigram_index_path.to_str().ok_or_else(|| {
                         anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
@@ -310,9 +310,9 @@ impl Database {
                     Some(1000),
                 )
                 .await?,
-            ) as Box<dyn Index>
+            ))
         } else {
-            Box::new(
+            Arc::new(Mutex::new(
                 create_trigram_index(
                     trigram_index_path.to_str().ok_or_else(|| {
                         anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
@@ -320,12 +320,11 @@ impl Database {
                     Some(1000),
                 )
                 .await?,
-            ) as Box<dyn Index>
+            ))
         };
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(trigram_index as Box<dyn Index>));
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
 
         // Create coordinated deletion service
         let deletion_service = kotadb::CoordinatedDeletionService::new(
@@ -711,9 +710,9 @@ mod tests {
 
         let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
             Arc::clone(&storage_arc),
@@ -761,9 +760,9 @@ mod tests {
         let trigram_index =
             create_trigram_index(trigram_path.to_str().unwrap(), Some(1000)).await?;
 
-        let storage_arc = Arc::new(Mutex::new(Box::new(storage) as Box<dyn Storage>));
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
-        let trigram_index_arc = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+        let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
         let deletion_service = kotadb::CoordinatedDeletionService::new(
             Arc::clone(&storage_arc),
@@ -1044,7 +1043,7 @@ async fn main() -> Result<()> {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
                 };
 
                 // Display detailed results
@@ -1258,12 +1257,12 @@ async fn main() -> Result<()> {
                     let symbol_db_path = cli.db_path.join("symbols.kota");
                     ingester.ingest_with_binary_symbols(
                         &repo_path,
-                        &mut **storage,
+                        &mut *storage,
                         &symbol_db_path,
                         Some(progress_callback),
                     ).await?
                 } else {
-                    ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?
+                    ingester.ingest_with_progress(&repo_path, &mut *storage, Some(progress_callback)).await?
                 };
 
                 #[cfg(not(feature = "tree-sitter-parsing"))]
@@ -1319,7 +1318,7 @@ async fn main() -> Result<()> {
                     let storage = db.storage.lock().await;
                     let primary_index = db.primary_index.lock().await;
                     let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&**storage, &**primary_index, &**trigram_index).await?
+                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
                 };
 
                 validation_progress.finish_with_message("✅ Validation complete");

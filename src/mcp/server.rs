@@ -19,7 +19,7 @@ pub struct MCPServer {
     tool_registry: Arc<MCPToolRegistry>,
     storage: Arc<Mutex<dyn Storage>>,
     #[allow(dead_code)] // Will be used for path-based operations
-    primary_index: Arc<Mutex<Box<dyn Index>>>,
+    primary_index: Arc<Mutex<dyn Index>>,
     #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
     deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
@@ -79,7 +79,8 @@ impl MCPServer {
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
 
-        // Create single storage instance and share via Arc cloning
+        // Create SINGLE storage instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
         let storage_impl = create_mcp_storage(
             &config.database.data_dir,
             Some(config.database.max_cache_size),
@@ -87,45 +88,28 @@ impl MCPServer {
         .await?;
         let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage_impl));
 
-        // For deletion service, we need Box<dyn Storage> but must create new instance
-        // due to type constraints. Both instances share the same underlying file storage.
-        let storage_for_deletion = Box::new(
-            create_mcp_storage(
-                &config.database.data_dir,
-                Some(config.database.max_cache_size),
-            )
-            .await?,
-        ) as Box<dyn Storage>;
-        let storage_boxed = Arc::new(Mutex::new(storage_for_deletion));
-
-        // Create primary index for path-based operations
+        // Create SINGLE primary index instance shared across all components
         let primary_index_path =
             std::path::Path::new(&config.database.data_dir).join("primary_index");
         std::fs::create_dir_all(&primary_index_path)?;
         let primary_index =
             create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
-        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
 
-        // Create trigram index - minimize instances to 2 (type constraints prevent sharing)
+        // Create SINGLE trigram index instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
         let trigram_index_path =
             std::path::Path::new(&config.database.data_dir).join("trigram_index");
         std::fs::create_dir_all(&trigram_index_path)?;
-
-        // First instance for deletion service (needs Box<dyn Index>)
         let trigram_index =
             create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        let trigram_index_boxed = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
-        // Second instance shared between search tools and semantic engine
-        let trigram_index_shared =
-            create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-        let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index_shared));
-
-        // Create coordinated deletion service
+        // Create coordinated deletion service using the SAME shared instances
         let deletion_service = Arc::new(CoordinatedDeletionService::new(
-            Arc::clone(&storage_boxed),
-            Arc::clone(&primary_index_arc),
-            Arc::clone(&trigram_index_boxed),
+            Arc::clone(&storage),
+            Arc::clone(&primary_index),
+            Arc::clone(&trigram_index),
         ));
 
         // Initialize tool registry based on configuration
@@ -150,16 +134,15 @@ impl MCPServer {
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
 
-            // SemanticSearchEngine takes ownership, so we must create new instances
-            // This is required because it manages its own vector index separately
+            // SemanticSearchEngine requires Box<dyn Trait> ownership model
+            // This necessitates creating separate storage and trigram instances
+            // TODO: Future optimization could refactor SemanticSearchEngine to use Arc<Mutex<dyn Trait>>
             let semantic_storage = create_mcp_storage(
                 &config.database.data_dir,
                 Some(config.database.max_cache_size),
             )
             .await?;
 
-            // Clone the shared trigram index for semantic engine
-            // This reuses the same index instance as search tools
             let trigram_index_for_semantic =
                 create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
 
@@ -173,7 +156,7 @@ impl MCPServer {
             let semantic_engine = Arc::new(Mutex::new(semantic_engine));
 
             let search_tools = Arc::new(SearchTools::new(
-                trigram_index_arc.clone(),
+                trigram_index.clone(),
                 semantic_engine,
                 storage.clone(),
             ));
@@ -184,7 +167,7 @@ impl MCPServer {
             config,
             tool_registry: Arc::new(tool_registry),
             storage,
-            primary_index: primary_index_arc,
+            primary_index,
             deletion_service,
             start_time: Instant::now(),
         })
