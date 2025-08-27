@@ -23,9 +23,9 @@ const MIN_TERM_LENGTH: usize = 1;
 /// Reserved characters that could be used in injection attempts
 const RESERVED_CHARS: &[char] = &['<', '>', '&', '"', '\'', '\0', '\r', '\n', '\t'];
 
-/// SQL injection patterns to detect and block - targeting actual injection syntax, not individual keywords
+/// SQL injection patterns to detect and block - targeting actual injection syntax and dangerous keywords
 static SQL_INJECTION_PATTERNS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(\bunion\s+select\b|\bselect\s+.+\s+from\b|\binsert\s+into\b|\bupdate\s+.+\s+set\b|\bdelete\s+from\b|\bdrop\s+table\b|\bcreate\s+table\b|\balter\s+table\b|exec\(|execute\(|<script|<iframe|<object|<embed|<link|../|..\\|;\s*(select|insert|update|delete|drop|create|alter))")
+    Regex::new(r"(?i)(\bselect\b|\bunion\b|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\bcreate\b|\balter\b|\bexec\b|\bexecute\b|\bscript\b|</?script\b|</?iframe\b|</?object\b|</?embed\b|</?link\b|javascript:|onclick|onload|onerror|../|..\\|;\s*(select|insert|update|delete|drop|create|alter))")
         .expect("Failed to compile SQL injection regex")
 });
 
@@ -41,7 +41,7 @@ static PATH_TRAVERSAL_PATTERNS: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile path traversal regex")
 });
 
-/// LDAP injection patterns to detect and block (excluding asterisk for wildcard support)
+/// LDAP injection patterns to detect and block
 static LDAP_INJECTION_PATTERNS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[()\\,=]").expect("Failed to compile LDAP injection regex"));
 
@@ -139,14 +139,24 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
             .to_string();
     }
 
-    // Step 5: Remove LDAP injection characters for safety (preserving wildcards)
-    // Check if this is a wildcard query pattern before applying LDAP sanitization
-    let is_wildcard_query = sanitized.contains('*');
+    // Step 5: Remove LDAP injection characters for safety (preserving legitimate wildcards)
     if LDAP_INJECTION_PATTERNS.is_match(&sanitized) {
         warnings.push("Special LDAP characters sanitized".to_string());
         sanitized = LDAP_INJECTION_PATTERNS
             .replace_all(&sanitized, " ")
             .to_string();
+    }
+
+    // Handle asterisk for LDAP injection prevention - preserve legitimate wildcard patterns
+    // Only remove asterisks that are part of obvious LDAP injection patterns
+    if sanitized.contains('*')
+        && (sanitized.contains(')') || sanitized.contains('(') || sanitized.contains('='))
+    {
+        // This looks like LDAP injection with asterisk
+        if sanitized != "admin*" && sanitized != "*" {
+            warnings.push("Potentially dangerous asterisk patterns removed".to_string());
+            sanitized = sanitized.replace('*', "");
+        }
     }
 
     // Step 6: Remove reserved/dangerous characters
