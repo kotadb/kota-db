@@ -461,8 +461,13 @@ impl Index for PrimaryIndex {
         // Use B+ tree traversal to get all documents (O(n) for full scan, but sorted)
         let all_pairs = extract_all_pairs(&btree_root)?;
 
-        // Check if we have wildcard patterns in search terms
-        let wildcard_pattern = if query.search_terms.len() == 1 {
+        // Check for wildcard patterns in path_pattern field first, then search_terms
+        // The QueryBuilder puts wildcard queries in path_pattern (see issue #337)
+        let wildcard_pattern = if let Some(ref pattern) = query.path_pattern {
+            // Use the path_pattern field if it's set (this is where wildcards go)
+            Some(pattern.clone())
+        } else if query.search_terms.len() == 1 {
+            // Fall back to checking search_terms for backward compatibility
             let term = &query.search_terms[0];
             if term.as_str().contains('*') {
                 Some(term.as_str().to_string())
