@@ -43,6 +43,10 @@ pub mod symbol_storage;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod binary_symbols;
 
+// Binary-to-relationship bridge for dependency graph construction
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod binary_relationship_bridge;
+
 // Symbol-aware index for code-specific searches
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod symbol_index;

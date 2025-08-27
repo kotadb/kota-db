@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 
 // Symbol extraction imports
 #[cfg(feature = "tree-sitter-parsing")]
+use crate::binary_relationship_bridge::BinaryRelationshipBridge;
+#[cfg(feature = "tree-sitter-parsing")]
 use crate::binary_symbols::BinarySymbolWriter;
 #[cfg(feature = "tree-sitter-parsing")]
 use crate::parsing::{CodeParser, SupportedLanguage};
@@ -336,6 +338,89 @@ impl RepositoryIngester {
         info!(
             "Binary ingestion complete: {} documents, {} symbols",
             result.documents_created, result.symbols_extracted
+        );
+
+        Ok(result)
+    }
+
+    /// Ingest a git repository with binary symbols and relationships (complete hybrid solution)
+    #[cfg(feature = "tree-sitter-parsing")]
+    pub async fn ingest_with_binary_symbols_and_relationships<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        symbol_db_path: impl AsRef<Path>,
+        graph_db_path: impl AsRef<Path>,
+        progress_callback: Option<ProgressCallback>,
+    ) -> Result<IngestResult> {
+        let repo_path = repo_path.as_ref();
+        info!(
+            "Starting repository ingestion with binary symbols and relationships from: {:?}",
+            repo_path
+        );
+
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+        };
+
+        // First, perform binary symbol extraction
+        let mut result = self
+            .ingest_with_binary_symbols(repo_path, storage, symbol_db_path.as_ref(), None)
+            .await?;
+
+        // Now extract relationships using the bridge
+        report_progress("Phase 3: Extracting relationships from binary symbols...");
+
+        let relationship_start = std::time::Instant::now();
+
+        // Re-open repository to get files for relationship extraction
+        let repo = GitRepository::open(repo_path, self.config.options.clone())
+            .context("Failed to reopen git repository")?;
+
+        let files = repo
+            .list_files()
+            .context("Failed to list repository files for relationship extraction")?;
+
+        // Convert files to the format expected by the bridge
+        let file_contents: Vec<(std::path::PathBuf, Vec<u8>)> = files
+            .iter()
+            .filter(|f| !f.is_binary)
+            .map(|f| (std::path::PathBuf::from(&f.path), f.content.clone()))
+            .collect();
+
+        // Extract relationships using the bridge
+        let bridge = BinaryRelationshipBridge::new();
+        match bridge.extract_relationships(symbol_db_path.as_ref(), repo_path, &file_contents) {
+            Ok(dependency_graph) => {
+                result.relationships_extracted = dependency_graph.stats.edge_count;
+
+                // Serialize and save the dependency graph
+                let serializable = dependency_graph.to_serializable();
+                let graph_json = serde_json::to_vec_pretty(&serializable)?;
+                std::fs::write(graph_db_path.as_ref(), graph_json)?;
+
+                let elapsed = relationship_start.elapsed();
+                info!(
+                    "Extracted {} relationships in {:?}",
+                    result.relationships_extracted, elapsed
+                );
+
+                report_progress(&format!(
+                    "Relationship extraction complete: {} relationships in {:?}",
+                    result.relationships_extracted, elapsed
+                ));
+            }
+            Err(e) => {
+                warn!("Failed to extract relationships: {}", e);
+                result.errors += 1;
+            }
+        }
+
+        info!(
+            "Complete hybrid ingestion: {} documents, {} symbols, {} relationships",
+            result.documents_created, result.symbols_extracted, result.relationships_extracted
         );
 
         Ok(result)
@@ -1251,6 +1336,8 @@ pub struct IngestResult {
     pub symbols_extracted: usize,
     /// Number of files that had symbol extraction attempted
     pub files_with_symbols: usize,
+    /// Number of relationships extracted between symbols
+    pub relationships_extracted: usize,
     /// Number of errors encountered
     pub errors: usize,
 }
