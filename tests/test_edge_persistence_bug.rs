@@ -1,4 +1,5 @@
 //! Test to reproduce Issue #341: Edge persistence bug in relationship queries
+#![allow(clippy::print_stderr)]
 
 use anyhow::Result;
 use kotadb::{
@@ -22,7 +23,7 @@ async fn test_edge_persistence_bug_simple() -> Result<()> {
     tokio::fs::create_dir_all(&storage_path).await?;
     tokio::fs::create_dir_all(&graph_path).await?;
 
-    println!("Testing edge persistence at: {:?}", graph_path);
+    eprintln!("Testing edge persistence at: {:?}", graph_path);
 
     // Phase 1: Create storage and add some test edges
     {
@@ -37,12 +38,12 @@ async fn test_edge_persistence_bug_simple() -> Result<()> {
 
         // Check initial state
         let stats = symbol_storage.get_stats();
-        println!("Initial stats: {} symbols", stats.total_symbols);
+        eprintln!("Initial stats: {} symbols", stats.total_symbols);
 
         // For now, just test that the storage was created properly
         // and the directories exist
         let edges_dir = graph_path.join("edges");
-        println!("Edges directory: {:?}", edges_dir);
+        eprintln!("Edges directory: {:?}", edges_dir);
 
         // CRITICAL: Flush to ensure any edges would be persisted
         drop(symbol_storage); // This should trigger cleanup/flush
@@ -51,7 +52,7 @@ async fn test_edge_persistence_bug_simple() -> Result<()> {
     // Phase 2: Check if edges directory exists and has content
     let edges_dir = graph_path.join("edges");
     let edges_exist = edges_dir.exists();
-    println!("Edges directory exists after first phase: {}", edges_exist);
+    eprintln!("Edges directory exists after first phase: {}", edges_exist);
 
     if edges_exist {
         let mut entries = tokio::fs::read_dir(&edges_dir).await?;
@@ -60,22 +61,22 @@ async fn test_edge_persistence_bug_simple() -> Result<()> {
             if entry.path().extension().and_then(|s| s.to_str()) == Some("page") {
                 file_count += 1;
                 let file_size = entry.metadata().await?.len();
-                println!(
+                eprintln!(
                     "Found edge page file: {:?}, size: {} bytes",
                     entry.file_name(),
                     file_size
                 );
             }
         }
-        println!("Total edge page files: {}", file_count);
+        eprintln!("Total edge page files: {}", file_count);
 
         // The bug manifests as having 0 edge files even after relationships are created
-        println!(
+        eprintln!(
             "✅ Edge directory exists but contains {} files (bug will show 0)",
             file_count
         );
     } else {
-        println!("❌ Edges directory doesn't exist at all");
+        eprintln!("❌ Edges directory doesn't exist at all");
     }
 
     Ok(())
@@ -96,8 +97,8 @@ async fn test_native_graph_storage_direct() -> Result<()> {
     let node1_id = Uuid::new_v4();
     let node2_id = Uuid::new_v4();
 
-    println!("Testing direct graph storage persistence");
-    println!("Node1: {}, Node2: {}", node1_id, node2_id);
+    eprintln!("Testing direct graph storage persistence");
+    eprintln!("Node1: {}, Node2: {}", node1_id, node2_id);
 
     // Phase 1: Create graph storage and add test data
     {
@@ -154,25 +155,25 @@ async fn test_native_graph_storage_direct() -> Result<()> {
         };
 
         // Store edge - THIS IS THE CRITICAL TEST
-        println!("Storing edge: {} -> {}", node1_id, node2_id);
+        eprintln!("Storing edge: {} -> {}", node1_id, node2_id);
         graph_storage.store_edge(node1_id, node2_id, edge).await?;
 
         // Check if edges are in memory
         let edges = graph_storage
             .get_edges(node1_id, petgraph::Direction::Outgoing)
             .await?;
-        println!("Edges in memory after store_edge: {}", edges.len());
+        eprintln!("Edges in memory after store_edge: {}", edges.len());
         assert_eq!(edges.len(), 1, "Should have 1 edge in memory");
 
         // CRITICAL: Flush to disk
-        println!("Calling flush...");
+        eprintln!("Calling flush...");
         graph_storage.flush().await?;
-        println!("Flush completed");
+        eprintln!("Flush completed");
 
         // Check edges directory
         let edges_dir = graph_path.join("edges");
         let edges_exist = edges_dir.exists();
-        println!("Edges directory exists after flush: {}", edges_exist);
+        eprintln!("Edges directory exists after flush: {}", edges_exist);
 
         if edges_exist {
             let mut entries = tokio::fs::read_dir(&edges_dir).await?;
@@ -183,14 +184,14 @@ async fn test_native_graph_storage_direct() -> Result<()> {
                     file_count += 1;
                     let file_size = entry.metadata().await?.len();
                     total_size += file_size;
-                    println!(
+                    eprintln!(
                         "Edge page file: {:?}, size: {} bytes",
                         entry.file_name(),
                         file_size
                     );
                 }
             }
-            println!(
+            eprintln!(
                 "After flush: {} edge page files, {} total bytes",
                 file_count, total_size
             );
@@ -199,7 +200,7 @@ async fn test_native_graph_storage_direct() -> Result<()> {
 
     // Phase 2: Reload and check if edges persist
     {
-        println!("Phase 2: Reloading graph storage...");
+        eprintln!("Phase 2: Reloading graph storage...");
         let config = GraphStorageConfig::default();
         let graph_storage = NativeGraphStorage::new(&graph_path, config).await?;
 
@@ -207,7 +208,7 @@ async fn test_native_graph_storage_direct() -> Result<()> {
         let edges = graph_storage
             .get_edges(node1_id, petgraph::Direction::Outgoing)
             .await?;
-        println!("Edges loaded from disk: {}", edges.len());
+        eprintln!("Edges loaded from disk: {}", edges.len());
 
         // This assertion will FAIL due to bug #341
         assert_eq!(
@@ -218,13 +219,13 @@ async fn test_native_graph_storage_direct() -> Result<()> {
 
         if !edges.is_empty() {
             let (target_id, edge_data) = &edges[0];
-            println!(
+            eprintln!(
                 "Loaded edge: {} -> {} (type: {:?})",
                 node1_id, target_id, edge_data.relation_type
             );
         }
     }
 
-    println!("✅ Direct graph storage test passed!");
+    eprintln!("✅ Direct graph storage test passed!");
     Ok(())
 }
