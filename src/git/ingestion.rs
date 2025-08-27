@@ -11,7 +11,15 @@ use crate::git::types::{CommitInfo, FileEntry, IngestionOptions};
 use crate::Document;
 use crate::Storage;
 
+// For parallel processing
+use futures::stream::StreamExt;
+use rayon::prelude::*;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
 // Symbol extraction imports
+#[cfg(feature = "tree-sitter-parsing")]
+use crate::binary_symbols::BinarySymbolWriter;
 #[cfg(feature = "tree-sitter-parsing")]
 use crate::parsing::{CodeParser, SupportedLanguage};
 #[cfg(feature = "tree-sitter-parsing")]
@@ -144,6 +152,181 @@ impl RepositoryIngester {
         .await
     }
 
+    /// Ingest a git repository with binary symbol storage (high-performance)
+    #[cfg(feature = "tree-sitter-parsing")]
+    pub async fn ingest_with_binary_symbols<S: Storage + ?Sized>(
+        &self,
+        repo_path: impl AsRef<Path>,
+        storage: &mut S,
+        symbol_db_path: impl AsRef<Path>,
+        progress_callback: Option<ProgressCallback>,
+    ) -> Result<IngestResult> {
+        let repo_path = repo_path.as_ref();
+        info!(
+            "Starting repository ingestion with binary symbols from: {:?}",
+            repo_path
+        );
+
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+        };
+
+        report_progress("Opening repository...");
+
+        // Open the repository
+        let repo = GitRepository::open(repo_path, self.config.options.clone())
+            .context("Failed to open git repository")?;
+
+        // Get repository metadata
+        let metadata = repo
+            .metadata()
+            .context("Failed to get repository metadata")?;
+
+        let safe_repo_name = Self::sanitize_name(&metadata.name);
+        info!(
+            "Repository: {} ({} commits)",
+            metadata.name, metadata.commit_count
+        );
+
+        let mut result = IngestResult::default();
+
+        // Ingest files first
+        report_progress("Discovering repository files...");
+        let files = repo
+            .list_files()
+            .context("Failed to list repository files")?;
+
+        info!("Found {} files to ingest", files.len());
+
+        if !files.is_empty() {
+            // Phase 1: Insert documents
+            report_progress("Phase 1: Inserting documents...");
+
+            for file in &files {
+                match self.create_file_document(&safe_repo_name, file) {
+                    Ok(doc) => {
+                        if let Err(e) = storage.insert(doc).await {
+                            warn!("Failed to insert file document {}: {}", file.path, e);
+                            result.errors += 1;
+                        } else {
+                            result.documents_created += 1;
+                            result.files_ingested += 1;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to create document for {}: {}", file.path, e);
+                        result.errors += 1;
+                    }
+                }
+            }
+
+            // Phase 2: Extract symbols with binary format
+            if self.config.options.extract_symbols {
+                report_progress("Phase 2: Extracting symbols with binary format...");
+
+                let parse_start = std::time::Instant::now();
+
+                // Parse all files in parallel using rayon
+                let parsed_symbols: Vec<_> = files
+                    .par_iter()
+                    .filter_map(|file| {
+                        // Skip binary files
+                        if file.is_binary {
+                            return None;
+                        }
+
+                        // Check file extension
+                        let extension = file.extension.as_ref()?;
+                        let language = SupportedLanguage::from_extension(extension)?;
+
+                        // Convert content to string
+                        let content = String::from_utf8(file.content.clone()).ok()?;
+
+                        // Create a local parser for this thread
+                        let mut local_parser = CodeParser::new().ok()?;
+
+                        // Parse the file
+                        let parsed_code = local_parser.parse_content(&content, language).ok()?;
+
+                        // Return symbols with file context
+                        Some((file.path.clone(), parsed_code.symbols))
+                    })
+                    .collect();
+
+                let parse_elapsed = parse_start.elapsed();
+                info!(
+                    "Parsed {} files in {:?}",
+                    parsed_symbols.len(),
+                    parse_elapsed
+                );
+
+                // Write symbols to binary format
+                report_progress("Writing symbols to binary database...");
+                let mut writer = BinarySymbolWriter::new();
+
+                for (file_path, symbols) in parsed_symbols {
+                    for symbol in symbols {
+                        // Convert symbol type to byte representation
+                        let kind = match symbol.symbol_type {
+                            crate::parsing::SymbolType::Function => 1,
+                            crate::parsing::SymbolType::Method => 2,
+                            crate::parsing::SymbolType::Class => 3,
+                            crate::parsing::SymbolType::Struct => 4,
+                            crate::parsing::SymbolType::Enum => 5,
+                            crate::parsing::SymbolType::Variable => 6,
+                            crate::parsing::SymbolType::Constant => 7,
+                            crate::parsing::SymbolType::Module => 8,
+                            _ => 0,
+                        };
+
+                        writer.add_symbol(
+                            uuid::Uuid::new_v4(),
+                            &symbol.name,
+                            kind,
+                            &file_path,
+                            symbol.start_line as u32,
+                            symbol.end_line as u32,
+                            None, // TODO: Handle parent relationships
+                        );
+
+                        result.symbols_extracted += 1;
+                    }
+
+                    if result.symbols_extracted > 0 {
+                        result.files_with_symbols += 1;
+                    }
+                }
+
+                // Write to file
+                let write_start = std::time::Instant::now();
+                writer.write_to_file(symbol_db_path.as_ref())?;
+                let write_elapsed = write_start.elapsed();
+
+                info!(
+                    "Wrote {} symbols to binary database in {:?} (total: {:?})",
+                    result.symbols_extracted,
+                    write_elapsed,
+                    parse_elapsed + write_elapsed
+                );
+
+                report_progress(&format!(
+                    "Symbol extraction complete: {} symbols in {:?}",
+                    result.symbols_extracted,
+                    parse_elapsed + write_elapsed
+                ));
+            }
+        }
+
+        info!(
+            "Binary ingestion complete: {} documents, {} symbols",
+            result.documents_created, result.symbols_extracted
+        );
+
+        Ok(result)
+    }
+
     /// Internal ingestion method that handles both cases
     #[cfg(feature = "tree-sitter-parsing")]
     #[instrument(skip(
@@ -223,60 +406,237 @@ impl RepositoryIngester {
             if !files.is_empty() {
                 report_progress(&format!("Processing {} files...", files.len()));
 
-                let mut last_progress_time = std::time::Instant::now();
-                let progress_throttle = std::time::Duration::from_millis(250); // Update every 250ms max
+                // Optimized parallel processing with symbol extraction
+                info!(
+                    "Symbol extraction flag: {}",
+                    self.config.options.extract_symbols
+                );
+                if self.config.options.extract_symbols {
+                    info!("Entering optimized symbol extraction branch");
+                    // When extracting symbols, process in two phases for optimal performance:
+                    // Phase 1: Batch insert all documents into storage (leverages dual-index)
+                    // Phase 2: Extract symbols in parallel batches
 
-                for (index, file) in files.iter().enumerate() {
-                    let now = std::time::Instant::now();
-                    let should_report = index % 50 == 0 || // Every 50 files
-                        index + 1 == files.len() || // Last file
-                        now.duration_since(last_progress_time) >= progress_throttle; // Time-based throttle
+                    report_progress("Phase 1: Inserting documents into storage...");
+                    info!("Starting Phase 1");
 
-                    if should_report {
-                        let progress = ((index + 1) as f64 / files.len() as f64 * 100.0) as u32;
-                        report_progress(&format!(
-                            "Processing files: {}/{} ({}%)",
-                            index + 1,
-                            files.len(),
-                            progress
-                        ));
-                        last_progress_time = now;
-                    }
+                    // Process documents in batches of 100 for efficient I/O
+                    let doc_batch_size = 100;
+                    let mut doc_batch_start = 0;
 
-                    match self.create_file_document(&safe_repo_name, file) {
-                        Ok(doc) => {
-                            if let Err(e) = storage.insert(doc).await {
-                                warn!("Failed to insert file document {}: {}", file.path, e);
-                                result.errors += 1;
-                            } else {
-                                result.documents_created += 1;
-                                result.files_ingested += 1;
+                    while doc_batch_start < files.len() {
+                        let doc_batch_end =
+                            std::cmp::min(doc_batch_start + doc_batch_size, files.len());
+                        let doc_batch = &files[doc_batch_start..doc_batch_end];
 
-                                // Extract symbols if enabled and this is a supported file type
-                                if self.config.options.extract_symbols {
-                                    if let (Some(symbol_storage), Some(code_parser)) =
-                                        (symbol_storage.as_mut(), code_parser.as_mut())
-                                    {
-                                        if let Some(symbols_extracted) =
-                                            Self::extract_symbols_from_file(
-                                                file,
-                                                &safe_repo_name,
-                                                symbol_storage,
-                                                code_parser,
-                                            )
-                                            .await
-                                        {
-                                            result.symbols_extracted += symbols_extracted;
-                                            result.files_with_symbols += 1;
-                                        }
+                        // Create documents synchronously (they're not async)
+                        let documents_results: Vec<_> = doc_batch
+                            .iter()
+                            .map(|file| self.create_file_document(&safe_repo_name, file))
+                            .collect();
+
+                        // Insert documents
+                        for (file, doc_result) in doc_batch.iter().zip(documents_results) {
+                            match doc_result {
+                                Ok(doc) => {
+                                    if let Err(e) = storage.insert(doc).await {
+                                        warn!(
+                                            "Failed to insert file document {}: {}",
+                                            file.path, e
+                                        );
+                                        result.errors += 1;
+                                    } else {
+                                        result.documents_created += 1;
+                                        result.files_ingested += 1;
                                     }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create document for {}: {}", file.path, e);
+                                    result.errors += 1;
                                 }
                             }
                         }
-                        Err(e) => {
-                            warn!("Failed to create document for {}: {}", file.path, e);
-                            result.errors += 1;
+
+                        let progress = (doc_batch_end as f64 / files.len() as f64 * 100.0) as u32;
+                        report_progress(&format!(
+                            "Inserted documents: {}/{} ({}%)",
+                            doc_batch_end,
+                            files.len(),
+                            progress
+                        ));
+
+                        doc_batch_start = doc_batch_end;
+                    }
+
+                    // Phase 2: Extract symbols with true parallel processing using rayon
+                    if self.config.options.extract_symbols {
+                        if let (Some(symbol_storage), Some(_code_parser)) =
+                            (symbol_storage.as_mut(), code_parser.as_mut())
+                        {
+                            report_progress(
+                                "Phase 2: Extracting symbols with rayon parallelization...",
+                            );
+                            info!(
+                                "Starting rayon-based parallel symbol extraction for {} files",
+                                files.len()
+                            );
+
+                            let parse_start = std::time::Instant::now();
+
+                            // Parse all files in parallel using rayon
+                            let parsed_files: Vec<_> = files
+                                .par_iter()
+                                .filter_map(|file| {
+                                    // Skip binary files
+                                    if file.is_binary {
+                                        return None;
+                                    }
+
+                                    // Check file extension
+                                    let extension = file.extension.as_ref()?;
+                                    let language = SupportedLanguage::from_extension(extension)?;
+
+                                    // Convert content to string
+                                    let content = String::from_utf8(file.content.clone()).ok()?;
+
+                                    // Create a local parser for this thread
+                                    let mut local_parser = CodeParser::new().ok()?;
+
+                                    // Parse the file
+                                    let parsed_code =
+                                        local_parser.parse_content(&content, language).ok()?;
+
+                                    Some((file.path.clone(), parsed_code))
+                                })
+                                .collect();
+
+                            let parse_elapsed = parse_start.elapsed();
+                            info!(
+                                "Parsed {} files in parallel in {:?}",
+                                parsed_files.len(),
+                                parse_elapsed
+                            );
+                            report_progress(&format!(
+                                "Parsed {} files in {:?}, storing symbols...",
+                                parsed_files.len(),
+                                parse_elapsed
+                            ));
+
+                            // Store symbols sequentially (SymbolStorage requires mutable access)
+                            let storage_start = std::time::Instant::now();
+                            let mut processed_count = 0;
+                            let total_parsed = parsed_files.len();
+                            let mut last_progress_time = std::time::Instant::now();
+                            info!("Starting to store {} parsed files", total_parsed);
+
+                            for (file_path, parsed_code) in parsed_files {
+                                let path = Path::new(&file_path);
+                                match symbol_storage
+                                    .extract_symbols(
+                                        path,
+                                        parsed_code,
+                                        Some(safe_repo_name.to_string()),
+                                    )
+                                    .await
+                                {
+                                    Ok(symbol_ids) => {
+                                        let count = symbol_ids.len();
+                                        if count > 0 {
+                                            result.symbols_extracted += count;
+                                            result.files_with_symbols += 1;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to store symbols from {}: {}", file_path, e);
+                                        result.errors += 1;
+                                    }
+                                }
+
+                                processed_count += 1;
+
+                                // Report progress periodically
+                                let now = std::time::Instant::now();
+                                if now.duration_since(last_progress_time)
+                                    >= std::time::Duration::from_millis(500)
+                                {
+                                    let progress = (processed_count as f64 / total_parsed as f64
+                                        * 100.0)
+                                        as u32;
+                                    report_progress(&format!(
+                                        "Storing symbols: {}/{} files ({}%), {} symbols found",
+                                        processed_count,
+                                        total_parsed,
+                                        progress,
+                                        result.symbols_extracted
+                                    ));
+                                    last_progress_time = now;
+                                }
+                            }
+
+                            let storage_elapsed = storage_start.elapsed();
+                            info!("Stored symbols in {:?}", storage_elapsed);
+                            report_progress(&format!(
+                                "Symbol extraction complete: {} symbols from {} files (parse: {:?}, store: {:?})",
+                                result.symbols_extracted,
+                                result.files_with_symbols,
+                                parse_elapsed,
+                                storage_elapsed
+                            ));
                         }
+                    }
+                } else {
+                    // Non-symbol extraction path: just insert documents in batches
+                    let batch_size = 100;
+                    let mut batch_start = 0;
+                    let mut last_progress_time = std::time::Instant::now();
+                    let progress_throttle = std::time::Duration::from_millis(250);
+
+                    while batch_start < files.len() {
+                        let batch_end = std::cmp::min(batch_start + batch_size, files.len());
+                        let batch = &files[batch_start..batch_end];
+
+                        // Report progress
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_progress_time) >= progress_throttle {
+                            let progress = (batch_end as f64 / files.len() as f64 * 100.0) as u32;
+                            report_progress(&format!(
+                                "Processing files: {}/{} ({}%)",
+                                batch_end,
+                                files.len(),
+                                progress
+                            ));
+                            last_progress_time = now;
+                        }
+
+                        // Create documents synchronously (they're not async)
+                        let documents_results: Vec<_> = batch
+                            .iter()
+                            .map(|file| self.create_file_document(&safe_repo_name, file))
+                            .collect();
+
+                        // Insert documents
+                        for (file, doc_result) in batch.iter().zip(documents_results) {
+                            match doc_result {
+                                Ok(doc) => {
+                                    if let Err(e) = storage.insert(doc).await {
+                                        warn!(
+                                            "Failed to insert file document {}: {}",
+                                            file.path, e
+                                        );
+                                        result.errors += 1;
+                                    } else {
+                                        result.documents_created += 1;
+                                        result.files_ingested += 1;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create document for {}: {}", file.path, e);
+                                    result.errors += 1;
+                                }
+                            }
+                        }
+
+                        batch_start = batch_end;
                     }
                 }
             }
@@ -713,8 +1073,104 @@ impl RepositoryIngester {
         builder.build()
     }
 
-    /// Extract symbols from a file if it's a supported language
+    /// Process symbol extraction for a batch of files in parallel
     #[cfg(feature = "tree-sitter-parsing")]
+    #[allow(dead_code)]
+    async fn extract_symbols_batch(
+        files: &[FileEntry],
+        repository_name: &str,
+        symbol_storage: Arc<Mutex<SymbolStorage>>,
+    ) -> Result<(usize, usize)> {
+        use futures::stream;
+
+        // Create a separate parser for each concurrent task to avoid contention
+        let concurrent_limit = num_cpus::get().min(8); // Limit concurrency to available CPUs
+
+        let results = stream::iter(files.iter())
+            .map(|file| {
+                let repo_name = repository_name.to_string();
+                let storage_clone = Arc::clone(&symbol_storage);
+
+                async move {
+                    // Create explicit result type
+                    let result: Result<(usize, bool)> = async {
+                        // Skip binary files
+                        if file.is_binary {
+                            return Ok((0, false));
+                        }
+
+                        // Get file extension
+                        let extension = file.extension.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!("No extension for file: {}", file.path)
+                        })?;
+
+                        // Check if language is supported
+                        let language = match SupportedLanguage::from_extension(extension) {
+                            Some(lang) => lang,
+                            None => return Ok((0, false)), // Not a supported language
+                        };
+
+                        // Convert content to string
+                        let content = String::from_utf8(file.content.clone())
+                            .context("Failed to decode file as UTF-8")?;
+
+                        // Create a local parser for this file
+                        let mut code_parser = CodeParser::new()?;
+
+                        // Parse the file content
+                        let parsed_code = code_parser
+                            .parse_content(&content, language)
+                            .context("Failed to parse file")?;
+
+                        // Extract symbols using shared storage
+                        let file_path = Path::new(&file.path);
+                        let mut storage = storage_clone.lock().await;
+
+                        let symbol_ids = storage
+                            .extract_symbols(file_path, parsed_code, Some(repo_name))
+                            .await
+                            .context("Failed to extract symbols")?;
+
+                        let count = symbol_ids.len();
+                        if count > 0 {
+                            info!("Extracted {} symbols from {}", count, file.path);
+                        }
+
+                        Ok((count, count > 0))
+                    }
+                    .await;
+
+                    result
+                }
+            })
+            .buffer_unordered(concurrent_limit)
+            .collect::<Vec<_>>()
+            .await;
+
+        // Aggregate results
+        let mut total_symbols = 0;
+        let mut files_with_symbols = 0;
+
+        for result in results {
+            match result {
+                Ok((count, has_symbols)) => {
+                    total_symbols += count;
+                    if has_symbols {
+                        files_with_symbols += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!("Symbol extraction error: {}", e);
+                }
+            }
+        }
+
+        Ok((total_symbols, files_with_symbols))
+    }
+
+    /// Extract symbols from a file if it's a supported language (legacy sequential method)
+    #[cfg(feature = "tree-sitter-parsing")]
+    #[allow(dead_code)]
     async fn extract_symbols_from_file(
         file: &FileEntry,
         repository_name: &str,

@@ -425,11 +425,12 @@ impl SymbolStorage {
         parsed_code: ParsedCode,
         repository: Option<String>,
     ) -> Result<Vec<Uuid>> {
-        info!(
-            "Extracting {} symbols from {}",
-            parsed_code.symbols.len(),
-            file_path.display()
-        );
+        // Commenting out verbose logging for performance
+        // info!(
+        //     "Extracting {} symbols from {}",
+        //     parsed_code.symbols.len(),
+        //     file_path.display()
+        // );
 
         let mut symbol_ids = Vec::new();
         let mut parent_stack: Vec<(Uuid, usize)> = Vec::new(); // (id, end_line)
