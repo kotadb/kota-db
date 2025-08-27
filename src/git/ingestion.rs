@@ -267,6 +267,10 @@ impl RepositoryIngester {
                 let mut writer = BinarySymbolWriter::new();
 
                 for (file_path, symbols) in parsed_symbols {
+                    if !symbols.is_empty() {
+                        result.files_with_symbols += 1;
+                    }
+
                     for symbol in symbols {
                         // Convert symbol type to byte representation
                         let kind = match symbol.symbol_type {
@@ -281,6 +285,12 @@ impl RepositoryIngester {
                             _ => 0,
                         };
 
+                        // TODO: Implement parent relationship tracking
+                        // This requires either:
+                        // 1. Two-pass processing to build parent ID map
+                        // 2. Maintaining a name->UUID map during processing
+                        let parent_id: Option<uuid::Uuid> = None;
+
                         writer.add_symbol(
                             uuid::Uuid::new_v4(),
                             &symbol.name,
@@ -288,14 +298,10 @@ impl RepositoryIngester {
                             &file_path,
                             symbol.start_line as u32,
                             symbol.end_line as u32,
-                            None, // TODO: Handle parent relationships
+                            parent_id,
                         );
 
                         result.symbols_extracted += 1;
-                    }
-
-                    if result.symbols_extracted > 0 {
-                        result.files_with_symbols += 1;
                     }
                 }
 

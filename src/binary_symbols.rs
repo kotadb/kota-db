@@ -17,7 +17,21 @@ const KOTA_MAGIC: &[u8; 4] = b"KOTA";
 /// Current version of the binary format
 const FORMAT_VERSION: u32 = 1;
 
+/// Platform endianness marker (1 = little-endian, 2 = big-endian)
+/// TODO: Store this in header reserved bytes in v2 for cross-platform support
+#[cfg(target_endian = "little")]
+#[allow(dead_code)]
+const ENDIAN_MARKER: u32 = 1;
+#[cfg(target_endian = "big")]
+#[allow(dead_code)]
+const ENDIAN_MARKER: u32 = 2;
+
 /// Fixed-size representation of a symbol for direct memory access
+///
+/// # Safety
+/// This struct uses `#[repr(C)]` to guarantee a stable memory layout.
+/// All fields are POD (Plain Old Data) types with no pointers or references.
+/// The struct can be safely transmuted to/from bytes on little-endian systems.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PackedSymbol {
@@ -43,13 +57,25 @@ impl PackedSymbol {
     /// Size of packed symbol in bytes
     pub const SIZE: usize = mem::size_of::<Self>();
 
-    /// Convert to bytes for writing
+    /// Convert to bytes for writing (little-endian)
+    ///
+    /// # Safety
+    /// Safe because PackedSymbol is #[repr(C)] with only POD fields.
+    /// Format is little-endian - will need conversion on big-endian systems.
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        // SAFETY: PackedSymbol has stable layout with #[repr(C)] and contains
+        // only fixed-size POD types with no padding between fields
         unsafe { mem::transmute(*self) }
     }
 
-    /// Convert from bytes for reading
+    /// Convert from bytes for reading (little-endian)
+    ///
+    /// # Safety  
+    /// Safe because PackedSymbol is #[repr(C)] with only POD fields.
+    /// Assumes data was written in little-endian format.
     pub fn from_bytes(bytes: [u8; Self::SIZE]) -> Self {
+        // SAFETY: PackedSymbol has stable layout with #[repr(C)] and the
+        // input bytes array has exactly the right size
         unsafe { mem::transmute(bytes) }
     }
 }
@@ -222,10 +248,26 @@ impl BinarySymbolReader {
 
         // Validate magic and version
         if header.magic != *KOTA_MAGIC {
-            anyhow::bail!("Invalid symbol database magic bytes");
+            anyhow::bail!(
+                "Invalid symbol database magic bytes. Expected KOTA, got {:?}",
+                String::from_utf8_lossy(&header.magic)
+            );
         }
         if header.version != FORMAT_VERSION {
-            anyhow::bail!("Unsupported symbol database version");
+            anyhow::bail!(
+                "Unsupported symbol database version: {} (expected {})",
+                header.version,
+                FORMAT_VERSION
+            );
+        }
+
+        // Check endianness (stored in reserved bytes for now)
+        // TODO: In v2, add explicit endian field to header
+        #[cfg(target_endian = "big")]
+        {
+            anyhow::bail!(
+                "Big-endian systems not yet supported. File was written on little-endian system."
+            );
         }
 
         Ok(Self { mmap, header })
@@ -316,5 +358,60 @@ mod tests {
         let symbol2 = reader.get_symbol(1).unwrap();
         assert_eq!(reader.get_symbol_name(&symbol2).unwrap(), "TestClass");
         assert_eq!(symbol2.parent_id, *id1.as_bytes());
+    }
+
+    #[test]
+    fn test_corrupted_file_handling() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("corrupted.symdb");
+
+        // Write invalid magic bytes
+        std::fs::write(&db_path, b"BADMAGIC").unwrap();
+
+        let result = BinarySymbolReader::open(&db_path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.err().unwrap());
+        // File is too small, so we get a different error
+        assert!(
+            err_msg.contains("Symbol database file too small")
+                || err_msg.contains("Invalid symbol database magic")
+        );
+    }
+
+    #[test]
+    fn test_version_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("wrong_version.symdb");
+
+        // Create header with wrong version
+        let header = SymbolDatabaseHeader {
+            magic: *KOTA_MAGIC,
+            version: 999, // Wrong version
+            symbol_count: 0,
+            string_table_offset: 88,
+            string_table_size: 0,
+            symbols_offset: 88,
+            _reserved: [0; 32],
+        };
+
+        std::fs::write(&db_path, header.to_bytes()).unwrap();
+
+        let result = BinarySymbolReader::open(&db_path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.err().unwrap());
+        assert!(err_msg.contains("Unsupported symbol database version"));
+    }
+
+    #[test]
+    fn test_empty_database() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("empty.symdb");
+
+        let writer = BinarySymbolWriter::new();
+        writer.write_to_file(&db_path).unwrap();
+
+        let reader = BinarySymbolReader::open(&db_path).unwrap();
+        assert_eq!(reader.symbol_count(), 0);
+        assert!(reader.get_symbol(0).is_none());
     }
 }
