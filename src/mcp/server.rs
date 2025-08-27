@@ -79,7 +79,8 @@ impl MCPServer {
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
 
-        // Create SINGLE storage instance shared across all components
+        // Create SINGLE storage instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
         let storage_impl = create_mcp_storage(
             &config.database.data_dir,
             Some(config.database.max_cache_size),
@@ -95,7 +96,8 @@ impl MCPServer {
             create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
         let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
 
-        // Create SINGLE trigram index instance shared across all components
+        // Create SINGLE trigram index instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
         let trigram_index_path =
             std::path::Path::new(&config.database.data_dir).join("trigram_index");
         std::fs::create_dir_all(&trigram_index_path)?;
@@ -132,15 +134,15 @@ impl MCPServer {
             std::fs::create_dir_all(&vector_index_path)?;
             let embedding_config = EmbeddingConfig::default();
 
-            // For SemanticSearchEngine, we need Box types for its internal architecture
-            // We'll create wrapper references to our shared instances
+            // SemanticSearchEngine requires Box<dyn Trait> ownership model
+            // This necessitates creating separate storage and trigram instances
+            // TODO: Future optimization could refactor SemanticSearchEngine to use Arc<Mutex<dyn Trait>>
             let semantic_storage = create_mcp_storage(
                 &config.database.data_dir,
                 Some(config.database.max_cache_size),
             )
             .await?;
 
-            // Create new trigram index for semantic engine (required by its Box<dyn Index> API)
             let trigram_index_for_semantic =
                 create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
 

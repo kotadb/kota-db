@@ -11,9 +11,9 @@ use tokio::sync::Mutex;
 // For now, we'll create a minimal test harness that mimics the Database behavior
 
 struct TestDatabase {
-    storage: Arc<Mutex<Box<dyn kotadb::Storage>>>,
-    primary_index: Arc<Mutex<Box<dyn kotadb::Index>>>,
-    trigram_index: Arc<Mutex<Box<dyn kotadb::Index>>>,
+    storage: Arc<Mutex<dyn kotadb::Storage>>,
+    primary_index: Arc<Mutex<dyn kotadb::Index>>,
+    trigram_index: Arc<Mutex<dyn kotadb::Index>>,
 }
 
 impl TestDatabase {
@@ -31,9 +31,9 @@ impl TestDatabase {
         let trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
 
         Ok(Self {
-            storage: Arc::new(Mutex::new(Box::new(storage) as Box<dyn kotadb::Storage>)),
-            primary_index: Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn kotadb::Index>)),
-            trigram_index: Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn kotadb::Index>)),
+            storage: Arc::new(Mutex::new(storage)),
+            primary_index: Arc::new(Mutex::new(primary_index)),
+            trigram_index: Arc::new(Mutex::new(trigram_index)),
         })
     }
 
