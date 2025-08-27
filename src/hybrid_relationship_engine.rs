@@ -4,7 +4,7 @@
 //! and the relationship query functionality, ensuring sub-10ms query latency while
 //! maintaining full API compatibility.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -17,7 +17,6 @@ use crate::{
         RelationshipLocation, RelationshipMatch, RelationshipQueryConfig, RelationshipQueryResult,
         RelationshipQueryType, RelationshipStats,
     },
-    symbol_storage::SymbolStorage,
     types::RelationType,
 };
 
@@ -27,19 +26,15 @@ pub struct HybridRelationshipEngine {
     symbol_reader: Option<BinarySymbolReader>,
     /// Dependency graph built from relationships
     dependency_graph: Option<DependencyGraph>,
-    /// Original symbol storage for backward compatibility
-    #[allow(dead_code)]
-    symbol_storage: SymbolStorage,
     /// Configuration
     config: RelationshipQueryConfig,
 }
 
 impl HybridRelationshipEngine {
     /// Create a new hybrid engine from database paths
-    #[instrument(skip(symbol_storage))]
+    #[instrument]
     pub async fn new(
         db_path: &Path,
-        symbol_storage: SymbolStorage,
         config: RelationshipQueryConfig,
     ) -> Result<Self> {
         info!("Initializing hybrid relationship engine");
@@ -88,7 +83,6 @@ impl HybridRelationshipEngine {
         Ok(Self {
             symbol_reader,
             dependency_graph,
-            symbol_storage,
             config,
         })
     }
@@ -356,13 +350,53 @@ impl HybridRelationshipEngine {
         result
     }
 
-    /// Load dependency graph from binary file (TODO: implement serialization)
-    fn load_dependency_graph(_path: &Path) -> Result<DependencyGraph> {
-        // TODO: Implement proper serialization/deserialization for DependencyGraph
-        // For now, return error - dependency graphs will need to be rebuilt
-        Err(anyhow::anyhow!(
-            "Dependency graph serialization not yet implemented"
-        ))
+    /// Save dependency graph to binary file
+    pub fn save_dependency_graph(graph: &DependencyGraph, path: &Path) -> Result<()> {
+        use std::fs::File;
+        use std::io::BufWriter;
+        
+        info!("Saving dependency graph with {} nodes to: {:?}", graph.graph.node_count(), path);
+        
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        }
+        
+        let file = File::create(path)
+            .with_context(|| format!("Failed to create dependency graph file: {:?}", path))?;
+        let writer = BufWriter::new(file);
+        
+        // Convert to serializable format
+        let serializable = graph.to_serializable();
+        
+        // Serialize using bincode for efficiency
+        bincode::serialize_into(writer, &serializable)
+            .context("Failed to serialize dependency graph")?;
+        
+        info!("Successfully saved dependency graph to: {:?}", path);
+        Ok(())
+    }
+    
+    /// Load dependency graph from binary file
+    fn load_dependency_graph(path: &Path) -> Result<DependencyGraph> {
+        use std::fs::File;
+        use std::io::BufReader;
+        
+        debug!("Loading dependency graph from: {:?}", path);
+        
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open dependency graph file: {:?}", path))?;
+        let reader = BufReader::new(file);
+        
+        // Deserialize using bincode for efficiency
+        let serializable: crate::dependency_extractor::SerializableDependencyGraph = 
+            bincode::deserialize_from(reader)
+                .context("Failed to deserialize dependency graph")?;
+        
+        // Convert from serializable format
+        DependencyGraph::from_serializable(serializable)
+            .context("Failed to reconstruct dependency graph from serialized data")
     }
 
     /// Convert binary symbol kind to SymbolType

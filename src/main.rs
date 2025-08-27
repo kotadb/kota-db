@@ -832,14 +832,10 @@ async fn create_relationship_engine(
     let graph_storage =
         kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
 
-    let symbol_storage =
-        SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
-
     // Create hybrid relationship engine
     let config = kotadb::relationship_query::RelationshipQueryConfig::default();
     let hybrid_engine = kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(
         db_path,
-        symbol_storage,
         config,
     )
     .await?;
