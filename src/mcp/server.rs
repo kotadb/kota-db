@@ -1,7 +1,9 @@
-use crate::contracts::Storage;
-use crate::create_file_storage;
+use crate::contracts::{Index, Storage};
 use crate::mcp::{config::MCPConfig, tools::MCPToolRegistry};
 use crate::wrappers::*;
+use crate::{
+    create_file_storage, create_primary_index, create_trigram_index, CoordinatedDeletionService,
+};
 use anyhow::Result;
 use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
@@ -16,6 +18,10 @@ pub struct MCPServer {
     config: MCPConfig,
     tool_registry: Arc<MCPToolRegistry>,
     storage: Arc<Mutex<dyn Storage>>,
+    #[allow(dead_code)] // Will be used for path-based operations
+    primary_index: Arc<Mutex<Box<dyn Index>>>,
+    #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
+    deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
 }
 
@@ -81,30 +87,58 @@ impl MCPServer {
         .await?;
         let storage = Arc::new(Mutex::new(storage));
 
+        // Create primary index for path-based operations
+        let primary_index_path =
+            std::path::Path::new(&config.database.data_dir).join("primary_index");
+        std::fs::create_dir_all(&primary_index_path)?;
+        let primary_index =
+            create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
+        let primary_index_arc = Arc::new(Mutex::new(Box::new(primary_index) as Box<dyn Index>));
+
+        // We'll initialize the trigram index early to share it with the deletion service
+        let trigram_index_path =
+            std::path::Path::new(&config.database.data_dir).join("trigram_index");
+        std::fs::create_dir_all(&trigram_index_path)?;
+        let trigram_index =
+            create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+        // Create two references: boxed for deletion service, unboxed for search tools
+        let trigram_index_boxed = Arc::new(Mutex::new(Box::new(trigram_index) as Box<dyn Index>));
+        // For search tools, we need another instance since we can't share the same mutex
+        let trigram_index_for_search =
+            create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+        let trigram_index_arc: Arc<Mutex<dyn Index>> =
+            Arc::new(Mutex::new(trigram_index_for_search));
+
+        // Create coordinated deletion service to ensure proper synchronization
+        let storage_for_deletion = Arc::new(Mutex::new(Box::new(
+            create_mcp_storage(
+                &config.database.data_dir,
+                Some(config.database.max_cache_size),
+            )
+            .await?,
+        ) as Box<dyn Storage>));
+        let deletion_service = Arc::new(CoordinatedDeletionService::new(
+            storage_for_deletion,
+            Arc::clone(&primary_index_arc),
+            Arc::clone(&trigram_index_boxed),
+        ));
+
         // Initialize tool registry based on configuration
         let mut tool_registry = MCPToolRegistry::new();
 
         if config.mcp.enable_document_tools {
-            use crate::mcp::tools::document_tools::DocumentTools;
-            let document_tools = Arc::new(DocumentTools::new(storage.clone()));
+            use crate::mcp::tools::coordinated_document_tools::CoordinatedDocumentTools;
+            let document_tools = Arc::new(CoordinatedDocumentTools::new(
+                storage.clone(),
+                deletion_service.clone(),
+            ));
             tool_registry = tool_registry.with_document_tools(document_tools);
         }
 
         if config.mcp.enable_search_tools {
             use crate::mcp::tools::search_tools::SearchTools;
-            use crate::{
-                create_trigram_index, embeddings::EmbeddingConfig,
-                semantic_search::SemanticSearchEngine,
-            };
+            use crate::{embeddings::EmbeddingConfig, semantic_search::SemanticSearchEngine};
             use std::path::Path;
-
-            // Create trigram index for text search
-            let trigram_index_path = Path::new(&config.database.data_dir).join("trigram_index");
-            std::fs::create_dir_all(&trigram_index_path)?;
-            let trigram_index =
-                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-            let trigram_index: Arc<Mutex<dyn crate::contracts::Index>> =
-                Arc::new(Mutex::new(trigram_index));
 
             // Create semantic search engine with trigram support for hybrid search
             let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
@@ -132,7 +166,7 @@ impl MCPServer {
             let semantic_engine = Arc::new(Mutex::new(semantic_engine));
 
             let search_tools = Arc::new(SearchTools::new(
-                trigram_index,
+                trigram_index_arc.clone(),
                 semantic_engine,
                 storage.clone(),
             ));
@@ -143,6 +177,8 @@ impl MCPServer {
             config,
             tool_registry: Arc::new(tool_registry),
             storage,
+            primary_index: primary_index_arc,
+            deletion_service,
             start_time: Instant::now(),
         })
     }
