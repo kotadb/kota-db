@@ -21,6 +21,7 @@ use crate::graph_storage::{
     GraphEdge, GraphNode, GraphPath, GraphStats, GraphStorage, GraphStorageConfig, GraphSubset,
     QueryMetadata,
 };
+use crate::symbol_storage::RelationType;
 use crate::types::ValidatedDocumentId;
 
 /// Page size for graph storage (4KB aligned for optimal I/O)
@@ -720,12 +721,92 @@ impl NativeGraphStorage {
                         .push(record);
                 }
             }
-            WalEntry::EdgeDelete {
-                from: _from,
-                to: _to,
+            WalEntry::EdgeDelete { from, to } => {
+                // Remove all edges between the nodes
+                let mut edges_out = self.edges_out.write();
+                if let Some(edge_list) = edges_out.get_mut(&from) {
+                    edge_list.remove(&to);
+                }
+
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    edge_list.remove(&from);
+                }
+            }
+            WalEntry::EdgeDeleteByType {
+                from,
+                to,
+                relation_type,
             } => {
-                // TODO: Fix for Vec<EdgeRecord> - temporarily disabled
-                tracing::warn!("WAL EdgeDelete temporarily disabled due to multiple edge support");
+                // Remove specific edge by type
+                let mut edges_out = self.edges_out.write();
+                if let Some(edge_list) = edges_out.get_mut(&from) {
+                    if let Some(edges) = edge_list.get_mut(&to) {
+                        edges.retain(|e| e.edge.relation_type != relation_type);
+                        if edges.is_empty() {
+                            edge_list.remove(&to);
+                        }
+                    }
+                }
+
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        edges.retain(|e| e.edge.relation_type != relation_type);
+                        if edges.is_empty() {
+                            edge_list.remove(&from);
+                        }
+                    }
+                }
+            }
+            WalEntry::EdgeUpdate { from, to, metadata } => {
+                // Update all edges between the nodes
+                let mut edges_out = self.edges_out.write();
+                if let Some(edge_list) = edges_out.get_mut(&from) {
+                    if let Some(edges) = edge_list.get_mut(&to) {
+                        for edge_record in edges.iter_mut() {
+                            edge_record.edge.metadata = metadata.clone();
+                        }
+                    }
+                }
+
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        for edge_record in edges.iter_mut() {
+                            edge_record.edge.metadata = metadata.clone();
+                        }
+                    }
+                }
+            }
+            WalEntry::EdgeUpdateByType {
+                from,
+                to,
+                relation_type,
+                metadata,
+            } => {
+                // Update specific edge by type
+                let mut edges_out = self.edges_out.write();
+                if let Some(edge_list) = edges_out.get_mut(&from) {
+                    if let Some(edges) = edge_list.get_mut(&to) {
+                        for edge_record in edges.iter_mut() {
+                            if edge_record.edge.relation_type == relation_type {
+                                edge_record.edge.metadata = metadata.clone();
+                            }
+                        }
+                    }
+                }
+
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        for edge_record in edges.iter_mut() {
+                            if edge_record.edge.relation_type == relation_type {
+                                edge_record.edge.metadata = metadata.clone();
+                            }
+                        }
+                    }
+                }
             }
             WalEntry::NodeUpdate { .. } => {
                 // Node updates would be handled here
@@ -741,12 +822,45 @@ impl NativeGraphStorage {
 /// WAL entry types
 #[derive(Debug, Serialize, Deserialize)]
 enum WalEntry {
-    NodeInsert { id: Uuid, data: Vec<u8> },
-    NodeUpdate { id: Uuid, data: Vec<u8> },
-    NodeDelete { id: Uuid },
-    EdgeInsert { from: Uuid, to: Uuid, data: Vec<u8> },
-    EdgeDelete { from: Uuid, to: Uuid },
-    Checkpoint { timestamp: i64 },
+    NodeInsert {
+        id: Uuid,
+        data: Vec<u8>,
+    },
+    NodeUpdate {
+        id: Uuid,
+        data: Vec<u8>,
+    },
+    NodeDelete {
+        id: Uuid,
+    },
+    EdgeInsert {
+        from: Uuid,
+        to: Uuid,
+        data: Vec<u8>,
+    },
+    EdgeDelete {
+        from: Uuid,
+        to: Uuid,
+    },
+    EdgeDeleteByType {
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+    },
+    EdgeUpdate {
+        from: Uuid,
+        to: Uuid,
+        metadata: HashMap<String, String>,
+    },
+    EdgeUpdateByType {
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+        metadata: HashMap<String, String>,
+    },
+    Checkpoint {
+        timestamp: i64,
+    },
 }
 
 #[async_trait]
@@ -946,21 +1060,197 @@ impl GraphStorage for NativeGraphStorage {
 
     async fn update_edge_metadata(
         &mut self,
-        _from: Uuid,
-        _to: Uuid,
-        _metadata: HashMap<String, String>,
+        from: Uuid,
+        to: Uuid,
+        metadata: HashMap<String, String>,
     ) -> Result<()> {
-        // TODO: Fix for Vec<EdgeRecord> - temporarily disabled
-        // Multiple edges between same nodes makes this more complex
-        tracing::warn!("update_edge_metadata temporarily disabled due to multiple edge support");
+        // Update all edges between the two nodes
+        let updated = {
+            let mut edges_out = self.edges_out.write();
+            if let Some(edge_list) = edges_out.get_mut(&from) {
+                if let Some(edges) = edge_list.get_mut(&to) {
+                    for edge_record in edges.iter_mut() {
+                        edge_record.edge.metadata = metadata.clone();
+                    }
+                    !edges.is_empty()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        // Update the reverse index as well
+        if updated {
+            {
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        for edge_record in edges.iter_mut() {
+                            edge_record.edge.metadata = metadata.clone();
+                        }
+                    }
+                }
+            } // Drop lock before await
+
+            // Log WAL entry
+            self.write_to_wal(WalEntry::EdgeUpdate { from, to, metadata })
+                .await?;
+        }
+
         Ok(())
     }
 
-    async fn remove_edge(&mut self, _from: Uuid, _to: Uuid) -> Result<bool> {
-        // TODO: Fix for Vec<EdgeRecord> - temporarily disabled
-        // Need to specify which edge to remove when multiple exist
-        tracing::warn!("remove_edge temporarily disabled due to multiple edge support");
-        Ok(false)
+    async fn update_edge_metadata_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
+        // Update specific edge by relationship type
+        let updated = {
+            let mut edges_out = self.edges_out.write();
+            if let Some(edge_list) = edges_out.get_mut(&from) {
+                if let Some(edges) = edge_list.get_mut(&to) {
+                    let mut found = false;
+                    for edge_record in edges.iter_mut() {
+                        if edge_record.edge.relation_type == relation_type {
+                            edge_record.edge.metadata = metadata.clone();
+                            found = true;
+                        }
+                    }
+                    found
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        // Update the reverse index as well
+        if updated {
+            {
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        for edge_record in edges.iter_mut() {
+                            if edge_record.edge.relation_type == relation_type {
+                                edge_record.edge.metadata = metadata.clone();
+                            }
+                        }
+                    }
+                }
+            } // Drop lock before await
+
+            // Log WAL entry with relation type
+            self.write_to_wal(WalEntry::EdgeUpdateByType {
+                from,
+                to,
+                relation_type,
+                metadata,
+            })
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool> {
+        // Remove all edges between the two nodes
+        let removed = {
+            let mut edges_out = self.edges_out.write();
+            if let Some(edge_list) = edges_out.get_mut(&from) {
+                edge_list.remove(&to).is_some()
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            // Update reverse index
+            {
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    edge_list.remove(&from);
+                }
+            } // Drop lock
+
+            // Update stats
+            {
+                let mut stats = self.stats.write();
+                stats.edge_count = stats.edge_count.saturating_sub(1);
+            } // Drop lock
+
+            // Log WAL entry
+            self.write_to_wal(WalEntry::EdgeDelete { from, to }).await?;
+        }
+
+        Ok(removed)
+    }
+
+    async fn remove_edge_by_type(
+        &mut self,
+        from: Uuid,
+        to: Uuid,
+        relation_type: RelationType,
+    ) -> Result<bool> {
+        // Remove specific edge by relationship type
+        let removed = {
+            let mut edges_out = self.edges_out.write();
+            if let Some(edge_list) = edges_out.get_mut(&from) {
+                if let Some(edges) = edge_list.get_mut(&to) {
+                    let initial_len = edges.len();
+                    edges.retain(|e| e.edge.relation_type != relation_type);
+                    let removed_count = initial_len - edges.len();
+
+                    // If no edges remain, remove the entire entry
+                    if edges.is_empty() {
+                        edge_list.remove(&to);
+                    }
+                    removed_count > 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            // Update reverse index
+            {
+                let mut edges_in = self.edges_in.write();
+                if let Some(edge_list) = edges_in.get_mut(&to) {
+                    if let Some(edges) = edge_list.get_mut(&from) {
+                        edges.retain(|e| e.edge.relation_type != relation_type);
+
+                        // If no edges remain, remove the entire entry
+                        if edges.is_empty() {
+                            edge_list.remove(&from);
+                        }
+                    }
+                }
+            } // Drop lock
+
+            // Update stats
+            {
+                let mut stats = self.stats.write();
+                stats.edge_count = stats.edge_count.saturating_sub(1);
+            } // Drop lock
+
+            // Log WAL entry
+            self.write_to_wal(WalEntry::EdgeDeleteByType {
+                from,
+                to,
+                relation_type,
+            })
+            .await?;
+        }
+
+        Ok(removed)
     }
 
     async fn delete_node(&mut self, node_id: Uuid) -> Result<bool> {
