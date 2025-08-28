@@ -954,7 +954,7 @@ impl RelationshipQueryEngine {
 pub fn parse_natural_language_relationship_query(query: &str) -> Option<RelationshipQueryType> {
     let query_lower = query.to_lowercase();
 
-    // Handle "who uses", "what uses", "what calls", "who calls", and "find callers of" patterns
+    // Handle caller-finding patterns
     if query_lower.contains("what calls") || query_lower.contains("who calls") {
         if let Some(target) = extract_target_from_query(query, "calls") {
             return Some(RelationshipQueryType::FindCallers { target });
@@ -968,8 +968,18 @@ pub fn parse_natural_language_relationship_query(query: &str) -> Option<Relation
     }
 
     if query_lower.contains("find callers of") {
-        if let Some(target) = extract_target_from_query(query, "of") {
-            return Some(RelationshipQueryType::FindCallers { target });
+        // Extract target specifically after "find callers of" to avoid matching other "of"s
+        if let Some(pos) = query_lower.find("find callers of") {
+            let after_phrase = &query[pos + "find callers of".len()..].trim();
+            if let Some(target) = after_phrase.split_whitespace().next() {
+                let cleaned =
+                    target.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ':');
+                if !cleaned.is_empty() {
+                    return Some(RelationshipQueryType::FindCallers {
+                        target: cleaned.to_string(),
+                    });
+                }
+            }
         }
     }
 
