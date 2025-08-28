@@ -90,7 +90,7 @@ impl Default for MCPConfig {
                 protocol_version: "2024-11-05".to_string(),
                 server_name: "kotadb".to_string(),
                 server_version: "0.5.0".to_string(),
-                enable_document_tools: true,
+                enable_document_tools: false, // Disabled per issue #401 - pure codebase intelligence
                 enable_search_tools: true,
             },
             logging: LoggingConfig {

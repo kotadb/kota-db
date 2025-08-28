@@ -115,13 +115,9 @@ impl MCPServer {
         // Initialize tool registry based on configuration
         let mut tool_registry = MCPToolRegistry::new();
 
+        // Document tools removed per issue #401 - pure codebase intelligence platform
         if config.mcp.enable_document_tools {
-            use crate::mcp::tools::coordinated_document_tools::CoordinatedDocumentTools;
-            let document_tools = Arc::new(CoordinatedDocumentTools::new(
-                Arc::clone(&storage),
-                deletion_service.clone(),
-            ));
-            tool_registry = tool_registry.with_document_tools(document_tools);
+            tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
         if config.mcp.enable_search_tools {

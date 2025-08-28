@@ -2,8 +2,8 @@
 ///
 /// This module contains the actual tool implementations that expose
 /// KotaDB functionality through the Model Context Protocol.
-pub mod coordinated_document_tools;
-pub mod document_tools;
+///
+/// Note: Document tools removed per issue #401 - KotaDB is now a pure codebase intelligence platform
 pub mod search_tools;
 
 /// Relationship query tools - the killer feature for LLM code understanding
@@ -26,8 +26,8 @@ pub trait MCPToolHandler {
 }
 
 /// Main tool registry that coordinates all MCP tools
+/// Document tools removed per issue #401 - pure codebase intelligence platform
 pub struct MCPToolRegistry {
-    pub document_tools: Option<Arc<dyn MCPToolHandler + Send + Sync>>,
     pub search_tools: Option<Arc<search_tools::SearchTools>>,
     #[cfg(feature = "tree-sitter-parsing")]
     pub relationship_tools: Option<Arc<relationship_tools::RelationshipTools>>,
@@ -42,17 +42,10 @@ impl Default for MCPToolRegistry {
 impl MCPToolRegistry {
     pub fn new() -> Self {
         Self {
-            document_tools: None,
             search_tools: None,
             #[cfg(feature = "tree-sitter-parsing")]
             relationship_tools: None,
         }
-    }
-
-    /// Register document tools (supports both regular and coordinated tools)
-    pub fn with_document_tools(mut self, tools: Arc<dyn MCPToolHandler + Send + Sync>) -> Self {
-        self.document_tools = Some(tools);
-        self
     }
 
     /// Register search tools
@@ -75,9 +68,6 @@ impl MCPToolRegistry {
     pub fn get_all_tool_definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = Vec::new();
 
-        if let Some(tools) = &self.document_tools {
-            definitions.extend(tools.get_tool_definitions());
-        }
         if let Some(tools) = &self.search_tools {
             definitions.extend(tools.get_tool_definitions());
         }
@@ -98,13 +88,12 @@ impl MCPToolRegistry {
         tracing::debug!("Handling tool call: {}", method);
 
         // Route to appropriate tool handler based on method prefix
+        // Note: Document tools removed per issue #401
         match method {
             m if m.starts_with("kotadb://document_") => {
-                if let Some(tools) = &self.document_tools {
-                    tools.handle_call(method, params).await
-                } else {
-                    Err(anyhow::anyhow!("Document tools not enabled"))
-                }
+                Err(anyhow::anyhow!(
+                    "Document tools removed in codebase intelligence transition (issue #401). Use search and relationship tools instead."
+                ))
             }
             m if m.starts_with("kotadb://text_search")
                 || m.starts_with("kotadb://semantic_search")

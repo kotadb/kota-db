@@ -13,8 +13,8 @@ macro_rules! qprintln {
 use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level, start_server, validate_post_ingestion_search,
-    with_trace_id, Document, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
-    ValidationStatus,
+    with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId,
+    ValidatedPath, ValidationStatus,
 };
 
 #[cfg(feature = "tree-sitter-parsing")]
@@ -466,6 +466,252 @@ impl Database {
         let total_size: usize = all_docs.iter().map(|d| d.size).sum();
         Ok((doc_count, total_size))
     }
+}
+
+/// Run performance benchmarks for various database operations
+async fn run_benchmarks(
+    database: Database,
+    operations: usize,
+    benchmark_type: &str,
+    format: &str,
+    max_search_queries: usize,
+    quiet: bool,
+) -> Result<()> {
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    #[derive(Debug, Clone)]
+    struct BenchmarkResult {
+        operation: String,
+        total_operations: usize,
+        total_duration: Duration,
+        ops_per_second: f64,
+        avg_latency_ms: f64,
+        min_latency_ms: f64,
+        max_latency_ms: f64,
+    }
+
+    let mut results = Vec::new();
+
+    // Storage benchmarks
+    if benchmark_type == "storage" || benchmark_type == "all" {
+        qprintln!(quiet, "\n📦 Storage Benchmarks");
+        qprintln!(quiet, "   Testing insert and retrieve operations...");
+
+        let mut durations = Vec::new();
+        let start = Instant::now();
+
+        for i in 0..operations {
+            let doc = DocumentBuilder::new()
+                .path(format!("benchmark/doc_{}.md", i))?
+                .title(format!("Benchmark Document {}", i))?
+                .content(format!("Benchmark document {} content with some test data", i).as_bytes())
+                .build()?;
+
+            let op_start = Instant::now();
+            database.storage.lock().await.insert(doc.clone()).await?;
+            durations.push(op_start.elapsed());
+
+            // Also test retrieval
+            let _ = database.storage.lock().await.get(&doc.id).await?;
+        }
+
+        let total_duration = start.elapsed();
+        let ops_per_second = operations as f64 / total_duration.as_secs_f64();
+        let avg_latency_ms = durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .sum::<f64>()
+            / durations.len() as f64;
+        let min_latency_ms = durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        let max_latency_ms = durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+
+        results.push(BenchmarkResult {
+            operation: "storage".to_string(),
+            total_operations: operations,
+            total_duration,
+            ops_per_second,
+            avg_latency_ms,
+            min_latency_ms,
+            max_latency_ms,
+        });
+
+        if !quiet {
+            println!(
+                "   ✓ Completed {} storage operations in {:.2}s",
+                operations,
+                total_duration.as_secs_f64()
+            );
+            println!(
+                "   ✓ {:.0} ops/sec, avg latency: {:.2}ms",
+                ops_per_second, avg_latency_ms
+            );
+        }
+    }
+
+    // Index benchmarks
+    if benchmark_type == "index" || benchmark_type == "all" {
+        qprintln!(quiet, "\n🔍 Index Benchmarks");
+        qprintln!(quiet, "   Rebuilding indices for benchmark documents...");
+
+        let start = Instant::now();
+        database.rebuild_indices().await?;
+        let rebuild_duration = start.elapsed();
+
+        qprintln!(
+            quiet,
+            "   ✓ Index rebuild completed in {:.2}s",
+            rebuild_duration.as_secs_f64()
+        );
+
+        // Test search operations
+        qprintln!(quiet, "   Testing search operations...");
+
+        let search_limit = operations.min(max_search_queries);
+        let mut search_durations = Vec::new();
+        let search_start = Instant::now();
+
+        for i in 0..search_limit {
+            let query_text = format!("benchmark document {}", i % 10);
+            let op_start = Instant::now();
+
+            let _ = database.search(&query_text, None, 10).await?;
+
+            search_durations.push(op_start.elapsed());
+        }
+
+        let search_duration = search_start.elapsed();
+        let search_ops_per_second = search_limit as f64 / search_duration.as_secs_f64();
+        let avg_search_latency_ms = search_durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .sum::<f64>()
+            / search_durations.len() as f64;
+        let min_search_latency_ms = search_durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        let max_search_latency_ms = search_durations
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+
+        results.push(BenchmarkResult {
+            operation: "search".to_string(),
+            total_operations: search_limit,
+            total_duration: search_duration,
+            ops_per_second: search_ops_per_second,
+            avg_latency_ms: avg_search_latency_ms,
+            min_latency_ms: min_search_latency_ms,
+            max_latency_ms: max_search_latency_ms,
+        });
+
+        if !quiet {
+            println!(
+                "   ✓ Completed {} search operations in {:.2}s",
+                search_limit,
+                search_duration.as_secs_f64()
+            );
+            println!(
+                "   ✓ {:.0} searches/sec, avg latency: {:.2}ms",
+                search_ops_per_second, avg_search_latency_ms
+            );
+        }
+    }
+
+    // Query benchmarks (testing different query types)
+    if benchmark_type == "query" || benchmark_type == "all" {
+        qprintln!(quiet, "\n📝 Query Benchmarks");
+
+        // Test wildcard queries
+        let wildcard_start = Instant::now();
+        let _ = database.search("*", None, 10).await?;
+        let wildcard_duration = wildcard_start.elapsed();
+
+        results.push(BenchmarkResult {
+            operation: "wildcard_query".to_string(),
+            total_operations: 1,
+            total_duration: wildcard_duration,
+            ops_per_second: 1.0 / wildcard_duration.as_secs_f64(),
+            avg_latency_ms: wildcard_duration.as_secs_f64() * 1000.0,
+            min_latency_ms: wildcard_duration.as_secs_f64() * 1000.0,
+            max_latency_ms: wildcard_duration.as_secs_f64() * 1000.0,
+        });
+
+        qprintln!(
+            quiet,
+            "   ✓ Wildcard query completed in {:.2}ms",
+            wildcard_duration.as_secs_f64() * 1000.0
+        );
+    }
+
+    // Output results based on format
+    match format {
+        "json" => {
+            let json_output = json!({
+                "benchmark_type": benchmark_type,
+                "total_operations": operations,
+                "results": results.iter().map(|r| json!({
+                    "operation": r.operation,
+                    "total_operations": r.total_operations,
+                    "duration_seconds": r.total_duration.as_secs_f64(),
+                    "ops_per_second": r.ops_per_second,
+                    "avg_latency_ms": r.avg_latency_ms,
+                    "min_latency_ms": r.min_latency_ms,
+                    "max_latency_ms": r.max_latency_ms,
+                })).collect::<Vec<_>>()
+            });
+            println!("{}", serde_json::to_string_pretty(&json_output)?);
+        }
+        "csv" => {
+            println!("operation,total_operations,duration_seconds,ops_per_second,avg_latency_ms,min_latency_ms,max_latency_ms");
+            for r in results {
+                println!(
+                    "{},{},{:.3},{:.2},{:.3},{:.3},{:.3}",
+                    r.operation,
+                    r.total_operations,
+                    r.total_duration.as_secs_f64(),
+                    r.ops_per_second,
+                    r.avg_latency_ms,
+                    r.min_latency_ms,
+                    r.max_latency_ms
+                );
+            }
+        }
+        _ => {
+            // human format
+            if !quiet {
+                println!("\n📊 Benchmark Summary");
+                println!("   Type: {}", benchmark_type);
+                println!("   Operations: {}", operations);
+                println!("\n   Results:");
+                for r in results {
+                    println!(
+                        "   - {}: {:.0} ops/sec, avg: {:.2}ms, min: {:.2}ms, max: {:.2}ms",
+                        r.operation,
+                        r.ops_per_second,
+                        r.avg_latency_ms,
+                        r.min_latency_ms,
+                        r.max_latency_ms
+                    );
+                }
+                println!("\n💡 Note: Benchmark data remains in the database for inspection.");
+                println!("   Use a fresh database path to avoid data accumulation across runs.");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1555,9 +1801,26 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Commands::Benchmark { .. } => {
-                println!("⚠️  Benchmark command temporarily disabled during codebase intelligence refactor");
-                println!("   This feature will be re-enabled with code-focused benchmarks soon.");
+            Commands::Benchmark {
+                operations,
+                benchmark_type,
+                format,
+                max_search_queries,
+            } => {
+                qprintln!(quiet, "\n🚀 Running KotaDB Benchmarks");
+                qprintln!(quiet, "   Operations: {}", operations);
+                qprintln!(quiet, "   Type: {}", benchmark_type);
+                qprintln!(quiet, "   Format: {}", format);
+
+                let database = Database::new(&cli.db_path, cli.binary_index).await?;
+                run_benchmarks(
+                    database,
+                    operations,
+                    &benchmark_type,
+                    &format,
+                    max_search_queries,
+                    quiet,
+                ).await?;
             }
         }
 
