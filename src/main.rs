@@ -1874,7 +1874,6 @@ async fn main() -> Result<()> {
                 }
 
                 println!("\n🔗 Dependency Graph:");
-                
                 // Check for binary dependency graph first (new system)
                 let graph_db_path = cli.db_path.join("dependency_graph.bin");
                 if graph_db_path.exists() {

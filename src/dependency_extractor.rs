@@ -668,6 +668,50 @@ impl DependencyExtractor {
         Ok(())
     }
 
+    /// Extract static method references, treating type names and method names appropriately
+    fn extract_static_method_references(
+        &self,
+        query: &Query,
+        tree: &Tree,
+        content: &str,
+        references: &mut Vec<CodeReference>,
+    ) -> Result<()> {
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(query, tree.root_node(), content.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let node = capture.node;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!(
+                        "Failed to extract static method call at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
+                })?;
+
+                let capture_name = query.capture_names()[capture.index as usize];
+                let ref_type = match capture_name {
+                    "type_name" => ReferenceType::TypeUsage, // Type names create type dependencies
+                    "static_method" => ReferenceType::StaticMethodCall, // Method names create call dependencies
+                    "module_path" => ReferenceType::TypeUsage, // Module paths are type-like
+                    _ => ReferenceType::StaticMethodCall,      // Default fallback
+                };
+
+                references.push(CodeReference {
+                    name: text.to_string(),
+                    ref_type,
+                    line: pos.row + 1,
+                    column: pos.column,
+                    text: text.to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Extract references (function calls, type usage, etc.) from the parse tree
     fn extract_references(
         &self,
@@ -734,31 +778,126 @@ impl DependencyExtractor {
             ReferenceType::ChainedMethodCall,
             "chained method call",
         )?;
-        extract_query_references(
+
+        // End the scope of the closure to release the mutable borrow on references
+        // (the closure will be dropped automatically at the end of this scope)
+
+        // Handle static method calls specially to differentiate type names from method names
+        self.extract_static_method_references(
             &queries.static_method_calls,
-            ReferenceType::StaticMethodCall,
-            "static method call",
+            tree,
+            content,
+            &mut references,
         )?;
-        extract_query_references(
-            &queries.trait_usage,
-            ReferenceType::TraitImpl,
-            "trait usage",
-        )?;
-        extract_query_references(
+
+        // Continue with remaining queries using direct implementation
+        let mut cursor = QueryCursor::new();
+        let mut matches =
+            cursor.matches(&queries.trait_usage, tree.root_node(), content.as_bytes());
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let node = capture.node;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!(
+                        "Failed to extract trait usage at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
+                })?;
+                references.push(CodeReference {
+                    name: text.to_string(),
+                    ref_type: ReferenceType::TraitImpl,
+                    line: pos.row + 1,
+                    column: pos.column,
+                    text: text.to_string(),
+                });
+            }
+        }
+
+        // Extract macro invocations
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(
             &queries.macro_invocations,
-            ReferenceType::MacroInvocation,
-            "macro invocation",
-        )?;
-        extract_query_references(
+            tree.root_node(),
+            content.as_bytes(),
+        );
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let node = capture.node;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!(
+                        "Failed to extract macro invocation at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
+                })?;
+                references.push(CodeReference {
+                    name: text.to_string(),
+                    ref_type: ReferenceType::MacroInvocation,
+                    line: pos.row + 1,
+                    column: pos.column,
+                    text: text.to_string(),
+                });
+            }
+        }
+
+        // Extract turbofish calls
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(
             &queries.turbofish_calls,
-            ReferenceType::TurbofishCall,
-            "turbofish call",
-        )?;
-        extract_query_references(
+            tree.root_node(),
+            content.as_bytes(),
+        );
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let node = capture.node;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!(
+                        "Failed to extract turbofish call at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
+                })?;
+                references.push(CodeReference {
+                    name: text.to_string(),
+                    ref_type: ReferenceType::TurbofishCall,
+                    line: pos.row + 1,
+                    column: pos.column,
+                    text: text.to_string(),
+                });
+            }
+        }
+
+        // Extract stdlib patterns
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(
             &queries.stdlib_patterns,
-            ReferenceType::StandardLibraryCall,
-            "stdlib pattern",
-        )?;
+            tree.root_node(),
+            content.as_bytes(),
+        );
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let node = capture.node;
+                let pos = node.start_position();
+                let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                    format!(
+                        "Failed to extract stdlib pattern at {}:{}",
+                        pos.row + 1,
+                        pos.column
+                    )
+                })?;
+                references.push(CodeReference {
+                    name: text.to_string(),
+                    ref_type: ReferenceType::StandardLibraryCall,
+                    line: pos.row + 1,
+                    column: pos.column,
+                    text: text.to_string(),
+                });
+            }
+        }
 
         Ok(references)
     }
