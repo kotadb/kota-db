@@ -720,7 +720,19 @@ impl LLMSearchEngine {
             Ok(trimmed)
         } else {
             // No match found, return beginning of content
-            let snippet = &content[..max_chars.min(content.len())];
+            // Safe string slicing that respects UTF-8 boundaries
+            let snippet = if max_chars >= content.len() {
+                content
+            } else {
+                // Find the largest valid character boundary at or before max_chars
+                content
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .filter(|&i| i <= max_chars)
+                    .next_back()
+                    .and_then(|safe_end| content.get(..safe_end))
+                    .unwrap_or("")
+            };
             Ok(format!("{}...", snippet.trim()))
         }
     }
