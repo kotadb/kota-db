@@ -45,6 +45,7 @@ fn main() {
         .extract_symbols(
             Path::new("test_consistency.rs"),
             parsed_code,
+            Some(rust_code),
             Some("test_repo".to_string()),
         )
         .await?;
@@ -112,6 +113,7 @@ async fn test_memory_optimization_processes_large_codebases() -> Result<()> {
         .extract_symbols(
             Path::new("large_file.rs"),
             parsed_code,
+            Some(&large_code),
             Some("test_repo".to_string()),
         )
         .await?;

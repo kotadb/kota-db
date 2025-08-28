@@ -177,6 +177,8 @@ pub struct SymbolStorage {
     name_index: HashMap<String, Vec<Uuid>>,
     /// Repository to files mapping
     repository_files: HashMap<String, HashSet<PathBuf>>,
+    /// File content cache for dependency analysis
+    file_content_cache: HashMap<PathBuf, String>,
     /// Configuration
     config: SymbolStorageConfig,
     /// Current estimated memory usage
@@ -215,6 +217,7 @@ impl SymbolStorage {
             file_symbols: HashMap::new(),
             name_index: HashMap::new(),
             repository_files: HashMap::new(),
+            file_content_cache: HashMap::new(),
             config,
             estimated_memory_usage: 0,
             lru_queue: VecDeque::new(),
@@ -403,13 +406,19 @@ impl SymbolStorage {
     }
 
     /// Extract and store symbols from parsed code
-    #[instrument(skip(self, parsed_code))]
+    #[instrument(skip(self, parsed_code, file_content))]
     pub async fn extract_symbols(
         &mut self,
         file_path: &Path,
         parsed_code: ParsedCode,
+        file_content: Option<&str>,
         repository: Option<String>,
     ) -> Result<Vec<Uuid>> {
+        // Store file content for dependency analysis if provided
+        if let Some(content) = file_content {
+            self.file_content_cache
+                .insert(file_path.to_path_buf(), content.to_string());
+        }
         // Commenting out verbose logging for performance
         // info!(
         //     "Extracting {} symbols from {}",
@@ -1179,8 +1188,14 @@ impl SymbolStorage {
     /// Build dependency graph by analyzing relationships between all symbols
     pub async fn build_dependency_graph(&mut self) -> Result<()> {
         info!(
-            "Building dependency graph from {} symbols",
-            self.symbol_index.len()
+            "Building dependency graph from {} symbols across {} files",
+            self.symbol_index.len(),
+            self.file_content_cache.len()
+        );
+
+        tracing::debug!(
+            "Files with cached content: {:?}",
+            self.file_content_cache.keys().collect::<Vec<_>>()
         );
 
         // Use DependencyExtractor for accurate dependency analysis
@@ -1201,8 +1216,20 @@ impl SymbolStorage {
 
         // Analyze each file with DependencyExtractor
         for (file_path, symbol_ids) in &symbol_ids_by_file {
-            // Read file content if available
-            if let Ok(content) = tokio::fs::read_to_string(file_path).await {
+            // Try cached content first, then read from disk
+            let content_opt = if let Some(cached_content) = self.file_content_cache.get(file_path) {
+                Some(cached_content.clone())
+            } else if let Ok(disk_content) = tokio::fs::read_to_string(file_path).await {
+                Some(disk_content)
+            } else {
+                tracing::warn!(
+                    "Cannot read file content for dependency analysis: {:?}",
+                    file_path
+                );
+                None
+            };
+
+            if let Some(content) = content_opt {
                 // Determine language from file extension
                 let language = self.determine_language(file_path);
 
@@ -1213,10 +1240,20 @@ impl SymbolStorage {
                         extractor.extract_dependencies(&parsed_code, &content, file_path)
                     {
                         all_analyses.push(analysis);
+                    } else {
+                        tracing::debug!("Failed to extract dependencies for {:?}", file_path);
                     }
+                } else {
+                    tracing::debug!("Failed to parse content for {:?}", file_path);
                 }
             }
         }
+
+        tracing::info!(
+            "Dependency analysis complete: {} file analyses successful out of {} files with symbols",
+            all_analyses.len(),
+            symbol_ids_by_file.len()
+        );
 
         // Build symbol entries vector only when needed, using references where possible
         let all_symbol_entries: Vec<SymbolEntry> = symbol_ids_by_file
@@ -1693,7 +1730,7 @@ impl SymbolStorage {
 
         // Try to add new symbols
         match self
-            .extract_symbols(file_path, parsed_code, repository)
+            .extract_symbols(file_path, parsed_code, None, repository)
             .await
         {
             Ok(new_ids) => {
@@ -1988,7 +2025,7 @@ impl MyStruct {
         let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
 
         let symbol_ids = symbol_storage
-            .extract_symbols(Path::new("test.rs"), parsed, None)
+            .extract_symbols(Path::new("test.rs"), parsed, None, None)
             .await?;
 
         assert!(!symbol_ids.is_empty());
@@ -2021,7 +2058,7 @@ fn compute_sum() -> i32 { 0 }
         let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
 
         symbol_storage
-            .extract_symbols(Path::new("math.rs"), parsed, None)
+            .extract_symbols(Path::new("math.rs"), parsed, None, None)
             .await?;
 
         // Search for "calculate"
@@ -2048,7 +2085,7 @@ fn compute_sum() -> i32 { 0 }
         // Initial extraction
         let parsed_v1 = parser.parse_content(rust_code_v1, SupportedLanguage::Rust)?;
         symbol_storage
-            .extract_symbols(Path::new("evolving.rs"), parsed_v1, None)
+            .extract_symbols(Path::new("evolving.rs"), parsed_v1, None, None)
             .await?;
 
         let symbols_v1 = symbol_storage.find_by_file(Path::new("evolving.rs"));
@@ -2081,7 +2118,7 @@ fn compute_sum() -> i32 { 0 }
 
         // Extract symbols twice from the same code
         let ids1 = symbol_storage
-            .extract_symbols(Path::new("test.rs"), parsed1, None)
+            .extract_symbols(Path::new("test.rs"), parsed1, None, None)
             .await?;
 
         // Delete the symbols from storage to test fresh extraction
@@ -2097,7 +2134,7 @@ fn compute_sum() -> i32 { 0 }
         symbol_storage.name_index.clear();
 
         let ids2 = symbol_storage
-            .extract_symbols(Path::new("test.rs"), parsed2, None)
+            .extract_symbols(Path::new("test.rs"), parsed2, None, None)
             .await?;
 
         // Symbol IDs should be identical for the same code
@@ -2177,7 +2214,7 @@ mod level1 {
         let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
 
         let symbol_ids = symbol_storage
-            .extract_symbols(Path::new("deep.rs"), parsed, None)
+            .extract_symbols(Path::new("deep.rs"), parsed, None, None)
             .await?;
 
         // Should handle deep nesting without stack overflow
@@ -2221,7 +2258,7 @@ mod level1 {
             let parsed = parser.parse_content(&rust_code, SupportedLanguage::Rust)?;
 
             let _ = symbol_storage
-                .extract_symbols(Path::new(&format!("file_{}.rs", i)), parsed, None)
+                .extract_symbols(Path::new(&format!("file_{}.rs", i)), parsed, None, None)
                 .await;
         }
 
@@ -2248,7 +2285,7 @@ mod level1 {
         let parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
 
         symbol_storage
-            .extract_symbols(Path::new("test.rs"), parsed, None)
+            .extract_symbols(Path::new("test.rs"), parsed, None, None)
             .await?;
 
         let original_count = symbol_storage.symbol_index.len();

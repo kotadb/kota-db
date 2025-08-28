@@ -599,6 +599,12 @@ impl DependencyExtractor {
         let mut name_to_symbol = HashMap::new();
         let mut file_imports = HashMap::new();
 
+        tracing::info!(
+            "Building dependency graph with {} analyses and {} symbol entries",
+            analyses.len(),
+            symbol_entries.len()
+        );
+
         // First pass: Create nodes for all symbols
         for entry in symbol_entries {
             let node = SymbolNode {
@@ -616,11 +622,29 @@ impl DependencyExtractor {
 
             // Also index by simple name for fallback resolution
             name_to_symbol.insert(entry.symbol.name.clone(), entry.id);
+
+            tracing::debug!(
+                "Added node: {} (type: {:?}, id: {})",
+                entry.qualified_name,
+                entry.symbol.symbol_type,
+                entry.id
+            );
         }
 
         // Second pass: Create edges based on references
+        let mut total_references = 0;
+        let mut resolved_references = 0;
+        let mut edges_created = 0;
+
         for analysis in &analyses {
             file_imports.insert(analysis.file_path.clone(), analysis.imports.clone());
+
+            tracing::debug!(
+                "Processing file {:?} with {} references and {} imports",
+                analysis.file_path,
+                analysis.references.len(),
+                analysis.imports.len()
+            );
 
             // Build spatial index for efficient symbol lookup
             let mut symbols_by_line: BTreeMap<usize, Vec<&SymbolEntry>> = BTreeMap::new();
@@ -633,18 +657,30 @@ impl DependencyExtractor {
                 }
             }
 
+            tracing::debug!(
+                "Spatial index built for {} lines in {:?}",
+                symbols_by_line.len(),
+                analysis.file_path
+            );
+
             for reference in &analysis.references {
+                total_references += 1;
+
                 // Try to resolve the reference to a symbol
                 let resolved_id =
                     self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol);
+
                 if resolved_id.is_none() {
-                    tracing::trace!(
+                    tracing::debug!(
                         "Failed to resolve reference '{}' at line {} in file {:?}",
                         reference.name,
                         reference.line,
                         analysis.file_path
                     );
+                } else {
+                    resolved_references += 1;
                 }
+
                 if let Some(target_id) = resolved_id {
                     // Find the source symbol (the one containing this reference)
                     if let Some(source_symbol) =
@@ -685,12 +721,53 @@ impl DependencyExtractor {
                                 };
 
                                 graph.add_edge(source_idx, target_idx, edge);
+                                edges_created += 1;
+
+                                tracing::debug!(
+                                    "Created edge #{}: {} -> {}",
+                                    edges_created,
+                                    source_symbol.qualified_name,
+                                    name_to_symbol
+                                        .iter()
+                                        .find_map(|(k, v)| if v == &target_id {
+                                            Some(k.as_str())
+                                        } else {
+                                            None
+                                        })
+                                        .unwrap_or("unknown")
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Skipped self-reference from {} to itself",
+                                    source_symbol.qualified_name
+                                );
                             }
+                        } else {
+                            tracing::debug!("Both source and target indices not found for edge");
                         }
+                    } else {
+                        tracing::debug!(
+                            "No source symbol found containing reference at line {}",
+                            reference.line
+                        );
                     }
+                } else {
+                    // Already logged above
                 }
             }
         }
+
+        tracing::info!(
+            "Dependency graph building complete: {} total references, {} resolved ({:.1}%), {} edges created",
+            total_references,
+            resolved_references,
+            if total_references > 0 {
+                (resolved_references as f64 / total_references as f64) * 100.0
+            } else {
+                0.0
+            },
+            edges_created
+        );
 
         // Calculate statistics
         let stats = self.calculate_graph_stats(&graph, &analyses);

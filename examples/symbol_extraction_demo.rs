@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
             .extract_symbols(
                 Path::new("src/types.rs"),
                 parsed,
+                None,
                 Some("kota-db".to_string()),
             )
             .await?;

@@ -59,7 +59,12 @@ pub fn helper_function() {
         let parsed_code = code_parser.parse_content(test_code, SupportedLanguage::Rust)?;
 
         let symbol_ids = symbol_storage
-            .extract_symbols(&test_file_path, parsed_code, Some("test-repo".to_string()))
+            .extract_symbols(
+                &test_file_path,
+                parsed_code,
+                Some(test_code),
+                Some("test-repo".to_string()),
+            )
             .await?;
 
         eprintln!("Extracted {} symbols", symbol_ids.len());
@@ -181,7 +186,12 @@ fn target() {
     let mut code_parser = CodeParser::new()?;
     let parsed_code = code_parser.parse_content(test_code, SupportedLanguage::Rust)?;
     let _symbol_ids = symbol_storage
-        .extract_symbols(&test_file_path, parsed_code, Some("test-repo".to_string()))
+        .extract_symbols(
+            &test_file_path,
+            parsed_code,
+            Some(test_code),
+            Some("test-repo".to_string()),
+        )
         .await?;
 
     eprintln!("Step 1: Symbols extracted");

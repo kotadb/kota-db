@@ -69,6 +69,7 @@ fn main() {
         .extract_symbols(
             Path::new("test_calculator.rs"),
             parsed_code,
+            None,
             Some("test_repo".to_string()),
         )
         .await?;
@@ -208,6 +209,7 @@ fn main() {
         .extract_symbols(
             Path::new("test_modules.rs"),
             parsed_code,
+            None,
             Some("test_repo".to_string()),
         )
         .await?;
