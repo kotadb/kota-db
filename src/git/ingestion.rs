@@ -359,29 +359,20 @@ impl RepositoryIngester {
             repo_path
         );
 
-        // Wrap the progress callback in an Arc so we can share it
-        let progress_callback = progress_callback.map(|cb| std::sync::Arc::new(cb));
-        
-        // Create a cloned reference for the first phase
-        let phase1_callback = progress_callback.as_ref().map(|arc| {
-            let arc_clone = arc.clone();
-            Box::new(move |msg: &str| arc_clone(msg)) as ProgressCallback
-        });
-
         // First, perform binary symbol extraction (it will handle its own progress reporting)
         let mut result = self
-            .ingest_with_binary_symbols(repo_path, storage, symbol_db_path.as_ref(), phase1_callback)
+            .ingest_with_binary_symbols(repo_path, storage, symbol_db_path.as_ref(), None)
             .await?;
 
         // Now extract relationships using the bridge
-        // Create a progress reporter for the relationship extraction phase
+        // Create a simple progress reporter for the relationship extraction phase
         let report_progress = |message: &str| {
-            if let Some(ref arc_callback) = progress_callback {
-                arc_callback(message);
+            if let Some(ref callback) = progress_callback {
+                callback(message);
             }
             info!("{}", message);
-        }; 
-        
+        };
+
         report_progress("Building dependency graph from extracted symbols...");
 
         let relationship_start = std::time::Instant::now();
@@ -402,12 +393,18 @@ impl RepositoryIngester {
             .collect();
 
         // Extract relationships using the bridge
-        report_progress(&format!("Analyzing {} source files for dependencies...", file_contents.len()));
+        report_progress(&format!(
+            "Analyzing {} source files for dependencies...",
+            file_contents.len()
+        ));
         let bridge = BinaryRelationshipBridge::new();
         match bridge.extract_relationships(symbol_db_path.as_ref(), repo_path, &file_contents) {
             Ok(dependency_graph) => {
                 result.relationships_extracted = dependency_graph.stats.edge_count;
-                report_progress(&format!("Found {} relationships between symbols", result.relationships_extracted));
+                report_progress(&format!(
+                    "Found {} relationships between symbols",
+                    result.relationships_extracted
+                ));
 
                 // Serialize and save the dependency graph (using bincode for compatibility)
                 report_progress("Persisting dependency graph to disk...");
@@ -429,8 +426,17 @@ impl RepositoryIngester {
                 ));
             }
             Err(e) => {
-                warn!("Failed to extract relationships: {}", e);
+                let error_msg = format!(
+                    "Relationship extraction failed for repository '{}': {}",
+                    repo_path.display(),
+                    e
+                );
+                warn!("{}", error_msg);
+                report_progress(&format!("⚠️ {}", error_msg));
                 result.errors += 1;
+
+                // Note: We continue with ingestion even if relationship extraction fails
+                // This ensures users still get documents and symbols even without relationships
             }
         }
 

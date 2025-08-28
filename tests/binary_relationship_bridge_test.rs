@@ -325,4 +325,175 @@ fn internal_function() {
 
         Ok(())
     }
+
+    /// Test that dependency graph is automatically created during repository ingestion
+    #[tokio::test]
+    async fn test_automatic_dependency_graph_creation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let storage_path = temp_dir.path().join("storage");
+        let repo_dir = temp_dir.path().join("test_repo");
+        std::fs::create_dir_all(&repo_dir)?;
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&repo_dir)
+            .output()?;
+
+        // Create source files with clear dependencies
+        let main_rs = r#"
+fn main() {
+    let result = helper::process_data();
+    println!("Result: {}", result);
+}
+"#;
+
+        let helper_rs = r#"
+pub fn process_data() -> i32 {
+    let value = calculate();
+    value * 2
+}
+
+fn calculate() -> i32 {
+    42
+}
+"#;
+
+        std::fs::write(repo_dir.join("main.rs"), main_rs)?;
+        std::fs::write(repo_dir.join("helper.rs"), helper_rs)?;
+
+        // Commit the files
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_dir)
+            .output()?;
+        std::process::Command::new("git")
+            .args(["commit", "-m", "Initial commit"])
+            .current_dir(&repo_dir)
+            .output()?;
+
+        // Set up storage
+        let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?;
+
+        // Create ingester and run the complete ingestion with relationships
+        let config = IngestionConfig::default();
+        let ingester = RepositoryIngester::new(config);
+
+        let symbol_db_path = temp_dir.path().join("symbols.kota");
+        let graph_db_path = temp_dir.path().join("dependency_graph.bin");
+
+        let result = ingester
+            .ingest_with_binary_symbols_and_relationships(
+                &repo_dir,
+                &mut storage,
+                &symbol_db_path,
+                &graph_db_path,
+                None, // No progress callback for test
+            )
+            .await?;
+
+        // Verify that both files were created
+        assert!(
+            symbol_db_path.exists(),
+            "Binary symbol database should be created automatically"
+        );
+        assert!(
+            graph_db_path.exists(),
+            "Dependency graph should be created automatically"
+        );
+
+        // Verify that relationships were extracted
+        assert!(
+            result.relationships_extracted > 0,
+            "Should have extracted some relationships between symbols"
+        );
+
+        // Verify that symbols were extracted
+        assert!(
+            result.symbols_extracted > 0,
+            "Should have extracted some symbols"
+        );
+
+        // Verify that documents were created
+        assert!(
+            result.documents_created > 0,
+            "Should have created document entries"
+        );
+
+        // Verify the dependency graph file is not empty
+        let graph_file_size = std::fs::metadata(&graph_db_path)?.len();
+        assert!(
+            graph_file_size > 100,
+            "Dependency graph file should contain data"
+        );
+
+        println!(
+            "✅ Automatic dependency graph creation test passed: {} docs, {} symbols, {} relationships",
+            result.documents_created, result.symbols_extracted, result.relationships_extracted
+        );
+
+        Ok(())
+    }
+
+    /// Test error handling when relationship extraction fails
+    #[tokio::test]
+    async fn test_relationship_extraction_error_handling() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let storage_path = temp_dir.path().join("storage");
+        let repo_dir = temp_dir.path().join("test_repo");
+        std::fs::create_dir_all(&repo_dir)?;
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&repo_dir)
+            .output()?;
+
+        // Create a file that might cause parsing issues
+        std::fs::write(repo_dir.join("main.rs"), "invalid rust syntax $$$ {{{")?;
+
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_dir)
+            .output()?;
+        std::process::Command::new("git")
+            .args(["commit", "-m", "Invalid syntax commit"])
+            .current_dir(&repo_dir)
+            .output()?;
+
+        let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?;
+
+        let config = IngestionConfig::default();
+        let ingester = RepositoryIngester::new(config);
+
+        let symbol_db_path = temp_dir.path().join("symbols.kota");
+        let graph_db_path = temp_dir.path().join("dependency_graph.bin");
+
+        // This should complete without panicking, even with parsing errors
+        let result = ingester
+            .ingest_with_binary_symbols_and_relationships(
+                &repo_dir,
+                &mut storage,
+                &symbol_db_path,
+                &graph_db_path,
+                None,
+            )
+            .await?;
+
+        // Verify graceful handling - documents should still be created
+        assert!(
+            result.documents_created > 0,
+            "Should create documents even with relationship extraction errors"
+        );
+
+        // Error count should be non-negative (always true, but documents the expectation)
+        println!("Error count tracked: {}", result.errors);
+
+        println!(
+            "✅ Error handling test passed: {} docs created despite parsing errors",
+            result.documents_created
+        );
+
+        Ok(())
+    }
 }
