@@ -683,11 +683,14 @@ impl LLMSearchEngine {
         }
 
         // Try function-aware extraction first for better code comprehension
-        if let Ok(function_snippet) =
+        if let Ok(Some(function_snippet)) =
             self.extract_function_aware_snippet(content, content_lower, query)
         {
-            if !function_snippet.is_empty() && function_snippet.len() <= max_chars * 2 {
-                // Allow function snippets to be up to 2x the normal limit for better context
+            // Apply absolute maximum limit to prevent memory issues with very large functions
+            const ABSOLUTE_MAX_SNIPPET_SIZE: usize = 4096; // 4KB absolute limit
+            let effective_limit = (max_chars * 2).min(ABSOLUTE_MAX_SNIPPET_SIZE);
+            
+            if !function_snippet.is_empty() && function_snippet.len() <= effective_limit {
                 return Ok(function_snippet);
             }
         }
@@ -699,22 +702,8 @@ impl LLMSearchEngine {
             let start = match_pos.saturating_sub(half_window);
             let end = (start + max_chars).min(content.len());
 
-            // Safe string slicing that respects UTF-8 boundaries
-            let snippet = content.get(start..end).unwrap_or_else(|| {
-                // If we can't slice at the exact positions, find the nearest valid boundaries
-                let safe_start = content
-                    .char_indices()
-                    .map(|(i, _)| i)
-                    .filter(|&i| i <= start)
-                    .next_back()
-                    .unwrap_or(0);
-                let safe_end = content
-                    .char_indices()
-                    .map(|(i, _)| i)
-                    .find(|&i| i >= end)
-                    .unwrap_or(content.len());
-                &content[safe_start..safe_end]
-            });
+            // Safe UTF-8 boundary slicing using a simpler, more robust approach
+            let snippet = self.safe_substring(content, start, end);
 
             // Try to break at word boundaries
             let trimmed = if start > 0 && end < content.len() {
@@ -730,20 +719,12 @@ impl LLMSearchEngine {
             Ok(trimmed)
         } else {
             // No match found, return beginning of content
-            // Safe string slicing that respects UTF-8 boundaries
-            let snippet = if max_chars >= content.len() {
-                content
+            let snippet = self.safe_substring(content, 0, max_chars);
+            Ok(if max_chars < content.len() {
+                format!("{}...", snippet.trim())
             } else {
-                // Find the largest valid character boundary at or before max_chars
-                content
-                    .char_indices()
-                    .map(|(i, _)| i)
-                    .filter(|&i| i <= max_chars)
-                    .next_back()
-                    .and_then(|safe_end| content.get(..safe_end))
-                    .unwrap_or("")
-            };
-            Ok(format!("{}...", snippet.trim()))
+                snippet.to_string()
+            })
         }
     }
 
@@ -754,7 +735,7 @@ impl LLMSearchEngine {
         content: &str,
         content_lower: &str,
         query: &str,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         // Find all match positions
         let match_positions: Vec<usize> = content_lower
             .match_indices(query)
@@ -762,7 +743,7 @@ impl LLMSearchEngine {
             .collect();
 
         if match_positions.is_empty() {
-            return Ok(String::new());
+            return Ok(None); // Distinguish between no matches and extraction failure
         }
 
         let mut snippets = Vec::new();
@@ -782,11 +763,64 @@ impl LLMSearchEngine {
         }
 
         if snippets.is_empty() {
-            return Ok(String::new());
+            return Ok(None); // No function definitions found around matches
         }
 
         // Join multiple function snippets with separators
-        Ok(snippets.join("\n\n// ---\n\n"))
+        Ok(Some(snippets.join("\n\n// ---\n\n")))
+    }
+
+    /// Safely extract a substring respecting UTF-8 character boundaries
+    /// Returns the longest valid substring that fits within the byte range
+    fn safe_substring<'a>(&self, content: &'a str, start: usize, end: usize) -> &'a str {
+        let end = end.min(content.len());
+        let start = start.min(end);
+        
+        // Find the largest valid UTF-8 boundary at or before our target positions
+        let safe_start = content
+            .char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| i <= start)
+            .next_back()
+            .unwrap_or(0);
+            
+        let safe_end = content
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= end)
+            .unwrap_or(content.len());
+            
+        // This is guaranteed to be valid since we're using char_indices boundaries
+        &content[safe_start..safe_end]
+    }
+
+    /// Count braces outside of string literals to avoid false positives
+    /// Returns (open_braces, close_braces) as i32 counts
+    fn count_braces_outside_strings(&self, line: &str) -> (i32, i32) {
+        let mut open_count = 0;
+        let mut close_count = 0;
+        let mut in_string = false;
+        let mut in_char = false;
+        let mut escaped = false;
+        let mut chars = line.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            
+            match ch {
+                '\\' if in_string || in_char => escaped = true,
+                '"' if !in_char => in_string = !in_string,
+                '\'' if !in_string => in_char = !in_char,
+                '{' if !in_string && !in_char => open_count += 1,
+                '}' if !in_string && !in_char => close_count += 1,
+                _ => {}
+            }
+        }
+        
+        (open_count, close_count)
     }
 
     /// Extract the containing function, impl block, or struct definition for a position
@@ -819,9 +853,18 @@ impl LLMSearchEngine {
         for i in (0..=match_line).rev() {
             let line = lines[i].trim();
 
-            // Count braces to understand nesting (reverse logic since we're going backwards)
-            brace_depth += line.chars().filter(|&c| c == '}').count() as i32;
-            brace_depth -= line.chars().filter(|&c| c == '{').count() as i32;
+            // Skip lines that are primarily comments to avoid false brace counts
+            if line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+                continue;
+            }
+
+            // Simple brace counting - count braces outside of string literals
+            // Note: This is a simplified approach. For production, consider using tree-sitter
+            let (open_braces, close_braces) = self.count_braces_outside_strings(line);
+            
+            // Reverse logic since we're going backwards
+            brace_depth += close_braces;
+            brace_depth -= open_braces;
 
             // Look for function, impl, struct, enum, or similar definitions
             if brace_depth <= 0
@@ -859,9 +902,13 @@ impl LLMSearchEngine {
         for i in start_line..lines.len() {
             let line = lines[i].trim();
 
-            // Count braces
-            let open_braces = line.chars().filter(|&c| c == '{').count() as i32;
-            let close_braces = line.chars().filter(|&c| c == '}').count() as i32;
+            // Skip comment lines in forward direction too
+            if line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+                continue;
+            }
+
+            // Use safer brace counting
+            let (open_braces, close_braces) = self.count_braces_outside_strings(line);
 
             if open_braces > 0 {
                 found_opening_brace = true;
