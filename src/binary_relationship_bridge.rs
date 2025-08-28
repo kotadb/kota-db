@@ -607,16 +607,9 @@ impl BinaryRelationshipBridge {
         }
     }
 
-    /// Convert ReferenceType to RelationType  
+    /// Convert ReferenceType to RelationType using the shared utility method
     fn ref_type_to_relation(&self, ref_type: &ReferenceType) -> RelationType {
-        match ref_type {
-            ReferenceType::FunctionCall => RelationType::Calls,
-            ReferenceType::TypeUsage => RelationType::References,
-            ReferenceType::TraitImpl => RelationType::Implements,
-            ReferenceType::MacroInvocation => RelationType::Calls,
-            ReferenceType::FieldAccess => RelationType::References,
-            ReferenceType::MethodCall => RelationType::Calls,
-        }
+        ref_type.to_relation_type()
     }
 }
 
