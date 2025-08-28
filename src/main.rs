@@ -13,8 +13,8 @@ macro_rules! qprintln {
 use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level, start_server, validate_post_ingestion_search,
-    with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId,
-    ValidatedPath, ValidationStatus,
+    with_trace_id, Document, Index, QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath,
+    ValidationStatus,
 };
 
 #[cfg(feature = "tree-sitter-parsing")]
@@ -31,24 +31,24 @@ use tokio::sync::{Mutex, RwLock};
 #[command(
     author,
     version,
-    about = "KotaDB - A codebase intelligence platform for distributed human-AI cognition",
+    about = "KotaDB - Codebase intelligence platform for AI assistants",
     long_about = None,
     after_help = "QUICK START:
-  1. Ingest a repository:     kotadb ingest-repo /path/to/repo
-  2. Search for code:         kotadb search 'function_name'
-  3. Find relationships:      kotadb relationship-query 'what calls MyFunction?'
-  4. Analyze impact:          kotadb impact-analysis 'StorageClass'
+  1. Index a codebase:        kotadb index-codebase /path/to/repo
+  2. Search for code:         kotadb search-code 'function_name'
+  3. Find relationships:      kotadb find-callers 'MyFunction'
+  4. Analyze impact:          kotadb analyze-impact 'StorageClass'
 
 EXAMPLES:
-  # Basic document operations
-  kotadb insert docs/readme.md \"README\" \"Content here\"
-  kotadb get docs/readme.md
-  kotadb search \"database query\"
-
-  # Codebase intelligence
-  kotadb ingest-repo ./my-project
+  # Index and search your codebase
+  kotadb index-codebase ./my-project
+  kotadb search-code 'database query'
+  kotadb search-symbols 'FileStorage'
+  
+  # Analyze code relationships
   kotadb find-callers FileStorage
-  kotadb relationship-query 'what would break if I change Config?'
+  kotadb analyze-impact Config
+  kotadb relationship-query 'what calls MyFunction?'
 
   # System management
   kotadb stats
@@ -84,46 +84,8 @@ enum Commands {
         port: u16,
     },
 
-    /// Insert a new document
-    Insert {
-        /// Path of the document (e.g., docs/readme.md)
-        path: String,
-        /// Title of the document
-        title: String,
-        /// Content of the document (can be piped in)
-        #[arg(value_name = "CONTENT")]
-        content: Option<String>,
-    },
-
-    /// Get a document by path
-    Get {
-        /// Path of the document (e.g., docs/readme.md)
-        path: String,
-    },
-
-    /// Update an existing document
-    Update {
-        /// Path of the document to update
-        path: String,
-        /// New path (optional)
-        #[arg(short = 'n', long)]
-        new_path: Option<String>,
-        /// New title (optional)
-        #[arg(short, long)]
-        title: Option<String>,
-        /// New content (optional, can be piped in)
-        #[arg(short, long)]
-        content: Option<String>,
-    },
-
-    /// Delete a document by path
-    Delete {
-        /// Path of the document to delete
-        path: String,
-    },
-
-    /// Search for documents and symbols by content or path
-    Search {
+    /// Search for code and symbols in the indexed codebase
+    SearchCode {
         /// Search query (use '*' for all, or search terms for content/symbol matching)
         #[arg(default_value = "*")]
         query: String,
@@ -149,13 +111,6 @@ enum Commands {
         context: String,
     },
 
-    /// List all documents
-    List {
-        /// Limit number of results
-        #[arg(short, long, default_value = "50")]
-        limit: usize,
-    },
-
     /// Show database statistics
     Stats,
 
@@ -165,9 +120,9 @@ enum Commands {
     /// Verify documentation accuracy against implementation
     VerifyDocs,
 
-    /// Ingest a git repository into the database
+    /// Index a codebase for intelligent analysis
     #[cfg(feature = "git-integration")]
-    IngestRepo {
+    IndexCodebase {
         /// Path to the git repository
         repo_path: PathBuf,
         /// Prefix for document paths in the database
@@ -235,9 +190,9 @@ enum Commands {
         limit: Option<usize>,
     },
 
-    /// Analyze dependencies: what would break if you change a symbol (safe refactoring analysis)
+    /// Analyze impact: what would break if you change a symbol
     #[cfg(feature = "tree-sitter-parsing")]
-    ImpactAnalysis {
+    AnalyzeImpact {
         /// Name or qualified name of the target symbol (e.g., 'StorageError' or 'errors::StorageError')
         target: String,
         /// Maximum number of impacted items to show (default: unlimited)
@@ -299,8 +254,6 @@ struct Database {
     trigram_index: Arc<Mutex<dyn Index>>,
     // Cache for path -> document ID lookups (built lazily)
     path_cache: Arc<RwLock<HashMap<String, ValidatedDocumentId>>>,
-    // Coordinated deletion service to ensure index synchronization
-    deletion_service: kotadb::CoordinatedDeletionService,
 }
 
 impl Database {
@@ -355,18 +308,11 @@ impl Database {
         let storage_arc: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
         let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
 
-        let deletion_service = kotadb::CoordinatedDeletionService::new(
-            storage_arc.clone(),
-            primary_index_arc.clone(),
-            trigram_index_arc.clone(),
-        );
-
         let db = Self {
             storage: storage_arc,
             primary_index: primary_index_arc,
             trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
-            deletion_service,
         };
 
         // Skip path cache rebuild for read-only operations like search
@@ -447,191 +393,6 @@ impl Database {
         Ok(())
     }
 
-    async fn insert(
-        &self,
-        path: String,
-        title: String,
-        content: String,
-    ) -> Result<ValidatedDocumentId> {
-        let doc = DocumentBuilder::new()
-            .path(&path)?
-            .title(&title)?
-            .content(content.as_bytes())
-            .build()?;
-
-        let doc_id = doc.id;
-        let doc_path = ValidatedPath::new(&path)?;
-
-        // Insert into storage
-        self.storage.lock().await.insert(doc.clone()).await?;
-
-        // Insert into both indices
-        self.primary_index
-            .lock()
-            .await
-            .insert(doc_id, doc_path.clone())
-            .await?;
-
-        // Insert into trigram index with content for proper full-text search
-        {
-            let mut trigram_guard = self.trigram_index.lock().await;
-            // Use the new content-aware method for proper trigram indexing
-            trigram_guard
-                .insert_with_content(doc_id, doc_path, &doc.content)
-                .await?;
-        }
-
-        // Update path cache
-        self.path_cache.write().await.insert(path, doc_id);
-
-        // Flush all to ensure persistence
-        self.storage.lock().await.flush().await?;
-        self.primary_index.lock().await.flush().await?;
-        self.trigram_index.lock().await.flush().await?;
-
-        Ok(doc_id)
-    }
-
-    async fn get_by_path(&self, path: &str) -> Result<Option<Document>> {
-        // Check if cache is empty and rebuild if needed (lazy initialization)
-        {
-            let cache = self.path_cache.read().await;
-            if cache.is_empty() {
-                drop(cache); // Release read lock before rebuilding
-                self.rebuild_path_cache().await?;
-            }
-        }
-
-        // O(1) lookup using the path cache
-        let cache = self.path_cache.read().await;
-
-        if let Some(doc_id) = cache.get(path) {
-            // Found in cache, get the document
-            self.storage.lock().await.get(doc_id).await
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn update_by_path(
-        &self,
-        path: &str,
-        new_path: Option<String>,
-        new_title: Option<String>,
-        new_content: Option<String>,
-    ) -> Result<()> {
-        // First find the document by path
-        let doc = self
-            .get_by_path(path)
-            .await?
-            .context("Document not found")?;
-
-        let doc_id = doc.id;
-
-        // Get existing document
-        let mut storage = self.storage.lock().await;
-        let existing = storage.get(&doc_id).await?.context("Document not found")?;
-
-        // Build updated document
-        let mut builder = DocumentBuilder::new();
-
-        // Use new values or keep existing ones
-        builder = builder.path(new_path.as_ref().unwrap_or(&existing.path.to_string()))?;
-        builder = builder.title(new_title.as_ref().unwrap_or(&existing.title.to_string()))?;
-
-        let content = if let Some(new_content) = new_content {
-            new_content.into_bytes()
-        } else {
-            existing.content.clone()
-        };
-        builder = builder.content(content);
-
-        // Build and set the same ID and created_at
-        let mut updated_doc = builder.build()?;
-        updated_doc.id = doc_id;
-        updated_doc.created_at = existing.created_at;
-
-        // Ensure updated_at is newer than the existing one
-        // In case of rapid updates, add a small increment to ensure it's different
-        if updated_doc.updated_at <= existing.updated_at {
-            use chrono::Duration;
-            updated_doc.updated_at = existing.updated_at + Duration::milliseconds(1);
-        }
-
-        // Update storage
-        storage.update(updated_doc.clone()).await?;
-
-        // Update indices and cache if path changed
-        if let Some(ref new_path_str) = new_path {
-            let new_validated_path = ValidatedPath::new(new_path_str)?;
-            self.primary_index
-                .lock()
-                .await
-                .update(doc_id, new_validated_path.clone())
-                .await?;
-            // Use update_with_content for trigram index since it needs content
-            self.trigram_index
-                .lock()
-                .await
-                .update_with_content(doc_id, new_validated_path, &updated_doc.content)
-                .await?;
-
-            // Update cache: remove old path, add new path
-            let mut cache = self.path_cache.write().await;
-            cache.retain(|_, id| *id != doc_id);
-            cache.insert(new_path_str.clone(), doc_id);
-        }
-
-        Ok(())
-    }
-
-    /// Centralized delete method that ensures all storage systems remain synchronized
-    /// This is the ONLY method that should be used to delete documents
-    async fn delete_document(&self, doc_id: &ValidatedDocumentId) -> Result<bool> {
-        // Use the coordinated deletion service to ensure proper synchronization
-        let deleted = self.deletion_service.delete_document(doc_id).await?;
-
-        if deleted {
-            // Remove from path cache if it exists
-            {
-                let mut cache = self.path_cache.write().await;
-                cache.retain(|_, cached_id| cached_id != doc_id);
-            }
-        }
-
-        Ok(deleted)
-    }
-
-    /// Get access to the coordinated deletion service for other modules
-    #[allow(dead_code)] // Will be used by HTTP server and MCP tools in future integration
-    pub fn get_deletion_service(&self) -> &kotadb::CoordinatedDeletionService {
-        &self.deletion_service
-    }
-
-    async fn delete_by_path(&self, path: &str) -> Result<bool> {
-        // Check if cache is empty and rebuild if needed (lazy initialization)
-        {
-            let cache = self.path_cache.read().await;
-            if cache.is_empty() {
-                drop(cache); // Release read lock before rebuilding
-                self.rebuild_path_cache().await?;
-            }
-        }
-
-        // First find the document by path using cache
-        let doc_id = {
-            let cache = self.path_cache.read().await;
-            cache.get(path).copied()
-        };
-
-        if let Some(doc_id) = doc_id {
-            // Use the centralized delete method to ensure coordination
-            self.delete_document(&doc_id).await
-        } else {
-            Ok(false)
-        }
-    }
-
     #[allow(dead_code)]
     async fn search(
         &self,
@@ -699,23 +460,11 @@ impl Database {
         Ok((documents, total_count))
     }
 
-    #[allow(dead_code)]
-    async fn list_all(&self, limit: usize) -> Result<Vec<Document>> {
-        let all_docs = self.storage.lock().await.list_all().await?;
-        Ok(all_docs.into_iter().take(limit).collect())
-    }
-
     async fn stats(&self) -> Result<(usize, usize)> {
         let all_docs = self.storage.lock().await.list_all().await?;
         let doc_count = all_docs.len();
         let total_size: usize = all_docs.iter().map(|d| d.size).sum();
         Ok((doc_count, total_size))
-    }
-
-    /// Flush any buffered writes to ensure durability
-    async fn flush(&self) -> Result<()> {
-        self.storage.lock().await.flush().await?;
-        Ok(())
     }
 }
 
@@ -746,18 +495,11 @@ mod tests {
         let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
         let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
-        let deletion_service = kotadb::CoordinatedDeletionService::new(
-            storage_arc.clone(),
-            primary_index_arc.clone(),
-            trigram_index_arc.clone(),
-        );
-
         let db = Database {
             storage: storage_arc,
             primary_index: primary_index_arc,
             trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
-            deletion_service,
         };
 
         // Should not panic with empty storage
@@ -796,18 +538,11 @@ mod tests {
         let primary_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
         let trigram_index_arc: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
 
-        let deletion_service = kotadb::CoordinatedDeletionService::new(
-            storage_arc.clone(),
-            primary_index_arc.clone(),
-            trigram_index_arc.clone(),
-        );
-
         let db = Database {
             storage: storage_arc,
             primary_index: primary_index_arc,
             trigram_index: trigram_index_arc,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
-            deletion_service,
         };
 
         // Time the rebuild operation
@@ -875,8 +610,8 @@ async fn create_relationship_engine(
     if !stats.using_binary_path && stats.binary_symbols_loaded == 0 {
         return Err(anyhow::anyhow!(
             "No symbols found in database. Required steps:\n\
-             1. Ingest a repository with symbols: kotadb ingest-repo /path/to/repo\n\
-             2. Verify ingestion: kotadb symbol-stats\n\
+             1. Index a codebase: kotadb index-codebase /path/to/repo\n\
+             2. Verify indexing: kotadb symbol-stats\n\
              3. Then retry this command"
         ));
     }
@@ -931,86 +666,12 @@ async fn main() -> Result<()> {
                 start_server(shared_storage, port).await?;
             }
 
-            Commands::Insert {
-                path,
-                title,
-                content,
-            } => {
-                // Read content from stdin if not provided
-                let content = match content {
-                    Some(c) => c,
-                    None => {
-                        use std::io::Read;
-                        let mut buffer = String::new();
-                        std::io::stdin().read_to_string(&mut buffer)?;
-                        buffer
-                    }
-                };
 
-                let doc_id = db.insert(path.clone(), title.clone(), content).await?;
-                // Ensure the write is persisted before exiting
-                db.flush().await?;
-                println!("✅ Document inserted successfully!");
-                println!("   ID: {}", doc_id.as_uuid());
-                println!("   Path: {path}");
-                println!("   Title: {title}");
-            }
-
-            Commands::Get { path } => match db.get_by_path(&path).await? {
-                Some(doc) => {
-                    println!("📄 Document found:");
-                    println!("   ID: {}", doc.id.as_uuid());
-                    println!("   Path: {}", doc.path.as_str());
-                    println!("   Title: {}", doc.title.as_str());
-                    println!("   Size: {} bytes", doc.size);
-                    println!("   Created: {}", doc.created_at);
-                    println!("   Updated: {}", doc.updated_at);
-                    println!("\n--- Content ---");
-                    println!("{}", String::from_utf8_lossy(&doc.content));
-                }
-                None => {
-                    println!("❌ Document not found");
-                }
-            },
-
-            Commands::Update {
-                path,
-                new_path,
-                title,
-                content,
-            } => {
-                // Read content from stdin if specified but not provided
-                let content = if content.as_ref().map(|c| c == "-").unwrap_or(false) {
-                    use std::io::Read;
-                    let mut buffer = String::new();
-                    std::io::stdin().read_to_string(&mut buffer)?;
-                    Some(buffer)
-                } else {
-                    content
-                };
-
-                db.update_by_path(&path, new_path, title, content).await?;
-                // Ensure the write is persisted before exiting
-                db.flush().await?;
-                println!("✅ Document updated successfully!");
-            }
-
-            Commands::Delete { path } => {
-                let deleted = db.delete_by_path(&path).await?;
-                // Ensure the deletion is persisted before exiting
-                if deleted {
-                    db.flush().await?;
-                    println!("✅ Document deleted successfully!");
-                } else {
-                    println!("❌ Document not found");
-                }
-            }
-
-            Commands::Search { query, limit, tags, context } => {
+            Commands::SearchCode { query, limit, tags, context } => {
                 // Handle empty query explicitly - return nothing with informative message
                 if query.is_empty() {
                     println!("Empty search query provided. Please specify a search term.");
-                    println!("Use 'list' command to view all documents, or '*' for wildcard search.");
+                    println!("Use '*' for wildcard search or provide specific code/symbol patterns.");
                     return Ok(());
                 }
 
@@ -1283,31 +944,6 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Commands::List { limit } => {
-                // Get all documents to know total, then limit
-                let all_docs = db.storage.lock().await.list_all().await?;
-                let total_count = all_docs.len();
-                let documents: Vec<_> = all_docs.into_iter().take(limit).collect();
-
-                if documents.is_empty() {
-                    println!("No documents in database");
-                } else {
-                    // Clear count information for LLM agents
-                    if documents.len() < total_count {
-                        println!("Showing {} of {} documents", documents.len(), total_count);
-                    } else {
-                        println!("Total documents: {}", documents.len());
-                    }
-                    println!();
-                    for doc in documents {
-                        println!("{}", doc.path.as_str());
-                        println!("  id: {}", doc.id.as_uuid());
-                        println!("  title: {}", doc.title.as_str());
-                        println!("  size: {} bytes", doc.size);
-                        println!();
-                    }
-                }
-            }
 
             Commands::Stats => {
                 let (count, total_size) = db.stats().await?;
@@ -1458,7 +1094,7 @@ async fn main() -> Result<()> {
             }
 
             #[cfg(feature = "git-integration")]
-            Commands::IngestRepo {
+            Commands::IndexCodebase {
                 repo_path,
                 prefix,
                 include_files,
@@ -1685,73 +1321,75 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::SearchSymbols { pattern, limit, symbol_type } => {
-                // Load symbol storage
-                let storage_path = cli.db_path.join("storage");
-                if !storage_path.exists() {
-                    return Err(anyhow::anyhow!(
-                        "No database found. Run 'ingest-repo' first to populate symbols."
-                    ));
+                // Use binary symbols which is where IndexCodebase stores them
+                let symbol_db_path = cli.db_path.join("symbols.kota");
+
+                if !symbol_db_path.exists() {
+                    println!("❌ No symbols found in database.");
+                    println!("   Required steps:");
+                    println!("   1. Index a codebase: kotadb index-codebase /path/to/repo");
+                    println!("   2. Verify indexing: kotadb symbol-stats");
+                    println!("   3. Then search: kotadb search-symbols 'pattern'");
+                    return Ok(());
                 }
 
-                let file_storage = create_file_storage(
-                    storage_path
-                        .to_str()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid storage path"))?,
-                    Some(100),
-                )
-                .await?;
+                // Open binary symbol reader for efficient searching
+                let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
+                let total_symbols = reader.symbol_count();
 
-                // Create symbol storage
-                let graph_path = storage_path.join("graph");
-                tokio::fs::create_dir_all(&graph_path).await?;
-                let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
-                let graph_storage =
-                    kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
-
-                let symbol_storage =
-                    SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
-
-                // Search for symbols using the built-in search
-                let mut matches = symbol_storage.search(&pattern, limit * 2); // Get extra for filtering
-
-                // Filter by type if specified
-                if let Some(ref filter_type) = symbol_type {
-                    let filter_lower = filter_type.to_lowercase();
-                    matches.retain(|entry| {
-                        format!("{:?}", entry.symbol.kind).to_lowercase().contains(&filter_lower) ||
-                        format!("{:?}", entry.symbol.symbol_type).to_lowercase().contains(&filter_lower)
-                    });
+                if total_symbols == 0 {
+                    println!("No symbols in database. Index a codebase first with: kotadb index-codebase /path/to/repo");
+                    return Ok(());
                 }
 
-                // Limit results
-                matches.truncate(limit);
+                // Search symbols
+                let mut matches = Vec::new();
+                let pattern_lower = pattern.to_lowercase();
+
+                for packed_symbol in reader.iter_symbols() {
+                    // Get the symbol name
+                    if let Ok(symbol_name) = reader.get_symbol_name(&packed_symbol) {
+                        // Match against pattern (case-insensitive)
+                        if symbol_name.to_lowercase().contains(&pattern_lower) {
+                            // Filter by type if specified
+                            if let Some(ref filter_type) = symbol_type {
+                                let filter_lower = filter_type.to_lowercase();
+                                let type_str = format!("{}", packed_symbol.kind).to_lowercase();
+                                if !type_str.contains(&filter_lower) {
+                                    continue;
+                                }
+                            }
+
+                            // Get file path for display
+                            let file_path = reader.get_symbol_file_path(&packed_symbol)
+                                .unwrap_or_else(|_| "<unknown>".to_string());
+
+                            matches.push((symbol_name, packed_symbol, file_path));
+                            if matches.len() >= limit {
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 if matches.is_empty() {
                     println!("No symbols found matching '{}'", pattern);
                     if let Some(ref st) = symbol_type {
                         println!("  with type filter: {}", st);
                     }
-                    if symbol_storage.get_stats().total_symbols == 0 {
-                        println!("Note: No symbols in database. Run 'ingest-repo' first.");
-                    }
+                    println!("  Total symbols in database: {}", total_symbols);
                 } else {
-                    // Check if we have more results than shown
-                    let full_results = symbol_storage.search(&pattern, limit + 1);
-                    let has_more = full_results.len() > limit;
-
-                    if has_more {
-                        println!("Showing {} of {} matching symbols (use -l {} for more)",
-                                limit, full_results.len(), limit * 2);
-                    } else {
-                        println!("Found {} matching symbols", matches.len());
+                    println!("Found {} matching symbols", matches.len());
+                    if matches.len() == limit {
+                        println!("(showing first {}, use -l for more)", limit);
                     }
                     println!();
 
-                    for entry in matches {
-                        println!("{}", entry.qualified_name);
-                        println!("  type: {:?}", entry.symbol.symbol_type);
-                        println!("  file: {}", entry.file_path.display());
-                        println!("  line: {}", entry.symbol.start_line);
+                    for (name, symbol, file_path) in matches {
+                        println!("{}", name);
+                        println!("  type: {}", symbol.kind);
+                        println!("  file: {}", file_path);
+                        println!("  line: {}", symbol.start_line);
                         println!();
                     }
                 }
@@ -1774,7 +1412,7 @@ async fn main() -> Result<()> {
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
-            Commands::ImpactAnalysis { target, limit } => {
+            Commands::AnalyzeImpact { target, limit } => {
                 let relationship_engine = create_relationship_engine(&cli.db_path).await?;
                 let query_type = RelationshipQueryType::ImpactAnalysis {
                     target: target.clone(),
@@ -1917,115 +1555,9 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Commands::Benchmark { operations, benchmark_type, format, max_search_queries } => {
-                println!("🔬 Running KotaDB Performance Benchmarks");
-                println!("════════════════════════════════════════");
-                println!("  Operations: {}", operations);
-                println!("  Type: {}", benchmark_type);
-                println!("  Format: {}", format);
-                println!();
-
-                use std::time::Instant;
-
-                // Ensure database exists
-                let db = Database::new(&cli.db_path, cli.binary_index).await?;
-
-                let mut results = Vec::new();
-                let mut search_count = 0usize;
-
-                // Storage benchmarks
-                if benchmark_type == "all" || benchmark_type == "storage" {
-                    println!("📝 Storage Benchmarks:");
-
-                    // Insert benchmark
-                    let start = Instant::now();
-                    for i in 0..operations {
-                        let path = format!("benchmark/doc_{}.md", i);
-                        let title = format!("Benchmark Doc {}", i);
-                        let content = format!("Benchmark content {}", i);
-                        db.insert(path, title, content).await?;
-                    }
-                    let insert_duration = start.elapsed();
-                    let insert_ops_per_sec = operations as f64 / insert_duration.as_secs_f64();
-                    println!("  Insert: {} ops in {:.2}s ({:.0} ops/sec)",
-                             operations, insert_duration.as_secs_f64(), insert_ops_per_sec);
-                    results.push(("insert", insert_duration, insert_ops_per_sec));
-
-                    // Search benchmark (using search as proxy for read performance)
-                    let start = Instant::now();
-                    for i in 0..operations {
-                        let path = format!("benchmark/doc_{}.md", i);
-                        let _ = db.search(&path, None, 1).await?;
-                    }
-                    let read_duration = start.elapsed();
-                    let read_ops_per_sec = operations as f64 / read_duration.as_secs_f64();
-                    println!("  Read/Search: {} ops in {:.2}s ({:.0} ops/sec)",
-                             operations, read_duration.as_secs_f64(), read_ops_per_sec);
-                    results.push(("read_search", read_duration, read_ops_per_sec));
-                }
-
-                // Index benchmarks
-                if benchmark_type == "all" || benchmark_type == "index" {
-                    println!("\n🔍 Index Benchmarks:");
-
-                    // Search benchmark (limited to prevent excessive runtime)
-                    let start = Instant::now();
-                    let search_limit = operations.min(max_search_queries);
-                    for i in 0..search_limit {
-                        let query = format!("content {}", i);
-                        let _ = db.search(&query, None, 10).await?;
-                    }
-                    search_count = search_limit;
-                    let search_duration = start.elapsed();
-                    let search_ops_per_sec = search_count as f64 / search_duration.as_secs_f64();
-                    println!("  Search: {} queries in {:.2}s ({:.0} queries/sec)",
-                             search_count, search_duration.as_secs_f64(), search_ops_per_sec);
-                    results.push(("search", search_duration, search_ops_per_sec));
-                }
-
-                // Output results based on format
-                match format.as_str() {
-                    "json" => {
-                        let json_output = serde_json::json!({
-                            "operations": operations,
-                            "type": benchmark_type,
-                            "results": results.iter().map(|(name, duration, ops_per_sec)| {
-                                serde_json::json!({
-                                    "operation": name,
-                                    "duration_ms": duration.as_millis(),
-                                    "ops_per_sec": ops_per_sec,
-                                })
-                            }).collect::<Vec<_>>(),
-                        });
-                        println!("\n{}", serde_json::to_string_pretty(&json_output)?);
-                    }
-                    "csv" => {
-                        println!("\noperation,duration_ms,ops_per_sec");
-                        for (name, duration, ops_per_sec) in results {
-                            println!("{},{},{:.2}", name, duration.as_millis(), ops_per_sec);
-                        }
-                    }
-                    _ => {
-                        // Human format - already printed above
-                        println!("\n✅ Benchmark complete!");
-                    }
-                }
-
-                // Cleanup behavior documentation
-                // Note: The Database struct doesn't expose a delete method by design
-                // to maintain data integrity. Benchmark data is left for inspection.
-                // This is intentional - users can:
-                // 1. Inspect the benchmark data after runs
-                // 2. Use a fresh database path for clean benchmarks
-                // 3. Delete the database directory manually if needed
-                println!("\n📊 Benchmark Complete!");
-                println!("   Data remains in database for inspection at: {:?}", cli.db_path);
-                println!("   💡 Tip: Use --db-path with a fresh directory for clean benchmarks");
-
-                if search_count < operations {
-                    println!("   ℹ️ Note: Search queries were limited to {} operations", search_count);
-                    println!("      Use --max-search-queries to adjust this limit");
-                }
+            Commands::Benchmark { .. } => {
+                println!("⚠️  Benchmark command temporarily disabled during codebase intelligence refactor");
+                println!("   This feature will be re-enabled with code-focused benchmarks soon.");
             }
         }
 
