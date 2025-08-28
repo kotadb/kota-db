@@ -154,6 +154,7 @@ data/dogfood/
 data/analysis/
 data/code-analysis-test/
 test-data/
+test-db-data/
 
 # Code analysis test suite artifacts
 /tests/code_analysis_artifacts/

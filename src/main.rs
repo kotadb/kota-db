@@ -59,7 +59,7 @@ struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
-    /// Suppress all non-essential output (ERROR level only)
+    /// Suppress all non-essential output for LLM-friendly results (ERROR level logging only)
     #[arg(short, long, global = true, conflicts_with = "verbose")]
     quiet: bool,
 
@@ -977,14 +977,21 @@ async fn main() -> Result<()> {
                         }
                         "minimal" => {
                             // Minimal: paths with relevance scores
-                            println!("Found {} matches in {} files (showing top {}):",
-                                response.optimization.total_matches,
-                                response.optimization.total_matches,
-                                response.results.len());
-                            println!();
+                            if !quiet {
+                                println!("Found {} matches in {} files (showing top {}):",
+                                    response.optimization.total_matches,
+                                    response.optimization.total_matches,
+                                    response.results.len());
+                                println!();
 
-                            for result in &response.results {
-                                println!("{} (score: {:.2})", result.path, result.relevance_score);
+                                for result in &response.results {
+                                    println!("{} (score: {:.2})", result.path, result.relevance_score);
+                                }
+                            } else {
+                                // In quiet mode, only show paths
+                                for result in &response.results {
+                                    println!("{}", result.path);
+                                }
                             }
                         }
                         "medium" => {
@@ -994,11 +1001,13 @@ async fn main() -> Result<()> {
                                 response.results.iter().map(|r| &r.path).collect();
                             let file_count = unique_files.len();
 
-                            println!("Found {} matches in {} files (showing top {}):",
-                                response.optimization.total_matches,
-                                file_count,
-                                response.results.len().min(3));
-                            println!();
+                            if !quiet {
+                                println!("Found {} matches in {} files (showing top {}):",
+                                    response.optimization.total_matches,
+                                    file_count,
+                                    response.results.len().min(3));
+                                println!();
+                            }
 
                             for (i, result) in response.results.iter().enumerate().take(3) {
                                 // Extract line numbers from first match location if available
@@ -1091,11 +1100,13 @@ async fn main() -> Result<()> {
                                 &response.results[..]
                             };
 
-                            println!("Found {} matches in {} files (showing {}):",
-                                response.optimization.total_matches,
-                                response.optimization.total_matches,
-                                results_to_show.len());
-                            println!();
+                            if !quiet {
+                                println!("Found {} matches in {} files (showing {}):",
+                                    response.optimization.total_matches,
+                                    response.optimization.total_matches,
+                                    results_to_show.len());
+                                println!();
+                            }
 
                             for result in results_to_show {
                                 println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -1156,26 +1167,32 @@ async fn main() -> Result<()> {
                     }
                         }
                         Err(e) => {
-                            // Log the error and fall back to regular search
-                            eprintln!("Warning: LLM search failed, falling back to regular search: {}", e);
+                            // Log the error and fall back to regular search (suppress in quiet mode)
+                            if !quiet {
+                                eprintln!("Warning: LLM search failed, falling back to regular search: {}", e);
+                            }
 
                             // Fall back to regular search
                             let tag_list = tags.clone().map(|t| t.split(',').map(String::from).collect());
                             let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
 
                             if results.is_empty() {
-                                println!("No documents found matching the query");
+                                if !quiet {
+                                    println!("No documents found matching the query");
+                                }
                             } else {
                                 // Show results in simple format as fallback
-                                if results.len() < total_count {
-                                    println!("Showing {} of {} results (fallback mode)", results.len(), total_count);
-                                } else {
-                                    println!("Found {} documents (fallback mode)", results.len());
+                                if !quiet {
+                                    if results.len() < total_count {
+                                        println!("Showing {} of {} results (fallback mode)", results.len(), total_count);
+                                    } else {
+                                        println!("Found {} documents (fallback mode)", results.len());
+                                    }
+                                    println!();
                                 }
-                                println!();
                                 for doc in results {
                                     println!("{}", doc.path.as_str());
-                                    if context != "none" {
+                                    if context != "none" && !quiet {
                                         println!("  id: {}", doc.id.as_uuid());
                                         println!("  title: {}", doc.title.as_str());
                                         println!("  size: {} bytes", doc.size);
@@ -1191,19 +1208,23 @@ async fn main() -> Result<()> {
                     let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
 
                     if results.is_empty() {
-                        println!("No documents found matching the query");
-                    } else {
-                        // Show clear count information for LLM agents
-                        if results.len() < total_count {
-                            println!("Showing {} of {} results", results.len(), total_count);
-                        } else {
-                            println!("Found {} documents", results.len());
+                        if !quiet {
+                            println!("No documents found matching the query");
                         }
-                        println!();
+                    } else {
+                        // Show clear count information for LLM agents (suppress in quiet mode)
+                        if !quiet {
+                            if results.len() < total_count {
+                                println!("Showing {} of {} results", results.len(), total_count);
+                            } else {
+                                println!("Found {} documents", results.len());
+                            }
+                            println!();
+                        }
                         for doc in results {
                             // Minimal output optimized for LLM consumption
                             println!("{}", doc.path.as_str());
-                            if context != "none" {
+                            if context != "none" && !quiet {
                                 println!("  id: {}", doc.id.as_uuid());
                                 println!("  title: {}", doc.title.as_str());
                                 println!("  size: {} bytes", doc.size);
@@ -1226,7 +1247,7 @@ async fn main() -> Result<()> {
             }
 
             Commands::Validate => {
-                println!("🔍 Running search functionality validation...");
+                qprintln!(quiet, "🔍 Running search functionality validation...");
 
                 let validation_result = {
                     let storage = db.storage.lock().await;
@@ -1236,13 +1257,13 @@ async fn main() -> Result<()> {
                 };
 
                 // Display detailed results
-                println!("\n📋 Validation Results:");
-                println!("   Status: {}", match validation_result.overall_status {
+                qprintln!(quiet, "\n📋 Validation Results:");
+                qprintln!(quiet, "   Status: {}", match validation_result.overall_status {
                     ValidationStatus::Passed => "✅ PASSED",
                     ValidationStatus::Warning => "⚠️ WARNING",
                     ValidationStatus::Failed => "❌ FAILED",
                 });
-                println!("   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
+                qprintln!(quiet, "   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
 
                 // Show individual check results
                 for check in &validation_result.check_results {
@@ -1435,15 +1456,20 @@ async fn main() -> Result<()> {
                     organization_config: Some(kotadb::git::RepositoryOrganizationConfig::default()),
                 };
 
-                // Create progress bar
-                let progress_bar = ProgressBar::new_spinner();
-                progress_bar.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.green} {msg}")
-                        .expect("Valid template")
-                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                );
-                progress_bar.set_message("Initializing...");
+                // Create progress bar (disabled in quiet mode)
+                let progress_bar = if quiet {
+                    ProgressBar::hidden()
+                } else {
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.green} {msg}")
+                            .expect("Valid template")
+                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                    );
+                    pb.set_message("Initializing...");
+                    pb
+                };
 
                 // Create progress callback
                 let pb = progress_bar.clone();
@@ -1481,13 +1507,18 @@ async fn main() -> Result<()> {
                 drop(storage);
 
                 // Rebuild indices and cache after ingestion with progress indication
-                let rebuild_progress = ProgressBar::new_spinner();
-                rebuild_progress.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.blue} {msg}")
-                        .expect("Valid template")
-                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                );
+                let rebuild_progress = if quiet {
+                    ProgressBar::hidden()
+                } else {
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.blue} {msg}")
+                            .expect("Valid template")
+                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                    );
+                    pb
+                };
 
                 rebuild_progress.set_message("Rebuilding primary and trigram indices...");
                 db.rebuild_indices().await?;
@@ -1512,13 +1543,18 @@ async fn main() -> Result<()> {
                 }
 
                 // Validate search functionality after ingestion
-                let validation_progress = ProgressBar::new_spinner();
-                validation_progress.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.yellow} {msg}")
-                        .expect("Valid template")
-                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                );
+                let validation_progress = if quiet {
+                    ProgressBar::hidden()
+                } else {
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.yellow} {msg}")
+                            .expect("Valid template")
+                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+                    );
+                    pb
+                };
 
                 validation_progress.set_message("Running search validation tests...");
                 let validation_result = {
@@ -1643,24 +1679,30 @@ async fn main() -> Result<()> {
                 }
 
                 if matches.is_empty() {
-                    println!("No symbols found matching '{}'", pattern);
-                    if let Some(ref st) = symbol_type {
-                        println!("  with type filter: {}", st);
+                    if !quiet {
+                        println!("No symbols found matching '{}'", pattern);
+                        if let Some(ref st) = symbol_type {
+                            println!("  with type filter: {}", st);
+                        }
+                        println!("  Total symbols in database: {}", total_symbols);
                     }
-                    println!("  Total symbols in database: {}", total_symbols);
                 } else {
-                    println!("Found {} matching symbols", matches.len());
-                    if matches.len() == limit {
-                        println!("(showing first {}, use -l for more)", limit);
+                    if !quiet {
+                        println!("Found {} matching symbols", matches.len());
+                        if matches.len() == limit {
+                            println!("(showing first {}, use -l for more)", limit);
+                        }
+                        println!();
                     }
-                    println!();
 
                     for (name, symbol, file_path) in matches {
                         println!("{}", name);
-                        println!("  type: {}", symbol.kind);
-                        println!("  file: {}", file_path);
-                        println!("  line: {}", symbol.start_line);
-                        println!();
+                        if !quiet {
+                            println!("  type: {}", symbol.kind);
+                            println!("  file: {}", file_path);
+                            println!("  line: {}", symbol.start_line);
+                            println!();
+                        }
                     }
                 }
             }
@@ -1678,7 +1720,17 @@ async fn main() -> Result<()> {
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
                 }
-                println!("{}", result.to_markdown());
+                if quiet {
+                    // In quiet mode, output minimal information
+                    let markdown = result.to_markdown();
+                    for line in markdown.lines() {
+                        if line.starts_with("- ") {
+                            println!("{}", line.trim_start_matches("- "));
+                        }
+                    }
+                } else {
+                    println!("{}", result.to_markdown());
+                }
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
@@ -1694,7 +1746,17 @@ async fn main() -> Result<()> {
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
                 }
-                println!("{}", result.to_markdown());
+                if quiet {
+                    // In quiet mode, output minimal information
+                    let markdown = result.to_markdown();
+                    for line in markdown.lines() {
+                        if line.starts_with("- ") {
+                            println!("{}", line.trim_start_matches("- "));
+                        }
+                    }
+                } else {
+                    println!("{}", result.to_markdown());
+                }
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
@@ -1718,7 +1780,17 @@ async fn main() -> Result<()> {
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
                 }
-                println!("{}", result.to_markdown());
+                if quiet {
+                    // In quiet mode, output minimal information
+                    let markdown = result.to_markdown();
+                    for line in markdown.lines() {
+                        if line.starts_with("- ") {
+                            println!("{}", line.trim_start_matches("- "));
+                        }
+                    }
+                } else {
+                    println!("{}", result.to_markdown());
+                }
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
