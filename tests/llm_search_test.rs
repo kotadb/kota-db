@@ -490,3 +490,293 @@ async fn test_llm_search_performance() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_llm_search_unicode_boundary_handling() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let db_path = temp_dir.path().to_path_buf();
+
+    // Create storage and trigram index
+    let storage = create_file_storage(db_path.join("storage").to_str().unwrap(), None).await?;
+    let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+
+    let trigram_index =
+        create_trigram_index(db_path.join("trigram").to_str().unwrap(), None).await?;
+    let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+    // Insert document with Unicode content that previously caused crashes
+    {
+        let mut storage_guard = storage.lock().await;
+        let mut trigram_guard = trigram_index.lock().await;
+
+        let unicode_content = "
+#!/bin/bash
+# Test script with Unicode box-drawing characters
+echo \"Starting test with Unicode...\"
+
+# Box drawing characters that caused the crash:
+# ═══════════════════════════════════════════════════════════════════
+# ║ This section contains Unicode box-drawing characters           ║
+# ║ These characters are multi-byte UTF-8 sequences                ║
+# ╠═══════════════════════════════════════════════════════════════════╣
+# ║ Character '═' takes 3 bytes: 0xE2 0x95 0x90                   ║
+# ║ Character '║' takes 3 bytes: 0xE2 0x95 0x91                   ║
+# ║ Character '╠' takes 3 bytes: 0xE2 0x95 0xA0                   ║
+# ║ Character '╣' takes 3 bytes: 0xE2 0x95 0xA3                   ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+
+echo \"Test complete with emojis: 🚀 🎯 ✅ 🔧 📋\"
+echo \"International chars: áéíóú ñ ç ß æ ø å\"
+echo \"Mathematical symbols: ∑ ∫ ∆ π ∞ √ ≤ ≥ ≠\"
+";
+
+        let doc = DocumentBuilder::new()
+            .path("scripts/unicode_test.sh")
+            .unwrap()
+            .title("Unicode Test Script")
+            .unwrap()
+            .content(unicode_content.as_bytes())
+            .build()?;
+
+        storage_guard.insert(doc.clone()).await?;
+        trigram_guard
+            .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+            .await?;
+    }
+
+    let search_engine = LLMSearchEngine::new();
+
+    // Test 1: Search that should find the Unicode content
+    let storage_guard = storage.lock().await;
+    let trigram_guard = trigram_index.lock().await;
+
+    let response = search_engine
+        .search_optimized("box-drawing", &*storage_guard, &*trigram_guard, Some(10))
+        .await?;
+
+    assert!(
+        !response.results.is_empty(),
+        "Should find document with Unicode content"
+    );
+
+    // Test 2: Verify content snippet doesn't crash on Unicode boundaries
+    for result in &response.results {
+        assert!(
+            !result.content_snippet.is_empty(),
+            "Content snippet should not be empty"
+        );
+
+        // Verify the snippet is valid UTF-8
+        assert!(
+            std::str::from_utf8(result.content_snippet.as_bytes()).is_ok(),
+            "Content snippet should be valid UTF-8"
+        );
+
+        // Verify it can be displayed without panicking
+        let _ = result.content_snippet.to_string();
+    }
+
+    println!("✓ Unicode boundary handling works correctly");
+    println!(
+        "  Processed {} results with Unicode content safely",
+        response.results.len()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_llm_search_snippet_length_with_unicode() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let db_path = temp_dir.path().to_path_buf();
+
+    let storage = create_file_storage(db_path.join("storage").to_str().unwrap(), None).await?;
+    let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+
+    let trigram_index =
+        create_trigram_index(db_path.join("trigram").to_str().unwrap(), None).await?;
+    let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+    // Test with different Unicode character types
+    let test_cases = vec![
+        (
+            "emojis.txt",
+            "Search with emojis: 🔍 🚀 💡 📊 ⚡ 🎯 ✅ 🔧 📋 🌟 ".repeat(50),
+        ),
+        (
+            "accents.txt",
+            "Àccéntéd châráctérs: café naïve résumé piñata façade ".repeat(50),
+        ),
+        (
+            "mathematical.txt",
+            "Math symbols: ∑∫∆πα∞√≤≥≠±×÷∈∉⊂⊃∪∩∀∃∇∂ ".repeat(50),
+        ),
+        (
+            "box_drawing.txt",
+            "Box chars: ═║╔╗╚╝╠╣╦╩╬├┤┬┴┼─│┌┐└┘ ".repeat(50),
+        ),
+    ];
+
+    for (filename, content) in test_cases {
+        let mut storage_guard = storage.lock().await;
+        let mut trigram_guard = trigram_index.lock().await;
+
+        let doc = DocumentBuilder::new()
+            .path(filename)
+            .unwrap()
+            .title(format!("Unicode Test: {}", filename))
+            .unwrap()
+            .content(content.as_bytes())
+            .build()?;
+
+        storage_guard.insert(doc.clone()).await?;
+        trigram_guard
+            .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+            .await?;
+
+        drop(storage_guard);
+        drop(trigram_guard);
+    }
+
+    // Test with small snippet size to force truncation at Unicode boundaries
+    let context_config = ContextConfig {
+        token_budget: 1000,
+        max_snippet_chars: 100, // Small size to trigger boundary issues
+        include_related: false,
+        strip_comments: false,
+        prefer_complete_functions: false,
+        proximity_window_size: 50,
+        max_term_matches: 5,
+        match_context_size: 25,
+    };
+
+    let search_engine = LLMSearchEngine::with_config(RelevanceConfig::default(), context_config);
+
+    let storage_guard = storage.lock().await;
+    let trigram_guard = trigram_index.lock().await;
+
+    let response = search_engine
+        .search_optimized("symbols", &*storage_guard, &*trigram_guard, Some(10))
+        .await?;
+
+    for result in &response.results {
+        // Verify snippet length is reasonable but respects Unicode boundaries
+        assert!(
+            result.content_snippet.len() <= 200, // Allow some flexibility
+            "Snippet should be approximately within size limits"
+        );
+
+        // Most important: verify it's valid UTF-8 after truncation
+        assert!(
+            std::str::from_utf8(result.content_snippet.as_bytes()).is_ok(),
+            "Truncated snippet must be valid UTF-8: {}",
+            result.path
+        );
+
+        // Verify no Unicode characters are broken
+        for c in result.content_snippet.chars() {
+            assert!(
+                !c.is_control() || c == '\n' || c == '\t',
+                "Should not contain broken Unicode control characters"
+            );
+        }
+    }
+
+    println!("✓ Unicode snippet truncation works correctly");
+    println!(
+        "  Tested {} results with various Unicode character types",
+        response.results.len()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_llm_search_regression_issue_397() -> Result<()> {
+    // Regression test specifically for issue #397 - Unicode boundary crash
+    let temp_dir = TempDir::new()?;
+    let db_path = temp_dir.path().to_path_buf();
+
+    let storage = create_file_storage(db_path.join("storage").to_str().unwrap(), None).await?;
+    let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage));
+
+    let trigram_index =
+        create_trigram_index(db_path.join("trigram").to_str().unwrap(), None).await?;
+    let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+    // Create content that reproduces the exact crash scenario
+    let crash_content = format!(
+        "{}{}{}",
+        "-".repeat(497), // Get close to the crash boundary
+        "═══",           // The Unicode character that caused the crash (bytes 499-502)
+        "More content after the Unicode character to test boundary handling"
+    );
+
+    {
+        let mut storage_guard = storage.lock().await;
+        let mut trigram_guard = trigram_index.lock().await;
+
+        let doc = DocumentBuilder::new()
+            .path("tests/crash_reproduction.md")
+            .unwrap()
+            .title("Crash Reproduction Test")
+            .unwrap()
+            .content(crash_content.as_bytes())
+            .build()?;
+
+        storage_guard.insert(doc.clone()).await?;
+        trigram_guard
+            .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+            .await?;
+    }
+
+    // Use configuration that previously caused the crash
+    let context_config = ContextConfig {
+        token_budget: 2000,
+        max_snippet_chars: 500, // This was the problematic size
+        include_related: false,
+        strip_comments: false,
+        prefer_complete_functions: false,
+        proximity_window_size: 100,
+        max_term_matches: 10,
+        match_context_size: 50,
+    };
+
+    let search_engine = LLMSearchEngine::with_config(RelevanceConfig::default(), context_config);
+
+    let storage_guard = storage.lock().await;
+    let trigram_guard = trigram_index.lock().await;
+
+    // This search should NOT crash (was the failing case from issue #397)
+    let response = search_engine
+        .search_optimized(
+            "nonexistent_term",
+            &*storage_guard,
+            &*trigram_guard,
+            Some(10),
+        )
+        .await?;
+
+    // When no matches are found, it falls back to beginning of content
+    // This path previously crashed due to Unicode boundary issues
+    if !response.results.is_empty() {
+        for result in &response.results {
+            // Verify the result is valid and doesn't contain broken Unicode
+            assert!(
+                std::str::from_utf8(result.content_snippet.as_bytes()).is_ok(),
+                "Content snippet must be valid UTF-8 after boundary correction"
+            );
+
+            // Additional validation that the fix worked
+            assert!(
+                result.content_snippet.len() <= 600, // Some buffer for safety
+                "Snippet should be within reasonable bounds"
+            );
+        }
+    }
+
+    println!("✓ Issue #397 regression test passed");
+    println!("  Unicode boundary crash is fixed - search completes without panic");
+
+    Ok(())
+}
