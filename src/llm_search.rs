@@ -682,7 +682,15 @@ impl LLMSearchEngine {
             return Ok(content.to_string());
         }
 
-        // Find the best section that includes query matches
+        // Try function-aware extraction first for better code comprehension
+        if let Ok(function_snippet) = self.extract_function_aware_snippet(content, content_lower, query) {
+            if !function_snippet.is_empty() && function_snippet.len() <= max_chars * 2 {
+                // Allow function snippets to be up to 2x the normal limit for better context
+                return Ok(function_snippet);
+            }
+        }
+
+        // Fall back to the original logic if function-aware extraction fails
         if let Some(match_pos) = content_lower.find(query) {
             // Center the snippet around the first match
             let half_window = max_chars / 2;
@@ -734,6 +742,155 @@ impl LLMSearchEngine {
                     .unwrap_or("")
             };
             Ok(format!("{}...", snippet.trim()))
+        }
+    }
+
+    /// Extract function-aware snippet that includes complete function definitions
+    /// when matches occur within function boundaries
+    fn extract_function_aware_snippet(
+        &self,
+        content: &str,
+        content_lower: &str,
+        query: &str,
+    ) -> Result<String> {
+        // Find all match positions
+        let match_positions: Vec<usize> = content_lower
+            .match_indices(query)
+            .map(|(pos, _)| pos)
+            .collect();
+
+        if match_positions.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut snippets = Vec::new();
+        
+        for &match_pos in &match_positions {
+            // Try to find the containing function/struct/impl for this match
+            if let Some(function_snippet) = self.extract_containing_definition(content, match_pos)? {
+                snippets.push(function_snippet);
+            }
+            
+            // Limit the number of function snippets to prevent excessive output
+            if snippets.len() >= 3 {
+                break;
+            }
+        }
+
+        if snippets.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Join multiple function snippets with separators
+        Ok(snippets.join("\n\n// ---\n\n"))
+    }
+
+    /// Extract the containing function, impl block, or struct definition for a position
+    fn extract_containing_definition(&self, content: &str, position: usize) -> Result<Option<String>> {
+        let lines: Vec<&str> = content.lines().collect();
+        
+        // Find the line number for the given position
+        let mut char_count = 0;
+        let mut match_line = 0;
+        
+        for (line_idx, line) in lines.iter().enumerate() {
+            let line_end = char_count + line.len() + 1; // +1 for newline
+            if position < line_end {
+                match_line = line_idx;
+                break;
+            }
+            char_count = line_end;
+        }
+
+        // Look backward from match line to find function/struct/impl start
+        let mut start_line = match_line;
+        let mut brace_depth = 0;
+        let mut found_definition = false;
+
+        // Search backward for definition start
+        for i in (0..=match_line).rev() {
+            let line = lines[i].trim();
+            
+            // Count braces to understand nesting (reverse logic since we're going backwards)
+            brace_depth += line.chars().filter(|&c| c == '}').count() as i32;
+            brace_depth -= line.chars().filter(|&c| c == '{').count() as i32;
+            
+            // Look for function, impl, struct, enum, or similar definitions
+            if brace_depth <= 0 && (
+                line.starts_with("pub fn ") || 
+                line.starts_with("fn ") ||
+                line.starts_with("pub struct ") || 
+                line.starts_with("struct ") ||
+                line.starts_with("pub enum ") || 
+                line.starts_with("enum ") ||
+                line.starts_with("impl ") ||
+                line.starts_with("pub impl ") ||
+                line.starts_with("trait ") ||
+                line.starts_with("pub trait ")
+            ) {
+                start_line = i;
+                found_definition = true;
+                break;
+            }
+            
+            // If we've gone too far back without finding a definition, stop
+            if i > 0 && match_line - i > 20 {
+                break;
+            }
+        }
+
+        if !found_definition {
+            return Ok(None);
+        }
+
+        // Look forward from match line to find the end of the definition
+        let mut end_line = match_line;
+        brace_depth = 0;
+        let mut found_opening_brace = false;
+
+        for i in start_line..lines.len() {
+            let line = lines[i].trim();
+            
+            // Count braces
+            let open_braces = line.chars().filter(|&c| c == '{').count() as i32;
+            let close_braces = line.chars().filter(|&c| c == '}').count() as i32;
+            
+            if open_braces > 0 {
+                found_opening_brace = true;
+            }
+            
+            brace_depth += open_braces - close_braces;
+            
+            // If we've found the opening brace and returned to balance, we're at the end
+            if found_opening_brace && brace_depth <= 0 {
+                end_line = i;
+                break;
+            }
+            
+            // Prevent extracting excessively large definitions
+            if i - start_line > 100 {
+                end_line = (start_line + 100).min(lines.len() - 1);
+                break;
+            }
+        }
+
+        // Extract the definition
+        if start_line <= end_line && end_line < lines.len() {
+            let definition_lines = &lines[start_line..=end_line];
+            let definition = definition_lines.join("\n");
+            
+            // Add line numbers for LLM context as suggested in issue
+            let line_start = start_line + 1; // 1-indexed for display
+            let line_end = end_line + 1;
+            let header = if line_start == line_end {
+                format!("// Line {}\n", line_start)
+            } else {
+                format!("// Lines {}-{}\n", line_start, line_end)
+            };
+            
+            Ok(Some(format!("{}{}", header, definition)))
+        } else {
+            Ok(None)
         }
     }
 
