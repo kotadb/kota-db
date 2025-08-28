@@ -1037,23 +1037,36 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                println!("{}{} (score: {:.2})", result.path, line_range, result.relevance_score);
-
-                                // Show content snippet with proper indentation
-                                if !result.content_snippet.is_empty() {
-                                    // Clean up the snippet for better presentation
-                                    let snippet = result.content_snippet
-                                        .trim_start_matches("...")
-                                        .trim_end_matches("...")
-                                        .trim();
-
-                                    for line in snippet.lines() {
-                                        println!("  {}", line);
+                                // Check if this looks like a structured code snippet with line numbers
+                                let has_line_numbers = result.content_snippet.starts_with("// Line");
+                                if has_line_numbers {
+                                    // New structured format as requested in issue #413
+                                    println!("File: {}", result.path);
+                                    if !result.content_snippet.is_empty() {
+                                        println!("```rust");
+                                        println!("{}", result.content_snippet.trim());
+                                        println!("```");
                                     }
+                                } else {
+                                    // Legacy format for backward compatibility
+                                    println!("{}{} (score: {:.2})", result.path, line_range, result.relevance_score);
 
-                                    // Add ellipsis if content was truncated
-                                    if result.content_snippet.ends_with("...") {
-                                        println!("    ...");
+                                    // Show content snippet with proper indentation
+                                    if !result.content_snippet.is_empty() {
+                                        // Clean up the snippet for better presentation
+                                        let snippet = result.content_snippet
+                                            .trim_start_matches("...")
+                                            .trim_end_matches("...")
+                                            .trim();
+
+                                        for line in snippet.lines() {
+                                            println!("  {}", line);
+                                        }
+
+                                        // Add ellipsis if content was truncated
+                                        if result.content_snippet.ends_with("...") {
+                                            println!("    ...");
+                                        }
                                     }
                                 }
 
@@ -1105,9 +1118,20 @@ async fn main() -> Result<()> {
                                 }
 
                                 println!();
-                                println!("Content:");
-                                for line in result.content_snippet.lines() {
-                                    println!("  {}", line);
+
+                                // Check if this is a structured code snippet and format accordingly
+                                let has_line_numbers = result.content_snippet.starts_with("// Line");
+                                if has_line_numbers {
+                                    // Enhanced structured format for code
+                                    println!("```rust");
+                                    println!("{}", result.content_snippet.trim());
+                                    println!("```");
+                                } else {
+                                    // Legacy content display
+                                    println!("Content:");
+                                    for line in result.content_snippet.lines() {
+                                        println!("  {}", line);
+                                    }
                                 }
                                 println!();
                             }
