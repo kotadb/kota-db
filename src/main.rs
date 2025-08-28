@@ -1039,7 +1039,6 @@ async fn main() -> Result<()> {
 
                                 // Check if this looks like a structured code snippet with line numbers
                                 let has_line_numbers = result.content_snippet.starts_with("// Line");
-                                
                                 if has_line_numbers {
                                     // New structured format as requested in issue #413
                                     println!("File: {}", result.path);
@@ -1119,10 +1118,9 @@ async fn main() -> Result<()> {
                                 }
 
                                 println!();
-                                
+
                                 // Check if this is a structured code snippet and format accordingly
                                 let has_line_numbers = result.content_snippet.starts_with("// Line");
-                                
                                 if has_line_numbers {
                                     // Enhanced structured format for code
                                     println!("```rust");
