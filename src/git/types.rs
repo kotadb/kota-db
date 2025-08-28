@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Metadata about a git repository
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +68,96 @@ pub struct CommitInfo {
     pub deletions: usize,
 }
 
+/// Memory management configuration for ingestion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryLimits {
+    /// Maximum memory usage in bytes (None = unlimited)
+    pub max_memory_bytes: Option<usize>,
+    /// Maximum files to process in a single batch
+    pub max_files_per_batch: usize,
+    /// Maximum relationships to keep in memory
+    pub max_relationships_per_document: usize,
+    /// Maximum total relationships in the dependency graph
+    pub max_total_relationships: usize,
+    /// Memory pressure check interval during processing
+    pub memory_check_interval_ms: u64,
+    /// Enable memory pressure detection
+    pub enable_memory_pressure_detection: bool,
+    /// Enable graceful degradation when approaching limits
+    pub enable_graceful_degradation: bool,
+    /// Memory usage threshold (0.0-1.0) to trigger warnings
+    pub memory_warning_threshold: f64,
+    /// Memory usage threshold (0.0-1.0) to trigger backpressure
+    pub memory_backpressure_threshold: f64,
+}
+
+impl Default for MemoryLimits {
+    fn default() -> Self {
+        Self {
+            max_memory_bytes: Some(512 * 1024 * 1024), // 512MB default
+            max_files_per_batch: 1000,
+            max_relationships_per_document: 10_000,
+            max_total_relationships: 100_000,
+            memory_check_interval_ms: 1000, // Check every second
+            enable_memory_pressure_detection: true,
+            enable_graceful_degradation: true,
+            memory_warning_threshold: 0.7,       // Warn at 70%
+            memory_backpressure_threshold: 0.85, // Backpressure at 85%
+        }
+    }
+}
+
+/// Current memory usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryUsageInfo {
+    /// Current memory usage in bytes
+    pub current_usage_bytes: usize,
+    /// Peak memory usage during this session
+    pub peak_usage_bytes: usize,
+    /// Number of documents currently in memory
+    pub documents_in_memory: usize,
+    /// Number of relationships currently in memory
+    pub relationships_in_memory: usize,
+    /// Memory usage as percentage of limit (0.0-1.0)
+    pub usage_percentage: f64,
+    /// Whether memory pressure is detected
+    pub memory_pressure_detected: bool,
+    /// Timestamp of this measurement
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Memory pressure level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryPressureLevel {
+    /// Memory usage is normal
+    Normal,
+    /// Memory usage is elevated but manageable
+    Warning,
+    /// Memory usage is high, backpressure should be applied
+    High,
+    /// Memory usage is critical, immediate action required
+    Critical,
+}
+
+/// Progress information including memory usage
+#[derive(Debug, Clone)]
+pub struct IngestionProgress {
+    /// Files processed so far
+    pub files_processed: usize,
+    /// Total files discovered
+    pub total_files: usize,
+    /// Symbols extracted so far
+    pub symbols_extracted: usize,
+    /// Relationships found so far
+    pub relationships_found: usize,
+    /// Current memory usage information
+    pub memory_usage: MemoryUsageInfo,
+    /// Estimated time remaining
+    pub estimated_remaining: Option<Duration>,
+    /// Current processing phase
+    pub current_phase: String,
+}
+
 /// Configuration for repository ingestion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestionOptions {
@@ -88,6 +179,8 @@ pub struct IngestionOptions {
     pub branch: Option<String>,
     /// Maximum depth for commit history (None = unlimited)
     pub max_history_depth: Option<usize>,
+    /// Memory management configuration
+    pub memory_limits: MemoryLimits,
 }
 
 impl Default for IngestionOptions {
@@ -117,6 +210,7 @@ impl Default for IngestionOptions {
             ],
             branch: None,
             max_history_depth: Some(1000),
+            memory_limits: MemoryLimits::default(),
         }
     }
 }

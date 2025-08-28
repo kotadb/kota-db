@@ -156,6 +156,28 @@ pub enum ReferenceType {
     OperatorOverload,
 }
 
+impl ReferenceType {
+    /// Convert ReferenceType to RelationType for consistent mapping
+    pub fn to_relation_type(&self) -> RelationType {
+        match self {
+            ReferenceType::FunctionCall => RelationType::Calls,
+            ReferenceType::MethodCall => RelationType::Calls,
+            ReferenceType::ChainedMethodCall => RelationType::Calls,
+            ReferenceType::StaticMethodCall => RelationType::Calls,
+            ReferenceType::GenericMethodCall => RelationType::Calls,
+            ReferenceType::TurbofishCall => RelationType::Calls,
+            ReferenceType::StandardLibraryCall => RelationType::Calls,
+            ReferenceType::ClosureCall => RelationType::Calls,
+            ReferenceType::MacroInvocation => RelationType::Calls,
+            ReferenceType::OperatorOverload => RelationType::Calls,
+            ReferenceType::TypeUsage => RelationType::References,
+            ReferenceType::FieldAccess => RelationType::References,
+            ReferenceType::TraitImpl => RelationType::Implements,
+            ReferenceType::TraitBound => RelationType::Implements,
+        }
+    }
+}
+
 /// Dependency extractor that analyzes code for relationships
 pub struct DependencyExtractor {
     /// Code parser for symbol extraction (kept for future use)
@@ -326,27 +348,59 @@ impl DependencyExtractor {
         )
         .context("Failed to create macro invocations query")?;
 
-        // Query for turbofish syntax: method::<T>(), collect::<Vec<_>>() (simplified)
+        // Query for turbofish syntax: method::<T>(), collect::<Vec<_>>(), parse::<i32>()
         let turbofish_calls = Query::new(
             &language,
             r#"
+            ; Field-based turbofish: obj.method::<T>()
             (call_expression
                 function: (generic_function
                     function: (field_expression
                         field: (field_identifier) @turbofish_method)))
+            
+            ; Standalone turbofish: parse::<i32>()
+            (call_expression
+                function: (generic_function
+                    function: (identifier) @turbofish_function))
+            
+            ; Scoped turbofish: String::from::<&str>()
+            (call_expression
+                function: (generic_function
+                    function: (scoped_identifier
+                        name: (identifier) @turbofish_scoped)))
             "#,
         )
         .context("Failed to create turbofish calls query")?;
 
-        // Query for standard library patterns (simplified)
+        // Query for standard library patterns
         let stdlib_patterns = Query::new(
             &language,
             r#"
-            ; Standard library qualified calls
+            ; Nested standard library calls: std::process::Command::new()
             (call_expression
                 function: (scoped_identifier
                     path: (scoped_identifier) @stdlib_path
                     name: (identifier) @stdlib_function))
+            
+            ; Direct std calls: std::fs::read()
+            (call_expression
+                function: (scoped_identifier
+                    path: (identifier) @std_module
+                    name: (identifier) @std_function)
+                (#match? @std_module "^std$"))
+            
+            ; Method calls on std types: Vec::new(), HashMap::with_capacity()
+            (call_expression
+                function: (scoped_identifier
+                    path: (identifier) @std_type
+                    name: (identifier) @std_method)
+                (#match? @std_type "^(Vec|HashMap|HashSet|BTreeMap|BTreeSet|String|Option|Result)$"))
+            
+            ; Associated function calls: String::from(), Option::Some()
+            (call_expression
+                function: (scoped_identifier
+                    name: (identifier) @assoc_function)
+                (#match? @assoc_function "^(from|new|with_capacity|Some|None|Ok|Err)$"))
             "#,
         )
         .context("Failed to create stdlib patterns query")?;
