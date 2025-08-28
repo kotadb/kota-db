@@ -20,30 +20,43 @@ static INDEX_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Initialize the logging and tracing infrastructure
 /// This should be called once at application startup
 pub fn init_logging() -> Result<()> {
-    init_logging_with_level(false)
+    init_logging_with_level(false, false)
 }
 
 /// Initialize logging with configurable verbosity
-pub fn init_logging_with_level(verbose: bool) -> Result<()> {
+pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
     // Create a layered subscriber with:
     // 1. Environment-based filtering (RUST_LOG)
     // 2. Pretty formatted output for development
     // 3. JSON output option for production
 
-    let default_level = if verbose {
-        "kotadb=debug,info"
+    // Determine the filter level based on flags
+    let filter_level = if quiet {
+        // In quiet mode, suppress everything except errors
+        // This sets a global filter that affects all modules
+        EnvFilter::new("error")
+    } else if verbose {
+        // In verbose mode, show debug info for kotadb and info for others
+        EnvFilter::new("kotadb=debug,info")
     } else {
-        "kotadb=warn,warn"
+        // Default: warnings for kotadb and others
+        EnvFilter::new("kotadb=warn,warn")
     };
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    // Allow environment variable to override if set, otherwise use our flag-based filter
+    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+        EnvFilter::try_from_default_env().unwrap_or(filter_level)
+    } else {
+        filter_level
+    };
 
+    // Configure the format layer based on quiet mode
+    // In quiet mode, we want minimal output without metadata
     let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_line_number(true)
-        .with_file(true)
+        .with_target(!quiet) // Don't show target module in quiet mode
+        .with_thread_ids(!quiet) // Don't show thread IDs in quiet mode
+        .with_line_number(!quiet) // Don't show line numbers in quiet mode
+        .with_file(!quiet) // Don't show file names in quiet mode
         .with_ansi(true);
 
     match tracing_subscriber::registry()
@@ -52,7 +65,9 @@ pub fn init_logging_with_level(verbose: bool) -> Result<()> {
         .try_init()
     {
         Ok(()) => {
-            info!("KotaDB observability initialized");
+            if !quiet {
+                info!("KotaDB observability initialized");
+            }
             Ok(())
         }
         Err(_) => {

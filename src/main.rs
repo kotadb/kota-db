@@ -1,6 +1,15 @@
 // KotaDB CLI - Codebase intelligence platform for distributed human-AI cognition
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+
+// Macro for conditional printing based on quiet flag
+macro_rules! qprintln {
+    ($quiet:expr, $($arg:tt)*) => {
+        if !$quiet {
+            println!($($arg)*);
+        }
+    };
+}
 use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level, start_server, validate_post_ingestion_search,
@@ -47,8 +56,12 @@ EXAMPLES:
 )]
 struct Cli {
     /// Enable verbose logging (DEBUG level). Default is WARN level.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, conflicts_with = "quiet")]
     verbose: bool,
+
+    /// Suppress all non-essential output (ERROR level only)
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    quiet: bool,
 
     /// Database directory path
     #[arg(short, long, default_value = "./kota-db-data")]
@@ -858,8 +871,11 @@ async fn main() -> Result<()> {
     // Parse CLI args first to get verbose flag
     let cli = Cli::parse();
 
-    // Initialize logging with appropriate level based on verbose flag
-    let _ = init_logging_with_level(cli.verbose); // Ignore error if already initialized
+    // Initialize logging with appropriate level based on verbose/quiet flags
+    let _ = init_logging_with_level(cli.verbose, cli.quiet); // Ignore error if already initialized
+
+    // Store quiet flag for use in output
+    let quiet = cli.quiet;
 
     // Run everything within trace context
     with_trace_id("kotadb-cli", async move {
@@ -1032,11 +1048,11 @@ async fn main() -> Result<()> {
 
             Commands::Stats => {
                 let (count, total_size) = db.stats().await?;
-                println!("Database Statistics");
-                println!("  total_documents: {count}");
-                println!("  total_size: {total_size} bytes");
+                qprintln!(quiet, "Database Statistics");
+                qprintln!(quiet, "  total_documents: {count}");
+                qprintln!(quiet, "  total_size: {total_size} bytes");
                 if count > 0 {
-                    println!("  average_size: {} bytes", total_size / count);
+                    qprintln!(quiet, "  average_size: {} bytes", total_size / count);
                 }
             }
 
@@ -1194,22 +1210,22 @@ async fn main() -> Result<()> {
                 use kotadb::git::types::IngestionOptions;
                 use kotadb::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 
-                println!("🔄 Ingesting git repository: {:?}", repo_path);
+                qprintln!(quiet, "🔄 Ingesting git repository: {:?}", repo_path);
 
                 // Determine if symbols should be extracted
                 #[cfg(feature = "tree-sitter-parsing")]
                 let should_extract_symbols = if no_symbols {
-                    println!("⚠️  Symbol extraction disabled via --no-symbols flag");
+                    qprintln!(quiet, "⚠️  Symbol extraction disabled via --no-symbols flag");
                     false
                 } else if let Some(extract) = extract_symbols {
                     if extract {
-                        println!("✅ Symbol extraction enabled via --extract-symbols flag");
+                        qprintln!(quiet, "✅ Symbol extraction enabled via --extract-symbols flag");
                     } else {
-                        println!("⚠️  Symbol extraction disabled via --extract-symbols=false");
+                        qprintln!(quiet, "⚠️  Symbol extraction disabled via --extract-symbols=false");
                     }
                     extract
                 } else {
-                    println!("✅ Symbol extraction enabled (default with tree-sitter feature)");
+                    qprintln!(quiet, "✅ Symbol extraction enabled (default with tree-sitter feature)");
                     true // Default to true when tree-sitter is available
                 };
 
@@ -1295,7 +1311,7 @@ async fn main() -> Result<()> {
                 rebuild_progress.finish_with_message("✅ Indices rebuilt");
 
                 // Ensure all async operations are complete before validation
-                println!("⏳ Ensuring index synchronization...");
+                qprintln!(quiet, "⏳ Ensuring index synchronization...");
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                 // Explicit flush verification
@@ -1330,26 +1346,26 @@ async fn main() -> Result<()> {
                 // Report validation results
                 match validation_result.overall_status {
                     ValidationStatus::Passed => {
-                        println!("✅ Search validation passed: All systems operational");
+                        qprintln!(quiet, "✅ Search validation passed: All systems operational");
                     }
                     ValidationStatus::Warning => {
-                        println!("⚠️ Search validation completed with warnings:");
+                        qprintln!(quiet, "⚠️ Search validation completed with warnings:");
                         for issue in &validation_result.issues {
-                            println!("   - {}", issue);
+                            qprintln!(quiet, "   - {}", issue);
                         }
-                        println!("   Recommendations:");
+                        qprintln!(quiet, "   Recommendations:");
                         for rec in &validation_result.recommendations {
-                            println!("   • {}", rec);
+                            qprintln!(quiet, "   • {}", rec);
                         }
                     }
                     ValidationStatus::Failed => {
-                        println!("❌ Search validation failed - ingestion may not be fully operational:");
+                        qprintln!(quiet, "❌ Search validation failed - ingestion may not be fully operational:");
                         for issue in &validation_result.issues {
-                            println!("   - {}", issue);
+                            qprintln!(quiet, "   - {}", issue);
                         }
-                        println!("   Recommendations:");
+                        qprintln!(quiet, "   Recommendations:");
                         for rec in &validation_result.recommendations {
-                            println!("   • {}", rec);
+                            qprintln!(quiet, "   • {}", rec);
                         }
 
                         // Return error for critical failures
@@ -1361,25 +1377,25 @@ async fn main() -> Result<()> {
 
                 // Show warnings for git ingestion
                 if !validation_result.warnings.is_empty() {
-                    println!("   Validation warnings:");
+                    qprintln!(quiet, "   Validation warnings:");
                     for warning in &validation_result.warnings {
-                        println!("   ⚠️ {}", warning);
+                        qprintln!(quiet, "   ⚠️ {}", warning);
                     }
                 }
 
-                println!("✅ Repository ingestion complete!");
-                println!("   Documents created: {}", result.documents_created);
-                println!("   Files ingested: {}", result.files_ingested);
-                println!("   Commits ingested: {}", result.commits_ingested);
+                qprintln!(quiet, "✅ Repository ingestion complete!");
+                qprintln!(quiet, "   Documents created: {}", result.documents_created);
+                qprintln!(quiet, "   Files ingested: {}", result.files_ingested);
+                qprintln!(quiet, "   Commits ingested: {}", result.commits_ingested);
                 if result.symbols_extracted > 0 {
-                    println!("   Symbols extracted: {} from {} files", result.symbols_extracted, result.files_with_symbols);
+                    qprintln!(quiet, "   Symbols extracted: {} from {} files", result.symbols_extracted, result.files_with_symbols);
                 }
                 if result.errors > 0 {
-                    println!("   ⚠️ Errors encountered: {}", result.errors);
+                    qprintln!(quiet, "   ⚠️ Errors encountered: {}", result.errors);
                 }
 
                 // Show validation summary
-                println!("   Validation: {} ({}/{})",
+                qprintln!(quiet, "   Validation: {} ({}/{})",
                     validation_result.summary(),
                     validation_result.passed_checks,
                     validation_result.total_checks
