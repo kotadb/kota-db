@@ -895,4 +895,52 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_trigram_index_wildcard_query_returns_empty() -> Result<()> {
+        // Test that validates trigram index correctly returns empty results for wildcard queries
+        // This is by design - trigram indices are for text search, not document listing
+        let temp_dir = TempDir::new()?;
+        let trigram_path = temp_dir.path().join("trigram");
+
+        let mut trigram_index =
+            create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
+
+        // Add documents with content to the trigram index
+        for i in 0..3 {
+            let doc_id = crate::ValidatedDocumentId::new();
+            let doc_path = crate::ValidatedPath::new(format!("test/doc{}.md", i))?;
+            let content = format!("Document {} contains function and struct keywords", i);
+
+            trigram_index
+                .insert_with_content(doc_id, doc_path, content.as_bytes())
+                .await?;
+        }
+
+        // Flush to ensure persistence
+        trigram_index.flush().await?;
+
+        // Test wildcard query returns empty (by design)
+        let wildcard_query = QueryBuilder::new().with_limit(10)?.build()?;
+        let wildcard_results = trigram_index.search(&wildcard_query).await?;
+        assert_eq!(
+            wildcard_results.len(),
+            0,
+            "Trigram index should return empty for wildcard queries"
+        );
+
+        // Test text search query returns results
+        let text_query = QueryBuilder::new()
+            .with_text("function")?
+            .with_limit(10)?
+            .build()?;
+        let text_results = trigram_index.search(&text_query).await?;
+        assert_eq!(
+            text_results.len(),
+            3,
+            "Trigram index should return results for text queries"
+        );
+
+        Ok(())
+    }
 }
