@@ -182,6 +182,15 @@ enum Commands {
         /// Maximum file size to ingest (in MB)
         #[arg(long, default_value = "10")]
         max_file_size_mb: usize,
+        /// Maximum total memory usage for ingestion (in MB, None = unlimited)
+        #[arg(long)]
+        max_memory_mb: Option<u64>,
+        /// Maximum number of files to process in parallel (None = auto-detect)
+        #[arg(long)]
+        max_parallel_files: Option<usize>,
+        /// Enable adaptive chunking to reduce memory usage during ingestion
+        #[arg(long, default_value = "true")]
+        enable_chunking: bool,
         /// Extract code symbols using tree-sitter parsing (enabled by default)
         /// Use --extract-symbols=false or --no-symbols to disable
         #[cfg(feature = "tree-sitter-parsing")]
@@ -1455,6 +1464,9 @@ async fn main() -> Result<()> {
                 include_files,
                 include_commits,
                 max_file_size_mb,
+                max_memory_mb,
+                max_parallel_files,
+                enable_chunking,
                 #[cfg(feature = "tree-sitter-parsing")]
                 extract_symbols,
                 #[cfg(feature = "tree-sitter-parsing")]
@@ -1483,12 +1495,25 @@ async fn main() -> Result<()> {
                     true // Default to true when tree-sitter is available
                 };
 
+                // Configure memory limits if specified
+                let memory_limits = if max_memory_mb.is_some() || max_parallel_files.is_some() || !enable_chunking {
+                    Some(kotadb::memory::MemoryLimitsConfig {
+                        max_total_memory_mb: max_memory_mb,
+                        max_parallel_files,
+                        enable_adaptive_chunking: enable_chunking,
+                        chunk_size: if enable_chunking { 50 } else { usize::MAX },
+                    })
+                } else {
+                    None
+                };
+
                 // Configure ingestion options
                 #[allow(unused_mut)]
                 let mut options = IngestionOptions {
                     include_file_contents: include_files,
                     include_commit_history: include_commits,
                     max_file_size: max_file_size_mb * 1024 * 1024,
+                    memory_limits,
                     ..Default::default()
                 };
 

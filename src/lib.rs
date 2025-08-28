@@ -14,6 +14,7 @@ pub mod graph_storage;
 pub mod http_server;
 pub mod hybrid_storage;
 pub mod llm_search;
+pub mod memory;
 pub mod metrics;
 pub mod native_graph_storage;
 pub mod observability;

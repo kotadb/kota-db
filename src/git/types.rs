@@ -88,6 +88,8 @@ pub struct IngestionOptions {
     pub branch: Option<String>,
     /// Maximum depth for commit history (None = unlimited)
     pub max_history_depth: Option<usize>,
+    /// Memory limits configuration for ingestion process
+    pub memory_limits: Option<crate::memory::MemoryLimitsConfig>,
 }
 
 impl Default for IngestionOptions {
@@ -117,6 +119,7 @@ impl Default for IngestionOptions {
             ],
             branch: None,
             max_history_depth: Some(1000),
+            memory_limits: None, // Default to no memory limits for backward compatibility
         }
     }
 }
