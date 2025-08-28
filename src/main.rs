@@ -1859,8 +1859,24 @@ async fn main() -> Result<()> {
                 println!("\n📦 Symbol Storage Location:");
                 println!("   Path: {:?}", storage_path);
 
+                // Also check for binary symbols (used by find-callers command)
+                let symbol_db_path = cli.db_path.join("symbols.kota");
+                let binary_symbol_count = if symbol_db_path.exists() {
+                    match kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path) {
+                        Ok(reader) => reader.symbol_count(),
+                        Err(e) => {
+                            println!("⚠️  Warning: Failed to read binary symbols: {}", e);
+                            0
+                        }
+                    }
+                } else {
+                    0
+                };
+
                 println!("\n🔤 Symbol Statistics:");
-                println!("   Total symbols: {}", stats.total_symbols);
+                println!("   Traditional symbols: {}", stats.total_symbols);
+                println!("   Binary symbols: {}", binary_symbol_count);
+                println!("   Total symbols: {}", stats.total_symbols + binary_symbol_count);
                 println!("   Total files: {}", stats.file_count);
 
                 if !stats.symbols_by_type.is_empty() {
@@ -1881,7 +1897,9 @@ async fn main() -> Result<()> {
                 println!("   Total relationships: {}", dep_stats.total_relationships);
                 println!("   Total symbols in graph: {}", dep_stats.total_symbols);
 
-                if stats.total_symbols == 0 {
+                let total_all_symbols = stats.total_symbols + binary_symbol_count;
+
+                if total_all_symbols == 0 {
                     println!("\n💡 Tip: Run 'ingest-repo' on a repository to extract symbols");
                 } else {
                     println!("\n✅ Symbol storage is ready for relationship queries!");
@@ -1889,6 +1907,13 @@ async fn main() -> Result<()> {
                     println!("   • find-callers <symbol>");
                     println!("   • impact-analysis <symbol>");
                     println!("   • relationship-query \"what calls X?\"");
+                }
+
+                // Show which storage is being used by find-callers command
+                if binary_symbol_count > 0 {
+                    println!("\n📍 Binary Symbol Location:");
+                    println!("   Path: {:?}", symbol_db_path);
+                    println!("   Status: Used by find-callers and relationship commands");
                 }
             }
 
