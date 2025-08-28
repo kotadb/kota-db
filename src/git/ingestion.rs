@@ -359,19 +359,21 @@ impl RepositoryIngester {
             repo_path
         );
 
-        let report_progress = |message: &str| {
-            if let Some(ref callback) = progress_callback {
-                callback(message);
-            }
-        };
-
-        // First, perform binary symbol extraction
+        // First, perform binary symbol extraction (it will handle its own progress reporting)
         let mut result = self
             .ingest_with_binary_symbols(repo_path, storage, symbol_db_path.as_ref(), None)
             .await?;
 
         // Now extract relationships using the bridge
-        report_progress("Phase 3: Extracting relationships from binary symbols...");
+        // Create a simple progress reporter for the relationship extraction phase
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+            info!("{}", message);
+        };
+
+        report_progress("Building dependency graph from extracted symbols...");
 
         let relationship_start = std::time::Instant::now();
 
@@ -391,15 +393,26 @@ impl RepositoryIngester {
             .collect();
 
         // Extract relationships using the bridge
+        report_progress(&format!(
+            "Analyzing {} source files for dependencies...",
+            file_contents.len()
+        ));
         let bridge = BinaryRelationshipBridge::new();
         match bridge.extract_relationships(symbol_db_path.as_ref(), repo_path, &file_contents) {
             Ok(dependency_graph) => {
                 result.relationships_extracted = dependency_graph.stats.edge_count;
+                report_progress(&format!(
+                    "Found {} relationships between symbols",
+                    result.relationships_extracted
+                ));
 
-                // Serialize and save the dependency graph
+                // Serialize and save the dependency graph (using bincode for compatibility)
+                report_progress("Persisting dependency graph to disk...");
                 let serializable = dependency_graph.to_serializable();
-                let graph_json = serde_json::to_vec_pretty(&serializable)?;
-                std::fs::write(graph_db_path.as_ref(), graph_json)?;
+                let graph_binary = bincode::serialize(&serializable)
+                    .context("Failed to serialize dependency graph")?;
+                std::fs::write(graph_db_path.as_ref(), graph_binary)
+                    .context("Failed to write dependency graph to disk")?;
 
                 let elapsed = relationship_start.elapsed();
                 info!(
@@ -408,13 +421,22 @@ impl RepositoryIngester {
                 );
 
                 report_progress(&format!(
-                    "Relationship extraction complete: {} relationships in {:?}",
+                    "✅ Dependency graph built: {} relationships extracted in {:?}",
                     result.relationships_extracted, elapsed
                 ));
             }
             Err(e) => {
-                warn!("Failed to extract relationships: {}", e);
+                let error_msg = format!(
+                    "Relationship extraction failed for repository '{}': {}",
+                    repo_path.display(),
+                    e
+                );
+                warn!("{}", error_msg);
+                report_progress(&format!("⚠️ {}", error_msg));
                 result.errors += 1;
+
+                // Note: We continue with ingestion even if relationship extraction fails
+                // This ensures users still get documents and symbols even without relationships
             }
         }
 
