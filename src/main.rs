@@ -1802,8 +1802,35 @@ async fn main() -> Result<()> {
                 }
 
                 println!("\n🔗 Dependency Graph:");
-                println!("   Total relationships: {}", dep_stats.total_relationships);
-                println!("   Total symbols in graph: {}", dep_stats.total_symbols);
+                
+                // Check for binary dependency graph first (new system)
+                let graph_db_path = cli.db_path.join("dependency_graph.bin");
+                if graph_db_path.exists() {
+                    match std::fs::read(&graph_db_path) {
+                        Ok(graph_binary) => {
+                            match bincode::deserialize::<kotadb::dependency_extractor::SerializableDependencyGraph>(&graph_binary) {
+                                Ok(serializable) => {
+                                    println!("   Total relationships: {}", serializable.stats.edge_count);
+                                    println!("   Total symbols in graph: {}", serializable.stats.node_count);
+                                }
+                                Err(e) => {
+                                    println!("   ⚠️  Failed to deserialize dependency graph: {}", e);
+                                    println!("   Total relationships: {} (from traditional storage)", dep_stats.total_relationships);
+                                    println!("   Total symbols in graph: {} (from traditional storage)", dep_stats.total_symbols);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("   ⚠️  Failed to read dependency graph: {}", e);
+                            println!("   Total relationships: {} (from traditional storage)", dep_stats.total_relationships);
+                            println!("   Total symbols in graph: {} (from traditional storage)", dep_stats.total_symbols);
+                        }
+                    }
+                } else {
+                    // Fall back to traditional storage
+                    println!("   Total relationships: {}", dep_stats.total_relationships);
+                    println!("   Total symbols in graph: {}", dep_stats.total_symbols);
+                }
 
                 let total_all_symbols = stats.total_symbols + binary_symbol_count;
 
