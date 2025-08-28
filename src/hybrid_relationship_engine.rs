@@ -5,11 +5,13 @@
 //! maintaining full API compatibility.
 
 use anyhow::{Context, Result};
+use std::cell::RefCell;
 use std::path::Path;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::{
+    binary_relationship_bridge::BinaryRelationshipBridge,
     binary_symbols::BinarySymbolReader,
     dependency_extractor::DependencyGraph,
     parsing::SymbolType,
@@ -24,8 +26,10 @@ use crate::{
 pub struct HybridRelationshipEngine {
     /// Binary symbol reader for fast symbol lookup
     symbol_reader: Option<BinarySymbolReader>,
-    /// Dependency graph built from relationships
-    dependency_graph: Option<DependencyGraph>,
+    /// Dependency graph built from relationships (using RefCell for interior mutability)
+    dependency_graph: RefCell<Option<DependencyGraph>>,
+    /// Database path for on-demand relationship extraction
+    db_path: std::path::PathBuf,
     /// Configuration
     config: RelationshipQueryConfig,
 }
@@ -79,7 +83,8 @@ impl HybridRelationshipEngine {
 
         Ok(Self {
             symbol_reader,
-            dependency_graph,
+            dependency_graph: RefCell::new(dependency_graph),
+            db_path: db_path.to_path_buf(),
             config,
         })
     }
@@ -97,7 +102,7 @@ impl HybridRelationshipEngine {
         let result = if self.symbol_reader.is_some() {
             debug!(
                 "Using binary symbol path for query (dependency graph available: {})",
-                self.dependency_graph.is_some()
+                self.dependency_graph.borrow().is_some()
             );
             self.execute_binary_query(query_type.clone()).await
         } else {
@@ -137,28 +142,48 @@ impl HybridRelationshipEngine {
 
         match query_type.clone() {
             RelationshipQueryType::FindCallers { target } => {
-                // If no dependency graph is available, return informative message
-                if self.dependency_graph.is_none() {
-                    return Ok(RelationshipQueryResult {
-                        query_type,
-                        direct_relationships: vec![],
-                        indirect_relationships: vec![],
-                        stats: RelationshipStats {
-                            direct_count: 0,
-                            indirect_count: 0,
-                            symbols_analyzed: reader.symbol_count(),
-                            execution_time_ms: 0,
-                            truncated: false,
-                        },
-                        summary: format!(
-                            "Symbol '{}' found in binary database (total {} symbols loaded), but relationship graph not available. \
-                            To enable caller analysis, ingest repository with relationship extraction enabled.",
-                            target, reader.symbol_count()
-                        ),
-                    });
+                // Check if we have a dependency graph, extract on-demand if needed
+                let has_graph = self.dependency_graph.borrow().is_some();
+                if !has_graph {
+                    // No graph available, attempt on-demand extraction
+                    info!("Dependency graph not cached, attempting on-demand extraction from binary symbols");
+
+                    match self.extract_relationships_on_demand().await {
+                        Ok(extracted_graph) => {
+                            info!(
+                                "Successfully extracted relationships on-demand with {} nodes",
+                                extracted_graph.graph.node_count()
+                            );
+
+                            // Store the extracted graph for future queries
+                            *self.dependency_graph.borrow_mut() = Some(extracted_graph);
+                        }
+                        Err(e) => {
+                            warn!("Failed to extract relationships on-demand: {}", e);
+                            return Ok(RelationshipQueryResult {
+                                query_type,
+                                direct_relationships: vec![],
+                                indirect_relationships: vec![],
+                                stats: RelationshipStats {
+                                    direct_count: 0,
+                                    indirect_count: 0,
+                                    symbols_analyzed: reader.symbol_count(),
+                                    execution_time_ms: 0,
+                                    truncated: false,
+                                },
+                                summary: format!(
+                                    "Symbol '{}' found in binary database (total {} symbols loaded), but on-demand relationship extraction failed: {}. \
+                                    Consider re-running ingest-repo with relationship extraction enabled for better performance.",
+                                    target, reader.symbol_count(), e
+                                ),
+                            });
+                        }
+                    }
                 }
 
-                let graph = self.dependency_graph.as_ref().unwrap();
+                // Now we should have a graph, borrow it
+                let graph_ref = self.dependency_graph.borrow();
+                let graph = graph_ref.as_ref().unwrap();
 
                 // Look up target symbol by name
                 let (_symbol, target_id) = reader
@@ -213,28 +238,48 @@ impl HybridRelationshipEngine {
                 })
             }
             RelationshipQueryType::ImpactAnalysis { target } => {
-                // If no dependency graph is available, return informative message
-                if self.dependency_graph.is_none() {
-                    return Ok(RelationshipQueryResult {
-                        query_type,
-                        direct_relationships: vec![],
-                        indirect_relationships: vec![],
-                        stats: RelationshipStats {
-                            direct_count: 0,
-                            indirect_count: 0,
-                            symbols_analyzed: reader.symbol_count(),
-                            execution_time_ms: 0,
-                            truncated: false,
-                        },
-                        summary: format!(
-                            "Symbol '{}' found in binary database (total {} symbols loaded), but relationship graph not available. \
-                            To enable impact analysis, ingest repository with relationship extraction enabled.",
-                            target, reader.symbol_count()
-                        ),
-                    });
+                // Check if we have a dependency graph, extract on-demand if needed
+                let has_graph = self.dependency_graph.borrow().is_some();
+                if !has_graph {
+                    // No graph available, attempt on-demand extraction
+                    info!("Dependency graph not cached, attempting on-demand extraction for impact analysis");
+
+                    match self.extract_relationships_on_demand().await {
+                        Ok(extracted_graph) => {
+                            info!(
+                                "Successfully extracted relationships on-demand with {} nodes",
+                                extracted_graph.graph.node_count()
+                            );
+
+                            // Store the extracted graph for future queries
+                            *self.dependency_graph.borrow_mut() = Some(extracted_graph);
+                        }
+                        Err(e) => {
+                            warn!("Failed to extract relationships on-demand: {}", e);
+                            return Ok(RelationshipQueryResult {
+                                query_type,
+                                direct_relationships: vec![],
+                                indirect_relationships: vec![],
+                                stats: RelationshipStats {
+                                    direct_count: 0,
+                                    indirect_count: 0,
+                                    symbols_analyzed: reader.symbol_count(),
+                                    execution_time_ms: 0,
+                                    truncated: false,
+                                },
+                                summary: format!(
+                                    "Symbol '{}' found in binary database (total {} symbols loaded), but on-demand relationship extraction failed: {}. \
+                                    Consider re-running ingest-repo with relationship extraction enabled for better performance.",
+                                    target, reader.symbol_count(), e
+                                ),
+                            });
+                        }
+                    }
                 }
 
-                let graph = self.dependency_graph.as_ref().unwrap();
+                // Now we should have a graph, borrow it
+                let graph_ref = self.dependency_graph.borrow();
+                let graph = graph_ref.as_ref().unwrap();
 
                 // For impact analysis, find all transitive dependencies
                 let (_symbol, target_id) = reader
@@ -414,20 +459,113 @@ impl HybridRelationshipEngine {
         }
     }
 
+    /// Extract relationships on-demand from binary symbols and source files
+    /// This method bridges the gap when binary symbols exist but dependency graph is missing
+    #[instrument(skip(self))]
+    async fn extract_relationships_on_demand(&self) -> Result<DependencyGraph> {
+        info!("Starting on-demand relationship extraction from binary symbols");
+        let start = std::time::Instant::now();
+
+        let symbol_db_path = self.db_path.join("symbols.kota");
+
+        // Ensure we have binary symbols available
+        if !symbol_db_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Binary symbol database not found at: {:?}",
+                symbol_db_path
+            ));
+        }
+
+        // Get the storage path to access source files
+        let storage_path = self.db_path.join("storage");
+        if !storage_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Storage path not found at: {:?}",
+                storage_path
+            ));
+        }
+
+        // Find source files from the storage directory
+        let files = self.collect_source_files(&storage_path).await?;
+        info!(
+            "Collected {} source files for relationship extraction",
+            files.len()
+        );
+
+        if files.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No source files found for relationship extraction"
+            ));
+        }
+
+        // Create relationship bridge and extract relationships
+        let bridge = BinaryRelationshipBridge::new();
+        let dependency_graph = bridge
+            .extract_relationships(&symbol_db_path, &self.db_path, &files)
+            .with_context(|| "Failed to extract relationships from binary symbols")?;
+
+        let elapsed = start.elapsed();
+        info!(
+            "On-demand relationship extraction completed in {:?}, extracted {} relationships",
+            elapsed,
+            dependency_graph.graph.node_count()
+        );
+
+        // Save the extracted graph for future use
+        let graph_path = self.db_path.join("dependency_graph.bin");
+        if let Err(e) = Self::save_dependency_graph(&dependency_graph, &graph_path) {
+            warn!("Failed to cache extracted dependency graph: {}", e);
+        } else {
+            info!("Cached extracted dependency graph to: {:?}", graph_path);
+        }
+
+        Ok(dependency_graph)
+    }
+
+    /// Collect source files from the storage directory for relationship extraction
+    async fn collect_source_files(
+        &self,
+        storage_path: &Path,
+    ) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+        use tokio::fs;
+
+        let mut files = Vec::new();
+        let mut entries = fs::read_dir(storage_path).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+
+            // Only process source code files (Rust, Python, JavaScript, TypeScript, etc.)
+            if let Some(extension) = path.extension() {
+                let ext = extension.to_string_lossy().to_lowercase();
+                if matches!(
+                    ext.as_str(),
+                    "rs" | "py" | "js" | "ts" | "cpp" | "c" | "h" | "hpp" | "java" | "go" | "rb"
+                ) {
+                    if let Ok(contents) = fs::read(&path).await {
+                        files.push((path, contents));
+                    }
+                }
+            }
+        }
+
+        Ok(files)
+    }
+
     /// Get statistics about the hybrid engine
     pub fn get_stats(&self) -> HybridEngineStats {
+        let graph_borrowed = self.dependency_graph.borrow();
         HybridEngineStats {
             binary_symbols_loaded: self
                 .symbol_reader
                 .as_ref()
                 .map(|r| r.symbol_count())
                 .unwrap_or(0),
-            graph_nodes_loaded: self
-                .dependency_graph
+            graph_nodes_loaded: graph_borrowed
                 .as_ref()
                 .map(|g| g.graph.node_count())
                 .unwrap_or(0),
-            using_binary_path: self.symbol_reader.is_some() && self.dependency_graph.is_some(),
+            using_binary_path: self.symbol_reader.is_some() && graph_borrowed.is_some(),
         }
     }
 }
