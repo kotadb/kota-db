@@ -30,8 +30,8 @@ pub struct TrigramIndex {
     wal_writer: RwLock<Option<tokio::fs::File>>,
     /// Index metadata
     metadata: RwLock<TrigramMetadata>,
-    /// Flag to track if the index has been lazy-loaded
-    is_loaded: RwLock<bool>,
+    /// State tracking for lazy loading with error protection
+    load_state: RwLock<LoadState>,
 }
 
 /// Cached document content for search operations
@@ -72,6 +72,19 @@ impl Default for TrigramMetadata {
             updated: now,
         }
     }
+}
+
+/// Loading state for lazy loading with error protection
+#[derive(Debug, Clone)]
+enum LoadState {
+    /// Index has not been loaded yet
+    NotLoaded,
+    /// Index is currently being loaded (prevents concurrent loads)
+    Loading,
+    /// Index has been successfully loaded
+    Loaded,
+    /// Index failed to load with error message (prevents retry storms)
+    Failed(String),
 }
 
 impl TrigramIndex {
@@ -248,34 +261,103 @@ impl TrigramIndex {
         Ok(())
     }
 
-    /// Ensure index is loaded (lazy loading on first access)
+    /// Ensure index is loaded (lazy loading with error protection)
     async fn ensure_loaded(&self) -> Result<()> {
-        // Check if already loaded
-        let is_loaded = *self.is_loaded.read().await;
-        if is_loaded {
-            return Ok(());
+        // Fast path: check if already loaded or failed
+        {
+            let state = self.load_state.read().await;
+            match &*state {
+                LoadState::Loaded => return Ok(()),
+                LoadState::Failed(err) => {
+                    return Err(anyhow::anyhow!(
+                        "Index previously failed to load and retry is disabled: {}",
+                        err
+                    ));
+                }
+                LoadState::Loading => {
+                    // Another thread is loading, wait briefly then check again
+                    drop(state);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    let state = self.load_state.read().await;
+                    match &*state {
+                        LoadState::Loaded => return Ok(()),
+                        LoadState::Failed(err) => {
+                            return Err(anyhow::anyhow!(
+                                "Index failed to load during concurrent attempt: {}",
+                                err
+                            ));
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Index loading is taking too long, another thread may have failed"
+                            ));
+                        }
+                    }
+                }
+                LoadState::NotLoaded => {
+                    // Continue to loading logic below
+                }
+            }
         }
 
-        // Acquire write lock to prevent race conditions
-        let mut loaded_flag = self.is_loaded.write().await;
-
-        // Double-check after acquiring write lock
-        if *loaded_flag {
-            return Ok(());
+        // Acquire write lock to begin loading
+        let mut state = self.load_state.write().await;
+        
+        // Double-check after acquiring write lock (another thread might have loaded)
+        match &*state {
+            LoadState::Loaded => return Ok(()),
+            LoadState::Failed(err) => {
+                return Err(anyhow::anyhow!(
+                    "Index previously failed to load: {}",
+                    err
+                ));
+            }
+            LoadState::Loading => {
+                // This should be rare due to our earlier check, but handle gracefully
+                return Err(anyhow::anyhow!(
+                    "Concurrent loading detected - this should not happen"
+                ));
+            }
+            LoadState::NotLoaded => {
+                // Good to proceed with loading
+            }
         }
 
-        // Load the index
+        // Set loading state
+        *state = LoadState::Loading;
+        drop(state); // Release write lock during loading
+
+        // Load the index with error capture
         tracing::info!("Lazy loading trigram index on first access");
         let start = std::time::Instant::now();
-
-        self.load_existing_index()
-            .await
-            .context("Failed to lazy load trigram index")?;
-
-        *loaded_flag = true;
-
-        tracing::info!("Trigram index loaded in {:?}", start.elapsed());
-        Ok(())
+        
+        // Log memory pressure warning for large indices
+        tracing::warn!("Loading large trigram index may consume significant memory (~132MB+)");
+        
+        let load_result = self.load_existing_index().await;
+        
+        // Update state based on result
+        let mut state = self.load_state.write().await;
+        match load_result {
+            Ok(()) => {
+                *state = LoadState::Loaded;
+                let elapsed = start.elapsed();
+                tracing::info!("Trigram index loaded successfully in {:?}", elapsed);
+                
+                // Log performance metrics for monitoring
+                if elapsed.as_millis() > 1000 {
+                    tracing::warn!("Trigram index loading took {}ms - consider memory optimization", elapsed.as_millis());
+                }
+                
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                *state = LoadState::Failed(error_msg.clone());
+                tracing::error!("Failed to load trigram index: {}", error_msg);
+                Err(e.context("Failed to lazy load trigram index"))
+            }
+        }
     }
 
     /// Load existing index from disk
@@ -560,7 +642,7 @@ impl Index for TrigramIndex {
             document_cache: RwLock::new(HashMap::new()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(TrigramMetadata::default()),
-            is_loaded: RwLock::new(false),
+            load_state: RwLock::new(LoadState::NotLoaded),
         };
 
         // Ensure directory structure exists

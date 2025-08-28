@@ -30,8 +30,8 @@ pub struct PrimaryIndex {
     wal_writer: RwLock<Option<tokio::fs::File>>,
     /// Index metadata
     metadata: RwLock<IndexMetadata>,
-    /// Flag to track if the index has been lazy-loaded
-    is_loaded: RwLock<bool>,
+    /// State tracking for lazy loading with error protection
+    load_state: RwLock<LoadState>,
 }
 
 /// Metadata for the primary index
@@ -55,6 +55,19 @@ impl Default for IndexMetadata {
     }
 }
 
+/// Loading state for lazy loading with error protection
+#[derive(Debug, Clone)]
+enum LoadState {
+    /// Index has not been loaded yet
+    NotLoaded,
+    /// Index is currently being loaded (prevents concurrent loads)
+    Loading,
+    /// Index has been successfully loaded
+    Loaded,
+    /// Index failed to load with error message (prevents retry storms)
+    Failed(String),
+}
+
 impl PrimaryIndex {
     /// Create a new PrimaryIndex instance
     pub fn new(index_path: PathBuf, _cache_capacity: usize) -> Self {
@@ -63,7 +76,7 @@ impl PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
-            is_loaded: RwLock::new(false),
+            load_state: RwLock::new(LoadState::NotLoaded),
         }
     }
 
@@ -140,34 +153,102 @@ impl PrimaryIndex {
         Ok(())
     }
 
-    /// Ensure index is loaded (lazy loading on first access)
+    /// Ensure index is loaded (lazy loading with error protection)
     async fn ensure_loaded(&self) -> Result<()> {
-        // Check if already loaded
-        let is_loaded = *self.is_loaded.read().await;
-        if is_loaded {
-            return Ok(());
+        // Fast path: check if already loaded or failed
+        {
+            let state = self.load_state.read().await;
+            match &*state {
+                LoadState::Loaded => return Ok(()),
+                LoadState::Failed(err) => {
+                    return Err(anyhow::anyhow!(
+                        "Primary index previously failed to load and retry is disabled: {}",
+                        err
+                    ));
+                }
+                LoadState::Loading => {
+                    // Another thread is loading, wait briefly then check again
+                    drop(state);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    let state = self.load_state.read().await;
+                    match &*state {
+                        LoadState::Loaded => return Ok(()),
+                        LoadState::Failed(err) => {
+                            return Err(anyhow::anyhow!(
+                                "Primary index failed to load during concurrent attempt: {}",
+                                err
+                            ));
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Primary index loading is taking too long, another thread may have failed"
+                            ));
+                        }
+                    }
+                }
+                LoadState::NotLoaded => {
+                    // Continue to loading logic below
+                }
+            }
         }
 
-        // Acquire write lock to prevent race conditions
-        let mut loaded_flag = self.is_loaded.write().await;
-
+        // Acquire write lock to begin loading
+        let mut state = self.load_state.write().await;
+        
         // Double-check after acquiring write lock
-        if *loaded_flag {
-            return Ok(());
+        match &*state {
+            LoadState::Loaded => return Ok(()),
+            LoadState::Failed(err) => {
+                return Err(anyhow::anyhow!(
+                    "Primary index previously failed to load: {}",
+                    err
+                ));
+            }
+            LoadState::Loading => {
+                return Err(anyhow::anyhow!(
+                    "Concurrent loading detected in primary index - this should not happen"
+                ));
+            }
+            LoadState::NotLoaded => {
+                // Good to proceed with loading
+            }
         }
 
-        // Load the index
+        // Set loading state
+        *state = LoadState::Loading;
+        drop(state); // Release write lock during loading
+
+        // Load the index with error capture
         tracing::info!("Lazy loading primary index on first access");
         let start = std::time::Instant::now();
-
-        self.load_existing_index()
-            .await
-            .context("Failed to lazy load primary index")?;
-
-        *loaded_flag = true;
-
-        tracing::info!("Primary index loaded in {:?}", start.elapsed());
-        Ok(())
+        
+        // Log memory pressure information
+        tracing::info!("Loading primary index (B+ tree structure)");
+        
+        let load_result = self.load_existing_index().await;
+        
+        // Update state based on result
+        let mut state = self.load_state.write().await;
+        match load_result {
+            Ok(()) => {
+                *state = LoadState::Loaded;
+                let elapsed = start.elapsed();
+                tracing::info!("Primary index loaded successfully in {:?}", elapsed);
+                
+                // Monitor loading performance
+                if elapsed.as_millis() > 500 {
+                    tracing::warn!("Primary index loading took {}ms - performance may be impacted", elapsed.as_millis());
+                }
+                
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                *state = LoadState::Failed(error_msg.clone());
+                tracing::error!("Failed to load primary index: {}", error_msg);
+                Err(e.context("Failed to lazy load primary index"))
+            }
+        }
     }
 
     /// Load existing index from disk
@@ -379,7 +460,7 @@ impl Index for PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
-            is_loaded: RwLock::new(false),
+            load_state: RwLock::new(LoadState::NotLoaded),
         };
 
         // Ensure directory structure exists
@@ -610,7 +691,7 @@ pub async fn create_primary_index(
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
-        is_loaded: RwLock::new(false),
+        load_state: RwLock::new(LoadState::NotLoaded),
     };
 
     // Ensure directory structure exists
@@ -637,7 +718,7 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
-        is_loaded: RwLock::new(false),
+        load_state: RwLock::new(LoadState::NotLoaded),
     };
 
     index.ensure_directories().await?;
