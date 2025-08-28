@@ -67,8 +67,8 @@ struct Cli {
     #[arg(short, long, default_value = "./kota-db-data")]
     db_path: PathBuf,
 
-    /// Use binary format for indices (10x faster, experimental)
-    #[arg(long, global = true)]
+    /// Use binary format for indices (10x faster performance)
+    #[arg(long, global = true, default_value = "true")]
     binary_index: bool,
 
     #[command(subcommand)]
