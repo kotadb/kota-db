@@ -1007,43 +1007,49 @@ async fn main() -> Result<()> {
 
                 // Use LLM-optimized search for non-wildcard queries when content is not minimal
                 if query != "*" && context != "none" {
-                    // Create LLM search engine with appropriate context configuration
-                    let context_config = match context.as_str() {
-                        "none" | "minimal" => kotadb::llm_search::ContextConfig {
-                            token_budget: 2000,
-                            max_snippet_chars: 200,
-                            match_context_size: 30,
-                            ..Default::default()
-                        },
-                        "medium" => kotadb::llm_search::ContextConfig {
-                            token_budget: 4000,
-                            max_snippet_chars: 500,
-                            match_context_size: 50,
-                            ..Default::default()
-                        },
-                        "full" => kotadb::llm_search::ContextConfig {
-                            token_budget: 8000,
-                            max_snippet_chars: 1000,
-                            match_context_size: 100,
-                            ..Default::default()
-                        },
-                        _ => kotadb::llm_search::ContextConfig::default(),
-                    };
+                    // Try LLM-optimized search with fallback to regular search on error
+                    let llm_search_result = async {
+                        // Create LLM search engine with appropriate context configuration
+                        let context_config = match context.as_str() {
+                            "none" | "minimal" => kotadb::llm_search::ContextConfig {
+                                token_budget: 2000,
+                                max_snippet_chars: 200,
+                                match_context_size: 30,
+                                ..Default::default()
+                            },
+                            "medium" => kotadb::llm_search::ContextConfig {
+                                token_budget: 4000,
+                                max_snippet_chars: 500,
+                                match_context_size: 50,
+                                ..Default::default()
+                            },
+                            "full" => kotadb::llm_search::ContextConfig {
+                                token_budget: 8000,
+                                max_snippet_chars: 1000,
+                                match_context_size: 100,
+                                ..Default::default()
+                            },
+                            _ => kotadb::llm_search::ContextConfig::default(),
+                        };
 
-                    let llm_engine = kotadb::llm_search::LLMSearchEngine::with_config(
-                        kotadb::llm_search::RelevanceConfig::default(),
-                        context_config,
-                    );
+                        let llm_engine = kotadb::llm_search::LLMSearchEngine::with_config(
+                            kotadb::llm_search::RelevanceConfig::default(),
+                            context_config,
+                        );
 
-                    // Perform LLM-optimized search
-                    let storage = db.storage.lock().await;
-                    let trigram_index = db.trigram_index.lock().await;
-                    let response = llm_engine.search_optimized(
-                        &query,
-                        &*storage,
-                        &*trigram_index,
-                        Some(limit)
-                    ).await?;
+                        // Perform LLM-optimized search
+                        let storage = db.storage.lock().await;
+                        let trigram_index = db.trigram_index.lock().await;
+                        llm_engine.search_optimized(
+                            &query,
+                            &*storage,
+                            &*trigram_index,
+                            Some(limit)
+                        ).await
+                    }.await;
+
+                    match llm_search_result {
+                        Ok(response) => {
 
                     // Format output based on context level
                     match context.as_str() {
@@ -1080,14 +1086,22 @@ async fn main() -> Result<()> {
 
                             for (i, result) in response.results.iter().enumerate().take(3) {
                                 // Extract line numbers from first match location if available
-                                // Calculate actual line numbers by counting newlines in content up to match
+                                // Note: Line numbers are estimates based on average line length
+                                // For exact line numbers, we'd need to load and parse the full file content
                                 let line_range = if !result.match_details.exact_matches.is_empty() {
                                     let first_match = &result.match_details.exact_matches[0];
                                     let last_match = result.match_details.exact_matches.last().unwrap();
 
-                                    // Estimate line numbers (would need full content for exact)
-                                    let start_line = first_match.start_offset / 40 + 1; // Rough estimate
-                                    let end_line = last_match.end_offset / 40 + 1;
+                                    // Better estimation: Use content snippet to calculate actual lines if possible
+                                    let snippet_lines = result.content_snippet.lines().count();
+                                    let avg_line_len = if snippet_lines > 0 {
+                                        result.content_snippet.len() / snippet_lines.max(1)
+                                    } else {
+                                        50 // Default average line length
+                                    };
+
+                                    let start_line = (first_match.start_offset / avg_line_len.max(1)) + 1;
+                                    let end_line = (last_match.end_offset / avg_line_len.max(1)) + 1;
 
                                     if start_line == end_line {
                                         format!(":{}", start_line)
@@ -1096,7 +1110,13 @@ async fn main() -> Result<()> {
                                     }
                                 } else if !result.match_details.term_matches.is_empty() {
                                     let first_match = &result.match_details.term_matches[0];
-                                    format!(":{}", first_match.start_offset / 40 + 1)
+                                    let snippet_lines = result.content_snippet.lines().count();
+                                    let avg_line_len = if snippet_lines > 0 {
+                                        result.content_snippet.len() / snippet_lines.max(1)
+                                    } else {
+                                        50
+                                    };
+                                    format!(":{}", (first_match.start_offset / avg_line_len.max(1)) + 1)
                                 } else {
                                     String::new()
                                 };
@@ -1133,13 +1153,22 @@ async fn main() -> Result<()> {
                         }
                         _ => {
                             // Full: all results with complete context (default for "full" and unrecognized values)
-                            println!("Found {} matches in {} files (showing all {}):",
+                            // Add memory safeguard: limit results if too many
+                            const MAX_FULL_CONTEXT_RESULTS: usize = 100;
+                            let results_to_show = if response.results.len() > MAX_FULL_CONTEXT_RESULTS {
+                                eprintln!("Warning: Limiting output to {} results to prevent excessive memory usage", MAX_FULL_CONTEXT_RESULTS);
+                                &response.results[..MAX_FULL_CONTEXT_RESULTS]
+                            } else {
+                                &response.results[..]
+                            };
+
+                            println!("Found {} matches in {} files (showing {}):",
                                 response.optimization.total_matches,
                                 response.optimization.total_matches,
-                                response.results.len());
+                                results_to_show.len());
                             println!();
 
-                            for result in &response.results {
+                            for result in results_to_show {
                                 println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                                 println!("📄 {}", result.path);
                                 println!("   Score: {:.2} | Tokens: ~{}",
@@ -1181,6 +1210,37 @@ async fn main() -> Result<()> {
                                 println!("Suggestions:");
                                 for suggestion in &response.metadata.suggestions {
                                     println!("  • {}", suggestion);
+                                }
+                            }
+                        }
+                    }
+                        }
+                        Err(e) => {
+                            // Log the error and fall back to regular search
+                            eprintln!("Warning: LLM search failed, falling back to regular search: {}", e);
+
+                            // Fall back to regular search
+                            let tag_list = tags.clone().map(|t| t.split(',').map(String::from).collect());
+                            let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
+
+                            if results.is_empty() {
+                                println!("No documents found matching the query");
+                            } else {
+                                // Show results in simple format as fallback
+                                if results.len() < total_count {
+                                    println!("Showing {} of {} results (fallback mode)", results.len(), total_count);
+                                } else {
+                                    println!("Found {} documents (fallback mode)", results.len());
+                                }
+                                println!();
+                                for doc in results {
+                                    println!("{}", doc.path.as_str());
+                                    if context != "none" {
+                                        println!("  id: {}", doc.id.as_uuid());
+                                        println!("  title: {}", doc.title.as_str());
+                                        println!("  size: {} bytes", doc.size);
+                                        println!();
+                                    }
                                 }
                             }
                         }
