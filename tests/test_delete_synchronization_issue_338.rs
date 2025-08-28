@@ -66,9 +66,18 @@ async fn test_document_deletion_index_synchronization() -> Result<()> {
     // Step 2: Verify all systems have the documents
     println!("Step 2: Verifying initial state...");
     let storage_count = storage.list_all().await?.len();
-    let all_query = QueryBuilder::new().with_limit(100)?.build()?;
-    let primary_count = primary_index.search(&all_query).await?.len();
-    let trigram_count = trigram_index.search(&all_query).await?.len();
+    // Use wildcard query for primary index
+    let wildcard_query = QueryBuilder::new()
+        .with_text("*")?
+        .with_limit(100)?
+        .build()?;
+    let primary_count = primary_index.search(&wildcard_query).await?.len();
+    // Use text query for trigram index (trigram index doesn't support wildcard)
+    let text_query = QueryBuilder::new()
+        .with_text("project")?
+        .with_limit(100)?
+        .build()?;
+    let trigram_count = trigram_index.search(&text_query).await?.len();
 
     println!("  Storage: {} documents", storage_count);
     println!("  Primary index: {} documents", primary_count);
@@ -107,8 +116,8 @@ async fn test_document_deletion_index_synchronization() -> Result<()> {
     // Step 4: Check the inconsistent state
     println!("Step 4: Checking for inconsistent state (should demonstrate bug)...");
     let storage_count_after = storage.list_all().await?.len();
-    let primary_count_after = primary_index.search(&all_query).await?.len();
-    let trigram_count_after = trigram_index.search(&all_query).await?.len();
+    let primary_count_after = primary_index.search(&wildcard_query).await?.len();
+    let trigram_count_after = trigram_index.search(&text_query).await?.len();
 
     println!("  After deletion:");
     println!("    Storage: {} documents", storage_count_after);
@@ -158,7 +167,7 @@ async fn test_document_deletion_index_synchronization() -> Result<()> {
     println!("Step 6: Checking if indices still reference deleted document...");
 
     // Search primary index for all documents
-    let primary_results = primary_index.search(&all_query).await?;
+    let primary_results = primary_index.search(&wildcard_query).await?;
     let primary_has_deleted = primary_results.contains(&doc_id_to_delete);
 
     if primary_has_deleted {
@@ -232,9 +241,16 @@ async fn test_document_deletion_proper_synchronization() -> Result<()> {
 
     // Verify initial state
     let initial_storage = storage.list_all().await?.len();
-    let all_query = QueryBuilder::new().with_limit(100)?.build()?;
-    let initial_primary = primary_index.search(&all_query).await?.len();
-    let initial_trigram = trigram_index.search(&all_query).await?.len();
+    let wildcard_query = QueryBuilder::new()
+        .with_text("*")?
+        .with_limit(100)?
+        .build()?;
+    let text_query = QueryBuilder::new()
+        .with_text("example")?
+        .with_limit(100)?
+        .build()?;
+    let initial_primary = primary_index.search(&wildcard_query).await?.len();
+    let initial_trigram = trigram_index.search(&text_query).await?.len();
 
     println!(
         "Initial state: Storage={}, Primary={}, Trigram={}",
@@ -255,8 +271,8 @@ async fn test_document_deletion_proper_synchronization() -> Result<()> {
 
     // Verify final state
     let final_storage = storage.list_all().await?.len();
-    let final_primary = primary_index.search(&all_query).await?.len();
-    let final_trigram = trigram_index.search(&all_query).await?.len();
+    let final_primary = primary_index.search(&wildcard_query).await?.len();
+    let final_trigram = trigram_index.search(&text_query).await?.len();
 
     println!(
         "Final state: Storage={}, Primary={}, Trigram={}",

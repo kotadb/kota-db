@@ -23,9 +23,10 @@ const MIN_TERM_LENGTH: usize = 1;
 /// Reserved characters that could be used in injection attempts (truly dangerous ones only)
 const RESERVED_CHARS: &[char] = &['<', '>', '&', '"', '\'', '\0', '\r', '\n', '\t'];
 
-/// SQL injection patterns to detect and block - targeting actual injection syntax and dangerous keywords
+/// SQL injection patterns to detect and block - targeting actual injection syntax, not standalone keywords
 static SQL_INJECTION_PATTERNS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(\bselect\b|\bunion\b|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\bcreate\b|\balter\b|\bexec\b|\bexecute\b|\bscript\b|</?script\b|</?iframe\b|</?object\b|</?embed\b|</?link\b|javascript:|onclick|onload|onerror|;\s*(select|insert|update|delete|drop|create|alter))")
+    // Only match SQL keywords when they appear with actual SQL syntax, not as standalone words
+    Regex::new(r"(?i)((\bunion\s+select\b)|(\bselect\s+.*\s+from\b)|(\binsert\s+into\b)|(\bupdate\s+.*\s+set\b)|(\bdelete\s+from\b)|(\bdrop\s+(table|database)\b)|(\bcreate\s+(table|database)\b)|(\balter\s+table\b)|</?script\b|</?iframe\b|</?object\b|</?embed\b|</?link\b|javascript:|onclick|onload|onerror|;\s*(select|insert|update|delete|drop|create|alter))")
         .expect("Failed to compile SQL injection regex")
 });
 

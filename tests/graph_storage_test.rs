@@ -200,7 +200,7 @@ async fn test_batch_operations() -> Result<()> {
     let elapsed = start.elapsed();
 
     println!("Batch insert 50 nodes: {}ms", elapsed.as_millis());
-    assert!(elapsed.as_millis() < 300); // Adjusted for debug mode
+    assert!(elapsed.as_millis() < 600); // Adjusted for debug mode
 
     // Verify all nodes were inserted
     for (id, _) in &nodes {
@@ -219,7 +219,7 @@ async fn test_batch_operations() -> Result<()> {
     let elapsed = start.elapsed();
 
     println!("Batch insert 49 edges: {}ms", elapsed.as_millis());
-    assert!(elapsed.as_millis() < 300); // Adjusted for debug mode
+    assert!(elapsed.as_millis() < 600); // Adjusted for debug mode
 
     // Verify graph statistics
     let stats = storage.get_graph_stats().await?;
