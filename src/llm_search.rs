@@ -560,7 +560,21 @@ impl LLMSearchEngine {
         let start = pos.saturating_sub(context_size);
         let end = (pos + len + context_size).min(content.len());
 
-        let context = &content[start..end];
+        // Ensure we slice at valid UTF-8 boundaries
+        let safe_start = content
+            .char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| i <= start)
+            .next_back()
+            .unwrap_or(0);
+
+        let safe_end = content
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= end)
+            .unwrap_or(content.len());
+
+        let context = &content[safe_start..safe_end];
         Ok(format!("...{}...", context.trim()))
     }
 
@@ -676,7 +690,21 @@ impl LLMSearchEngine {
             let end = (start + max_chars).min(content.len());
 
             // Safe string slicing that respects UTF-8 boundaries
-            let snippet = content.get(start..end).unwrap_or(&content[start..]);
+            let snippet = content.get(start..end).unwrap_or_else(|| {
+                // If we can't slice at the exact positions, find the nearest valid boundaries
+                let safe_start = content
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .filter(|&i| i <= start)
+                    .next_back()
+                    .unwrap_or(0);
+                let safe_end = content
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .find(|&i| i >= end)
+                    .unwrap_or(content.len());
+                &content[safe_start..safe_end]
+            });
 
             // Try to break at word boundaries
             let trimmed = if start > 0 && end < content.len() {
