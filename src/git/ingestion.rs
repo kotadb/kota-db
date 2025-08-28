@@ -8,6 +8,7 @@ use crate::builders::DocumentBuilder;
 use crate::git::file_organization::FileOrganizationManager;
 use crate::git::repository::GitRepository;
 use crate::git::types::{CommitInfo, FileEntry, IngestionOptions};
+use crate::memory::MemoryManager;
 use crate::Document;
 use crate::Storage;
 
@@ -448,6 +449,161 @@ impl RepositoryIngester {
         Ok(result)
     }
 
+    /// Process files in chunks with memory limits
+    #[instrument(skip(self, files, storage, memory_manager, progress_callback))]
+    async fn process_files_chunked<S: Storage + ?Sized>(
+        &self,
+        files: &[FileEntry],
+        storage: &mut S,
+        safe_repo_name: &str,
+        memory_manager: &MemoryManager,
+        progress_callback: Option<&ProgressCallback>,
+        chunk_size: usize,
+    ) -> Result<(usize, usize, usize)> {
+        let mut documents_created = 0;
+        let mut files_ingested = 0;
+        let mut errors = 0;
+
+        let report_progress = |message: &str| {
+            if let Some(ref callback) = progress_callback {
+                callback(message);
+            }
+        };
+
+        // Process files in chunks to control memory usage
+        let total_files = files.len();
+        let mut processed = 0;
+
+        for (chunk_index, chunk) in files.chunks(chunk_size).enumerate() {
+            // Check memory pressure before processing each chunk
+            if memory_manager.is_memory_pressure() {
+                warn!("Memory pressure detected, reducing chunk size for remaining files");
+                // Continue with smaller chunks if we're under memory pressure
+            }
+
+            // Estimate memory needed for this chunk
+            let chunk_memory_estimate: u64 = chunk
+                .iter()
+                .map(|file| {
+                    memory_manager.estimate_file_memory(
+                        file.content.len(),
+                        self.config.options.extract_symbols,
+                    )
+                })
+                .sum();
+
+            // Try to reserve memory for this chunk
+            let _memory_reservation = match memory_manager.reserve(chunk_memory_estimate) {
+                Ok(reservation) => Some(reservation),
+                Err(e) => {
+                    warn!(
+                        "Cannot reserve memory for chunk {}: {}. Processing with smaller chunks.",
+                        chunk_index, e
+                    );
+                    // If we can't reserve memory for the whole chunk, process files one by one
+                    let mut chunk_docs = 0;
+                    let mut chunk_files = 0;
+                    let mut chunk_errors = 0;
+
+                    for file in chunk {
+                        let file_memory_estimate = memory_manager.estimate_file_memory(
+                            file.content.len(),
+                            self.config.options.extract_symbols,
+                        );
+
+                        if let Ok(_file_reservation) = memory_manager.reserve(file_memory_estimate)
+                        {
+                            match self.create_file_document(safe_repo_name, file) {
+                                Ok(doc) => {
+                                    if let Err(e) = storage.insert(doc).await {
+                                        warn!(
+                                            "Failed to insert file document {}: {}",
+                                            file.path, e
+                                        );
+                                        chunk_errors += 1;
+                                    } else {
+                                        chunk_docs += 1;
+                                        chunk_files += 1;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create document for {}: {}", file.path, e);
+                                    chunk_errors += 1;
+                                }
+                            }
+                        } else {
+                            warn!("Skipping file {} due to memory limits", file.path);
+                            chunk_errors += 1;
+                        }
+                    }
+
+                    documents_created += chunk_docs;
+                    files_ingested += chunk_files;
+                    errors += chunk_errors;
+                    processed += chunk.len();
+
+                    let progress = (processed as f64 / total_files as f64 * 100.0) as u32;
+                    report_progress(&format!(
+                        "Processed files: {}/{} ({}%) - Memory-limited processing",
+                        processed, total_files, progress
+                    ));
+
+                    continue;
+                }
+            };
+
+            // Process the chunk normally if we have enough memory
+            let mut chunk_docs = 0;
+            let mut chunk_files = 0;
+            let mut chunk_errors = 0;
+
+            for file in chunk {
+                match self.create_file_document(safe_repo_name, file) {
+                    Ok(doc) => {
+                        if let Err(e) = storage.insert(doc).await {
+                            warn!("Failed to insert file document {}: {}", file.path, e);
+                            chunk_errors += 1;
+                        } else {
+                            chunk_docs += 1;
+                            chunk_files += 1;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to create document for {}: {}", file.path, e);
+                        chunk_errors += 1;
+                    }
+                }
+            }
+
+            documents_created += chunk_docs;
+            files_ingested += chunk_files;
+            errors += chunk_errors;
+            processed += chunk.len();
+
+            // Report progress
+            let progress = (processed as f64 / total_files as f64 * 100.0) as u32;
+            let memory_stats = memory_manager.get_stats();
+            report_progress(&format!(
+                "Processed files: {}/{} ({}%) - {} - Chunk {} complete",
+                processed,
+                total_files,
+                progress,
+                memory_stats,
+                chunk_index + 1
+            ));
+
+            // Force memory reservation to be dropped here
+            drop(_memory_reservation);
+        }
+
+        info!(
+            "Chunked processing complete: {} documents, {} files, {} errors",
+            documents_created, files_ingested, errors
+        );
+
+        Ok((documents_created, files_ingested, errors))
+    }
+
     /// Internal ingestion method that handles both cases
     #[cfg(feature = "tree-sitter-parsing")]
     #[instrument(skip(
@@ -527,240 +683,310 @@ impl RepositoryIngester {
             if !files.is_empty() {
                 report_progress(&format!("Processing {} files...", files.len()));
 
-                // Optimized parallel processing with symbol extraction
-                info!(
-                    "Symbol extraction flag: {}",
-                    self.config.options.extract_symbols
-                );
-                if self.config.options.extract_symbols {
-                    info!("Entering optimized symbol extraction branch");
-                    // When extracting symbols, process in two phases for optimal performance:
-                    // Phase 1: Batch insert all documents into storage (leverages dual-index)
-                    // Phase 2: Extract symbols in parallel batches
+                // Initialize memory management if configured
+                let memory_manager =
+                    if let Some(ref memory_config) = self.config.options.memory_limits {
+                        let memory_manager = MemoryManager::new(memory_config.max_total_memory_mb);
+                        info!("Memory management enabled: {:?}", memory_config);
+                        Some(memory_manager)
+                    } else {
+                        None
+                    };
 
-                    report_progress("Phase 1: Inserting documents into storage...");
-                    info!("Starting Phase 1");
+                // Determine processing strategy based on memory limits
+                let should_use_chunked_processing =
+                    if let (Some(memory_config), Some(_memory_mgr)) =
+                        (&self.config.options.memory_limits, &memory_manager)
+                    {
+                        memory_config.enable_adaptive_chunking
+                            || memory_config.max_total_memory_mb.is_some()
+                    } else {
+                        false
+                    };
 
-                    // Process documents in batches of 100 for efficient I/O
-                    let doc_batch_size = 100;
-                    let mut doc_batch_start = 0;
+                if should_use_chunked_processing {
+                    // Use memory-aware chunked processing
+                    let memory_mgr = memory_manager.as_ref().unwrap();
+                    let memory_config = self.config.options.memory_limits.as_ref().unwrap();
+                    let chunk_size = memory_config.chunk_size.min(files.len());
 
-                    while doc_batch_start < files.len() {
-                        let doc_batch_end =
-                            std::cmp::min(doc_batch_start + doc_batch_size, files.len());
-                        let doc_batch = &files[doc_batch_start..doc_batch_end];
+                    info!(
+                        "Using memory-aware chunked processing: {} files in chunks of {}",
+                        files.len(),
+                        chunk_size
+                    );
+                    report_progress(&format!(
+                        "Processing {} files with memory limits ({} MB max, {} file chunks)",
+                        files.len(),
+                        memory_config.max_total_memory_mb.unwrap_or(0),
+                        chunk_size
+                    ));
 
-                        // Create documents synchronously (they're not async)
-                        let documents_results: Vec<_> = doc_batch
-                            .iter()
-                            .map(|file| self.create_file_document(&safe_repo_name, file))
-                            .collect();
+                    let (chunk_docs, chunk_files, chunk_errors) = self
+                        .process_files_chunked(
+                            &files,
+                            storage,
+                            &safe_repo_name,
+                            memory_mgr,
+                            progress_callback.as_ref(),
+                            chunk_size,
+                        )
+                        .await
+                        .context("Failed to process files in chunks")?;
 
-                        // Insert documents
-                        for (file, doc_result) in doc_batch.iter().zip(documents_results) {
-                            match doc_result {
-                                Ok(doc) => {
-                                    if let Err(e) = storage.insert(doc).await {
-                                        warn!(
-                                            "Failed to insert file document {}: {}",
-                                            file.path, e
-                                        );
-                                        result.errors += 1;
-                                    } else {
-                                        result.documents_created += 1;
-                                        result.files_ingested += 1;
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to create document for {}: {}", file.path, e);
-                                    result.errors += 1;
-                                }
-                            }
-                        }
+                    result.documents_created += chunk_docs;
+                    result.files_ingested += chunk_files;
+                    result.errors += chunk_errors;
 
-                        let progress = (doc_batch_end as f64 / files.len() as f64 * 100.0) as u32;
-                        report_progress(&format!(
-                            "Inserted documents: {}/{} ({}%)",
-                            doc_batch_end,
-                            files.len(),
-                            progress
-                        ));
-
-                        doc_batch_start = doc_batch_end;
-                    }
-
-                    // Phase 2: Extract symbols with true parallel processing using rayon
+                    let memory_stats = memory_mgr.get_stats();
+                    info!(
+                        "Chunked processing complete: {} - {} documents created",
+                        memory_stats, chunk_docs
+                    );
+                } else {
+                    // Use original processing strategy
+                    // Optimized parallel processing with symbol extraction
+                    info!(
+                        "Using original processing strategy - Symbol extraction flag: {}",
+                        self.config.options.extract_symbols
+                    );
                     if self.config.options.extract_symbols {
-                        if let (Some(symbol_storage), Some(_code_parser)) =
-                            (symbol_storage.as_mut(), code_parser.as_mut())
-                        {
-                            report_progress(
-                                "Phase 2: Extracting symbols with rayon parallelization...",
-                            );
-                            info!(
-                                "Starting rayon-based parallel symbol extraction for {} files",
-                                files.len()
-                            );
+                        info!("Entering optimized symbol extraction branch");
+                        // When extracting symbols, process in two phases for optimal performance:
+                        // Phase 1: Batch insert all documents into storage (leverages dual-index)
+                        // Phase 2: Extract symbols in parallel batches
 
-                            let parse_start = std::time::Instant::now();
+                        report_progress("Phase 1: Inserting documents into storage...");
+                        info!("Starting Phase 1");
 
-                            // Parse all files in parallel using rayon
-                            let parsed_files: Vec<_> = files
-                                .par_iter()
-                                .filter_map(|file| {
-                                    // Skip binary files
-                                    if file.is_binary {
-                                        return None;
-                                    }
+                        // Process documents in batches of 100 for efficient I/O
+                        let doc_batch_size = 100;
+                        let mut doc_batch_start = 0;
 
-                                    // Check file extension
-                                    let extension = file.extension.as_ref()?;
-                                    let language = SupportedLanguage::from_extension(extension)?;
+                        while doc_batch_start < files.len() {
+                            let doc_batch_end =
+                                std::cmp::min(doc_batch_start + doc_batch_size, files.len());
+                            let doc_batch = &files[doc_batch_start..doc_batch_end];
 
-                                    // Convert content to string
-                                    let content = String::from_utf8(file.content.clone()).ok()?;
-
-                                    // Create a local parser for this thread
-                                    let mut local_parser = CodeParser::new().ok()?;
-
-                                    // Parse the file
-                                    let parsed_code =
-                                        local_parser.parse_content(&content, language).ok()?;
-
-                                    Some((file.path.clone(), parsed_code))
-                                })
+                            // Create documents synchronously (they're not async)
+                            let documents_results: Vec<_> = doc_batch
+                                .iter()
+                                .map(|file| self.create_file_document(&safe_repo_name, file))
                                 .collect();
 
-                            let parse_elapsed = parse_start.elapsed();
-                            info!(
-                                "Parsed {} files in parallel in {:?}",
-                                parsed_files.len(),
-                                parse_elapsed
-                            );
-                            report_progress(&format!(
-                                "Parsed {} files in {:?}, storing symbols...",
-                                parsed_files.len(),
-                                parse_elapsed
-                            ));
-
-                            // Store symbols sequentially (SymbolStorage requires mutable access)
-                            let storage_start = std::time::Instant::now();
-                            let mut processed_count = 0;
-                            let total_parsed = parsed_files.len();
-                            let mut last_progress_time = std::time::Instant::now();
-                            info!("Starting to store {} parsed files", total_parsed);
-
-                            for (file_path, parsed_code) in parsed_files {
-                                let path = Path::new(&file_path);
-                                match symbol_storage
-                                    .extract_symbols(
-                                        path,
-                                        parsed_code,
-                                        None, // No content available in this path
-                                        Some(safe_repo_name.to_string()),
-                                    )
-                                    .await
-                                {
-                                    Ok(symbol_ids) => {
-                                        let count = symbol_ids.len();
-                                        if count > 0 {
-                                            result.symbols_extracted += count;
-                                            result.files_with_symbols += 1;
+                            // Insert documents
+                            for (file, doc_result) in doc_batch.iter().zip(documents_results) {
+                                match doc_result {
+                                    Ok(doc) => {
+                                        if let Err(e) = storage.insert(doc).await {
+                                            warn!(
+                                                "Failed to insert file document {}: {}",
+                                                file.path, e
+                                            );
+                                            result.errors += 1;
+                                        } else {
+                                            result.documents_created += 1;
+                                            result.files_ingested += 1;
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Failed to store symbols from {}: {}", file_path, e);
+                                        warn!("Failed to create document for {}: {}", file.path, e);
                                         result.errors += 1;
                                     }
                                 }
-
-                                processed_count += 1;
-
-                                // Report progress periodically
-                                let now = std::time::Instant::now();
-                                if now.duration_since(last_progress_time)
-                                    >= std::time::Duration::from_millis(500)
-                                {
-                                    let progress = (processed_count as f64 / total_parsed as f64
-                                        * 100.0)
-                                        as u32;
-                                    report_progress(&format!(
-                                        "Storing symbols: {}/{} files ({}%), {} symbols found",
-                                        processed_count,
-                                        total_parsed,
-                                        progress,
-                                        result.symbols_extracted
-                                    ));
-                                    last_progress_time = now;
-                                }
                             }
 
-                            let storage_elapsed = storage_start.elapsed();
-                            info!("Stored symbols in {:?}", storage_elapsed);
+                            let progress =
+                                (doc_batch_end as f64 / files.len() as f64 * 100.0) as u32;
                             report_progress(&format!(
+                                "Inserted documents: {}/{} ({}%)",
+                                doc_batch_end,
+                                files.len(),
+                                progress
+                            ));
+
+                            doc_batch_start = doc_batch_end;
+                        }
+
+                        // Phase 2: Extract symbols with true parallel processing using rayon
+                        if self.config.options.extract_symbols {
+                            if let (Some(symbol_storage), Some(_code_parser)) =
+                                (symbol_storage.as_mut(), code_parser.as_mut())
+                            {
+                                report_progress(
+                                    "Phase 2: Extracting symbols with rayon parallelization...",
+                                );
+                                info!(
+                                    "Starting rayon-based parallel symbol extraction for {} files",
+                                    files.len()
+                                );
+
+                                let parse_start = std::time::Instant::now();
+
+                                // Parse all files in parallel using rayon
+                                let parsed_files: Vec<_> = files
+                                    .par_iter()
+                                    .filter_map(|file| {
+                                        // Skip binary files
+                                        if file.is_binary {
+                                            return None;
+                                        }
+
+                                        // Check file extension
+                                        let extension = file.extension.as_ref()?;
+                                        let language =
+                                            SupportedLanguage::from_extension(extension)?;
+
+                                        // Convert content to string
+                                        let content =
+                                            String::from_utf8(file.content.clone()).ok()?;
+
+                                        // Create a local parser for this thread
+                                        let mut local_parser = CodeParser::new().ok()?;
+
+                                        // Parse the file
+                                        let parsed_code =
+                                            local_parser.parse_content(&content, language).ok()?;
+
+                                        Some((file.path.clone(), parsed_code))
+                                    })
+                                    .collect();
+
+                                let parse_elapsed = parse_start.elapsed();
+                                info!(
+                                    "Parsed {} files in parallel in {:?}",
+                                    parsed_files.len(),
+                                    parse_elapsed
+                                );
+                                report_progress(&format!(
+                                    "Parsed {} files in {:?}, storing symbols...",
+                                    parsed_files.len(),
+                                    parse_elapsed
+                                ));
+
+                                // Store symbols sequentially (SymbolStorage requires mutable access)
+                                let storage_start = std::time::Instant::now();
+                                let mut processed_count = 0;
+                                let total_parsed = parsed_files.len();
+                                let mut last_progress_time = std::time::Instant::now();
+                                info!("Starting to store {} parsed files", total_parsed);
+
+                                for (file_path, parsed_code) in parsed_files {
+                                    let path = Path::new(&file_path);
+                                    match symbol_storage
+                                        .extract_symbols(
+                                            path,
+                                            parsed_code,
+                                            None, // No content available in this path
+                                            Some(safe_repo_name.to_string()),
+                                        )
+                                        .await
+                                    {
+                                        Ok(symbol_ids) => {
+                                            let count = symbol_ids.len();
+                                            if count > 0 {
+                                                result.symbols_extracted += count;
+                                                result.files_with_symbols += 1;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to store symbols from {}: {}",
+                                                file_path, e
+                                            );
+                                            result.errors += 1;
+                                        }
+                                    }
+
+                                    processed_count += 1;
+
+                                    // Report progress periodically
+                                    let now = std::time::Instant::now();
+                                    if now.duration_since(last_progress_time)
+                                        >= std::time::Duration::from_millis(500)
+                                    {
+                                        let progress =
+                                            (processed_count as f64 / total_parsed as f64 * 100.0)
+                                                as u32;
+                                        report_progress(&format!(
+                                            "Storing symbols: {}/{} files ({}%), {} symbols found",
+                                            processed_count,
+                                            total_parsed,
+                                            progress,
+                                            result.symbols_extracted
+                                        ));
+                                        last_progress_time = now;
+                                    }
+                                }
+
+                                let storage_elapsed = storage_start.elapsed();
+                                info!("Stored symbols in {:?}", storage_elapsed);
+                                report_progress(&format!(
                                 "Symbol extraction complete: {} symbols from {} files (parse: {:?}, store: {:?})",
                                 result.symbols_extracted,
                                 result.files_with_symbols,
                                 parse_elapsed,
                                 storage_elapsed
                             ));
-                        }
-                    }
-                } else {
-                    // Non-symbol extraction path: just insert documents in batches
-                    let batch_size = 100;
-                    let mut batch_start = 0;
-                    let mut last_progress_time = std::time::Instant::now();
-                    let progress_throttle = std::time::Duration::from_millis(250);
-
-                    while batch_start < files.len() {
-                        let batch_end = std::cmp::min(batch_start + batch_size, files.len());
-                        let batch = &files[batch_start..batch_end];
-
-                        // Report progress
-                        let now = std::time::Instant::now();
-                        if now.duration_since(last_progress_time) >= progress_throttle {
-                            let progress = (batch_end as f64 / files.len() as f64 * 100.0) as u32;
-                            report_progress(&format!(
-                                "Processing files: {}/{} ({}%)",
-                                batch_end,
-                                files.len(),
-                                progress
-                            ));
-                            last_progress_time = now;
-                        }
-
-                        // Create documents synchronously (they're not async)
-                        let documents_results: Vec<_> = batch
-                            .iter()
-                            .map(|file| self.create_file_document(&safe_repo_name, file))
-                            .collect();
-
-                        // Insert documents
-                        for (file, doc_result) in batch.iter().zip(documents_results) {
-                            match doc_result {
-                                Ok(doc) => {
-                                    if let Err(e) = storage.insert(doc).await {
-                                        warn!(
-                                            "Failed to insert file document {}: {}",
-                                            file.path, e
-                                        );
-                                        result.errors += 1;
-                                    } else {
-                                        result.documents_created += 1;
-                                        result.files_ingested += 1;
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to create document for {}: {}", file.path, e);
-                                    result.errors += 1;
-                                }
                             }
                         }
+                    } else {
+                        // Non-symbol extraction path: just insert documents in batches
+                        let batch_size = 100;
+                        let mut batch_start = 0;
+                        let mut last_progress_time = std::time::Instant::now();
+                        let progress_throttle = std::time::Duration::from_millis(250);
 
-                        batch_start = batch_end;
+                        while batch_start < files.len() {
+                            let batch_end = std::cmp::min(batch_start + batch_size, files.len());
+                            let batch = &files[batch_start..batch_end];
+
+                            // Report progress
+                            let now = std::time::Instant::now();
+                            if now.duration_since(last_progress_time) >= progress_throttle {
+                                let progress =
+                                    (batch_end as f64 / files.len() as f64 * 100.0) as u32;
+                                report_progress(&format!(
+                                    "Processing files: {}/{} ({}%)",
+                                    batch_end,
+                                    files.len(),
+                                    progress
+                                ));
+                                last_progress_time = now;
+                            }
+
+                            // Create documents synchronously (they're not async)
+                            let documents_results: Vec<_> = batch
+                                .iter()
+                                .map(|file| self.create_file_document(&safe_repo_name, file))
+                                .collect();
+
+                            // Insert documents
+                            for (file, doc_result) in batch.iter().zip(documents_results) {
+                                match doc_result {
+                                    Ok(doc) => {
+                                        if let Err(e) = storage.insert(doc).await {
+                                            warn!(
+                                                "Failed to insert file document {}: {}",
+                                                file.path, e
+                                            );
+                                            result.errors += 1;
+                                        } else {
+                                            result.documents_created += 1;
+                                            result.files_ingested += 1;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to create document for {}: {}", file.path, e);
+                                        result.errors += 1;
+                                    }
+                                }
+                            }
+
+                            batch_start = batch_end;
+                        }
                     }
-                }
+                } // End of else block for original processing strategy
             }
         }
 
