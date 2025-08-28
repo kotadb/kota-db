@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM-optimized search output with progressive disclosure (#370)
+  - New `--context` flag for search command with levels: none, minimal, medium, full
+  - "medium" context (default) implements dream workflow with relevance scores and line numbers
+  - Smart context extraction shows complete semantic code blocks
+  - Progressive disclosure prevents overwhelming LLM context windows
+  - Integrated existing LLMSearchEngine for sophisticated relevance scoring
 - CI failure investigation and improvements to ensure all checks pass reliably
 - `--verbose` flag for CLI operations to enable detailed logging output (#335)
   - Default logging level set to WARN for clean agent-friendly output

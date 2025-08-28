@@ -138,6 +138,15 @@ enum Commands {
         /// Filter by tags (comma-separated)
         #[arg(short, long)]
         tags: Option<String>,
+        /// Context level for output (none/minimal/medium/full)
+        #[arg(
+            short = 'c',
+            long,
+            default_value = "medium",
+            help = "Context detail level for LLM consumption",
+            value_parser = ["none", "minimal", "medium", "full"]
+        )]
+        context: String,
     },
 
     /// List all documents
@@ -988,7 +997,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Commands::Search { query, limit, tags } => {
+            Commands::Search { query, limit, tags, context } => {
                 // Handle empty query explicitly - return nothing with informative message
                 if query.is_empty() {
                     println!("Empty search query provided. Please specify a search term.");
@@ -996,26 +1005,271 @@ async fn main() -> Result<()> {
                     return Ok(());
                 }
 
-                let tag_list = tags.map(|t| t.split(',').map(String::from).collect());
-                let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
+                // Use LLM-optimized search for non-wildcard queries when content is not minimal
+                if query != "*" && context != "none" {
+                    // Try LLM-optimized search with fallback to regular search on error
+                    let llm_search_result = async {
+                        // Create LLM search engine with appropriate context configuration
+                        let context_config = match context.as_str() {
+                            "none" | "minimal" => kotadb::llm_search::ContextConfig {
+                                token_budget: 2000,
+                                max_snippet_chars: 200,
+                                match_context_size: 30,
+                                ..Default::default()
+                            },
+                            "medium" => kotadb::llm_search::ContextConfig {
+                                token_budget: 4000,
+                                max_snippet_chars: 500,
+                                match_context_size: 50,
+                                ..Default::default()
+                            },
+                            "full" => kotadb::llm_search::ContextConfig {
+                                token_budget: 8000,
+                                max_snippet_chars: 1000,
+                                match_context_size: 100,
+                                ..Default::default()
+                            },
+                            _ => kotadb::llm_search::ContextConfig::default(),
+                        };
 
-                if results.is_empty() {
-                    println!("No documents found matching the query");
-                } else {
-                    // Show clear count information for LLM agents
-                    if results.len() < total_count {
-                        println!("Showing {} of {} results", results.len(), total_count);
-                    } else {
-                        println!("Found {} documents", results.len());
+                        let llm_engine = kotadb::llm_search::LLMSearchEngine::with_config(
+                            kotadb::llm_search::RelevanceConfig::default(),
+                            context_config,
+                        );
+
+                        // Perform LLM-optimized search
+                        let storage = db.storage.lock().await;
+                        let trigram_index = db.trigram_index.lock().await;
+                        llm_engine.search_optimized(
+                            &query,
+                            &*storage,
+                            &*trigram_index,
+                            Some(limit)
+                        ).await
+                    }.await;
+
+                    match llm_search_result {
+                        Ok(response) => {
+
+                    // Format output based on context level
+                    match context.as_str() {
+                        "none" => {
+                            // Ultra-minimal: just paths
+                            for result in &response.results {
+                                println!("{}", result.path);
+                            }
+                        }
+                        "minimal" => {
+                            // Minimal: paths with relevance scores
+                            println!("Found {} matches in {} files (showing top {}):",
+                                response.optimization.total_matches,
+                                response.optimization.total_matches,
+                                response.results.len());
+                            println!();
+
+                            for result in &response.results {
+                                println!("{} (score: {:.2})", result.path, result.relevance_score);
+                            }
+                        }
+                        "medium" => {
+                            // Medium: the dream workflow format from issue #370
+                            // Count unique files in results
+                            let unique_files: std::collections::HashSet<_> =
+                                response.results.iter().map(|r| &r.path).collect();
+                            let file_count = unique_files.len();
+
+                            println!("Found {} matches in {} files (showing top {}):",
+                                response.optimization.total_matches,
+                                file_count,
+                                response.results.len().min(3));
+                            println!();
+
+                            for (i, result) in response.results.iter().enumerate().take(3) {
+                                // Extract line numbers from first match location if available
+                                // Note: Line numbers are estimates based on average line length
+                                // For exact line numbers, we'd need to load and parse the full file content
+                                let line_range = if !result.match_details.exact_matches.is_empty() {
+                                    let first_match = &result.match_details.exact_matches[0];
+                                    let last_match = result.match_details.exact_matches.last().unwrap();
+
+                                    // Better estimation: Use content snippet to calculate actual lines if possible
+                                    let snippet_lines = result.content_snippet.lines().count();
+                                    let avg_line_len = if snippet_lines > 0 {
+                                        result.content_snippet.len() / snippet_lines.max(1)
+                                    } else {
+                                        50 // Default average line length
+                                    };
+
+                                    let start_line = (first_match.start_offset / avg_line_len.max(1)) + 1;
+                                    let end_line = (last_match.end_offset / avg_line_len.max(1)) + 1;
+
+                                    if start_line == end_line {
+                                        format!(":{}", start_line)
+                                    } else {
+                                        format!(":{}-{}", start_line, end_line)
+                                    }
+                                } else if !result.match_details.term_matches.is_empty() {
+                                    let first_match = &result.match_details.term_matches[0];
+                                    let snippet_lines = result.content_snippet.lines().count();
+                                    let avg_line_len = if snippet_lines > 0 {
+                                        result.content_snippet.len() / snippet_lines.max(1)
+                                    } else {
+                                        50
+                                    };
+                                    format!(":{}", (first_match.start_offset / avg_line_len.max(1)) + 1)
+                                } else {
+                                    String::new()
+                                };
+
+                                println!("{}{} (score: {:.2})", result.path, line_range, result.relevance_score);
+
+                                // Show content snippet with proper indentation
+                                if !result.content_snippet.is_empty() {
+                                    // Clean up the snippet for better presentation
+                                    let snippet = result.content_snippet
+                                        .trim_start_matches("...")
+                                        .trim_end_matches("...")
+                                        .trim();
+
+                                    for line in snippet.lines() {
+                                        println!("  {}", line);
+                                    }
+
+                                    // Add ellipsis if content was truncated
+                                    if result.content_snippet.ends_with("...") {
+                                        println!("    ...");
+                                    }
+                                }
+
+                                if i < 2 && i < response.results.len() - 1 {
+                                    println!();
+                                }
+                            }
+
+                            if response.results.len() > 3 {
+                                println!();
+                                println!("[Run with --context=full for all results]");
+                            }
+                        }
+                        _ => {
+                            // Full: all results with complete context (default for "full" and unrecognized values)
+                            // Add memory safeguard: limit results if too many
+                            const MAX_FULL_CONTEXT_RESULTS: usize = 100;
+                            let results_to_show = if response.results.len() > MAX_FULL_CONTEXT_RESULTS {
+                                eprintln!("Warning: Limiting output to {} results to prevent excessive memory usage", MAX_FULL_CONTEXT_RESULTS);
+                                &response.results[..MAX_FULL_CONTEXT_RESULTS]
+                            } else {
+                                &response.results[..]
+                            };
+
+                            println!("Found {} matches in {} files (showing {}):",
+                                response.optimization.total_matches,
+                                response.optimization.total_matches,
+                                results_to_show.len());
+                            println!();
+
+                            for result in results_to_show {
+                                println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                                println!("📄 {}", result.path);
+                                println!("   Score: {:.2} | Tokens: ~{}",
+                                    result.relevance_score,
+                                    result.estimated_tokens);
+
+                                // Show match details
+                                println!("   Matches: {} exact, {} terms",
+                                    result.match_details.exact_matches.len(),
+                                    result.match_details.term_matches.len());
+
+                                // Show context info if available
+                                if !result.context_info.callees.is_empty() {
+                                    println!("   Calls: {}", result.context_info.callees.join(", "));
+                                }
+                                if !result.context_info.related_types.is_empty() {
+                                    println!("   Types: {}", result.context_info.related_types.join(", "));
+                                }
+
+                                println!();
+                                println!("Content:");
+                                for line in result.content_snippet.lines() {
+                                    println!("  {}", line);
+                                }
+                                println!();
+                            }
+
+                            // Show optimization info
+                            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                            println!("Search completed in {}ms", response.metadata.query_time_ms);
+                            println!("Token usage: {}/{} ({:.0}%)",
+                                response.optimization.token_usage.estimated_tokens,
+                                response.optimization.token_usage.budget,
+                                response.optimization.token_usage.efficiency * 100.0);
+
+                            // Show suggestions if any
+                            if !response.metadata.suggestions.is_empty() {
+                                println!();
+                                println!("Suggestions:");
+                                for suggestion in &response.metadata.suggestions {
+                                    println!("  • {}", suggestion);
+                                }
+                            }
+                        }
                     }
-                    println!();
-                    for doc in results {
-                        // Minimal output optimized for LLM consumption
-                        println!("{}", doc.path.as_str());
-                        println!("  id: {}", doc.id.as_uuid());
-                        println!("  title: {}", doc.title.as_str());
-                        println!("  size: {} bytes", doc.size);
+                        }
+                        Err(e) => {
+                            // Log the error and fall back to regular search
+                            eprintln!("Warning: LLM search failed, falling back to regular search: {}", e);
+
+                            // Fall back to regular search
+                            let tag_list = tags.clone().map(|t| t.split(',').map(String::from).collect());
+                            let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
+
+                            if results.is_empty() {
+                                println!("No documents found matching the query");
+                            } else {
+                                // Show results in simple format as fallback
+                                if results.len() < total_count {
+                                    println!("Showing {} of {} results (fallback mode)", results.len(), total_count);
+                                } else {
+                                    println!("Found {} documents (fallback mode)", results.len());
+                                }
+                                println!();
+                                for doc in results {
+                                    println!("{}", doc.path.as_str());
+                                    if context != "none" {
+                                        println!("  id: {}", doc.id.as_uuid());
+                                        println!("  title: {}", doc.title.as_str());
+                                        println!("  size: {} bytes", doc.size);
+                                        println!();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fall back to original search for wildcard or when context is none
+                    let tag_list = tags.map(|t| t.split(',').map(String::from).collect());
+                    let (results, total_count) = db.search_with_count(&query, tag_list, limit).await?;
+
+                    if results.is_empty() {
+                        println!("No documents found matching the query");
+                    } else {
+                        // Show clear count information for LLM agents
+                        if results.len() < total_count {
+                            println!("Showing {} of {} results", results.len(), total_count);
+                        } else {
+                            println!("Found {} documents", results.len());
+                        }
                         println!();
+                        for doc in results {
+                            // Minimal output optimized for LLM consumption
+                            println!("{}", doc.path.as_str());
+                            if context != "none" {
+                                println!("  id: {}", doc.id.as_uuid());
+                                println!("  title: {}", doc.title.as_str());
+                                println!("  size: {} bytes", doc.size);
+                                println!();
+                            }
+                        }
                     }
                 }
             }
