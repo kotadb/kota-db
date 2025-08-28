@@ -196,9 +196,12 @@ fn internal_function() {
         // Verify graph database was created
         assert!(graph_db_path.exists(), "Graph database should exist");
 
-        // Read and verify the graph
-        let graph_json = std::fs::read_to_string(&graph_db_path)?;
-        assert!(!graph_json.is_empty(), "Graph JSON should not be empty");
+        // Read and verify the graph (binary format)
+        let graph_binary = std::fs::read(&graph_db_path)?;
+        assert!(
+            !graph_binary.is_empty(),
+            "Graph binary data should not be empty"
+        );
 
         Ok(())
     }

@@ -223,17 +223,9 @@ impl BinaryRelationshipBridge {
                     }
                 }
 
-                // Convert content to string
-                let content_str = match String::from_utf8(content.clone()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Some(FileReferences {
-                            file_path: path.clone(),
-                            references: Vec::new(),
-                            extraction_errors: vec![format!("UTF-8 decode error: {}", e)],
-                        });
-                    }
-                };
+                // Convert content to string with lossy UTF-8 conversion
+                // This handles files with mixed encodings gracefully
+                let content_str = String::from_utf8_lossy(content).into_owned();
 
                 // Extract references with partial success support
                 match self.extract_file_references_with_recovery(path, &content_str, language) {
@@ -401,7 +393,17 @@ impl BinaryRelationshipBridge {
         while let Some(m) = matches.next() {
             for capture in m.captures {
                 let node = capture.node;
-                let name = node.utf8_text(content.as_bytes())?.to_string();
+                // Handle potential UTF-8 issues in tree-sitter text extraction
+                let name = match node.utf8_text(content.as_bytes()) {
+                    Ok(text) => text.to_string(),
+                    Err(_) => {
+                        // Fall back to lossy conversion for the node's byte range
+                        let start = node.start_byte();
+                        let end = node.end_byte();
+                        let bytes = &content.as_bytes()[start..end];
+                        String::from_utf8_lossy(bytes).into_owned()
+                    }
+                };
                 let point = node.start_position();
 
                 references.push(CodeReference {
@@ -409,7 +411,16 @@ impl BinaryRelationshipBridge {
                     ref_type: ReferenceType::FunctionCall,
                     line: point.row + 1,
                     column: point.column + 1,
-                    text: node.utf8_text(content.as_bytes())?.to_string(),
+                    text: match node.utf8_text(content.as_bytes()) {
+                        Ok(text) => text.to_string(),
+                        Err(_) => {
+                            // Fall back to lossy conversion for the node's byte range
+                            let start = node.start_byte();
+                            let end = node.end_byte();
+                            let bytes = &content.as_bytes()[start..end];
+                            String::from_utf8_lossy(bytes).into_owned()
+                        }
+                    },
                 });
             }
         }
