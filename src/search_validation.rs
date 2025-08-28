@@ -331,27 +331,26 @@ async fn validate_document_count_consistency(
         .context("Failed to search primary index")?;
     let primary_count = primary_results.len();
 
-    let trigram_results = trigram_index
-        .search(&wildcard_query)
-        .await
-        .context("Failed to search trigram index")?;
-    let trigram_count = trigram_results.len();
+    // Note: Trigram index doesn't support wildcard queries (returns empty for queries without search terms)
+    // This is by design - trigram indices are for text search, not document listing
+    // We'll validate the trigram index separately with actual text searches
+    let trigram_note = "Trigram index validated separately via text search";
 
     let check = ValidationCheck {
         name: "storage_count_consistency".to_string(),
-        description: "Verify storage and index document counts match".to_string(),
-        passed: storage_count == primary_count && storage_count == trigram_count,
-        error: if storage_count == primary_count && storage_count == trigram_count {
+        description: "Verify storage and primary index document counts match".to_string(),
+        passed: storage_count == primary_count,
+        error: if storage_count == primary_count {
             None
         } else {
             Some(format!(
-                "Count mismatch: Storage={}, Primary={}, Trigram={}",
-                storage_count, primary_count, trigram_count
+                "Count mismatch: Storage={}, Primary={}",
+                storage_count, primary_count
             ))
         },
         details: Some(format!(
-            "Storage: {} docs, Primary index: {} docs, Trigram index: {} docs",
-            storage_count, primary_count, trigram_count
+            "Storage: {} docs, Primary index: {} docs ({})",
+            storage_count, primary_count, trigram_note
         )),
         critical: true,
     };
@@ -590,34 +589,26 @@ async fn validate_index_document_coverage(
         .into_iter()
         .collect();
 
-    let trigram_ids: HashSet<ValidatedDocumentId> = trigram_index
-        .search(&wildcard_query)
-        .await
-        .context("Failed to search trigram index")?
-        .into_iter()
-        .collect();
+    // Note: Trigram index doesn't support wildcard queries - it requires search terms
+    // We can't check trigram coverage with wildcard queries, it will be validated
+    // through actual text search tests
 
-    // Check coverage
+    // Check coverage for primary index only
     let primary_coverage = storage_ids.iter().all(|id| primary_ids.contains(id));
-    let trigram_coverage = storage_ids.iter().all(|id| trigram_ids.contains(id));
 
     let check = ValidationCheck {
         name: "index_document_coverage".to_string(),
-        description: "Verify indices contain same documents as storage".to_string(),
-        passed: primary_coverage && trigram_coverage,
-        error: if primary_coverage && trigram_coverage {
+        description: "Verify primary index contains same documents as storage".to_string(),
+        passed: primary_coverage,
+        error: if primary_coverage {
             None
         } else {
-            Some(format!(
-                "Coverage issues: Primary={}, Trigram={}",
-                primary_coverage, trigram_coverage
-            ))
+            Some("Coverage issues: Primary index missing some documents from storage".to_string())
         },
         details: Some(format!(
-            "Storage: {} unique docs, Primary: {} coverage, Trigram: {} coverage",
+            "Storage: {} unique docs, Primary: {} coverage (Trigram validated via text search)",
             storage_ids.len(),
-            if primary_coverage { "✓" } else { "✗" },
-            if trigram_coverage { "✓" } else { "✗" }
+            if primary_coverage { "✓" } else { "✗" }
         )),
         critical: true,
     };
@@ -901,6 +892,54 @@ mod tests {
             report.overall_status,
             ValidationStatus::Passed | ValidationStatus::Warning | ValidationStatus::Failed
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_trigram_index_wildcard_query_returns_empty() -> Result<()> {
+        // Test that validates trigram index correctly returns empty results for wildcard queries
+        // This is by design - trigram indices are for text search, not document listing
+        let temp_dir = TempDir::new()?;
+        let trigram_path = temp_dir.path().join("trigram");
+
+        let mut trigram_index =
+            create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
+
+        // Add documents with content to the trigram index
+        for i in 0..3 {
+            let doc_id = crate::ValidatedDocumentId::new();
+            let doc_path = crate::ValidatedPath::new(format!("test/doc{}.md", i))?;
+            let content = format!("Document {} contains function and struct keywords", i);
+
+            trigram_index
+                .insert_with_content(doc_id, doc_path, content.as_bytes())
+                .await?;
+        }
+
+        // Flush to ensure persistence
+        trigram_index.flush().await?;
+
+        // Test wildcard query returns empty (by design)
+        let wildcard_query = QueryBuilder::new().with_limit(10)?.build()?;
+        let wildcard_results = trigram_index.search(&wildcard_query).await?;
+        assert_eq!(
+            wildcard_results.len(),
+            0,
+            "Trigram index should return empty for wildcard queries"
+        );
+
+        // Test text search query returns results
+        let text_query = QueryBuilder::new()
+            .with_text("function")?
+            .with_limit(10)?
+            .build()?;
+        let text_results = trigram_index.search(&text_query).await?;
+        assert_eq!(
+            text_results.len(),
+            3,
+            "Trigram index should return results for text queries"
+        );
 
         Ok(())
     }
