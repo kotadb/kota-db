@@ -157,7 +157,7 @@ pub enum ReferenceType {
 }
 
 impl ReferenceType {
-    /// Convert ReferenceType to RelationType for consistent mapping
+    /// Convert ReferenceType to RelationType for basic mapping
     pub fn to_relation_type(&self) -> RelationType {
         match self {
             ReferenceType::FunctionCall => RelationType::Calls,
@@ -174,6 +174,26 @@ impl ReferenceType {
             ReferenceType::FieldAccess => RelationType::References,
             ReferenceType::TraitImpl => RelationType::Implements,
             ReferenceType::TraitBound => RelationType::Implements,
+        }
+    }
+
+    /// Convert ReferenceType to RelationType with descriptive custom types for enhanced semantics
+    pub fn to_descriptive_relation_type(&self) -> RelationType {
+        match self {
+            ReferenceType::FunctionCall => RelationType::Calls,
+            ReferenceType::MethodCall => RelationType::Calls,
+            ReferenceType::ChainedMethodCall => RelationType::Calls,
+            ReferenceType::StaticMethodCall => RelationType::Calls,
+            ReferenceType::GenericMethodCall => RelationType::Calls,
+            ReferenceType::TurbofishCall => RelationType::Calls,
+            ReferenceType::StandardLibraryCall => RelationType::Calls,
+            ReferenceType::ClosureCall => RelationType::Calls,
+            ReferenceType::TypeUsage => RelationType::Custom("uses_type".to_string()),
+            ReferenceType::TraitImpl => RelationType::Custom("implements_trait".to_string()),
+            ReferenceType::TraitBound => RelationType::Custom("bound_by_trait".to_string()),
+            ReferenceType::MacroInvocation => RelationType::Custom("invokes_macro".to_string()),
+            ReferenceType::FieldAccess => RelationType::Custom("accesses_field".to_string()),
+            ReferenceType::OperatorOverload => RelationType::Custom("uses_operator".to_string()),
         }
     }
 }
@@ -862,34 +882,9 @@ impl DependencyExtractor {
                             // Don't add self-references
                             if source_idx != target_idx {
                                 let edge = DependencyEdge {
-                                    relation_type: match reference.ref_type {
-                                        ReferenceType::FunctionCall => RelationType::Calls,
-                                        ReferenceType::MethodCall => RelationType::Calls,
-                                        ReferenceType::ChainedMethodCall => RelationType::Calls,
-                                        ReferenceType::StaticMethodCall => RelationType::Calls,
-                                        ReferenceType::GenericMethodCall => RelationType::Calls,
-                                        ReferenceType::TurbofishCall => RelationType::Calls,
-                                        ReferenceType::StandardLibraryCall => RelationType::Calls,
-                                        ReferenceType::ClosureCall => RelationType::Calls,
-                                        ReferenceType::TypeUsage => {
-                                            RelationType::Custom("uses_type".to_string())
-                                        }
-                                        ReferenceType::TraitImpl => {
-                                            RelationType::Custom("implements_trait".to_string())
-                                        }
-                                        ReferenceType::TraitBound => {
-                                            RelationType::Custom("bound_by_trait".to_string())
-                                        }
-                                        ReferenceType::MacroInvocation => {
-                                            RelationType::Custom("invokes_macro".to_string())
-                                        }
-                                        ReferenceType::FieldAccess => {
-                                            RelationType::Custom("accesses_field".to_string())
-                                        }
-                                        ReferenceType::OperatorOverload => {
-                                            RelationType::Custom("uses_operator".to_string())
-                                        }
-                                    },
+                                    relation_type: reference
+                                        .ref_type
+                                        .to_descriptive_relation_type(),
                                     line_number: reference.line,
                                     column_number: reference.column,
                                     context: Some(reference.text.clone()),
