@@ -43,10 +43,16 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
         EnvFilter::new("kotadb=warn,warn")
     };
 
-    // Allow environment variable to override if set, otherwise use our flag-based filter
-    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+    // Quiet flag takes precedence over environment variable
+    // This ensures that --quiet ALWAYS suppresses logs regardless of RUST_LOG
+    let env_filter = if quiet {
+        // Force error-only logging when quiet is enabled, ignoring RUST_LOG
+        EnvFilter::new("error")
+    } else if std::env::var("RUST_LOG").is_ok() {
+        // If not quiet, allow RUST_LOG to override the default
         EnvFilter::try_from_default_env().unwrap_or(filter_level)
     } else {
+        // Use flag-based filter if RUST_LOG is not set
         filter_level
     };
 
