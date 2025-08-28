@@ -1,8 +1,12 @@
 // Test for issue #368 - Trigram index not populated during repository ingestion
 // This test currently FAILS, demonstrating the issue
-use anyhow::Result;
+use anyhow::{Context, Result};
 use kotadb::*;
 use tempfile::TempDir;
+
+// Test configuration constants
+const TEST_CACHE_SIZE: usize = 100;
+const TEST_DOCUMENT_COUNT: usize = 5;
 
 #[tokio::test]
 async fn test_trigram_index_population_after_rebuild() -> Result<()> {
@@ -12,22 +16,33 @@ async fn test_trigram_index_population_after_rebuild() -> Result<()> {
     let primary_path = temp_dir.path().join("primary");
     let trigram_path = temp_dir.path().join("trigram");
 
-    // Create storage
-    let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?;
+    // Create storage with test cache size
+    let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(TEST_CACHE_SIZE))
+        .await
+        .context("Failed to create file storage")?;
 
-    // Create indices
-    let mut primary_index = create_primary_index(primary_path.to_str().unwrap(), Some(100)).await?;
-    let mut trigram_index = create_trigram_index(trigram_path.to_str().unwrap(), Some(100)).await?;
+    // Create indices with test cache size
+    let mut primary_index =
+        create_primary_index(primary_path.to_str().unwrap(), Some(TEST_CACHE_SIZE))
+            .await
+            .context("Failed to create primary index")?;
+    let mut trigram_index =
+        create_trigram_index(trigram_path.to_str().unwrap(), Some(TEST_CACHE_SIZE))
+            .await
+            .context("Failed to create trigram index")?;
 
     // Create test documents
-    for i in 0..5 {
+    for i in 0..TEST_DOCUMENT_COUNT {
         let doc = DocumentBuilder::new()
             .path(format!("test{}.md", i))?
             .title(format!("Test Document {}", i))?
             .content(format!("This is test content number {}. It contains various words like function, struct, impl, and let.", i).as_bytes())
             .build()?;
 
-        storage.insert(doc.clone()).await?;
+        storage
+            .insert(doc.clone())
+            .await
+            .with_context(|| format!("Failed to insert document {}", i))?;
     }
 
     // Test trigram index before rebuild - should be empty
@@ -43,14 +58,25 @@ async fn test_trigram_index_population_after_rebuild() -> Result<()> {
     );
 
     // Rebuild indices with content
-    let all_docs = storage.list_all().await?;
-    assert_eq!(all_docs.len(), 5, "Should have 5 documents in storage");
+    let all_docs = storage
+        .list_all()
+        .await
+        .context("Failed to list all documents from storage")?;
+    assert_eq!(
+        all_docs.len(),
+        TEST_DOCUMENT_COUNT,
+        "Should have {} documents in storage",
+        TEST_DOCUMENT_COUNT
+    );
 
     // Rebuild primary index
     for doc in &all_docs {
         primary_index
             .insert(doc.id, ValidatedPath::new(doc.path.to_string())?)
-            .await?;
+            .await
+            .with_context(|| {
+                format!("Failed to insert document {} into primary index", doc.path)
+            })?;
     }
 
     // Rebuild trigram index WITH CONTENT (this is the critical part)
@@ -61,20 +87,33 @@ async fn test_trigram_index_population_after_rebuild() -> Result<()> {
                 ValidatedPath::new(doc.path.to_string())?,
                 &doc.content,
             )
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to insert document {} with content into trigram index",
+                    doc.path
+                )
+            })?;
     }
 
-    // Flush indices
-    primary_index.flush().await?;
-    trigram_index.flush().await?;
+    // Flush indices to ensure persistence
+    primary_index
+        .flush()
+        .await
+        .context("Failed to flush primary index")?;
+    trigram_index
+        .flush()
+        .await
+        .context("Failed to flush trigram index")?;
 
     // Test primary index after rebuild
     let wildcard_query = QueryBuilder::new().with_limit(10)?.build()?;
     let primary_results = primary_index.search(&wildcard_query).await?;
     assert_eq!(
         primary_results.len(),
-        5,
-        "Primary index should have 5 documents"
+        TEST_DOCUMENT_COUNT,
+        "Primary index should have {} documents",
+        TEST_DOCUMENT_COUNT
     );
 
     // Test trigram index after rebuild - should now have results
@@ -85,8 +124,9 @@ async fn test_trigram_index_population_after_rebuild() -> Result<()> {
     );
     assert_eq!(
         trigram_results_after.len(),
-        5,
-        "All 5 documents should match 'test'"
+        TEST_DOCUMENT_COUNT,
+        "All {} documents should match 'test'",
+        TEST_DOCUMENT_COUNT
     );
 
     // Test other search terms
