@@ -71,7 +71,7 @@ struct Test {
     );
 
     let symbol_ids = symbol_storage
-        .extract_symbols(std::path::Path::new("test.rs"), parsed, None)
+        .extract_symbols(std::path::Path::new("test.rs"), parsed, None, None)
         .await?;
 
     println!(

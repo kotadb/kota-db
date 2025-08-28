@@ -276,7 +276,7 @@ impl RepositoryIngester {
                 report_progress("Writing symbols to binary database...");
                 let mut writer = BinarySymbolWriter::new();
 
-                for (file_path, symbols) in parsed_symbols {
+                for (file_path, symbols) in &parsed_symbols {
                     if !symbols.is_empty() {
                         result.files_with_symbols += 1;
                     }
@@ -305,7 +305,7 @@ impl RepositoryIngester {
                             uuid::Uuid::new_v4(),
                             &symbol.name,
                             kind,
-                            &file_path,
+                            file_path,
                             symbol.start_line as u32,
                             symbol.end_line as u32,
                             parent_id,
@@ -656,6 +656,7 @@ impl RepositoryIngester {
                                     .extract_symbols(
                                         path,
                                         parsed_code,
+                                        None, // No content available in this path
                                         Some(safe_repo_name.to_string()),
                                     )
                                     .await
@@ -1248,7 +1249,12 @@ impl RepositoryIngester {
                         let mut storage = storage_clone.lock().await;
 
                         let symbol_ids = storage
-                            .extract_symbols(file_path, parsed_code, Some(repo_name))
+                            .extract_symbols(
+                                file_path,
+                                parsed_code,
+                                Some(&content),
+                                Some(repo_name),
+                            )
                             .await
                             .context("Failed to extract symbols")?;
 
@@ -1330,7 +1336,12 @@ impl RepositoryIngester {
         // Extract symbols and store them
         let file_path = Path::new(&file.path);
         match symbol_storage
-            .extract_symbols(file_path, parsed_code, Some(repository_name.to_string()))
+            .extract_symbols(
+                file_path,
+                parsed_code,
+                Some(&content),
+                Some(repository_name.to_string()),
+            )
             .await
         {
             Ok(symbol_ids) => {

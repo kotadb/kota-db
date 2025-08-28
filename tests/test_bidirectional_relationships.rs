@@ -67,7 +67,7 @@ fn finalize() {
 
     // Add symbols to storage
     symbol_storage
-        .extract_symbols(&test_file_path, parsed, None)
+        .extract_symbols(&test_file_path, parsed, None, None)
         .await?;
 
     info!(

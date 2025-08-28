@@ -1527,7 +1527,7 @@ async fn main() -> Result<()> {
 
                 #[cfg(feature = "tree-sitter-parsing")]
                 let result = if config.options.extract_symbols {
-                    // Use binary format for efficient symbol storage with automatic dependency graph building
+                    // Use binary format for efficient symbol storage with automatic dependency graph and relationship building
                     let symbol_db_path = cli.db_path.join("symbols.kota");
                     let graph_db_path = cli.db_path.join("dependency_graph.bin");
                     ingester.ingest_with_binary_symbols_and_relationships(

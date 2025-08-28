@@ -840,7 +840,9 @@ impl Index for SymbolIndex {
 
         // Extract symbols
         let mut storage = self.symbol_storage.write().await;
-        let _symbol_ids = storage.extract_symbols(file_path, parsed, None).await?;
+        let _symbol_ids = storage
+            .extract_symbols(file_path, parsed, None, None)
+            .await?;
 
         // Use incremental update instead of full rebuild
         drop(storage);
@@ -888,7 +890,9 @@ impl Index for SymbolIndex {
 
         // Extract new symbols
         let mut storage = self.symbol_storage.write().await;
-        let _symbol_ids = storage.extract_symbols(file_path, parsed, None).await?;
+        let _symbol_ids = storage
+            .extract_symbols(file_path, parsed, None, None)
+            .await?;
 
         // Use incremental update instead of full rebuild
         drop(storage);
