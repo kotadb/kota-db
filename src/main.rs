@@ -610,8 +610,8 @@ async fn create_relationship_engine(
     if !stats.using_binary_path && stats.binary_symbols_loaded == 0 {
         return Err(anyhow::anyhow!(
             "No symbols found in database. Required steps:\n\
-             1. Ingest a repository with symbols: kotadb ingest-repo /path/to/repo\n\
-             2. Verify ingestion: kotadb symbol-stats\n\
+             1. Index a codebase: kotadb index-codebase /path/to/repo\n\
+             2. Verify indexing: kotadb symbol-stats\n\
              3. Then retry this command"
         ));
     }
@@ -671,7 +671,7 @@ async fn main() -> Result<()> {
                 // Handle empty query explicitly - return nothing with informative message
                 if query.is_empty() {
                     println!("Empty search query provided. Please specify a search term.");
-                    println!("Use 'list' command to view all documents, or '*' for wildcard search.");
+                    println!("Use '*' for wildcard search or provide specific code/symbol patterns.");
                     return Ok(());
                 }
 
@@ -1321,73 +1321,75 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::SearchSymbols { pattern, limit, symbol_type } => {
-                // Load symbol storage
-                let storage_path = cli.db_path.join("storage");
-                if !storage_path.exists() {
-                    return Err(anyhow::anyhow!(
-                        "No database found. Run 'ingest-repo' first to populate symbols."
-                    ));
+                // Use binary symbols which is where IndexCodebase stores them
+                let symbol_db_path = cli.db_path.join("symbols.kota");
+
+                if !symbol_db_path.exists() {
+                    println!("❌ No symbols found in database.");
+                    println!("   Required steps:");
+                    println!("   1. Index a codebase: kotadb index-codebase /path/to/repo");
+                    println!("   2. Verify indexing: kotadb symbol-stats");
+                    println!("   3. Then search: kotadb search-symbols 'pattern'");
+                    return Ok(());
                 }
 
-                let file_storage = create_file_storage(
-                    storage_path
-                        .to_str()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid storage path"))?,
-                    Some(100),
-                )
-                .await?;
+                // Open binary symbol reader for efficient searching
+                let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
+                let total_symbols = reader.symbol_count();
 
-                // Create symbol storage
-                let graph_path = storage_path.join("graph");
-                tokio::fs::create_dir_all(&graph_path).await?;
-                let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
-                let graph_storage =
-                    kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
-
-                let symbol_storage =
-                    SymbolStorage::with_graph_storage(Box::new(file_storage), Box::new(graph_storage)).await?;
-
-                // Search for symbols using the built-in search
-                let mut matches = symbol_storage.search(&pattern, limit * 2); // Get extra for filtering
-
-                // Filter by type if specified
-                if let Some(ref filter_type) = symbol_type {
-                    let filter_lower = filter_type.to_lowercase();
-                    matches.retain(|entry| {
-                        format!("{:?}", entry.symbol.kind).to_lowercase().contains(&filter_lower) ||
-                        format!("{:?}", entry.symbol.symbol_type).to_lowercase().contains(&filter_lower)
-                    });
+                if total_symbols == 0 {
+                    println!("No symbols in database. Index a codebase first with: kotadb index-codebase /path/to/repo");
+                    return Ok(());
                 }
 
-                // Limit results
-                matches.truncate(limit);
+                // Search symbols
+                let mut matches = Vec::new();
+                let pattern_lower = pattern.to_lowercase();
+
+                for packed_symbol in reader.iter_symbols() {
+                    // Get the symbol name
+                    if let Ok(symbol_name) = reader.get_symbol_name(&packed_symbol) {
+                        // Match against pattern (case-insensitive)
+                        if symbol_name.to_lowercase().contains(&pattern_lower) {
+                            // Filter by type if specified
+                            if let Some(ref filter_type) = symbol_type {
+                                let filter_lower = filter_type.to_lowercase();
+                                let type_str = format!("{}", packed_symbol.kind).to_lowercase();
+                                if !type_str.contains(&filter_lower) {
+                                    continue;
+                                }
+                            }
+
+                            // Get file path for display
+                            let file_path = reader.get_symbol_file_path(&packed_symbol)
+                                .unwrap_or_else(|_| "<unknown>".to_string());
+
+                            matches.push((symbol_name, packed_symbol, file_path));
+                            if matches.len() >= limit {
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 if matches.is_empty() {
                     println!("No symbols found matching '{}'", pattern);
                     if let Some(ref st) = symbol_type {
                         println!("  with type filter: {}", st);
                     }
-                    if symbol_storage.get_stats().total_symbols == 0 {
-                        println!("Note: No symbols in database. Run 'ingest-repo' first.");
-                    }
+                    println!("  Total symbols in database: {}", total_symbols);
                 } else {
-                    // Check if we have more results than shown
-                    let full_results = symbol_storage.search(&pattern, limit + 1);
-                    let has_more = full_results.len() > limit;
-
-                    if has_more {
-                        println!("Showing {} of {} matching symbols (use -l {} for more)",
-                                limit, full_results.len(), limit * 2);
-                    } else {
-                        println!("Found {} matching symbols", matches.len());
+                    println!("Found {} matching symbols", matches.len());
+                    if matches.len() == limit {
+                        println!("(showing first {}, use -l for more)", limit);
                     }
                     println!();
 
-                    for entry in matches {
-                        println!("{}", entry.qualified_name);
-                        println!("  type: {:?}", entry.symbol.symbol_type);
-                        println!("  file: {}", entry.file_path.display());
-                        println!("  line: {}", entry.symbol.start_line);
+                    for (name, symbol, file_path) in matches {
+                        println!("{}", name);
+                        println!("  type: {}", symbol.kind);
+                        println!("  file: {}", file_path);
+                        println!("  line: {}", symbol.start_line);
                         println!();
                     }
                 }
