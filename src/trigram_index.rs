@@ -302,15 +302,12 @@ impl TrigramIndex {
 
         // Acquire write lock to begin loading
         let mut state = self.load_state.write().await;
-        
+
         // Double-check after acquiring write lock (another thread might have loaded)
         match &*state {
             LoadState::Loaded => return Ok(()),
             LoadState::Failed(err) => {
-                return Err(anyhow::anyhow!(
-                    "Index previously failed to load: {}",
-                    err
-                ));
+                return Err(anyhow::anyhow!("Index previously failed to load: {}", err));
             }
             LoadState::Loading => {
                 // This should be rare due to our earlier check, but handle gracefully
@@ -330,12 +327,12 @@ impl TrigramIndex {
         // Load the index with error capture
         tracing::info!("Lazy loading trigram index on first access");
         let start = std::time::Instant::now();
-        
+
         // Log memory pressure warning for large indices
         tracing::warn!("Loading large trigram index may consume significant memory (~132MB+)");
-        
+
         let load_result = self.load_existing_index().await;
-        
+
         // Update state based on result
         let mut state = self.load_state.write().await;
         match load_result {
@@ -343,12 +340,15 @@ impl TrigramIndex {
                 *state = LoadState::Loaded;
                 let elapsed = start.elapsed();
                 tracing::info!("Trigram index loaded successfully in {:?}", elapsed);
-                
+
                 // Log performance metrics for monitoring
                 if elapsed.as_millis() > 1000 {
-                    tracing::warn!("Trigram index loading took {}ms - consider memory optimization", elapsed.as_millis());
+                    tracing::warn!(
+                        "Trigram index loading took {}ms - consider memory optimization",
+                        elapsed.as_millis()
+                    );
                 }
-                
+
                 Ok(())
             }
             Err(e) => {

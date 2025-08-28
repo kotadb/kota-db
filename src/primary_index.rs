@@ -194,7 +194,7 @@ impl PrimaryIndex {
 
         // Acquire write lock to begin loading
         let mut state = self.load_state.write().await;
-        
+
         // Double-check after acquiring write lock
         match &*state {
             LoadState::Loaded => return Ok(()),
@@ -221,12 +221,12 @@ impl PrimaryIndex {
         // Load the index with error capture
         tracing::info!("Lazy loading primary index on first access");
         let start = std::time::Instant::now();
-        
+
         // Log memory pressure information
         tracing::info!("Loading primary index (B+ tree structure)");
-        
+
         let load_result = self.load_existing_index().await;
-        
+
         // Update state based on result
         let mut state = self.load_state.write().await;
         match load_result {
@@ -234,12 +234,15 @@ impl PrimaryIndex {
                 *state = LoadState::Loaded;
                 let elapsed = start.elapsed();
                 tracing::info!("Primary index loaded successfully in {:?}", elapsed);
-                
+
                 // Monitor loading performance
                 if elapsed.as_millis() > 500 {
-                    tracing::warn!("Primary index loading took {}ms - performance may be impacted", elapsed.as_millis());
+                    tracing::warn!(
+                        "Primary index loading took {}ms - performance may be impacted",
+                        elapsed.as_millis()
+                    );
                 }
-                
+
                 Ok(())
             }
             Err(e) => {
