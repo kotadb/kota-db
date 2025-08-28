@@ -6,7 +6,8 @@
 
 use anyhow::{Context, Result};
 use std::cell::RefCell;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
@@ -547,7 +548,7 @@ impl HybridRelationshipEngine {
                 });
 
                 matches.push(RelationshipMatch {
-                    symbol_id: Uuid::from_bytes(symbol.id),
+                    symbol_id: Uuid::from_bytes(symbol.id), // Safe: PackedSymbol.id is [u8; 16]
                     symbol_name: symbol_name.clone(),
                     qualified_name: format!("{}::{}", file_path, symbol_name),
                     symbol_type: Self::convert_symbol_type(symbol.kind),
@@ -585,7 +586,7 @@ impl HybridRelationshipEngine {
                 });
 
                 matches.push(RelationshipMatch {
-                    symbol_id: Uuid::from_bytes(symbol.id),
+                    symbol_id: Uuid::from_bytes(symbol.id), // Safe: PackedSymbol.id is [u8; 16]
                     symbol_name: symbol_name.clone(),
                     qualified_name: format!("{}::{}", file_path, symbol_name),
                     symbol_type: Self::convert_symbol_type(symbol.kind),
@@ -680,32 +681,25 @@ impl HybridRelationshipEngine {
             ));
         }
 
-        // Get the storage path to access source files
-        let storage_path = self.db_path.join("storage");
-        if !storage_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Storage path not found at: {:?}",
-                storage_path
-            ));
-        }
-
-        // Find source files from the storage directory
-        let files = self.collect_source_files(&storage_path).await?;
+        // Try to find source files using multiple strategies
+        let (source_repo_path, files) = self.find_source_files_intelligently().await?;
         info!(
-            "Collected {} source files for relationship extraction",
-            files.len()
+            "Found {} source files for relationship extraction from: {:?}",
+            files.len(),
+            source_repo_path
         );
 
         if files.is_empty() {
             return Err(anyhow::anyhow!(
-                "No source files found for relationship extraction"
+                "No source files found for relationship extraction. \
+                Ensure you're running from the repository directory or the original source files are accessible."
             ));
         }
 
-        // Create relationship bridge and extract relationships
+        // Create relationship bridge and extract relationships using the actual repository path
         let bridge = BinaryRelationshipBridge::new();
         let dependency_graph = bridge
-            .extract_relationships(&symbol_db_path, &self.db_path, &files)
+            .extract_relationships(&symbol_db_path, &source_repo_path, &files)
             .with_context(|| "Failed to extract relationships from binary symbols")?;
 
         let elapsed = start.elapsed();
@@ -724,6 +718,218 @@ impl HybridRelationshipEngine {
         }
 
         Ok(dependency_graph)
+    }
+
+    /// Intelligently find source files using multiple strategies
+    /// 1. Try storage path (legacy document approach)
+    /// 2. Try current working directory (codebase intelligence approach)
+    /// 3. Try parent directories looking for git repositories
+    async fn find_source_files_intelligently(&self) -> Result<(PathBuf, Vec<(PathBuf, Vec<u8>)>)> {
+        // Strategy 1: Try the storage path first (maintains backward compatibility)
+        let storage_path = self.db_path.join("storage");
+        if storage_path.exists() {
+            if let Ok(files) = self.collect_source_files(&storage_path).await {
+                if !files.is_empty() {
+                    info!("Found {} source files in storage path", files.len());
+                    return Ok((storage_path, files));
+                }
+            }
+        }
+
+        // Strategy 2: Try current working directory (most common case for codebase intelligence)
+        let current_dir =
+            std::env::current_dir().context("Failed to get current working directory")?;
+        if let Ok(files) = self.collect_source_files_from_repo(&current_dir).await {
+            if !files.is_empty() {
+                info!(
+                    "Found {} source files in current directory: {:?}",
+                    files.len(),
+                    current_dir
+                );
+                return Ok((current_dir, files));
+            }
+        }
+
+        // Strategy 3: Try to find a git repository in parent directories
+        if let Ok((repo_path, files)) = self.find_git_repository_files(&current_dir).await {
+            return Ok((repo_path, files));
+        }
+
+        // Strategy 4: If all else fails, return empty with helpful error context
+        Err(anyhow::anyhow!(
+            "Could not find source files for relationship extraction. Tried:\n\
+            1. Storage directory: {:?} (found {} files)\n\
+            2. Current directory: {:?}\n\
+            3. Parent directories for git repositories\n\
+            \n\
+            💡 Solutions:\n\
+            • Run relationship queries from within the repository directory\n\
+            • Use 'git rev-parse --show-toplevel' to find your repository root\n\
+            • Ensure source files are accessible (not in .gitignore)\n\
+            • Check that the repository contains supported file types (.rs, .py, .js, .ts, etc.)",
+            storage_path,
+            if storage_path.exists() {
+                self.collect_source_files(&storage_path)
+                    .await
+                    .map(|f| f.len())
+                    .unwrap_or(0)
+            } else {
+                0
+            },
+            current_dir
+        ))
+    }
+
+    /// Search for git repository in parent directories and collect source files
+    /// Returns the repository path and collected files if found
+    async fn find_git_repository_files(
+        &self,
+        start_dir: &Path,
+    ) -> Result<(PathBuf, Vec<(PathBuf, Vec<u8>)>)> {
+        let mut search_dir = start_dir.to_path_buf();
+
+        // Limit search to 5 levels to avoid infinite loops and excessive traversal
+        for level in 0..5 {
+            if search_dir.join(".git").exists() {
+                debug!("Found git repository at level {}: {:?}", level, search_dir);
+
+                if let Ok(files) = self.collect_source_files_from_repo(&search_dir).await {
+                    if !files.is_empty() {
+                        info!(
+                            "Found {} source files in git repository: {:?}",
+                            files.len(),
+                            search_dir
+                        );
+                        return Ok((search_dir, files));
+                    }
+                }
+            }
+
+            if let Some(parent) = search_dir.parent() {
+                search_dir = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "No git repository found in parent directories of: {:?}",
+            start_dir
+        ))
+    }
+
+    /// Collect source files from a repository directory (not storage)
+    async fn collect_source_files_from_repo(
+        &self,
+        repo_path: &Path,
+    ) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+        use tokio::fs;
+
+        let mut files = Vec::new();
+
+        // Walk the directory recursively, but skip common non-source directories
+        let mut stack = vec![repo_path.to_path_buf()];
+        let mut files_processed = 0;
+
+        while let Some(dir_path) = stack.pop() {
+            if let Ok(mut entries) = fs::read_dir(&dir_path).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    let file_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+
+                    // Skip common directories that don't contain source code
+                    if path.is_dir() {
+                        if !self.should_skip_directory(file_name) {
+                            stack.push(path);
+                        }
+                        continue;
+                    }
+
+                    // Check file limit
+                    if let Some(max_files) = self.extraction_config.max_files_per_extraction {
+                        if files_processed >= max_files {
+                            warn!(
+                                "Reached maximum file limit ({}) during repository extraction, stopping",
+                                max_files
+                            );
+                            break;
+                        }
+                    }
+
+                    // Process source files
+                    if let Some(extension) = path.extension() {
+                        let ext = extension.to_string_lossy().to_lowercase();
+                        if self.is_supported_extension(&ext) {
+                            files_processed += 1;
+
+                            // Check file size
+                            if let Ok(metadata) = fs::metadata(&path).await {
+                                if metadata.len() > self.extraction_config.max_file_size {
+                                    debug!(
+                                        "Skipping large file: {:?} ({} bytes)",
+                                        path,
+                                        metadata.len()
+                                    );
+                                    continue;
+                                }
+                            }
+
+                            // Read file content
+                            match fs::read(&path).await {
+                                Ok(content) => {
+                                    files.push((path, content));
+                                }
+                                Err(e) => {
+                                    debug!("Failed to read file {:?}: {}", path, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(files)
+    }
+
+    /// Check if a directory should be skipped during source file collection
+    /// Uses HashSet for O(1) lookup performance
+    fn should_skip_directory(&self, dir_name: &str) -> bool {
+        static SKIP_DIRS: &[&str] = &[
+            "target",
+            "node_modules",
+            ".git",
+            ".svn",
+            ".hg",
+            "build",
+            "dist",
+            "out",
+            ".cache",
+            "tmp",
+            "temp",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".idea",
+            ".vscode",
+            ".vs",
+            ".DS_Store",
+            "Thumbs.db",
+            ".tox",
+            ".venv",
+            "venv",
+            "env",
+        ];
+
+        // Use lazy static pattern for O(1) lookup
+        use std::sync::OnceLock;
+        static SKIP_SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+        let skip_set = SKIP_SET.get_or_init(|| SKIP_DIRS.iter().copied().collect());
+
+        skip_set.contains(dir_name)
     }
 
     /// Collect source files from the storage directory for relationship extraction
