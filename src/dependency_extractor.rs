@@ -138,7 +138,7 @@ pub struct CodeReference {
 }
 
 /// Type of reference found in code
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReferenceType {
     FunctionCall,
     TypeUsage,
@@ -146,6 +146,14 @@ pub enum ReferenceType {
     MacroInvocation,
     FieldAccess,
     MethodCall,
+    ChainedMethodCall,
+    StaticMethodCall,
+    GenericMethodCall,
+    TraitBound,
+    StandardLibraryCall,
+    ClosureCall,
+    TurbofishCall,
+    OperatorOverload,
 }
 
 /// Dependency extractor that analyzes code for relationships
@@ -169,6 +177,18 @@ struct DependencyQueries {
     imports: Query,
     /// Query for method calls
     method_calls: Query,
+    /// Query for chained method calls
+    chained_method_calls: Query,
+    /// Query for static method calls (Type::method)
+    static_method_calls: Query,
+    /// Query for trait implementations and bounds
+    trait_usage: Query,
+    /// Query for macro invocations
+    macro_invocations: Query,
+    /// Query for turbofish syntax (method::<T>)
+    turbofish_calls: Query,
+    /// Query for standard library patterns
+    stdlib_patterns: Query,
 }
 
 impl DependencyExtractor {
@@ -249,11 +269,99 @@ impl DependencyExtractor {
         )
         .context("Failed to create method calls query")?;
 
+        // Query for chained method calls: obj.method1().method2()
+        // Note: Tree-sitter Rust grammar uses different node structure
+        let chained_method_calls = Query::new(
+            &language,
+            r#"
+            ; Method calls where the receiver is another call expression  
+            (call_expression
+                function: (field_expression
+                    value: (call_expression)
+                    field: (field_identifier) @chained_method))
+            "#,
+        )
+        .context("Failed to create chained method calls query")?;
+
+        // Query for static method calls: Type::method()
+        let static_method_calls = Query::new(
+            &language,
+            r#"
+            (call_expression
+                function: (scoped_identifier
+                    path: (identifier) @type_name
+                    name: (identifier) @static_method))
+
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier) @module_path
+                    name: (identifier) @static_method))
+            "#,
+        )
+        .context("Failed to create static method calls query")?;
+
+        // Query for trait implementations and bounds (simplified)
+        let trait_usage = Query::new(
+            &language,
+            r#"
+            ; Trait implementation blocks
+            (impl_item
+                trait: (type_identifier) @trait_name)
+            "#,
+        )
+        .context("Failed to create trait usage query")?;
+
+        // Query for macro invocations: println!(), vec![], format!(), etc.
+        let macro_invocations = Query::new(
+            &language,
+            r#"
+            (macro_invocation
+                macro: (identifier) @macro_name)
+
+            (macro_invocation
+                macro: (scoped_identifier
+                    path: (identifier) @macro_module
+                    name: (identifier) @macro_name))
+            "#,
+        )
+        .context("Failed to create macro invocations query")?;
+
+        // Query for turbofish syntax: method::<T>(), collect::<Vec<_>>() (simplified)
+        let turbofish_calls = Query::new(
+            &language,
+            r#"
+            (call_expression
+                function: (generic_function
+                    function: (field_expression
+                        field: (field_identifier) @turbofish_method)))
+            "#,
+        )
+        .context("Failed to create turbofish calls query")?;
+
+        // Query for standard library patterns (simplified)
+        let stdlib_patterns = Query::new(
+            &language,
+            r#"
+            ; Standard library qualified calls
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier) @stdlib_path
+                    name: (identifier) @stdlib_function))
+            "#,
+        )
+        .context("Failed to create stdlib patterns query")?;
+
         Ok(DependencyQueries {
             function_calls,
             type_references,
             imports,
             method_calls,
+            chained_method_calls,
+            static_method_calls,
+            trait_usage,
+            macro_invocations,
+            turbofish_calls,
+            stdlib_patterns,
         })
     }
 
@@ -500,90 +608,83 @@ impl DependencyExtractor {
 
         let mut references = Vec::new();
 
-        // Extract function calls
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(
+        // Helper function to extract references from a query
+        let mut extract_query_references =
+            |query: &Query, ref_type: ReferenceType, query_name: &str| -> Result<()> {
+                let mut cursor = QueryCursor::new();
+                let mut matches = cursor.matches(query, tree.root_node(), content.as_bytes());
+
+                while let Some(match_) = matches.next() {
+                    for capture in match_.captures {
+                        let node = capture.node;
+                        let pos = node.start_position();
+                        let text = node.utf8_text(content.as_bytes()).with_context(|| {
+                            format!(
+                                "Failed to extract {} at {}:{}",
+                                query_name,
+                                pos.row + 1,
+                                pos.column
+                            )
+                        })?;
+
+                        references.push(CodeReference {
+                            name: text.to_string(),
+                            ref_type: ref_type.clone(),
+                            line: pos.row + 1,
+                            column: pos.column,
+                            text: text.to_string(),
+                        });
+                    }
+                }
+                Ok(())
+            };
+
+        // Extract all different types of references
+        extract_query_references(
             &queries.function_calls,
-            tree.root_node(),
-            content.as_bytes(),
-        );
-
-        while let Some(match_) = matches.next() {
-            for capture in match_.captures {
-                let node = capture.node;
-                let pos = node.start_position();
-                let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!(
-                        "Failed to extract function call at {}:{}",
-                        pos.row + 1,
-                        pos.column
-                    )
-                })?;
-
-                references.push(CodeReference {
-                    name: text.to_string(),
-                    ref_type: ReferenceType::FunctionCall,
-                    line: pos.row + 1,
-                    column: pos.column,
-                    text: text.to_string(),
-                });
-            }
-        }
-
-        // Extract type references
-        let mut matches = cursor.matches(
+            ReferenceType::FunctionCall,
+            "function call",
+        )?;
+        extract_query_references(
             &queries.type_references,
-            tree.root_node(),
-            content.as_bytes(),
-        );
-
-        while let Some(match_) = matches.next() {
-            for capture in match_.captures {
-                let node = capture.node;
-                let pos = node.start_position();
-                let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!(
-                        "Failed to extract type reference at {}:{}",
-                        pos.row + 1,
-                        pos.column
-                    )
-                })?;
-
-                references.push(CodeReference {
-                    name: text.to_string(),
-                    ref_type: ReferenceType::TypeUsage,
-                    line: pos.row + 1,
-                    column: pos.column,
-                    text: text.to_string(),
-                });
-            }
-        }
-
-        // Extract method calls
-        let mut matches =
-            cursor.matches(&queries.method_calls, tree.root_node(), content.as_bytes());
-
-        while let Some(match_) = matches.next() {
-            for capture in match_.captures {
-                let node = capture.node;
-                let pos = node.start_position();
-                let text = node.utf8_text(content.as_bytes()).with_context(|| {
-                    format!(
-                        "Failed to extract method call at {}:{}",
-                        pos.row + 1,
-                        pos.column
-                    )
-                })?;
-
-                references.push(CodeReference {
-                    name: text.to_string(),
-                    ref_type: ReferenceType::MethodCall,
-                    line: pos.row + 1,
-                    column: pos.column,
-                    text: text.to_string(),
-                });
-            }
-        }
+            ReferenceType::TypeUsage,
+            "type reference",
+        )?;
+        extract_query_references(
+            &queries.method_calls,
+            ReferenceType::MethodCall,
+            "method call",
+        )?;
+        extract_query_references(
+            &queries.chained_method_calls,
+            ReferenceType::ChainedMethodCall,
+            "chained method call",
+        )?;
+        extract_query_references(
+            &queries.static_method_calls,
+            ReferenceType::StaticMethodCall,
+            "static method call",
+        )?;
+        extract_query_references(
+            &queries.trait_usage,
+            ReferenceType::TraitImpl,
+            "trait usage",
+        )?;
+        extract_query_references(
+            &queries.macro_invocations,
+            ReferenceType::MacroInvocation,
+            "macro invocation",
+        )?;
+        extract_query_references(
+            &queries.turbofish_calls,
+            ReferenceType::TurbofishCall,
+            "turbofish call",
+        )?;
+        extract_query_references(
+            &queries.stdlib_patterns,
+            ReferenceType::StandardLibraryCall,
+            "stdlib pattern",
+        )?;
 
         Ok(references)
     }
@@ -709,11 +810,31 @@ impl DependencyExtractor {
                                 let edge = DependencyEdge {
                                     relation_type: match reference.ref_type {
                                         ReferenceType::FunctionCall => RelationType::Calls,
+                                        ReferenceType::MethodCall => RelationType::Calls,
+                                        ReferenceType::ChainedMethodCall => RelationType::Calls,
+                                        ReferenceType::StaticMethodCall => RelationType::Calls,
+                                        ReferenceType::GenericMethodCall => RelationType::Calls,
+                                        ReferenceType::TurbofishCall => RelationType::Calls,
+                                        ReferenceType::StandardLibraryCall => RelationType::Calls,
+                                        ReferenceType::ClosureCall => RelationType::Calls,
                                         ReferenceType::TypeUsage => {
                                             RelationType::Custom("uses_type".to_string())
                                         }
-                                        ReferenceType::MethodCall => RelationType::Calls,
-                                        _ => RelationType::Custom("references".to_string()),
+                                        ReferenceType::TraitImpl => {
+                                            RelationType::Custom("implements_trait".to_string())
+                                        }
+                                        ReferenceType::TraitBound => {
+                                            RelationType::Custom("bound_by_trait".to_string())
+                                        }
+                                        ReferenceType::MacroInvocation => {
+                                            RelationType::Custom("invokes_macro".to_string())
+                                        }
+                                        ReferenceType::FieldAccess => {
+                                            RelationType::Custom("accesses_field".to_string())
+                                        }
+                                        ReferenceType::OperatorOverload => {
+                                            RelationType::Custom("uses_operator".to_string())
+                                        }
                                     },
                                     line_number: reference.line,
                                     column_number: reference.column,
