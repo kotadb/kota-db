@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -547,7 +548,7 @@ impl HybridRelationshipEngine {
                 });
 
                 matches.push(RelationshipMatch {
-                    symbol_id: Uuid::from_bytes(symbol.id),
+                    symbol_id: Uuid::from_bytes(symbol.id), // Safe: PackedSymbol.id is [u8; 16]
                     symbol_name: symbol_name.clone(),
                     qualified_name: format!("{}::{}", file_path, symbol_name),
                     symbol_type: Self::convert_symbol_type(symbol.kind),
@@ -585,7 +586,7 @@ impl HybridRelationshipEngine {
                 });
 
                 matches.push(RelationshipMatch {
-                    symbol_id: Uuid::from_bytes(symbol.id),
+                    symbol_id: Uuid::from_bytes(symbol.id), // Safe: PackedSymbol.id is [u8; 16]
                     symbol_name: symbol_name.clone(),
                     qualified_name: format!("{}::{}", file_path, symbol_name),
                     symbol_type: Self::convert_symbol_type(symbol.kind),
@@ -750,10 +751,48 @@ impl HybridRelationshipEngine {
         }
 
         // Strategy 3: Try to find a git repository in parent directories
-        let mut search_dir = current_dir.clone();
-        for _ in 0..5 {
-            // Limit search to avoid infinite loops
+        if let Ok((repo_path, files)) = self.find_git_repository_files(&current_dir).await {
+            return Ok((repo_path, files));
+        }
+
+        // Strategy 4: If all else fails, return empty with helpful error context
+        Err(anyhow::anyhow!(
+            "Could not find source files for relationship extraction. Tried:\n\
+            1. Storage directory: {:?} (found {} files)\n\
+            2. Current directory: {:?}\n\
+            3. Parent directories for git repositories\n\
+            \n\
+            💡 Solutions:\n\
+            • Run relationship queries from within the repository directory\n\
+            • Use 'git rev-parse --show-toplevel' to find your repository root\n\
+            • Ensure source files are accessible (not in .gitignore)\n\
+            • Check that the repository contains supported file types (.rs, .py, .js, .ts, etc.)",
+            storage_path,
+            if storage_path.exists() {
+                self.collect_source_files(&storage_path)
+                    .await
+                    .map(|f| f.len())
+                    .unwrap_or(0)
+            } else {
+                0
+            },
+            current_dir
+        ))
+    }
+
+    /// Search for git repository in parent directories and collect source files
+    /// Returns the repository path and collected files if found
+    async fn find_git_repository_files(
+        &self,
+        start_dir: &Path,
+    ) -> Result<(PathBuf, Vec<(PathBuf, Vec<u8>)>)> {
+        let mut search_dir = start_dir.to_path_buf();
+
+        // Limit search to 5 levels to avoid infinite loops and excessive traversal
+        for level in 0..5 {
             if search_dir.join(".git").exists() {
+                debug!("Found git repository at level {}: {:?}", level, search_dir);
+
                 if let Ok(files) = self.collect_source_files_from_repo(&search_dir).await {
                     if !files.is_empty() {
                         info!(
@@ -773,19 +812,9 @@ impl HybridRelationshipEngine {
             }
         }
 
-        // Strategy 4: If all else fails, return empty with helpful error context
         Err(anyhow::anyhow!(
-            "Could not find source files for relationship extraction. Tried:\n\
-            1. Storage directory: {:?} (found {} files)\n\
-            2. Current directory: {:?}\n\
-            3. Parent directories for git repositories\n\
-            \n\
-            For codebase intelligence, run relationship queries from within the repository directory.",
-            storage_path,
-            if storage_path.exists() {
-                self.collect_source_files(&storage_path).await.map(|f| f.len()).unwrap_or(0)
-            } else { 0 },
-            current_dir
+            "No git repository found in parent directories of: {:?}",
+            start_dir
         ))
     }
 
@@ -867,27 +896,40 @@ impl HybridRelationshipEngine {
     }
 
     /// Check if a directory should be skipped during source file collection
+    /// Uses HashSet for O(1) lookup performance
     fn should_skip_directory(&self, dir_name: &str) -> bool {
-        matches!(
-            dir_name,
-            "target"
-                | "node_modules"
-                | ".git"
-                | ".svn"
-                | ".hg"
-                | "build"
-                | "dist"
-                | "out"
-                | ".cache"
-                | "tmp"
-                | "temp"
-                | "__pycache__"
-                | ".pytest_cache"
-                | ".mypy_cache"
-                | ".idea"
-                | ".vscode"
-                | ".vs"
-        )
+        static SKIP_DIRS: &[&str] = &[
+            "target",
+            "node_modules",
+            ".git",
+            ".svn",
+            ".hg",
+            "build",
+            "dist",
+            "out",
+            ".cache",
+            "tmp",
+            "temp",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".idea",
+            ".vscode",
+            ".vs",
+            ".DS_Store",
+            "Thumbs.db",
+            ".tox",
+            ".venv",
+            "venv",
+            "env",
+        ];
+
+        // Use lazy static pattern for O(1) lookup
+        use std::sync::OnceLock;
+        static SKIP_SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+        let skip_set = SKIP_SET.get_or_init(|| SKIP_DIRS.iter().copied().collect());
+
+        skip_set.contains(dir_name)
     }
 
     /// Collect source files from the storage directory for relationship extraction
