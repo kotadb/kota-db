@@ -689,7 +689,7 @@ impl LLMSearchEngine {
             // Apply absolute maximum limit to prevent memory issues with very large functions
             const ABSOLUTE_MAX_SNIPPET_SIZE: usize = 4096; // 4KB absolute limit
             let effective_limit = (max_chars * 2).min(ABSOLUTE_MAX_SNIPPET_SIZE);
-            
+
             if !function_snippet.is_empty() && function_snippet.len() <= effective_limit {
                 return Ok(function_snippet);
             }
@@ -775,7 +775,7 @@ impl LLMSearchEngine {
     fn safe_substring<'a>(&self, content: &'a str, start: usize, end: usize) -> &'a str {
         let end = end.min(content.len());
         let start = start.min(end);
-        
+
         // Find the largest valid UTF-8 boundary at or before our target positions
         let safe_start = content
             .char_indices()
@@ -783,13 +783,13 @@ impl LLMSearchEngine {
             .filter(|&i| i <= start)
             .next_back()
             .unwrap_or(0);
-            
+
         let safe_end = content
             .char_indices()
             .map(|(i, _)| i)
             .find(|&i| i >= end)
             .unwrap_or(content.len());
-            
+
         // This is guaranteed to be valid since we're using char_indices boundaries
         &content[safe_start..safe_end]
     }
@@ -802,14 +802,12 @@ impl LLMSearchEngine {
         let mut in_string = false;
         let mut in_char = false;
         let mut escaped = false;
-        let mut chars = line.chars().peekable();
-        
-        while let Some(ch) = chars.next() {
+        for ch in line.chars() {
             if escaped {
                 escaped = false;
                 continue;
             }
-            
+
             match ch {
                 '\\' if in_string || in_char => escaped = true,
                 '"' if !in_char => in_string = !in_string,
@@ -819,7 +817,7 @@ impl LLMSearchEngine {
                 _ => {}
             }
         }
-        
+
         (open_count, close_count)
     }
 
@@ -861,7 +859,7 @@ impl LLMSearchEngine {
             // Simple brace counting - count braces outside of string literals
             // Note: This is a simplified approach. For production, consider using tree-sitter
             let (open_braces, close_braces) = self.count_braces_outside_strings(line);
-            
+
             // Reverse logic since we're going backwards
             brace_depth += close_braces;
             brace_depth -= open_braces;
