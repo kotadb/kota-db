@@ -954,8 +954,21 @@ impl RelationshipQueryEngine {
 pub fn parse_natural_language_relationship_query(query: &str) -> Option<RelationshipQueryType> {
     let query_lower = query.to_lowercase();
 
+    // Handle "who uses", "what uses", "what calls", "who calls", and "find callers of" patterns
     if query_lower.contains("what calls") || query_lower.contains("who calls") {
         if let Some(target) = extract_target_from_query(query, "calls") {
+            return Some(RelationshipQueryType::FindCallers { target });
+        }
+    }
+
+    if query_lower.contains("who uses") || query_lower.contains("what uses") {
+        if let Some(target) = extract_target_from_query(query, "uses") {
+            return Some(RelationshipQueryType::FindCallers { target });
+        }
+    }
+
+    if query_lower.contains("find callers of") {
+        if let Some(target) = extract_target_from_query(query, "of") {
             return Some(RelationshipQueryType::FindCallers { target });
         }
     }
@@ -1232,6 +1245,49 @@ mod tests {
 
         if let Some(RelationshipQueryType::UnusedSymbols { symbol_type }) = query_type {
             assert_eq!(symbol_type, Some(SymbolType::Function));
+        }
+    }
+
+    #[test]
+    fn test_parse_who_uses_query() {
+        // Test "who uses" pattern - should find callers
+        let query_type = parse_natural_language_relationship_query("who uses FileStorage?");
+        assert!(
+            matches!(query_type, Some(RelationshipQueryType::FindCallers { .. })),
+            "Query 'who uses FileStorage?' should be parsed as FindCallers"
+        );
+
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(target, "FileStorage");
+        }
+    }
+
+    #[test]
+    fn test_parse_what_uses_query() {
+        // Test "what uses" pattern - should also find callers
+        let query_type = parse_natural_language_relationship_query("what uses Config::new");
+        assert!(
+            matches!(query_type, Some(RelationshipQueryType::FindCallers { .. })),
+            "Query 'what uses Config::new' should be parsed as FindCallers"
+        );
+
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(target, "Config::new");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_callers_of_query() {
+        // Test "find callers of" pattern
+        let query_type =
+            parse_natural_language_relationship_query("find callers of Storage::insert");
+        assert!(
+            matches!(query_type, Some(RelationshipQueryType::FindCallers { .. })),
+            "Query 'find callers of Storage::insert' should be parsed as FindCallers"
+        );
+
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(target, "Storage::insert");
         }
     }
 }
