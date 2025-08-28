@@ -156,7 +156,8 @@ docker-shell:
 # === CI/CD ===
 
 # Run the same checks as CI
-ci: fmt-check clippy test audit
+ci: 
+  CI=true just fmt-check clippy test audit
   @echo "🚀 CI checks completed successfully!"
 
 # Build release binaries

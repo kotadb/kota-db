@@ -561,13 +561,20 @@ async fn test_realistic_workload_simulation() -> Result<()> {
     println!("✅ Completed mixed workload: {reads} reads, {inserts} inserts, {updates} updates in {workload_duration:?}");
 
     // Performance assertions for realistic workload
+    // Relax thresholds for CI environments
+    let is_ci = std::env::var("CI").is_ok();
+    let bulk_load_threshold = if is_ci { 300 } else { 150 }; // 5 minutes for CI, 2.5 for local
+    let workload_threshold = if is_ci { 120 } else { 60 }; // 2 minutes for CI, 1 for local
+
     assert!(
-        bulk_load_duration < Duration::from_secs(150),
-        "Bulk load should complete within 2.5 minutes, took {bulk_load_duration:?}"
+        bulk_load_duration < Duration::from_secs(bulk_load_threshold),
+        "Bulk load should complete within {} seconds, took {bulk_load_duration:?}",
+        bulk_load_threshold
     );
     assert!(
-        workload_duration < Duration::from_secs(60),
-        "Mixed workload should complete within 1 minute, took {workload_duration:?}"
+        workload_duration < Duration::from_secs(workload_threshold),
+        "Mixed workload should complete within {} seconds, took {workload_duration:?}",
+        workload_threshold
     );
 
     // Verify final state

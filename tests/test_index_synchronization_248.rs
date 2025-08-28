@@ -85,19 +85,29 @@ async fn test_bulk_index_rebuild_with_large_dataset() -> Result<()> {
 
     // Now validate the indices have the correct number of documents
     // Test with high limit to ensure we see all documents
-    let high_limit_query = QueryBuilder::new()
+    // Primary index can use wildcard query
+    let wildcard_query = QueryBuilder::new()
+        .with_text("*")? // Wildcard for primary index
         .with_limit(10000)? // High limit to see all documents
         .build()?;
 
     println!("Validating index counts...");
 
     // Check primary index
-    let primary_results = primary_index.search(&high_limit_query).await?;
+    let primary_results = primary_index.search(&wildcard_query).await?;
     println!("Primary index contains {} documents", primary_results.len());
 
-    // Check trigram index (wildcard search)
-    let trigram_results = trigram_index.search(&high_limit_query).await?;
-    println!("Trigram index contains {} documents", trigram_results.len());
+    // Check trigram index with text search (trigram doesn't support wildcard)
+    // Search for "main" which appears in all generated document paths
+    let trigram_query = QueryBuilder::new()
+        .with_text("main")? // Text search for trigram index
+        .with_limit(10000)? // High limit
+        .build()?;
+    let trigram_results = trigram_index.search(&trigram_query).await?;
+    println!(
+        "Trigram index contains {} documents with 'main'",
+        trigram_results.len()
+    );
 
     // The bug was:
     // - Primary index appeared to have only 1000 (due to query limit)
