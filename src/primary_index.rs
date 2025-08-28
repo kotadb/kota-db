@@ -30,6 +30,8 @@ pub struct PrimaryIndex {
     wal_writer: RwLock<Option<tokio::fs::File>>,
     /// Index metadata
     metadata: RwLock<IndexMetadata>,
+    /// Flag to track if the index has been lazy-loaded
+    is_loaded: RwLock<bool>,
 }
 
 /// Metadata for the primary index
@@ -61,6 +63,7 @@ impl PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
+            is_loaded: RwLock::new(false),
         }
     }
 
@@ -134,6 +137,36 @@ impl PrimaryIndex {
             .with_context(|| format!("Failed to open WAL file: {}", wal_path.display()))?;
 
         *self.wal_writer.write().await = Some(wal_file);
+        Ok(())
+    }
+
+    /// Ensure index is loaded (lazy loading on first access)
+    async fn ensure_loaded(&self) -> Result<()> {
+        // Check if already loaded
+        let is_loaded = *self.is_loaded.read().await;
+        if is_loaded {
+            return Ok(());
+        }
+
+        // Acquire write lock to prevent race conditions
+        let mut loaded_flag = self.is_loaded.write().await;
+
+        // Double-check after acquiring write lock
+        if *loaded_flag {
+            return Ok(());
+        }
+
+        // Load the index
+        tracing::info!("Lazy loading primary index on first access");
+        let start = std::time::Instant::now();
+
+        self.load_existing_index()
+            .await
+            .context("Failed to lazy load primary index")?;
+
+        *loaded_flag = true;
+
+        tracing::info!("Primary index loaded in {:?}", start.elapsed());
         Ok(())
     }
 
@@ -346,6 +379,7 @@ impl Index for PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
+            is_loaded: RwLock::new(false),
         };
 
         // Ensure directory structure exists
@@ -354,11 +388,9 @@ impl Index for PrimaryIndex {
         // Initialize WAL
         index.init_wal().await?;
 
-        // Load existing state from disk
-        index
-            .load_existing_index()
-            .await
-            .context("Failed to load existing index from disk")?;
+        // Skip loading existing index - will be loaded lazily on first search
+        // This dramatically improves cold start performance
+        tracing::debug!("Skipping primary index load during initialization for faster cold start");
 
         Ok(index)
     }
@@ -453,6 +485,9 @@ impl Index for PrimaryIndex {
     /// Primary index only supports wildcard searches (no text search terms).
     /// For text search, use a dedicated text search index.
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
+        // Ensure index is loaded before searching (lazy loading)
+        self.ensure_loaded().await?;
+
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
 
@@ -575,6 +610,7 @@ pub async fn create_primary_index(
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
+        is_loaded: RwLock::new(false),
     };
 
     // Ensure directory structure exists
@@ -601,6 +637,7 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
+        is_loaded: RwLock::new(false),
     };
 
     index.ensure_directories().await?;
