@@ -110,17 +110,16 @@ docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
 # Install client and try it
 pip install kotadb-client
 python -c "
-from kotadb import KotaDB, DocumentBuilder
+from kotadb import KotaDB
 db = KotaDB('http://localhost:8080')
-doc_id = db.insert_with_builder(
-    DocumentBuilder()
-    .path('/hello.md')
-    .title('Hello KotaDB!')
-    .content('My first document')
-)
-print(f'Created document: {doc_id}')
-results = db.query('hello')
-print(f'Found {len(results.get(\"documents\", []))} documents')
+
+# Index a codebase
+stats = db.index_codebase('/path/to/project')
+print(f'Indexed {stats[\"symbols\"]} symbols')
+
+# Search for code
+results = db.search_code('function_name')
+print(f'Found {len(results)} matches')
 "
 ```
 
@@ -142,10 +141,10 @@ Real-world benchmarks on Apple Silicon:
 | **B+ Tree Search** | **489 µs** | 2,000 queries/sec | Path lookups |
 | **Trigram Search** | **<3 ms** | 333+ queries/sec | 210x faster! |
 | **Symbol Extraction** | **~100 ms/file** | 10 files/sec | Tree-sitter parsing |
-| **Document Insert** | **277 µs** | 3,600 ops/sec | With indexing |
+| **Symbol Index** | **277 µs** | 3,600 ops/sec | With relationships |
 | **Bulk Operations** | **20 ms** | 50,000 ops/sec | Batched writes |
 
-*Tested on KotaDB's own codebase (2,818+ documents, 17,128+ symbols)*
+*Tested on KotaDB's own codebase (21,613+ symbols, 248+ source files)*
 
 ---
 
@@ -160,43 +159,44 @@ cd examples/flask-web-app && pip install -r requirements.txt && python app.py
 # Visit http://localhost:5000
 ```
 
-### 📝 [Note-Taking App](examples/note-taking-app/) 
-Advanced document management with folders and tags
+### 🔍 [Code Analysis Tool](examples/code-analysis/) 
+Analyze your codebase structure and dependencies
 ```bash
-cd examples/note-taking-app && pip install -r requirements.txt && python note_app.py
-# Visit http://localhost:5001  
+cd examples/code-analysis && pip install -r requirements.txt && python analyzer.py
+# Analyzes the current directory by default
 ```
 
-### 🧠 [RAG Pipeline](examples/rag-pipeline/)
-AI-powered question answering with document retrieval
+### 🤖 [AI Assistant Integration](examples/ai-assistant/)
+Power your AI coding assistant with code understanding
 ```bash
-cd examples/rag-pipeline && pip install -r requirements.txt && python rag_demo.py
-# Requires OPENAI_API_KEY for best results
+cd examples/ai-assistant && pip install -r requirements.txt && python assistant.py
+# Integrates with Claude, GPT, or local models
 ```
 
 ### ⚡ Quick Examples
 ```bash
-# Python type-safe usage
-from kotadb import KotaDB, DocumentBuilder, ValidatedPath
+# Python codebase intelligence
+from kotadb import KotaDB
 
 db = KotaDB("http://localhost:8080")
-doc_id = db.insert_with_builder(
-    DocumentBuilder()
-    .path(ValidatedPath("/notes/meeting.md"))
-    .title("Team Meeting")
-    .content("Discussion about project timeline...")
-    .add_tag("meeting")
-    .add_tag("important")
-)
 
-# Advanced search with filters
-from kotadb import QueryBuilder
-results = db.query_with_builder(
-    QueryBuilder()
-    .text("project timeline") 
-    .tag_filter("meeting")
-    .limit(10)
-)
+# Index your codebase
+stats = db.index_codebase("./my-project")
+print(f"Indexed {stats['symbols']} symbols")
+
+# Search for symbols
+symbols = db.search_symbols("FileStorage")
+for sym in symbols:
+    print(f"{sym['type']}: {sym['name']} at {sym['location']}")
+
+# Find all references to a function
+callers = db.find_callers("process_data")
+for caller in callers:
+    print(f"Called from {caller['file']}:{caller['line']}")
+
+# Analyze impact of changes
+impact = db.analyze_impact("DatabaseConnection")
+print(f"Changing this would affect {len(impact['affected'])} files")
 ```
 
 ### 🦀 Rust (Full Feature Access)
@@ -209,15 +209,15 @@ cd kota-db && cargo build --release
 cargo run --bin kotadb -- serve
 
 # Codebase Intelligence Features
-cargo run --bin kotadb -- ingest-repo .         # Analyze entire repository
-cargo run --bin kotadb -- symbol-stats          # View extracted symbols
-cargo run --bin kotadb -- find-callers FileStorage  # Who calls this?
-cargo run --bin kotadb -- impact-analysis StorageError  # What breaks if changed?
+cargo run --bin kotadb -- index-codebase .         # Analyze entire repository
+cargo run --bin kotadb -- symbol-stats             # View extracted symbols
+cargo run --bin kotadb -- find-callers FileStorage # Who calls this?
+cargo run --bin kotadb -- analyze-impact StorageError  # What breaks if changed?
 
-# Document operations  
-cargo run --bin kotadb -- search "ownership"   # Full-text search (<3ms)
-cargo run --bin kotadb -- search "*.rs"        # Wildcard path search
-cargo run --bin kotadb -- stats                # Database statistics
+# Search operations  
+cargo run --bin kotadb -- search-code "ownership"  # Full-text code search (<3ms)
+cargo run --bin kotadb -- search-symbols "*.rs"    # Find symbols by pattern
+cargo run --bin kotadb -- stats                    # Database statistics
 ```
 
 <details>
@@ -294,22 +294,26 @@ just release-preview  # Preview next release
 
 ### Rust (Full Feature Access)
 ```rust
-use kotadb::{create_file_storage, DocumentBuilder};
+use kotadb::{Database, SymbolExtractor};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Production-ready storage with all safety features
-    let mut storage = create_file_storage("~/.kota/db", Some(1000)).await?;
+    // Initialize database with codebase intelligence
+    let db = Database::new("~/.kota/db").await?;
     
-    // Type-safe document construction
-    let doc = DocumentBuilder::new()
-        .path("/knowledge/rust-patterns.md")?
-        .title("Advanced Rust Design Patterns")?
-        .content(b"# Advanced Rust Patterns\n\n...")?
-        .build()?;
+    // Index a Rust project
+    let stats = db.index_codebase("./my-project").await?;
+    println!("Indexed {} symbols from {} files", stats.symbols, stats.files);
     
-    // Automatically traced, validated, cached, with retries
-    storage.insert(doc).await?;
+    // Search for symbols
+    let symbols = db.search_symbols("FileStorage").await?;
+    for symbol in symbols {
+        println!("{}: {} at {}", symbol.kind, symbol.name, symbol.location);
+    }
+    
+    // Find all callers of a function
+    let callers = db.find_callers("process_data").await?;
+    println!("Function called from {} locations", callers.len());
     
     Ok(())
 }
@@ -317,54 +321,53 @@ async fn main() -> Result<()> {
 
 ### Python (Client Library)
 ```python
-from kotadb import KotaDB, DocumentBuilder, QueryBuilder, ValidatedPath
+from kotadb import KotaDB
 
 # Connect to KotaDB server
 db = KotaDB("http://localhost:8080")
 
-# Type-safe document construction (runtime validation)
-doc_id = db.insert_with_builder(
-    DocumentBuilder()
-    .path(ValidatedPath("/knowledge/python-patterns.md"))
-    .title("Python Design Patterns")
-    .content("# Python Patterns\n\n...")
-    .add_tag("python")
-    .add_tag("patterns")
-)
+# Index a codebase
+stats = db.index_codebase("/path/to/your/project")
+print(f"Indexed {stats['symbols']} symbols from {stats['files']} files")
 
-# Query with builder pattern
-results = db.query_with_builder(
-    QueryBuilder()
-    .text("design patterns")
-    .limit(10)
-    .tag_filter("python")
-)
+# Search for specific symbols
+symbols = db.search_symbols("DatabaseConnection")
+for symbol in symbols:
+    print(f"{symbol['type']}: {symbol['name']} at {symbol['location']}")
+
+# Find dependencies
+callers = db.find_callers("process_data")
+print(f"Function called from {len(callers)} locations")
+
+# Analyze impact
+impact = db.analyze_impact("StorageError")
+print(f"Changing this affects {len(impact['affected'])} files")
 ```
 
 ### TypeScript (Client Library)
 ```typescript
-import { KotaDB, DocumentBuilder, QueryBuilder, ValidatedPath } from 'kotadb-client';
+import { KotaDB } from 'kotadb-client';
 
 // Connect to KotaDB server
 const db = new KotaDB({ url: 'http://localhost:8080' });
 
-// Type-safe document construction (runtime validation)
-const docId = await db.insertWithBuilder(
-  new DocumentBuilder()
-    .path("/knowledge/typescript-patterns.md")
-    .title("TypeScript Design Patterns")
-    .content("# TypeScript Patterns\n\n...")
-    .addTag("typescript")
-    .addTag("patterns")
-);
+// Index a codebase
+const stats = await db.indexCodebase('/path/to/your/project');
+console.log(`Indexed ${stats.symbols} symbols from ${stats.files} files`);
 
-// Query with builder pattern and full IntelliSense support
-const results = await db.queryWithBuilder(
-  new QueryBuilder()
-    .text("design patterns")
-    .limit(10)
-    .tagFilter("typescript")
-);
+// Search for specific symbols
+const symbols = await db.searchSymbols('DatabaseConnection');
+for (const symbol of symbols) {
+    console.log(`${symbol.type}: ${symbol.name} at ${symbol.location}`);
+}
+
+// Find dependencies
+const callers = await db.findCallers('processData');
+console.log(`Function called from ${callers.length} locations`);
+
+// Analyze impact
+const impact = await db.analyzeImpact('StorageError');
+console.log(`Changing this affects ${impact.affected.length} files`);
 ```
 
 ---

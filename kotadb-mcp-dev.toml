@@ -21,8 +21,10 @@ server_name = "kotadb"
 server_version = "0.5.0"
 
 # Tool Categories
-enable_document_tools = true
+enable_codebase_tools = true
+enable_symbol_tools = true
 enable_search_tools = true
+enable_analysis_tools = true
 
 [logging]
 level = "debug"
