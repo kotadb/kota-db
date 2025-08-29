@@ -897,6 +897,8 @@ impl DependencyExtractor {
             name_to_symbol.insert(entry.qualified_name.clone(), entry.id);
 
             // Also index by simple name for fallback resolution
+            // This is crucial for type resolution when tree-sitter extracts "FileStorage"
+            // from "FileStorage::new()" - we need both the qualified and simple names
             name_to_symbol.insert(entry.symbol.name.clone(), entry.id);
 
             tracing::debug!(

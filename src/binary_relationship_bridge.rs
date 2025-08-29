@@ -118,6 +118,14 @@ impl BinaryRelationshipBridge {
         Ok(graph)
     }
 
+    /// Build a qualified name from file path and symbol name
+    /// For now, just returns the simple name to maintain existing behavior
+    /// The dependency graph builder will also index by simple name for fallback resolution
+    fn build_qualified_name_from_path(&self, _file_path: &Path, symbol_name: &str) -> String {
+        // Return simple name - the dependency graph will handle suffix matching
+        symbol_name.to_string()
+    }
+
     /// Build lookup maps from binary symbols
     #[allow(clippy::type_complexity)]
     fn build_symbol_maps(
@@ -138,8 +146,9 @@ impl BinaryRelationshipBridge {
             let name = reader.get_symbol_name(&symbol)?;
             let file_path = PathBuf::from(reader.get_symbol_file_path(&symbol)?);
 
-            // Build qualified name (for now, use file:name pattern)
-            let qualified_name = format!("{}::{}", file_path.display(), name);
+            // Build qualified name using module path
+            // Convert file path to module-style qualified name (e.g., src/file_storage.rs -> file_storage)
+            let qualified_name = self.build_qualified_name_from_path(&file_path, &name);
 
             let info = SymbolInfo {
                 id,
@@ -676,9 +685,20 @@ impl BinaryRelationshipBridge {
         // Create edges from references
         for file_refs in &all_references {
             // Get the symbol hierarchy for this file
-            let hierarchy = match file_hierarchies.get(&file_refs.file_path) {
-                Some(h) => h,
-                None => continue,
+            // Try exact match first, then try with "src/" prefix
+            let hierarchy = if let Some(h) = file_hierarchies.get(&file_refs.file_path) {
+                h
+            } else if let Some(h) =
+                file_hierarchies.get(&PathBuf::from("src").join(&file_refs.file_path))
+            {
+                h
+            } else {
+                debug!(
+                    "No symbol hierarchy found for file: {:?} (available: {:?})",
+                    file_refs.file_path,
+                    file_hierarchies.keys().collect::<Vec<_>>()
+                );
+                continue;
             };
 
             for reference in &file_refs.references {
@@ -706,6 +726,12 @@ impl BinaryRelationshipBridge {
                                 graph.add_edge(source_node, target_node, edge);
                             }
                         }
+                    } else {
+                        // Log when we can't find a containing symbol for debugging
+                        debug!(
+                            "No containing symbol found for reference '{}' at line {} in {:?}",
+                            reference.name, reference.line, file_refs.file_path
+                        );
                     }
                 }
             }

@@ -941,7 +941,17 @@ impl BinaryRelationshipEngine {
                     current_dir
                 );
                 return Ok((current_dir, files));
+            } else {
+                warn!(
+                    "No source files found in current directory: {:?}",
+                    current_dir
+                );
             }
+        } else {
+            warn!(
+                "Failed to collect source files from current directory: {:?}",
+                current_dir
+            );
         }
 
         // Strategy 3: Try to find a git repository in parent directories
