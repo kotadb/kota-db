@@ -1490,10 +1490,12 @@ async fn main() -> Result<()> {
 
 
             Commands::Stats { basic, symbols, relationships } => {
-                // Determine what to show - if no flags specified, show everything
-                let show_basic = basic || (!symbols && !relationships);
-                let show_symbols = symbols || (!basic && !relationships);
-                let show_relationships = relationships || (!basic && !symbols);
+                // Determine what to show with explicit flag precedence
+                // If no flags specified, show everything
+                let no_flags_specified = !basic && !symbols && !relationships;
+                let show_basic = basic || no_flags_specified;
+                let show_symbols = symbols || no_flags_specified;
+                let show_relationships = relationships || no_flags_specified;
 
                 // Show basic document statistics
                 if show_basic {
@@ -2129,4 +2131,182 @@ async fn main() -> Result<()> {
         Ok::<(), anyhow::Error>(())
     })
     .await
+}
+
+#[cfg(test)]
+mod stats_tests {
+
+    #[test]
+    fn test_stats_flag_logic_no_flags() {
+        // When no flags are specified, should show everything
+        let (basic, symbols, relationships) = (false, false, false);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(show_basic, "Should show basic when no flags specified");
+        assert!(show_symbols, "Should show symbols when no flags specified");
+        assert!(
+            show_relationships,
+            "Should show relationships when no flags specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_basic_only() {
+        // When only --basic is specified, should show only basic
+        let (basic, symbols, relationships) = (true, false, false);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(show_basic, "Should show basic when --basic specified");
+        assert!(
+            !show_symbols,
+            "Should not show symbols when only --basic specified"
+        );
+        assert!(
+            !show_relationships,
+            "Should not show relationships when only --basic specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_symbols_only() {
+        // When only --symbols is specified, should show only symbols
+        let (basic, symbols, relationships) = (false, true, false);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(
+            !show_basic,
+            "Should not show basic when only --symbols specified"
+        );
+        assert!(show_symbols, "Should show symbols when --symbols specified");
+        assert!(
+            !show_relationships,
+            "Should not show relationships when only --symbols specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_relationships_only() {
+        // When only --relationships is specified, should show only relationships
+        let (basic, symbols, relationships) = (false, false, true);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(
+            !show_basic,
+            "Should not show basic when only --relationships specified"
+        );
+        assert!(
+            !show_symbols,
+            "Should not show symbols when only --relationships specified"
+        );
+        assert!(
+            show_relationships,
+            "Should show relationships when --relationships specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_basic_and_symbols() {
+        // When --basic and --symbols are specified, should show both
+        let (basic, symbols, relationships) = (true, true, false);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(
+            show_basic,
+            "Should show basic when --basic and --symbols specified"
+        );
+        assert!(
+            show_symbols,
+            "Should show symbols when --basic and --symbols specified"
+        );
+        assert!(
+            !show_relationships,
+            "Should not show relationships when only --basic and --symbols specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_symbols_and_relationships() {
+        // When --symbols and --relationships are specified, should show both
+        let (basic, symbols, relationships) = (false, true, true);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(
+            !show_basic,
+            "Should not show basic when only --symbols and --relationships specified"
+        );
+        assert!(
+            show_symbols,
+            "Should show symbols when --symbols and --relationships specified"
+        );
+        assert!(
+            show_relationships,
+            "Should show relationships when --symbols and --relationships specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_basic_and_relationships() {
+        // When --basic and --relationships are specified, should show both
+        let (basic, symbols, relationships) = (true, false, true);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(
+            show_basic,
+            "Should show basic when --basic and --relationships specified"
+        );
+        assert!(
+            !show_symbols,
+            "Should not show symbols when only --basic and --relationships specified"
+        );
+        assert!(
+            show_relationships,
+            "Should show relationships when --basic and --relationships specified"
+        );
+    }
+
+    #[test]
+    fn test_stats_flag_logic_all_flags() {
+        // When all flags are specified, should show everything
+        let (basic, symbols, relationships) = (true, true, true);
+
+        let no_flags_specified = !basic && !symbols && !relationships;
+        let show_basic = basic || no_flags_specified;
+        let show_symbols = symbols || no_flags_specified;
+        let show_relationships = relationships || no_flags_specified;
+
+        assert!(show_basic, "Should show basic when all flags specified");
+        assert!(show_symbols, "Should show symbols when all flags specified");
+        assert!(
+            show_relationships,
+            "Should show relationships when all flags specified"
+        );
+    }
 }

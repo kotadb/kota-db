@@ -114,7 +114,7 @@ cargo run --bin kotadb -- -d ./kota-db-data search-symbols "*" # Wildcard symbol
 
 # Codebase indexing with symbol extraction
 cargo run --bin kotadb -- -d ./kota-db-data index-codebase .           # Index repository with symbols
-cargo run --bin kotadb -- -d ./kota-db-data symbol-stats               # Check extracted symbols
+cargo run --bin kotadb -- -d ./kota-db-data stats --symbols               # Check extracted symbols
 cargo run --bin kotadb -- -d ./kota-db-data find-callers FileStorage   # Find who calls a function
 cargo run --bin kotadb -- -d ./kota-db-data analyze-impact Config      # Analyze change impact
 
@@ -251,7 +251,7 @@ Model Context Protocol server for LLM integration:
 When working on search, indexing, or git features, test on KotaDB itself:
 - **Use separate data directory**: Create a dedicated directory for analysis
 - **Test real complexity**: `cargo run --bin kotadb -- -d ./data/analysis index-codebase .`
-- **Validate symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
+- **Validate symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis stats --symbols`
 - **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
 - **Validate your changes**: Run searches and performance tests on actual codebase
 - **Document issues found**: Create GitHub issues for any problems discovered

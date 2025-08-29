@@ -210,7 +210,7 @@ cargo run --bin kotadb -- serve
 
 # Codebase Intelligence Features
 cargo run --bin kotadb -- index-codebase .         # Analyze entire repository
-cargo run --bin kotadb -- symbol-stats             # View extracted symbols
+cargo run --bin kotadb -- stats --symbols          # View extracted symbols
 cargo run --bin kotadb -- find-callers FileStorage # Who calls this?
 cargo run --bin kotadb -- analyze-impact StorageError  # What breaks if changed?
 

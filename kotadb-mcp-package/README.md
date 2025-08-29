@@ -121,8 +121,7 @@ The TypeScript MCP package uses consistent `kotadb_` prefixes to clearly disting
 | `kotadb_search_symbols` | `search-symbols` | Find symbols by pattern |
 | `kotadb_find_callers` | `find-callers` | Find references to symbols |
 | `kotadb_analyze_impact` | `analyze-impact` | Impact analysis |
-| `kotadb_symbol_stats` | `symbol-stats` | Symbol extraction statistics |
-| `kotadb_stats` | `stats` | Database statistics |
+| `kotadb_stats` | `stats` | Comprehensive database statistics (documents, symbols, relationships) |
 
 **Why Different Names?**
 - **Clear Origin**: Easy to identify which implementation provided the tool

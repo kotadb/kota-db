@@ -1,7 +1,7 @@
-//! Integration tests for symbol-stats CLI command
+//! Integration tests for stats CLI command
 //!
-//! These tests verify the symbol-stats command correctly reports both traditional
-//! and binary symbol counts, ensuring consistency with find-callers command.
+//! These tests verify the stats command correctly reports database statistics,
+//! including documents, symbols, and relationships, with proper flag handling.
 
 use anyhow::Result;
 use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
