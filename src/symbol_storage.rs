@@ -162,6 +162,12 @@ impl Default for SearchThresholds {
 }
 
 /// Symbol storage and extraction pipeline
+///
+/// NOTE: For new implementations, prefer using BinarySymbolWriter/Reader
+/// which provides 10x better performance than this JSON-based storage.
+/// This class is maintained for backwards compatibility with existing tests.
+///
+/// See: binary_symbols.rs for the recommended binary format implementation.
 pub struct SymbolStorage {
     /// Underlying document storage
     storage: Box<dyn Storage + Send + Sync>,
@@ -386,6 +392,7 @@ impl SymbolStorage {
                 .collect();
 
             for doc in results {
+                #[allow(deprecated)]
                 match self.deserialize_symbol(&doc) {
                     Ok(entry) => {
                         self.index_symbol(entry)?;
@@ -554,6 +561,7 @@ impl SymbolStorage {
                 .context("Failed to store symbol in graph storage")?;
         } else {
             // Fallback to document storage if no graph storage available
+            #[allow(deprecated)]
             let doc = self.serialize_symbol(&entry)?;
             self.storage.insert(doc).await?;
         }
@@ -1005,6 +1013,10 @@ impl SymbolStorage {
     }
 
     /// Serialize a symbol entry to a document
+    ///
+    /// DEPRECATED: Use binary symbol format instead (10x faster).
+    /// See BinarySymbolWriter for the recommended approach.
+    #[deprecated(note = "Use BinarySymbolWriter for 10x better performance")]
     fn serialize_symbol(&self, entry: &SymbolEntry) -> Result<Document> {
         let json = serde_json::to_string_pretty(&entry)?;
 
@@ -1043,6 +1055,10 @@ impl SymbolStorage {
     }
 
     /// Deserialize a document to a symbol entry
+    ///
+    /// DEPRECATED: Use binary symbol format instead (10x faster).
+    /// See BinarySymbolReader for the recommended approach.
+    #[deprecated(note = "Use BinarySymbolReader for 10x better performance")]
     fn deserialize_symbol(&self, doc: &Document) -> Result<SymbolEntry> {
         let content = String::from_utf8(doc.content.clone())?;
 
@@ -1441,6 +1457,7 @@ impl SymbolStorage {
         if self.graph_storage.is_none() {
             // Only update document storage if we're not using graph storage
             for symbol in self.symbol_index.values() {
+                #[allow(deprecated)]
                 let mut doc = self.serialize_symbol(symbol)?;
                 doc.updated_at = chrono::Utc::now();
                 self.storage.update(doc).await?;

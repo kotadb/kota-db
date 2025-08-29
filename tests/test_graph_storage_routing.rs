@@ -1,6 +1,7 @@
 //! Test that symbol relationships are properly routed to graph storage backend
 
 use anyhow::Result;
+#[allow(deprecated)] // Test uses deprecated API
 use kotadb::factory::create_symbol_storage_with_graph;
 use kotadb::graph_storage::{GraphStorage, GraphStorageConfig};
 use kotadb::native_graph_storage::NativeGraphStorage;
@@ -137,6 +138,7 @@ async fn test_graph_storage_factory_function() -> Result<()> {
     let db_path = temp_dir.path().to_str().unwrap();
 
     // Use factory function to create symbol storage with graph
+    #[allow(deprecated)]
     let symbol_storage = create_symbol_storage_with_graph(db_path, Some(100)).await?;
 
     // Verify it was created successfully
