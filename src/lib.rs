@@ -64,9 +64,9 @@ pub mod natural_language_query;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod relationship_query;
 
-// Hybrid relationship engine that integrates binary symbols with relationships
+// Binary relationship engine that provides fast symbol lookup and relationships
 #[cfg(feature = "tree-sitter-parsing")]
-pub mod hybrid_relationship_engine;
+pub mod binary_relationship_engine;
 
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]

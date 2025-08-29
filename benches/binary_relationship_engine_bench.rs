@@ -1,14 +1,14 @@
-//! Performance benchmarks for hybrid relationship engine.
+//! Performance benchmarks for binary relationship engine.
 //!
-//! This benchmark suite validates that the hybrid relationship engine meets the
+//! This benchmark suite validates that the binary relationship engine meets the
 //! sub-10ms query latency requirement and confirms the claimed sub-microsecond
 //! symbol lookups.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "tree-sitter-parsing")]
-use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
+use kotadb::binary_relationship_engine::BinaryRelationshipEngine;
 #[cfg(feature = "tree-sitter-parsing")]
-use kotadb::hybrid_relationship_engine::HybridRelationshipEngine;
+use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::relationship_query::{RelationshipQueryConfig, RelationshipQueryType};
 use std::path::Path;
@@ -58,9 +58,9 @@ fn create_test_symbol_database(path: &Path, symbol_count: usize) -> anyhow::Resu
     Ok(symbol_names)
 }
 
-/// Benchmark hybrid engine initialization
+/// Benchmark binary engine initialization
 #[cfg(feature = "tree-sitter-parsing")]
-fn bench_hybrid_engine_initialization(c: &mut Criterion) {
+fn bench_binary_engine_initialization(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path();
@@ -71,14 +71,14 @@ fn bench_hybrid_engine_initialization(c: &mut Criterion) {
         create_test_symbol_database(&symbol_db_path, 10_000).unwrap();
     });
 
-    let mut group = c.benchmark_group("hybrid_engine_init");
+    let mut group = c.benchmark_group("binary_engine_init");
     group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("init_with_10k_symbols", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let config = RelationshipQueryConfig::default();
-                let engine = HybridRelationshipEngine::new(black_box(db_path), black_box(config))
+                let engine = BinaryRelationshipEngine::new(black_box(db_path), black_box(config))
                     .await
                     .unwrap();
 
@@ -150,7 +150,7 @@ fn bench_relationship_queries(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
@@ -210,7 +210,7 @@ fn bench_engine_stats(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
@@ -240,7 +240,7 @@ fn bench_query_latency_requirement(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
@@ -280,7 +280,7 @@ fn bench_query_latency_requirement(c: &mut Criterion) {
 #[cfg(feature = "tree-sitter-parsing")]
 criterion_group!(
     benches,
-    bench_hybrid_engine_initialization,
+    bench_binary_engine_initialization,
     bench_symbol_lookup_performance,
     bench_relationship_queries,
     bench_engine_stats,

@@ -4,10 +4,10 @@
 //! including documents, symbols, and relationships, with proper flag handling.
 
 use anyhow::Result;
+use kotadb::binary_relationship_engine::BinaryRelationshipEngine;
 use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
 use kotadb::git::types::IngestionOptions;
 use kotadb::git::{IngestionConfig, RepositoryIngester};
-use kotadb::hybrid_relationship_engine::HybridRelationshipEngine;
 use kotadb::relationship_query::RelationshipQueryConfig;
 use kotadb::symbol_storage::SymbolStorage;
 use std::path::Path;
@@ -294,19 +294,19 @@ async fn test_symbol_stats_command_binary_and_traditional() -> Result<()> {
     );
     println!("Binary symbols extracted: {}", binary_symbol_count);
 
-    // Test 4: Test HybridRelationshipEngine (what find-callers uses)
+    // Test 4: Test BinaryRelationshipEngine (what find-callers uses)
     #[cfg(feature = "tree-sitter-parsing")]
     {
         let relationship_config = RelationshipQueryConfig::default();
-        let hybrid_engine = HybridRelationshipEngine::new(&db_path, relationship_config).await?;
-        let hybrid_stats = hybrid_engine.get_stats();
+        let binary_engine = BinaryRelationshipEngine::new(&db_path, relationship_config).await?;
+        let binary_stats = binary_engine.get_stats();
 
         assert_eq!(
-            hybrid_stats.binary_symbols_loaded, binary_symbol_count,
-            "HybridRelationshipEngine should load same number of binary symbols"
+            binary_stats.binary_symbols_loaded, binary_symbol_count,
+            "BinaryRelationshipEngine should load same number of binary symbols"
         );
         assert!(
-            hybrid_stats.using_binary_path,
+            binary_stats.using_binary_path,
             "Should be using binary symbol path"
         );
     }
@@ -490,14 +490,14 @@ impl TestStruct {
             0
         };
 
-        // Get symbol count from find-callers perspective (HybridRelationshipEngine)
+        // Get symbol count from find-callers perspective (BinaryRelationshipEngine)
         let relationship_config = RelationshipQueryConfig::default();
-        let hybrid_engine = HybridRelationshipEngine::new(&db_path, relationship_config).await?;
-        let hybrid_stats = hybrid_engine.get_stats();
+        let binary_engine = BinaryRelationshipEngine::new(&db_path, relationship_config).await?;
+        let binary_stats = binary_engine.get_stats();
 
         // The counts must match!
         assert_eq!(
-            binary_symbol_count, hybrid_stats.binary_symbols_loaded,
+            binary_symbol_count, binary_stats.binary_symbols_loaded,
             "symbol-stats and find-callers must report the same binary symbol count"
         );
 
@@ -505,7 +505,7 @@ impl TestStruct {
         println!("   symbol-stats binary count: {}", binary_symbol_count);
         println!(
             "   find-callers binary count: {}",
-            hybrid_stats.binary_symbols_loaded
+            binary_stats.binary_symbols_loaded
         );
     }
 

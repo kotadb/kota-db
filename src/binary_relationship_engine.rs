@@ -1,8 +1,7 @@
-//! Hybrid relationship query engine that integrates binary symbols with relationship queries
+//! Binary relationship query engine that provides fast symbol lookup and relationship queries
 //!
-//! This module provides the integration layer between the fast binary symbol format
-//! and the relationship query functionality, ensuring sub-10ms query latency while
-//! maintaining full API compatibility.
+//! This module provides the primary engine for relationship queries using the binary symbol format,
+//! ensuring sub-10ms query latency while maintaining full API compatibility.
 
 use anyhow::{Context, Result};
 use std::cell::RefCell;
@@ -86,8 +85,8 @@ impl Default for ExtractionConfig {
 /// Performance threshold for query execution warning (in milliseconds)
 const QUERY_PERFORMANCE_THRESHOLD_MS: u64 = 10;
 
-/// Hybrid relationship query engine that uses binary symbols
-pub struct HybridRelationshipEngine {
+/// Binary relationship query engine that uses binary symbols
+pub struct BinaryRelationshipEngine {
     /// Binary symbol reader for fast symbol lookup
     symbol_reader: Option<BinarySymbolReader>,
     /// Dependency graph built from relationships (using RefCell for interior mutability)
@@ -102,21 +101,21 @@ pub struct HybridRelationshipEngine {
     extraction_config: ExtractionConfig,
 }
 
-impl HybridRelationshipEngine {
-    /// Create a new hybrid engine from database paths
+impl BinaryRelationshipEngine {
+    /// Create a new binary engine from database paths
     #[instrument]
     pub async fn new(db_path: &Path, config: RelationshipQueryConfig) -> Result<Self> {
         Self::with_extraction_config(db_path, config, ExtractionConfig::default()).await
     }
 
-    /// Create a new hybrid engine with custom extraction configuration
+    /// Create a new binary engine with custom extraction configuration
     #[instrument]
     pub async fn with_extraction_config(
         db_path: &Path,
         config: RelationshipQueryConfig,
         extraction_config: ExtractionConfig,
     ) -> Result<Self> {
-        info!("Initializing hybrid relationship engine");
+        info!("Initializing binary relationship engine");
 
         // Try to load binary symbols if available
         let symbol_db_path = db_path.join("symbols.kota");
@@ -169,7 +168,7 @@ impl HybridRelationshipEngine {
         })
     }
 
-    /// Execute a relationship query using the hybrid approach
+    /// Execute a relationship query using the binary approach
     #[instrument(skip(self))]
     pub async fn execute_query(
         &self,
@@ -1257,12 +1256,12 @@ impl HybridRelationshipEngine {
         (node_count * 64) + (edge_count * 32)
     }
 
-    /// Get statistics about the hybrid engine
-    pub fn get_stats(&self) -> HybridEngineStats {
+    /// Get statistics about the binary engine
+    pub fn get_stats(&self) -> BinaryEngineStats {
         let graph_borrowed = self.dependency_graph.borrow();
         let cache_metadata = self.cache_metadata.borrow();
 
-        HybridEngineStats {
+        BinaryEngineStats {
             binary_symbols_loaded: self
                 .symbol_reader
                 .as_ref()
@@ -1284,9 +1283,9 @@ impl HybridRelationshipEngine {
     }
 }
 
-/// Statistics about the hybrid engine
+/// Statistics about the binary engine
 #[derive(Debug, Clone)]
-pub struct HybridEngineStats {
+pub struct BinaryEngineStats {
     pub binary_symbols_loaded: usize,
     pub graph_nodes_loaded: usize,
     pub using_binary_path: bool,
@@ -1389,7 +1388,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hybrid_engine_creation_with_custom_config() {
+    async fn test_binary_engine_creation_with_custom_config() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
 
@@ -1398,7 +1397,7 @@ mod tests {
 
         // This will fail since there's no binary symbols file, but should not panic
         let result =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await;
 
         // Should succeed even without binary symbols
@@ -1435,7 +1434,7 @@ mod tests {
         };
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1483,7 +1482,7 @@ mod tests {
         };
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1533,7 +1532,7 @@ mod tests {
         };
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1557,7 +1556,7 @@ mod tests {
         let extraction_config = test_extraction_config();
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1596,7 +1595,7 @@ mod tests {
         let extraction_config = test_extraction_config();
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1636,7 +1635,7 @@ mod tests {
         };
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1687,7 +1686,7 @@ mod tests {
         };
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1715,7 +1714,7 @@ mod tests {
         let extraction_config = test_extraction_config();
 
         let engine =
-            HybridRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
+            BinaryRelationshipEngine::with_extraction_config(db_path, config, extraction_config)
                 .await
                 .expect("Failed to create engine");
 
@@ -1905,12 +1904,12 @@ mod tests {
 
         // Save dependency graph
         let graph_db_path = db_path.join("dependency_graph.bin");
-        HybridRelationshipEngine::save_dependency_graph(&dependency_graph, &graph_db_path)
+        BinaryRelationshipEngine::save_dependency_graph(&dependency_graph, &graph_db_path)
             .expect("Failed to save dependency graph");
 
         // Now create the engine and test the query
         let config = RelationshipQueryConfig::default();
-        let engine = HybridRelationshipEngine::new(db_path, config)
+        let engine = BinaryRelationshipEngine::new(db_path, config)
             .await
             .expect("Failed to create engine");
 
