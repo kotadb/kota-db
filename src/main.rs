@@ -959,7 +959,7 @@ async fn create_relationship_engine(
 
 /// Display symbol statistics from the binary symbol database
 #[cfg(feature = "tree-sitter-parsing")]
-async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Result<()> {
+async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
     use std::collections::HashMap;
 
     let symbol_db_path = db_path.join("symbols.kota");
@@ -968,7 +968,7 @@ async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Resul
         return Ok(()); // No symbols to show
     }
 
-    qprintln!(quiet, "\n🔤 Symbol Analysis:");
+    println!("\nSymbol Analysis:");
 
     // Read binary symbols
     let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
@@ -1007,33 +1007,33 @@ async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Resul
         }
     }
 
-    qprintln!(quiet, "   Path: {:?}", symbol_db_path);
-    qprintln!(quiet, "   Total symbols: {}", binary_symbol_count);
-    qprintln!(quiet, "   Total files: {}", unique_files.len());
+    println!("   Database path: {:?}", symbol_db_path);
+    println!("   Total symbols extracted: {}", binary_symbol_count);
+    println!("   Source files analyzed: {}", unique_files.len());
 
     if !symbols_by_type.is_empty() {
-        qprintln!(quiet, "\n📝 Symbols by Type:");
+        println!("\nSymbols by Type:");
         let mut types: Vec<_> = symbols_by_type.into_iter().collect();
         types.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
         for (symbol_type, count) in types {
-            qprintln!(quiet, "   {}: {}", symbol_type, count);
+            println!("   {}: {}", symbol_type, count);
         }
     }
 
     if !symbols_by_language.is_empty() {
-        qprintln!(quiet, "\n🌐 Symbols by Language:");
+        println!("\nSymbols by Language:");
         let mut langs: Vec<_> = symbols_by_language.into_iter().collect();
         langs.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
         for (language, count) in langs {
-            qprintln!(quiet, "   {}: {}", language, count);
+            println!("   {}: {}", language, count);
         }
     }
 
     if binary_symbol_count > 0 {
-        qprintln!(quiet, "\n📍 Binary Symbol Database:");
-        qprintln!(quiet, "   Format: KotaDB Binary Format (.kota)");
-        qprintln!(quiet, "   Performance: 10x faster than JSON");
-        qprintln!(quiet, "   Features: Memory-mapped, zero-copy access");
+        println!("\nStorage Format:");
+        println!("   Format: KotaDB Binary (.kota)");
+        println!("   Performance: 10x faster than JSON");
+        println!("   Features: Memory-mapped, zero-copy access");
     }
 
     Ok(())
@@ -1041,8 +1041,8 @@ async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Resul
 
 /// Display relationship and dependency graph statistics
 #[cfg(feature = "tree-sitter-parsing")]
-async fn show_relationship_statistics(db_path: &std::path::Path, quiet: bool) -> Result<()> {
-    qprintln!(quiet, "\n🔗 Relationship Analysis:");
+async fn show_relationship_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
+    println!("\nRelationship Analysis:");
 
     // Check for binary dependency graph
     let graph_db_path = db_path.join("dependency_graph.bin");
@@ -1054,46 +1054,25 @@ async fn show_relationship_statistics(db_path: &std::path::Path, quiet: bool) ->
                 >(&graph_binary)
                 {
                     Ok(serializable) => {
-                        qprintln!(quiet, "   Path: {:?}", graph_db_path);
-                        qprintln!(
-                            quiet,
-                            "   Total relationships: {}",
-                            serializable.stats.edge_count
-                        );
-                        qprintln!(
-                            quiet,
-                            "   Total symbols in graph: {}",
-                            serializable.stats.node_count
-                        );
+                        println!("   Database path: {:?}", graph_db_path);
+                        println!("   Total relationships: {}", serializable.stats.edge_count);
+                        println!("   Connected symbols: {}", serializable.stats.node_count);
                     }
                     Err(e) => {
-                        qprintln!(
-                            quiet,
-                            "   ⚠️  Failed to deserialize dependency graph: {}",
-                            e
-                        );
-                        qprintln!(
-                            quiet,
-                            "   Unable to read dependency graph. Re-index to rebuild."
-                        );
+                        println!("   Warning: Failed to deserialize dependency graph: {}", e);
+                        println!("   Unable to read dependency graph. Re-index to rebuild.");
                     }
                 }
             }
             Err(e) => {
-                qprintln!(quiet, "   ⚠️  Failed to read dependency graph: {}", e);
-                qprintln!(
-                    quiet,
-                    "   Unable to read dependency graph. Re-index to rebuild."
-                );
+                println!("   Warning: Failed to read dependency graph: {}", e);
+                println!("   Unable to read dependency graph. Re-index to rebuild.");
             }
         }
     } else {
-        qprintln!(quiet, "   No dependency graph found.");
-        qprintln!(
-            quiet,
-            "\n   💡 Tip: To build dependency graph, re-index with symbol extraction:"
-        );
-        qprintln!(quiet, "      kotadb ingest-repo /path/to/repo");
+        println!("   No dependency graph found.");
+        println!("\n   Tip: To build dependency graph, re-index with symbol extraction:");
+        println!("      kotadb index-codebase /path/to/repo");
     }
 
     Ok(())
@@ -1481,13 +1460,13 @@ async fn main() -> Result<()> {
                 // Show basic document statistics
                 if show_basic {
                     let (count, total_size) = db.stats().await?;
-                    qprintln!(quiet, "📊 Database Statistics");
-                    qprintln!(quiet, "═══════════════════════════════");
-                    qprintln!(quiet, "\n📄 Document Storage:");
-                    qprintln!(quiet, "   Total documents: {count}");
-                    qprintln!(quiet, "   Total size: {total_size} bytes");
+                    println!("Codebase Intelligence Statistics");
+                    println!("================================");
+                    println!("\nIndexed Content:");
+                    println!("   Total files indexed: {count}");
+                    println!("   Total content size: {total_size} bytes");
                     if count > 0 {
-                        qprintln!(quiet, "   Average size: {} bytes", total_size / count);
+                        println!("   Average file size: {} bytes", total_size / count);
                     }
                 }
 
@@ -1508,21 +1487,21 @@ async fn main() -> Result<()> {
                 if show_symbols || show_relationships {
                     let symbol_db_path = cli.db_path.join("symbols.kota");
                     if !symbol_db_path.exists() {
-                        qprintln!(quiet, "\n❌ No symbols found in database.");
-                        qprintln!(quiet, "   Required steps:");
-                        qprintln!(quiet, "   1. Index a codebase: kotadb ingest-repo /path/to/repo");
-                        qprintln!(quiet, "   2. Verify indexing: kotadb stats --symbols");
+                        println!("\nNo symbols found in database.");
+                        println!("   Required steps:");
+                        println!("   1. Index a codebase: kotadb index-codebase /path/to/repo");
+                        println!("   2. Verify indexing: kotadb stats --symbols");
                     } else {
                         // Show success tips if symbols exist
                         let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
                         let binary_symbol_count = reader.symbol_count();
 
                         if binary_symbol_count > 0 {
-                            qprintln!(quiet, "\n✅ Codebase intelligence ready! Try these commands:");
-                            qprintln!(quiet, "   • find-callers <symbol>     - Find what calls a function");
-                            qprintln!(quiet, "   • analyze-impact <symbol>   - Analyze change impact");
-                            qprintln!(quiet, "   • search-symbols <pattern>  - Search code symbols");
-                            qprintln!(quiet, "   • search-code <query>       - Full-text code search");
+                            println!("\nCodebase intelligence ready! Try these commands:");
+                            println!("   find-callers <symbol>     - Find what calls a function");
+                            println!("   analyze-impact <symbol>   - Analyze change impact");
+                            println!("   search-symbols <pattern>  - Search code symbols");
+                            println!("   search-code <query>       - Full-text code search");
                         }
                     }
                 }
