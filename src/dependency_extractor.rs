@@ -289,7 +289,7 @@ impl DependencyExtractor {
                 type: (scoped_type_identifier
                     name: (type_identifier) @type_name))
             
-            ; Static method calls (Type::method)
+            ; Static method calls (Type::method) - comprehensive patterns
             (call_expression
                 function: (scoped_identifier
                     path: (identifier) @type_name))
@@ -297,6 +297,38 @@ impl DependencyExtractor {
                 function: (scoped_identifier
                     path: (scoped_identifier
                         path: (identifier) @type_name)))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (scoped_identifier
+                            path: (identifier) @type_name))))
+            
+            ; Module-qualified static calls (crate::module::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (scoped_identifier
+                            path: (scoped_identifier
+                                path: (identifier) @type_name)))))
+            
+            ; Super/self qualified calls (super::Type::method, self::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (super) 
+                        name: (identifier) @type_name)))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (self) 
+                        name: (identifier) @type_name)))
+            
+            ; Crate-qualified calls (crate::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (crate) 
+                        name: (identifier) @type_name)))
             
             ; Field types in struct declarations and variable declarations
             (field_declaration
@@ -732,6 +764,8 @@ impl DependencyExtractor {
         content: &str,
         language: SupportedLanguage,
     ) -> Result<Vec<CodeReference>> {
+        tracing::info!("🎯 Extracting references for {:?} language", language);
+        
         let queries = self
             .queries
             .get(&language)
@@ -758,6 +792,14 @@ impl DependencyExtractor {
                             )
                         })?;
 
+                        tracing::info!(
+                            "📝 Found {} '{}' at line {}: {:?}", 
+                            query_name, 
+                            text, 
+                            pos.row + 1,
+                            ref_type
+                        );
+                        
                         references.push(CodeReference {
                             name: text.to_string(),
                             ref_type: ref_type.clone(),
@@ -776,11 +818,13 @@ impl DependencyExtractor {
             ReferenceType::FunctionCall,
             "function call",
         )?;
+        tracing::info!("🔍 Starting type reference extraction...");
         extract_query_references(
             &queries.type_references,
             ReferenceType::TypeUsage,
             "type reference",
         )?;
+        tracing::info!("✅ Completed type reference extraction");
         extract_query_references(
             &queries.method_calls,
             ReferenceType::MethodCall,
@@ -1130,16 +1174,35 @@ impl DependencyExtractor {
         // This handles cases where tree-sitter extracts "FileStorage" but the symbol
         // is stored as "kotadb::file_storage::FileStorage"
         if !name.contains("::") {
-            // Find any symbol name that ends with "::name"
-            for (qualified_name, &id) in name_to_symbol {
-                if qualified_name.ends_with(&format!("::{}", name)) {
-                    tracing::debug!(
-                        "Resolved '{}' to qualified name '{}' via suffix matching",
-                        name,
-                        qualified_name
-                    );
-                    return Some(id);
+            // Performance optimization: Only iterate if reasonable number of symbols
+            if name_to_symbol.len() < 10000 { // Threshold for direct iteration
+                // Find any symbol name that ends with "::name" (exact boundary match)
+                let pattern = format!("::{}", name);
+                let mut matches = Vec::new();
+                
+                for (qualified_name, &id) in name_to_symbol {
+                    // Ensure it's a true suffix match with :: boundary
+                    if qualified_name.ends_with(&pattern) && 
+                       (qualified_name.len() == name.len() || 
+                        qualified_name.len() > pattern.len()) {
+                        matches.push((qualified_name.clone(), id));
+                        
+                        // Early termination for performance
+                        if matches.len() > 5 { // Don't collect too many matches
+                            break;
+                        }
+                    }
                 }
+            
+                // Process matches
+                return self.process_suffix_matches(name, matches);
+            } else {
+                // For large symbol tables, log the performance concern
+                tracing::warn!(
+                    "Skipping suffix matching for '{}' due to large symbol table ({}). Consider building reverse lookup index.",
+                    name,
+                    name_to_symbol.len()
+                );
             }
 
             // Also try case where the name appears at the end (for exact matches)
@@ -1148,6 +1211,31 @@ impl DependencyExtractor {
             }
         }
 
+        None
+    }
+    
+    /// Process suffix matches for symbol resolution 
+    fn process_suffix_matches(&self, name: &str, matches: Vec<(String, Uuid)>) -> Option<Uuid> {
+        // If we have exactly one match, use it
+        if matches.len() == 1 {
+            tracing::debug!(
+                "Resolved '{}' to qualified name '{}' via suffix matching",
+                name,
+                matches[0].0
+            );
+            return Some(matches[0].1);
+        } else if matches.len() > 1 {
+            // Multiple matches - prefer the shortest (most specific)
+            let mut sorted_matches = matches;
+            sorted_matches.sort_by_key(|(qualified_name, _)| qualified_name.len());
+            tracing::debug!(
+                "Resolved '{}' to qualified name '{}' via suffix matching (chose shortest of {} matches)",
+                name,
+                sorted_matches[0].0,
+                sorted_matches.len()
+            );
+            return Some(sorted_matches[0].1);
+        }
         None
     }
 
