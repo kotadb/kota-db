@@ -94,34 +94,34 @@ This keeps your main context focused on high-level coordination and decision-mak
 
 ## 🏗️ Project Overview
 
-**KotaDB** is a custom database for distributed human-AI cognition built in Rust.
+**KotaDB** is a codebase intelligence platform that helps AI assistants understand code relationships, dependencies, and structure. Built in Rust with zero external database dependencies.
 
 ### Key Facts
 - **Language**: Rust (edition 2021)
 - **Repository**: https://github.com/jayminwest/kota-db
-- **Status**: Storage engine complete, ready for index implementation
+- **Purpose**: Reduce LLM context usage by 70% while improving code understanding
 - **Architecture**: 6-stage risk reduction methodology (99% success rate)
-- **Testing**: Property-based, integration, and performance tests required
+- **Performance**: Sub-10ms query latency for code analysis
 
 ## 🎯 Current Status & Priorities
 
 ### ✅ COMPLETED (DO NOT BREAK)
-- **All 6 Risk Reduction Stages** - This is the foundation, never compromise it
-- **FileStorage Implementation** - Production-ready with full safety wrappers
-- **Component Library** - Validated types, builders, wrappers all functional
+- **Codebase Intelligence Core** - Symbol extraction, dependency analysis, impact analysis
+- **Index Systems** - B+ tree, trigram search (<3ms), HNSW vector, relationship graph
+- **Binary Storage Pipeline** - 10x faster than JSON for symbol operations
 - **CI/CD Pipeline** - Comprehensive testing and deployment automation
 
 ### 🔄 ACTIVE DEVELOPMENT AREAS
-- **Index Implementation** - Primary, full-text, graph, and semantic indices
-- **MCP Server** - Model Context Protocol integration
-- **Query Engine** - Natural language and structured query processing
-- **Performance Optimization** - Sub-10ms query latency target
+- **MCP Integration** - Seamless Claude Code integration via Model Context Protocol
+- **Query Performance** - Optimize for AI assistant usage patterns
+- **Relationship Queries** - Enhanced "who calls what" and impact analysis
+- **Symbol Search** - Advanced pattern matching and code navigation
 
 ### 📋 UPCOMING PHASES
-- CLI interface with builder patterns
-- Advanced analytics tools
-- Multi-tenant support
-- Distributed indexing
+- One-click MCP setup for Claude Code
+- GitHub auto-sync for repositories
+- Advanced code intelligence features
+- Support for more AI assistants
 
 ## 🌳 Branching Strategy (Git Flow)
 
@@ -216,10 +216,10 @@ When working on search, indexing, or git features, consider testing on KotaDB it
 
 ### Quick Setup
 1. **Use separate data directory**: Create `data/analysis/` for dogfooding tests
-2. **Test on real codebase**: `cargo run --bin kotadb -- -d ./data/analysis ingest-repo .`
+2. **Index codebase**: `cargo run --bin kotadb -- -d ./data/analysis index-codebase .`
 3. **Verify symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
 4. **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
-5. **Validate functionality**: Run searches and queries to test your changes
+5. **Validate code search**: `cargo run --bin kotadb -- -d ./data/analysis search-code "function"`
 6. **Document findings**: Create GitHub issues for any problems discovered
 7. **Clean up**: Delete analysis data directory when done
 

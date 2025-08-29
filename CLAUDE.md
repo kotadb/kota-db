@@ -107,15 +107,16 @@ The release process automatically:
 cargo build
 cargo build --release  # Production build
 
-# Run the main binary with custom database path
-cargo run --bin kotadb -- -d ./kota-db-data stats    # Show database statistics
-cargo run --bin kotadb -- -d ./kota-db-data search "rust"   # Full-text search (trigram index)
-cargo run --bin kotadb -- -d ./kota-db-data search "*"      # Wildcard search (primary index)
+# Run codebase intelligence commands
+cargo run --bin kotadb -- -d ./kota-db-data stats              # Show database statistics
+cargo run --bin kotadb -- -d ./kota-db-data search-code "rust" # Full-text code search (<3ms)
+cargo run --bin kotadb -- -d ./kota-db-data search-symbols "*" # Wildcard symbol search
 
-# Repository ingestion with symbol extraction
-cargo run --bin kotadb -- -d ./kota-db-data ingest-repo .   # Default: extracts symbols
-cargo run --bin kotadb -- -d ./kota-db-data ingest-repo . --no-symbols  # Skip symbol extraction
-cargo run --bin kotadb -- -d ./kota-db-data symbol-stats    # Check extracted symbols
+# Codebase indexing with symbol extraction
+cargo run --bin kotadb -- -d ./kota-db-data index-codebase .           # Index repository with symbols
+cargo run --bin kotadb -- -d ./kota-db-data symbol-stats               # Check extracted symbols
+cargo run --bin kotadb -- -d ./kota-db-data find-callers FileStorage   # Find who calls a function
+cargo run --bin kotadb -- -d ./kota-db-data analyze-impact Config      # Analyze change impact
 
 # Performance benchmarking
 cargo run --release -- benchmark --operations 10000   # Run performance benchmarks
@@ -172,14 +173,14 @@ cargo bench --features bench
 
 ## High-Level Architecture
 
-KotaDB is a custom database designed for distributed human-AI cognition, built in Rust with zero external database dependencies.
+KotaDB is a codebase intelligence platform that helps AI assistants understand code relationships, dependencies, and structure. Built in Rust with zero external database dependencies.
 
 ### Core Components
 
 #### Storage Layer (`src/file_storage.rs`)
 - **FileStorage**: Page-based storage engine with Write-Ahead Log (WAL)
-- **Factory Function**: `create_file_storage()` returns production-ready wrapped storage with tracing, validation, retries, and caching
-- **Documents**: Stored as both Markdown (`.md`) and JSON (`.json`) files
+- **Binary Storage**: High-performance binary format for symbols and relationships (10x faster)
+- **Dual Architecture**: Separates code content from relationship data for optimal performance
 - **Persistence**: 4KB page-based architecture with checksums
 
 #### Index Systems
@@ -212,9 +213,10 @@ Validated types ensure compile-time and runtime safety:
 - Comprehensive validation rules
 
 #### Query System
-- **Query Routing**: Automatic selection between primary and trigram indices based on query pattern
-- **Natural Language**: Designed for LLM interaction patterns
-- **Performance**: Sub-10ms query latency for most operations
+- **Code Intelligence**: Find callers, analyze impact, track dependencies
+- **Symbol Search**: Fast pattern-based symbol discovery (functions, classes, variables)
+- **Natural Language**: Query relationships like "what calls FileStorage?"
+- **Performance**: Sub-10ms query latency for code analysis operations
 
 ### MCP Server (`src/mcp/`)
 Model Context Protocol server for LLM integration:
@@ -248,7 +250,7 @@ Model Context Protocol server for LLM integration:
 ### Dogfooding for Validation
 When working on search, indexing, or git features, test on KotaDB itself:
 - **Use separate data directory**: Create a dedicated directory for analysis
-- **Test real complexity**: `cargo run --bin kotadb -- -d ./data/analysis ingest-repo .`
+- **Test real complexity**: `cargo run --bin kotadb -- -d ./data/analysis index-codebase .`
 - **Validate symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
 - **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
 - **Validate your changes**: Run searches and performance tests on actual codebase
