@@ -1,14 +1,14 @@
-//! Performance benchmarks for hybrid relationship engine.
+//! Performance benchmarks for binary relationship engine.
 //!
-//! This benchmark suite validates that the hybrid relationship engine meets the
+//! This benchmark suite validates that the binary relationship engine meets the
 //! sub-10ms query latency requirement and confirms the claimed sub-microsecond
 //! symbol lookups.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "tree-sitter-parsing")]
-use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
+use kotadb::binary_relationship_engine::BinaryRelationshipEngine;
 #[cfg(feature = "tree-sitter-parsing")]
-use kotadb::hybrid_relationship_engine::HybridRelationshipEngine;
+use kotadb::binary_symbols::{BinarySymbolReader, BinarySymbolWriter};
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::relationship_query::{RelationshipQueryConfig, RelationshipQueryType};
 use std::path::Path;
@@ -78,7 +78,7 @@ fn bench_hybrid_engine_initialization(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let config = RelationshipQueryConfig::default();
-                let engine = HybridRelationshipEngine::new(black_box(db_path), black_box(config))
+                let engine = BinaryRelationshipEngine::new(black_box(db_path), black_box(config))
                     .await
                     .unwrap();
 
@@ -150,7 +150,7 @@ fn bench_relationship_queries(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
@@ -210,7 +210,7 @@ fn bench_engine_stats(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
@@ -240,7 +240,7 @@ fn bench_query_latency_requirement(c: &mut Criterion) {
 
     let engine = rt.block_on(async {
         let config = RelationshipQueryConfig::default();
-        HybridRelationshipEngine::new(db_path, config)
+        BinaryRelationshipEngine::new(db_path, config)
             .await
             .unwrap()
     });
