@@ -58,9 +58,9 @@ fn create_test_symbol_database(path: &Path, symbol_count: usize) -> anyhow::Resu
     Ok(symbol_names)
 }
 
-/// Benchmark hybrid engine initialization
+/// Benchmark binary engine initialization
 #[cfg(feature = "tree-sitter-parsing")]
-fn bench_hybrid_engine_initialization(c: &mut Criterion) {
+fn bench_binary_engine_initialization(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path();
@@ -71,7 +71,7 @@ fn bench_hybrid_engine_initialization(c: &mut Criterion) {
         create_test_symbol_database(&symbol_db_path, 10_000).unwrap();
     });
 
-    let mut group = c.benchmark_group("hybrid_engine_init");
+    let mut group = c.benchmark_group("binary_engine_init");
     group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("init_with_10k_symbols", |b| {
@@ -280,7 +280,7 @@ fn bench_query_latency_requirement(c: &mut Criterion) {
 #[cfg(feature = "tree-sitter-parsing")]
 criterion_group!(
     benches,
-    bench_hybrid_engine_initialization,
+    bench_binary_engine_initialization,
     bench_symbol_lookup_performance,
     bench_relationship_queries,
     bench_engine_stats,
