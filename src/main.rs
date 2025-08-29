@@ -1,5 +1,5 @@
 // KotaDB CLI - Codebase intelligence platform for distributed human-AI cognition
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 // Macro for conditional printing based on quiet flag
@@ -935,32 +935,8 @@ mod tests {
 async fn create_relationship_engine(
     db_path: &Path,
 ) -> Result<kotadb::hybrid_relationship_engine::HybridRelationshipEngine> {
-    // Load real symbol storage from the main database storage path (db_path/storage)
-    // This ensures we read symbols from the same location where they were written
-    let storage_path = db_path.join("storage");
-
-    // Ensure the database directory exists
-    if !storage_path.exists() {
-        std::fs::create_dir_all(&storage_path)
-            .with_context(|| format!("Failed to create database directory: {:?}", storage_path))?;
-    }
-    let file_storage = create_file_storage(
-        storage_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid storage path: {:?}", storage_path))?,
-        Some(100), // Cache size
-    )
-    .await?;
-
-    // Create symbol storage with dual storage architecture (document + graph)
-    // This ensures relationships can be stored and queried efficiently
-    let graph_path = storage_path.join("graph");
-    tokio::fs::create_dir_all(&graph_path).await?;
-    let graph_config = kotadb::graph_storage::GraphStorageConfig::default();
-    let graph_storage =
-        kotadb::native_graph_storage::NativeGraphStorage::new(graph_path, graph_config).await?;
-
-    // Create hybrid relationship engine
+    // Create hybrid relationship engine with direct binary symbol access
+    // The engine loads symbols directly from symbols.kota and dependency_graph.bin
     let config = kotadb::relationship_query::RelationshipQueryConfig::default();
     let hybrid_engine =
         kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(db_path, config).await?;
