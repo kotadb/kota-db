@@ -15,6 +15,7 @@ use crate::{
     binary_symbols::BinarySymbolReader,
     dependency_extractor::DependencyGraph,
     parsing::{SupportedLanguage, SymbolType},
+    path_utils::normalize_path_relative,
     relationship_query::{
         RelationshipLocation, RelationshipMatch, RelationshipQueryConfig, RelationshipQueryResult,
         RelationshipQueryType, RelationshipStats,
@@ -1074,7 +1075,9 @@ impl BinaryRelationshipEngine {
                             // Read file content
                             match fs::read(&path).await {
                                 Ok(content) => {
-                                    files.push((path, content));
+                                    // Normalize path to be relative to repo root
+                                    let relative_path = normalize_path_relative(&path, repo_path);
+                                    files.push((PathBuf::from(relative_path), content));
                                 }
                                 Err(e) => {
                                     debug!("Failed to read file {:?}: {}", path, e);
@@ -1179,7 +1182,15 @@ impl BinaryRelationshipEngine {
                     // Read file contents
                     match fs::read(&path).await {
                         Ok(contents) => {
-                            files.push((path, contents));
+                            // For storage path, files are already relative, but normalize just in case
+                            let normalized_path = if path.is_absolute() {
+                                // If absolute, try to make relative to storage path
+                                normalize_path_relative(&path, storage_path)
+                            } else {
+                                // Already relative, just normalize format
+                                normalize_path_relative(&path, Path::new(""))
+                            };
+                            files.push((PathBuf::from(normalized_path), contents));
                         }
                         Err(e) => {
                             warn!("Failed to read file {}: {}", path.display(), e);
