@@ -305,41 +305,76 @@ impl HybridRelationshipEngine {
         let graph_ref = self.get_dependency_graph()?;
         let graph = &*graph_ref;
 
-        // Look up target symbol by name - try multiple strategies
-        debug!("Looking for symbol '{}' in binary reader", target);
-        let (_symbol, target_id) = reader
-            .find_symbol_by_name(target)
-            .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", target))?;
+        // Look up target symbol by name - find ALL symbols with this name
+        debug!(
+            "Looking for all symbols named '{}' in binary reader",
+            target
+        );
+        let all_symbols = self.find_all_symbols_by_name(reader, target);
 
-        debug!("Found symbol '{}' with UUID: {}", target, target_id);
+        if all_symbols.is_empty() {
+            return Err(anyhow::anyhow!("Symbol '{}' not found", target));
+        }
 
-        // Resolve symbol UUID with fallback to name-based lookup
-        let effective_id = match Self::resolve_symbol_uuid_with_fallback(graph, target, target_id) {
-            Some(id) => id,
-            None => {
-                // Return empty result if we can't find the symbol in the graph
-                return Ok(RelationshipQueryResult {
-                    query_type,
-                    direct_relationships: vec![],
-                    indirect_relationships: vec![],
-                    stats: RelationshipStats {
-                        direct_count: 0,
-                        indirect_count: 0,
-                        symbols_analyzed: reader.symbol_count(),
-                        execution_time_ms: 0,
-                        truncated: false,
-                    },
-                    summary: format!(
-                        "Symbol '{}' found in binary storage but not in dependency graph. \
-                        The graph may be out of sync. Try re-indexing the codebase.",
-                        target
-                    ),
-                });
+        debug!("Found {} symbols named '{}'", all_symbols.len(), target);
+
+        // Try each symbol until we find one with relationships
+        let mut all_callers = Vec::new();
+
+        for (_symbol, symbol_id) in &all_symbols {
+            debug!("Checking symbol '{}' with UUID: {}", target, symbol_id);
+
+            // Resolve symbol UUID with fallback to name-based lookup
+            if let Some(effective_id) =
+                Self::resolve_symbol_uuid_with_fallback(graph, target, *symbol_id)
+            {
+                // Find callers for this specific symbol instance
+                let callers = graph.find_dependents(effective_id);
+                if !callers.is_empty() {
+                    debug!(
+                        "Found {} callers for symbol '{}' (UUID: {})",
+                        callers.len(),
+                        target,
+                        symbol_id
+                    );
+                    all_callers.extend(callers);
+                } else {
+                    debug!(
+                        "No callers found for symbol '{}' (UUID: {})",
+                        target, symbol_id
+                    );
+                }
+            } else {
+                debug!(
+                    "Symbol '{}' (UUID: {}) not found in dependency graph",
+                    target, symbol_id
+                );
             }
-        };
+        }
 
-        // Find all callers in the dependency graph
-        let callers = graph.find_dependents(effective_id);
+        // If we found no callers from any symbol instance, return empty result
+        if all_callers.is_empty() {
+            return Ok(RelationshipQueryResult {
+                query_type,
+                direct_relationships: vec![],
+                indirect_relationships: vec![],
+                stats: RelationshipStats {
+                    direct_count: 0,
+                    indirect_count: 0,
+                    symbols_analyzed: reader.symbol_count(),
+                    execution_time_ms: 0,
+                    truncated: false,
+                },
+                summary: format!(
+                    "Symbol '{}' found in binary storage ({} instances) but no relationships found in dependency graph. \
+                    The graph may be out of sync or the symbol may not be referenced by other code.",
+                    target, all_symbols.len()
+                ),
+            });
+        }
+
+        // Use the combined callers from all symbol instances
+        let callers = all_callers;
 
         // Convert to relationship matches with caller-specific context
         let direct_relationships =
@@ -541,6 +576,25 @@ impl HybridRelationshipEngine {
         // Convert from serializable format
         DependencyGraph::from_serializable(serializable)
             .context("Failed to reconstruct dependency graph from serialized data")
+    }
+
+    /// Find all symbols with the given name (handles multiple symbols with same name)
+    fn find_all_symbols_by_name(
+        &self,
+        reader: &BinarySymbolReader,
+        name: &str,
+    ) -> Vec<(crate::binary_symbols::PackedSymbol, uuid::Uuid)> {
+        reader
+            .iter_symbols()
+            .filter_map(|symbol| {
+                if let Ok(symbol_name) = reader.get_symbol_name(&symbol) {
+                    if symbol_name == name {
+                        return Some((symbol, uuid::Uuid::from_bytes(symbol.id)));
+                    }
+                }
+                None
+            })
+            .collect()
     }
 
     /// Resolve symbol UUID with fallback to name-based lookup
