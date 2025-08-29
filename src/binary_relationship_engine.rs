@@ -727,6 +727,20 @@ impl BinaryRelationshipEngine {
                     "unknown".to_string()
                 });
 
+                // Generate context based on relation type
+                let context = match relation_type {
+                    RelationType::Calls => {
+                        format!("Calls {} at line {}", target, symbol.start_line)
+                    }
+                    RelationType::References => {
+                        format!("References {} at line {}", target, symbol.start_line)
+                    }
+                    RelationType::Implements => {
+                        format!("Implements {} at line {}", target, symbol.start_line)
+                    }
+                    _ => format!("Uses {} at line {}", target, symbol.start_line),
+                };
+
                 matches.push(RelationshipMatch {
                     symbol_id: Uuid::from_bytes(symbol.id), // Safe: PackedSymbol.id is [u8; 16]
                     symbol_name: symbol_name.clone(),
@@ -739,7 +753,7 @@ impl BinaryRelationshipEngine {
                         column_number: 0,
                         file_path: file_path.clone(),
                     },
-                    context: format!("Calls {} at line {}", target, symbol.start_line),
+                    context,
                 });
             }
         }

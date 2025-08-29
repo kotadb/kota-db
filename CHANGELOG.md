@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Made `--quiet` mode the default for CLI to optimize LLM context usage (#429)
+  - Reduces token consumption by 70% for AI assistants
+  - Use `--quiet=false` to show detailed output
+  - Aligns with project goal of reducing LLM context requirements
 - Enhanced natural language query parser for improved AI agent experience (#431)
   - Fixed rigid parsing patterns that failed on documented query variations
   - Added support for "what would break if I change X?" and alternative phrasings
@@ -41,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Target: Achieve <10ms query latency (previously 580ms)
 
 ### Fixed
+- Improved relationship type context display in find-callers command (#418)
+  - Fixed context strings to correctly show "References" for type usage (not just "Calls")
+  - Clarified command help text to indicate it finds all references, not just function calls
+  - Includes constructor calls (Type::new), type annotations, and parameter types
 - Edge metadata update and removal operations for multiple edge support (#332)
   - Restored `update_edge_metadata` and `remove_edge` methods disabled during #331 fix
   - Added new `update_edge_metadata_by_type` and `remove_edge_by_type` methods
