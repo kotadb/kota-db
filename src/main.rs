@@ -1002,8 +1002,11 @@ async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Resul
     let mut unique_files = std::collections::HashSet::new();
 
     for symbol in reader.iter_symbols() {
-        // Count by type
-        let type_name = format!("{}", symbol.kind);
+        // Count by type - convert u8 back to SymbolType for readable display
+        let type_name = match kotadb::parsing::SymbolType::try_from(symbol.kind) {
+            Ok(symbol_type) => format!("{}", symbol_type),
+            Err(_) => format!("unknown({})", symbol.kind),
+        };
         *symbols_by_type.entry(type_name).or_insert(0) += 1;
 
         // Count by language (inferred from file extension)
