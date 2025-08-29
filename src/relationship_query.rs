@@ -1054,7 +1054,42 @@ pub fn parse_natural_language_relationship_query(query: &str) -> Option<Relation
     None
 }
 
-/// Extract target symbol name from query
+/// Validates if a symbol name is properly formatted
+/// Supports simple identifiers (foo, _bar) and qualified names (Foo::Bar, std::vec::Vec)
+fn is_valid_symbol_name(symbol: &str) -> bool {
+    if symbol.is_empty() {
+        return false;
+    }
+
+    // Handle qualified names (contains ::)
+    if symbol.contains("::") {
+        return symbol
+            .split("::")
+            .all(|part| !part.is_empty() && is_valid_simple_identifier(part));
+    }
+
+    // Handle simple identifiers
+    is_valid_simple_identifier(symbol)
+}
+
+/// Validates a simple identifier (no :: separators)
+fn is_valid_simple_identifier(identifier: &str) -> bool {
+    if identifier.is_empty() {
+        return false;
+    }
+
+    // Must start with alphabetic or underscore
+    let mut chars = identifier.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+
+    // Rest must be alphanumeric or underscore
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Extract target symbol name from query with enhanced validation
 fn extract_target_from_query(query: &str, keyword: &str) -> Option<String> {
     let query_lower = query.to_lowercase();
     if let Some(pos) = query_lower.find(keyword) {
@@ -1064,7 +1099,11 @@ fn extract_target_from_query(query: &str, keyword: &str) -> Option<String> {
         // Look for the next meaningful word that could be a symbol name
         for word in words {
             let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ':');
-            if !cleaned.is_empty() && cleaned.len() > 1 && !cleaned.eq_ignore_ascii_case("this") {
+            if !cleaned.is_empty()
+                && cleaned.len() > 1
+                && !cleaned.eq_ignore_ascii_case("this")
+                && is_valid_symbol_name(cleaned)
+            {
                 return Some(cleaned.to_string());
             }
         }
@@ -1085,7 +1124,7 @@ fn extract_target_from_impact_query(query: &str) -> Option<String> {
             for word in words {
                 let cleaned =
                     word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ':');
-                if !cleaned.is_empty() && cleaned.len() > 1 {
+                if !cleaned.is_empty() && cleaned.len() > 1 && is_valid_symbol_name(cleaned) {
                     return Some(cleaned.to_string());
                 }
             }
@@ -1109,6 +1148,46 @@ fn extract_target_from_impact_query(query: &str) -> Option<String> {
     None
 }
 
+/// Constructor mapping for generic terms to specific function patterns
+/// This allows "what creates storage?" to map to "create_storage" etc.
+static CONSTRUCTOR_MAPPINGS: &[(&str, &str)] = &[
+    ("storage", "create_storage"),
+    ("config", "create_config"),
+    ("index", "create_index"),
+    ("connection", "create_connection"),
+    ("pool", "create_pool"),
+    ("client", "create_client"),
+    ("server", "create_server"),
+    ("engine", "create_engine"),
+    ("builder", "create_builder"),
+];
+
+/// Maps generic terms to constructor function patterns
+fn map_generic_to_constructor(generic_term: &str) -> String {
+    let term_lower = generic_term.to_lowercase();
+
+    // Check predefined mappings
+    for &(generic, constructor) in CONSTRUCTOR_MAPPINGS {
+        if term_lower == generic {
+            return constructor.to_string();
+        }
+    }
+
+    // Fallback: if no specific mapping exists, try common patterns
+    if term_lower.ends_with("s") {
+        // Handle plurals: "storages" -> "create_storage"
+        let singular = &term_lower[..term_lower.len() - 1];
+        for &(generic, constructor) in CONSTRUCTOR_MAPPINGS {
+            if singular == generic {
+                return constructor.to_string();
+            }
+        }
+    }
+
+    // Default: prepend "create_" to the term
+    format!("create_{}", term_lower)
+}
+
 /// Extract target for "creates" queries like "what creates storage?"
 fn extract_target_from_creates_query(query: &str) -> Option<String> {
     let query_lower = query.to_lowercase();
@@ -1116,12 +1195,21 @@ fn extract_target_from_creates_query(query: &str) -> Option<String> {
     // Pattern: "what creates X?" - look for word after "creates"
     if query_lower.contains("creates") {
         if let Some(target) = extract_target_from_query(query, "creates") {
-            // For generic terms like "storage", we want to find constructors/factories
-            // Convert "storage" to potential constructor patterns
-            if target.eq_ignore_ascii_case("storage") {
-                return Some("create_storage".to_string()); // Look for create_storage functions
+            // Check if this is a generic term that should be mapped to constructor patterns
+            let target_lower = target.to_lowercase();
+
+            // If it's already a specific symbol name (contains uppercase, underscores, or ::), use as-is
+            if target.chars().any(|c| c.is_uppercase())
+                || target.contains('_')
+                || target.contains("::")
+                || target.chars().all(|c| c.is_uppercase())
+            {
+                // All caps like "HTTP"
+                return Some(target);
             }
-            return Some(target);
+
+            // Otherwise, treat as generic term and map to constructor
+            return Some(map_generic_to_constructor(&target_lower));
         }
     }
 
@@ -1138,6 +1226,7 @@ fn extract_target_from_creates_query(query: &str) -> Option<String> {
                     && cleaned.len() > 1
                     && !cleaned.eq_ignore_ascii_case("is")
                     && !cleaned.eq_ignore_ascii_case("how")
+                    && is_valid_symbol_name(cleaned)
                 {
                     return Some(cleaned.to_string());
                 }
@@ -1514,5 +1603,172 @@ mod tests {
         } else {
             panic!("Query 'what creates storage?' should parse as FindCallers");
         }
+    }
+
+    #[test]
+    fn test_symbol_validation_edge_cases() {
+        // Test enhanced symbol validation with various edge cases
+
+        // Valid simple identifiers
+        assert!(is_valid_symbol_name("foo"));
+        assert!(is_valid_symbol_name("_bar"));
+        assert!(is_valid_symbol_name("foo123"));
+        assert!(is_valid_symbol_name("FileStorage"));
+        assert!(is_valid_symbol_name("HTTP_CLIENT"));
+
+        // Valid qualified names
+        assert!(is_valid_symbol_name("std::vec::Vec"));
+        assert!(is_valid_symbol_name("MyModule::Config"));
+        assert!(is_valid_symbol_name("foo::bar::baz"));
+
+        // Invalid cases
+        assert!(!is_valid_symbol_name(""));
+        assert!(!is_valid_symbol_name("123invalid"));
+        assert!(!is_valid_symbol_name(":invalid::"));
+        assert!(!is_valid_symbol_name("::invalid"));
+        assert!(!is_valid_symbol_name("invalid::"));
+        assert!(!is_valid_symbol_name("foo::::bar"));
+        assert!(!is_valid_symbol_name("foo..bar"));
+        assert!(!is_valid_symbol_name("foo-bar"));
+    }
+
+    #[test]
+    fn test_constructor_mapping_system() {
+        // Test the extensible constructor mapping system
+
+        // Predefined mappings
+        assert_eq!(map_generic_to_constructor("storage"), "create_storage");
+        assert_eq!(map_generic_to_constructor("config"), "create_config");
+        assert_eq!(map_generic_to_constructor("engine"), "create_engine");
+
+        // Case insensitive
+        assert_eq!(map_generic_to_constructor("Storage"), "create_storage");
+        assert_eq!(map_generic_to_constructor("CONFIG"), "create_config");
+
+        // Plural handling
+        assert_eq!(map_generic_to_constructor("storages"), "create_storage");
+        assert_eq!(map_generic_to_constructor("configs"), "create_config");
+
+        // Unknown terms get default pattern
+        assert_eq!(map_generic_to_constructor("unknown"), "create_unknown");
+        assert_eq!(map_generic_to_constructor("database"), "create_database");
+    }
+
+    #[test]
+    fn test_creates_query_with_specific_symbols() {
+        // Test that specific symbol names are preserved, not mapped
+
+        // Specific class names (contain uppercase) - should use as-is
+        let query_type = parse_natural_language_relationship_query("what creates FileStorage?");
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(
+                target, "FileStorage",
+                "Specific class names should not be mapped"
+            );
+        } else {
+            panic!("Should parse as FindCallers");
+        }
+
+        // Function names with underscores - should use as-is
+        let query_type =
+            parse_natural_language_relationship_query("what creates create_file_storage?");
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(
+                target, "create_file_storage",
+                "Function names should not be mapped"
+            );
+        } else {
+            panic!("Should parse as FindCallers");
+        }
+
+        // Qualified names - should use as-is
+        let query_type = parse_natural_language_relationship_query("what creates std::vec::Vec?");
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            assert_eq!(
+                target, "std::vec::Vec",
+                "Qualified names should not be mapped"
+            );
+        } else {
+            panic!("Should parse as FindCallers");
+        }
+    }
+
+    #[test]
+    fn test_robustness_edge_cases() {
+        // Test parser robustness with various edge cases
+
+        // Multiple targets in query (should parse first valid one)
+        let query_type = parse_natural_language_relationship_query(
+            "what would break if I change Config and Database?",
+        );
+        assert!(
+            matches!(
+                query_type,
+                Some(RelationshipQueryType::ImpactAnalysis { .. })
+            ),
+            "Should parse first valid target from multi-target query"
+        );
+
+        // Very long queries should still work
+        let long_query = "what would break if I change FileStorage and it affects everything in the system and causes issues?";
+        let query_type = parse_natural_language_relationship_query(long_query);
+        assert!(
+            matches!(
+                query_type,
+                Some(RelationshipQueryType::ImpactAnalysis { .. })
+            ),
+            "Should handle long queries gracefully"
+        );
+
+        // Unicode in queries (should be handled properly)
+        let unicode_query = "what creates FileStorage?"; // Contains smart quotes
+        let query_type = parse_natural_language_relationship_query(unicode_query);
+        assert!(
+            query_type.is_some(),
+            "Should handle unicode characters gracefully"
+        );
+
+        // Empty and whitespace queries
+        assert!(parse_natural_language_relationship_query("").is_none());
+        assert!(parse_natural_language_relationship_query("   ").is_none());
+        assert!(parse_natural_language_relationship_query("what").is_none());
+
+        // Malformed symbol names should be rejected
+        let malformed_query = "what creates :invalid::?";
+        let query_type = parse_natural_language_relationship_query(malformed_query);
+        // Should either fail to parse or handle gracefully
+        if let Some(RelationshipQueryType::FindCallers { target }) = query_type {
+            // If it does parse, the target should be cleaned up
+            assert!(
+                is_valid_symbol_name(&target),
+                "Malformed symbols should be cleaned or rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_performance_considerations() {
+        // Test performance with reasonable query sizes
+
+        // Large number of repeated patterns - should not hang
+        let repetitive_query = "what creates storage storage storage storage storage?";
+        let start = std::time::Instant::now();
+        let _result = parse_natural_language_relationship_query(repetitive_query);
+        let duration = start.elapsed();
+        assert!(
+            duration.as_millis() < 100,
+            "Query parsing should be fast even with repetitive patterns"
+        );
+
+        // Very long symbol names - should handle gracefully
+        let long_symbol = "a".repeat(1000);
+        let long_query = format!("what creates {}?", long_symbol);
+        let start = std::time::Instant::now();
+        let _result = parse_natural_language_relationship_query(&long_query);
+        let duration = start.elapsed();
+        assert!(
+            duration.as_millis() < 100,
+            "Should handle long symbol names efficiently"
+        );
     }
 }

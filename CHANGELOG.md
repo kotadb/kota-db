@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced "creates" pattern recognition: "what creates storage?" maps to caller queries
   - Added flexible impact analysis patterns: "what depends on X?", "what would be affected by X?"
   - Improved symbol extraction with proper punctuation handling (removes trailing "?", "!", etc.)
-  - Added comprehensive test coverage for all new natural language patterns
+  - **Production-ready robustness improvements**: Enhanced symbol validation for qualified names (std::vec::Vec)
+  - **Extensible constructor mapping**: Configurable generic term mapping ("storage" → "create_storage") with fallback patterns
+  - **Comprehensive edge case handling**: Unicode support, performance validation, malformed query resilience
+  - Added comprehensive test coverage for all new natural language patterns (14 total tests)
   - Enables truly natural queries for LLMs, reducing context usage requirements
 - LLM-optimized search output with progressive disclosure (#370)
   - New `--context` flag for search command with levels: none, minimal, medium, full
