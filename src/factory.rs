@@ -17,6 +17,9 @@ use std::path::Path;
 
 /// Create a production-ready symbol storage with all wrappers
 ///
+/// DEPRECATED: Use binary symbol format (BinarySymbolWriter/Reader) instead.
+/// Binary format is 10x faster than JSON-based SymbolStorage.
+///
 /// Returns a symbol storage instance wrapped with:
 /// - Tracing for observability
 /// - Validation for input safety
@@ -26,6 +29,9 @@ use std::path::Path;
 /// # Arguments
 /// * `data_dir` - Directory for storing data
 /// * `cache_size` - Optional cache size (defaults to 1000)
+#[deprecated(
+    note = "Use BinarySymbolWriter/Reader for 10x better performance. See ingest_with_binary_symbols_and_relationships."
+)]
 pub async fn create_symbol_storage(
     data_dir: &str,
     cache_size: Option<usize>,
@@ -41,7 +47,10 @@ pub async fn create_symbol_storage(
 
 /// Create a test symbol storage for unit tests
 ///
+/// DEPRECATED: Use binary symbol format for tests.
+///
 /// Returns a symbol storage backed by temporary directory storage
+#[deprecated(note = "Use BinarySymbolWriter/Reader for tests")]
 pub async fn create_test_symbol_storage() -> Result<Arc<Mutex<SymbolStorage>>> {
     // Use temporary directory for test storage
     let test_dir = format!("test_data/symbol_test_{}", Uuid::new_v4());
@@ -56,8 +65,11 @@ pub async fn create_test_symbol_storage() -> Result<Arc<Mutex<SymbolStorage>>> {
 
 /// Create a symbol storage with custom underlying storage
 ///
+/// DEPRECATED: Use binary symbol format instead.
+///
 /// Allows providing a custom storage implementation while still
 /// getting the full symbol extraction and indexing capabilities
+#[deprecated(note = "Use BinarySymbolWriter/Reader instead")]
 pub async fn create_symbol_storage_with_storage(
     storage: Box<dyn Storage + Send + Sync>,
 ) -> Result<Arc<Mutex<SymbolStorage>>> {
@@ -67,6 +79,8 @@ pub async fn create_symbol_storage_with_storage(
 
 /// Create a symbol storage with both document and graph storage backends
 ///
+/// DEPRECATED: Use binary symbol format with dependency_graph.bin instead.
+///
 /// This enables dual storage architecture for optimal performance:
 /// - Document storage for symbol metadata and content
 /// - Graph storage for O(1) relationship lookups
@@ -74,6 +88,7 @@ pub async fn create_symbol_storage_with_storage(
 /// # Arguments
 /// * `data_dir` - Directory for storing data
 /// * `cache_size` - Optional cache size (defaults to 1000)
+#[deprecated(note = "Use binary symbols.kota and dependency_graph.bin files instead")]
 pub async fn create_symbol_storage_with_graph(
     data_dir: &str,
     cache_size: Option<usize>,

@@ -183,7 +183,9 @@ pub use symbol_storage::{
 pub use types::RelationType;
 
 // Re-export symbol factory functions
+// NOTE: These are deprecated in favor of binary symbol format
 #[cfg(feature = "tree-sitter-parsing")]
+#[allow(deprecated)]
 pub use factory::{
     create_symbol_storage, create_symbol_storage_with_storage, create_test_symbol_storage,
 };

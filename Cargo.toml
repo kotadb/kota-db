@@ -179,11 +179,6 @@ path = "src/bin/mcp_server_stdio.rs"
 required-features = ["mcp-server"]
 
 
-
-[[example]]
-name = "standalone_usage"
-path = "examples/standalone_usage.rs"
-
 # Benchmarks
 [[bench]]
 name = "storage"
