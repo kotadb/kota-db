@@ -62,31 +62,17 @@ impl FileOrganizationManager {
 
     /// Sanitize file path to prevent directory traversal attacks
     fn sanitize_file_path(&self, file_path: &str) -> Result<String> {
-        // Remove leading slashes and normalize the path
-        let normalized = file_path.trim_start_matches('/');
+        use crate::path_utils::PathNormalizer;
+        use std::path::Path;
 
-        // Check for directory traversal patterns
-        if normalized.contains("..") {
-            anyhow::bail!("Directory traversal detected in file path: {}", file_path);
-        }
+        // Use the consolidated path normalizer for consistent behavior
+        let normalizer = PathNormalizer::new();
 
-        // Check for absolute paths (shouldn't happen in git, but be safe)
-        if file_path.starts_with('/') && file_path.len() > 1 {
-            warn!("Absolute file path detected, normalizing: {}", file_path);
-        }
-
-        // Ensure path is not empty after normalization
-        if normalized.is_empty() {
-            anyhow::bail!("Empty file path after normalization");
-        }
-
-        // Check for suspicious characters that shouldn't be in file paths
-        let invalid_chars = ['<', '>', ':', '"', '|', '?', '*', '\0'];
-        if normalized.chars().any(|c| invalid_chars.contains(&c)) {
-            anyhow::bail!("Invalid characters in file path: {}", file_path);
-        }
-
-        Ok(normalized.to_string())
+        // For git files, we want to preserve relative paths but ensure security
+        let path = Path::new(file_path);
+        normalizer
+            .sanitize_for_storage(path)
+            .map_err(|e| anyhow::anyhow!("Failed to sanitize file path '{}': {}", file_path, e))
     }
 
     /// Handle file creation in repository
@@ -660,10 +646,16 @@ mod tests {
             .is_err());
         assert!(manager.sanitize_file_path("src/../../file.txt").is_err());
 
-        // Invalid characters should be rejected
-        assert!(manager.sanitize_file_path("file<name>.txt").is_err());
-        assert!(manager.sanitize_file_path("file|name.txt").is_err());
-        assert!(manager.sanitize_file_path("file?name.txt").is_err());
+        // The new implementation removes invalid characters rather than failing
+        // This provides better usability while maintaining security
+        let result = manager.sanitize_file_path("file<name>.txt").unwrap();
+        assert_eq!(result, "filename.txt");
+
+        let result = manager.sanitize_file_path("file|name.txt").unwrap();
+        assert_eq!(result, "filename.txt");
+
+        let result = manager.sanitize_file_path("file?name.txt").unwrap();
+        assert_eq!(result, "filename.txt");
 
         // Empty path should be rejected
         assert!(manager.sanitize_file_path("").is_err());
