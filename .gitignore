@@ -161,3 +161,4 @@ test-db-data/
 /tests/test_repos/
 *.test.kotadb
 code-analysis-bench-results/
+test-db/
