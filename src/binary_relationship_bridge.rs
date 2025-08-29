@@ -375,20 +375,120 @@ impl BinaryRelationshipBridge {
         let mut references = Vec::new();
         let language = tree_sitter_rust::LANGUAGE.into();
 
-        // Query for function calls
-        let call_query = Query::new(
+        // Enhanced comprehensive query for all reference types
+        let comprehensive_query = Query::new(
             &language,
             r#"
+            ; Basic function calls
             (call_expression
                 function: (identifier) @function_name)
             (call_expression
                 function: (scoped_identifier
                     name: (identifier) @function_name))
+            (call_expression
+                function: (field_expression
+                    field: (field_identifier) @method_name))
+            
+            ; Basic type identifiers
+            (type_identifier) @type_name
+            
+            ; Scoped type identifiers (module::Type)
+            (scoped_type_identifier
+                name: (type_identifier) @type_name)
+            
+            ; Generic types (Vec<Type>, Arc<Type>)
+            (generic_type
+                type: (type_identifier) @type_name)
+            (generic_type
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Static method calls (Type::method) - comprehensive patterns
+            (call_expression
+                function: (scoped_identifier
+                    path: (identifier) @type_name))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (identifier) @type_name)))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (scoped_identifier
+                            path: (identifier) @type_name))))
+            
+            ; Module-qualified static calls (crate::module::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (scoped_identifier
+                            path: (scoped_identifier
+                                path: (identifier) @type_name)))))
+            
+            ; Super/self qualified calls (super::Type::method, self::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (super) 
+                        name: (identifier) @type_name)))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (self) 
+                        name: (identifier) @type_name)))
+            
+            ; Crate-qualified calls (crate::Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (crate) 
+                        name: (identifier) @type_name)))
+            
+            ; Field types in struct declarations and variable declarations
+            (field_declaration
+                type: (type_identifier) @type_name)
+            (field_declaration
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (field_declaration
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Variable declarations with explicit types
+            (let_declaration
+                type: (type_identifier) @type_name)
+            (let_declaration
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (let_declaration
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Function parameter types
+            (parameter
+                type: (type_identifier) @type_name)
+            (parameter
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (parameter
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Function return types
+            (function_item
+                return_type: (type_identifier) @type_name)
+            (function_item
+                return_type: (generic_type
+                    type: (type_identifier) @type_name))
+            (function_item
+                return_type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
             "#,
         )?;
 
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&call_query, tree.root_node(), content.as_bytes());
+        let mut matches =
+            cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
 
         while let Some(m) = matches.next() {
             for capture in m.captures {
@@ -406,9 +506,19 @@ impl BinaryRelationshipBridge {
                 };
                 let point = node.start_position();
 
+                // Determine reference type based on the capture name
+                let ref_type = match capture.index {
+                    // These correspond to the @function_name captures
+                    0 | 1 => ReferenceType::FunctionCall,
+                    // @method_name captures
+                    2 => ReferenceType::MethodCall,
+                    // All @type_name captures (majority of patterns)
+                    _ => ReferenceType::TypeUsage,
+                };
+
                 references.push(CodeReference {
                     name,
-                    ref_type: ReferenceType::FunctionCall,
+                    ref_type,
                     line: point.row + 1,
                     column: point.column + 1,
                     text: match node.utf8_text(content.as_bytes()) {
@@ -425,9 +535,107 @@ impl BinaryRelationshipBridge {
             }
         }
 
-        // Add more query patterns for type references, imports, etc.
-
         Ok(references)
+    }
+
+    /// Enhanced symbol reference resolution with suffix matching fallback
+    fn resolve_symbol_reference(
+        &self,
+        name: &str,
+        name_map: &HashMap<String, Uuid>,
+    ) -> Option<Uuid> {
+        // First, try exact match (fastest path)
+        if let Some(&id) = name_map.get(name) {
+            return Some(id);
+        }
+
+        // If exact match fails and this is an unqualified name, try suffix matching
+        // This handles cases where we're looking for "FileStorage" but the symbol
+        // is stored as "kotadb::file_storage::FileStorage"
+        if !name.contains("::") {
+            // Performance optimization: Only iterate if reasonable number of symbols
+            if name_map.len() < 10000 {
+                // Find any symbol name that ends with "::name" (exact boundary match)
+                let pattern = format!("::{}", name);
+                let mut matches = Vec::new();
+
+                for (qualified_name, &id) in name_map {
+                    // Ensure it's a true suffix match with :: boundary
+                    if qualified_name.ends_with(&pattern)
+                        && (qualified_name.len() == name.len()
+                            || qualified_name.len() > pattern.len())
+                    {
+                        matches.push((qualified_name.clone(), id));
+
+                        // Early termination for performance
+                        if matches.len() > 5 {
+                            // Don't collect too many matches
+                            break;
+                        }
+                    }
+                }
+
+                // Process matches
+                return self.process_suffix_matches(name, matches);
+            } else {
+                tracing::debug!(
+                    "🔍 Skipping suffix matching for '{}' due to large symbol count ({})",
+                    name,
+                    name_map.len()
+                );
+            }
+        }
+
+        None
+    }
+
+    /// Process suffix matches for symbol resolution
+    fn process_suffix_matches(&self, name: &str, matches: Vec<(String, Uuid)>) -> Option<Uuid> {
+        // If we have exactly one match, use it
+        if matches.len() == 1 {
+            let (qualified_name, id) = &matches[0];
+            tracing::debug!(
+                "🔍 Resolved '{}' to '{}' via suffix matching",
+                name,
+                qualified_name
+            );
+            return Some(*id);
+        }
+
+        // If we have multiple matches, try to find the best one
+        if matches.len() > 1 {
+            tracing::debug!(
+                "🔍 Multiple suffix matches for '{}': {:?}",
+                name,
+                matches.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+            );
+
+            // Prefer shorter qualified names (likely more direct references)
+            // and avoid test/example modules
+            let best_match = matches
+                .iter()
+                .filter(|(qualified_name, _)| {
+                    // Filter out test and example modules
+                    !qualified_name.contains("::test")
+                        && !qualified_name.contains("::tests")
+                        && !qualified_name.contains("::example")
+                })
+                .min_by_key(|(qualified_name, _)| qualified_name.len());
+
+            if let Some((qualified_name, id)) = best_match {
+                tracing::debug!(
+                    "🔍 Selected best match for '{}': '{}'",
+                    name,
+                    qualified_name
+                );
+                return Some(*id);
+            }
+
+            // Fallback to first match if all are filtered out
+            return Some(matches[0].1);
+        }
+
+        None
     }
 
     /// Build the final dependency graph
@@ -474,8 +682,8 @@ impl BinaryRelationshipBridge {
             };
 
             for reference in &file_refs.references {
-                // Try to resolve the reference to a symbol
-                if let Some(&target_id) = name_map.get(&reference.name) {
+                // Try to resolve the reference to a symbol with enhanced matching
+                if let Some(target_id) = self.resolve_symbol_reference(&reference.name, &name_map) {
                     // Find which symbol in this file contains this reference using hierarchy
                     let source_id = hierarchy
                         .iter()
