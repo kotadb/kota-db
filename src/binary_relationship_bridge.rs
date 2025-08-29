@@ -107,6 +107,12 @@ impl BinaryRelationshipBridge {
         let all_references = self.extract_all_references(files, &name_map)?;
 
         // Step 4: Build the dependency graph
+        debug!(
+            "Building graph with {} symbols, {} files, {} reference files",
+            symbol_map.len(),
+            file_map.len(),
+            all_references.len()
+        );
         let graph = self.build_graph(symbol_map, name_map, file_map, all_references)?;
 
         let elapsed = start.elapsed();
@@ -678,7 +684,14 @@ impl BinaryRelationshipBridge {
             // Get the symbol hierarchy for this file
             let hierarchy = match file_hierarchies.get(&file_refs.file_path) {
                 Some(h) => h,
-                None => continue,
+                None => {
+                    debug!(
+                        "No hierarchy found for file path: {:?}. Available paths: {:?}",
+                        file_refs.file_path,
+                        file_hierarchies.keys().take(5).collect::<Vec<_>>()
+                    );
+                    continue;
+                }
             };
 
             for reference in &file_refs.references {

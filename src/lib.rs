@@ -68,6 +68,9 @@ pub mod relationship_query;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod binary_relationship_engine;
 
+// Path normalization utilities for consistent path handling
+pub mod path_utils;
+
 // Factory functions for production-ready components
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod factory;
