@@ -271,15 +271,72 @@ impl DependencyExtractor {
         )
         .context("Failed to create function calls query")?;
 
-        // Query for type references
+        // Query for type references - enhanced to catch more patterns
         let type_references = Query::new(
             &language,
             r#"
+            ; Basic type identifiers
             (type_identifier) @type_name
+            
+            ; Scoped type identifiers (module::Type)
             (scoped_type_identifier
                 name: (type_identifier) @type_name)
+            
+            ; Generic types (Vec<Type>, Arc<Type>)
             (generic_type
                 type: (type_identifier) @type_name)
+            (generic_type
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Static method calls (Type::method)
+            (call_expression
+                function: (scoped_identifier
+                    path: (identifier) @type_name))
+            (call_expression
+                function: (scoped_identifier
+                    path: (scoped_identifier
+                        path: (identifier) @type_name)))
+            
+            ; Field types in struct declarations and variable declarations
+            (field_declaration
+                type: (type_identifier) @type_name)
+            (field_declaration
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (field_declaration
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Variable declarations with explicit types
+            (let_declaration
+                type: (type_identifier) @type_name)
+            (let_declaration
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (let_declaration
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Function parameter types
+            (parameter
+                type: (type_identifier) @type_name)
+            (parameter
+                type: (generic_type
+                    type: (type_identifier) @type_name))
+            (parameter
+                type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
+            
+            ; Function return types
+            (function_item
+                return_type: (type_identifier) @type_name)
+            (function_item
+                return_type: (generic_type
+                    type: (type_identifier) @type_name))
+            (function_item
+                return_type: (scoped_type_identifier
+                    name: (type_identifier) @type_name))
             "#,
         )
         .context("Failed to create type references query")?;
@@ -841,6 +898,15 @@ impl DependencyExtractor {
             for reference in &analysis.references {
                 total_references += 1;
 
+                // Debug log reference processing
+                tracing::debug!(
+                    "Processing reference '{}' of type {:?} at line {} in {:?}",
+                    reference.name,
+                    reference.ref_type,
+                    reference.line,
+                    analysis.file_path
+                );
+
                 // Try to resolve the reference to a symbol
                 let resolved_id =
                     self.resolve_reference(&reference.name, &analysis.imports, &name_to_symbol);
@@ -1057,6 +1123,28 @@ impl DependencyExtractor {
                 if let Some(&id) = name_to_symbol.get(&qualified) {
                     return Some(id);
                 }
+            }
+        }
+
+        // FALLBACK: Try suffix matching for unqualified names
+        // This handles cases where tree-sitter extracts "FileStorage" but the symbol
+        // is stored as "kotadb::file_storage::FileStorage"
+        if !name.contains("::") {
+            // Find any symbol name that ends with "::name"
+            for (qualified_name, &id) in name_to_symbol {
+                if qualified_name.ends_with(&format!("::{}", name)) {
+                    tracing::debug!(
+                        "Resolved '{}' to qualified name '{}' via suffix matching",
+                        name,
+                        qualified_name
+                    );
+                    return Some(id);
+                }
+            }
+
+            // Also try case where the name appears at the end (for exact matches)
+            if let Some(&id) = name_to_symbol.get(name) {
+                return Some(id);
             }
         }
 
