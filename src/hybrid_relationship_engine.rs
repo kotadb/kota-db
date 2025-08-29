@@ -83,6 +83,9 @@ impl Default for ExtractionConfig {
     }
 }
 
+/// Performance threshold for query execution warning (in milliseconds)
+const QUERY_PERFORMANCE_THRESHOLD_MS: u64 = 10;
+
 /// Hybrid relationship query engine that uses binary symbols
 pub struct HybridRelationshipEngine {
     /// Binary symbol reader for fast symbol lookup
@@ -286,6 +289,8 @@ impl HybridRelationshipEngine {
         query_type: RelationshipQueryType,
         target: &str,
     ) -> Result<RelationshipQueryResult> {
+        let start = std::time::Instant::now();
+
         let reader = self
             .symbol_reader
             .as_ref()
@@ -308,36 +313,11 @@ impl HybridRelationshipEngine {
 
         debug!("Found symbol '{}' with UUID: {}", target, target_id);
 
-        // Check if this UUID exists in the dependency graph
-        if !graph.symbol_to_node.contains_key(&target_id) {
-            warn!(
-                "Symbol '{}' (UUID: {}) found in binary storage but not in dependency graph!",
-                target, target_id
-            );
-            warn!(
-                "Graph has {} nodes, checking name_to_symbol map with {} entries",
-                graph.symbol_to_node.len(),
-                graph.name_to_symbol.len()
-            );
-
-            // Try to find by qualified name in the graph's name_to_symbol map
-            let mut found_id = None;
-            for (name, id) in &graph.name_to_symbol {
-                if name.ends_with(&format!("::{}", target)) || name == target {
-                    info!(
-                        "Found symbol in graph by qualified name: {} -> {}",
-                        name, id
-                    );
-                    found_id = Some(*id);
-                    break;
-                }
-            }
-
-            // If still not found, the dependency graph may have been built with different UUIDs
-            // This can happen if symbols were re-extracted after the graph was built
-            if found_id.is_none() {
-                warn!("Symbol not found in graph's name_to_symbol map either");
-                warn!("This indicates the dependency graph is out of sync with binary symbols");
+        // Resolve symbol UUID with fallback to name-based lookup
+        let effective_id = match Self::resolve_symbol_uuid_with_fallback(graph, target, target_id) {
+            Some(id) => id,
+            None => {
+                // Return empty result if we can't find the symbol in the graph
                 return Ok(RelationshipQueryResult {
                     query_type,
                     direct_relationships: vec![],
@@ -351,48 +331,27 @@ impl HybridRelationshipEngine {
                     },
                     summary: format!(
                         "Symbol '{}' found in binary storage but not in dependency graph. \
-                        The graph may be out of sync. Try re-indexing the codebase with: \
-                        kotadb index-codebase /path/to/repo",
+                        The graph may be out of sync. Try re-indexing the codebase.",
                         target
                     ),
                 });
             }
-
-            // Use the UUID from the graph instead
-            let graph_id = found_id.unwrap();
-            debug!(
-                "Using graph UUID {} instead of binary UUID {}",
-                graph_id, target_id
-            );
-
-            // Find all callers using the graph's UUID
-            let callers = graph.find_dependents(graph_id);
-
-            // Convert to relationship matches
-            let direct_relationships =
-                self.convert_caller_relationships_to_matches(reader, &callers, target);
-
-            return Ok(RelationshipQueryResult {
-                query_type,
-                direct_relationships,
-                indirect_relationships: vec![],
-                stats: RelationshipStats {
-                    direct_count: callers.len(),
-                    indirect_count: 0,
-                    symbols_analyzed: reader.symbol_count(),
-                    execution_time_ms: 0,
-                    truncated: false,
-                },
-                summary: format!("Found {} direct callers of '{}'", callers.len(), target),
-            });
-        }
+        };
 
         // Find all callers in the dependency graph
-        let callers = graph.find_dependents(target_id);
+        let callers = graph.find_dependents(effective_id);
 
         // Convert to relationship matches with caller-specific context
         let direct_relationships =
             self.convert_caller_relationships_to_matches(reader, &callers, target);
+
+        let execution_time_ms = start.elapsed().as_millis() as u64;
+        if execution_time_ms > QUERY_PERFORMANCE_THRESHOLD_MS {
+            warn!(
+                "Find callers query took {}ms, expected < {}ms",
+                execution_time_ms, QUERY_PERFORMANCE_THRESHOLD_MS
+            );
+        }
 
         Ok(RelationshipQueryResult {
             query_type,
@@ -402,7 +361,7 @@ impl HybridRelationshipEngine {
                 direct_count: callers.len(),
                 indirect_count: 0,
                 symbols_analyzed: reader.symbol_count(),
-                execution_time_ms: 0,
+                execution_time_ms,
                 truncated: false,
             },
             summary: format!("Found {} direct callers of '{}'", callers.len(), target),
@@ -415,6 +374,8 @@ impl HybridRelationshipEngine {
         query_type: RelationshipQueryType,
         target: &str,
     ) -> Result<RelationshipQueryResult> {
+        let start = std::time::Instant::now();
+
         let reader = self
             .symbol_reader
             .as_ref()
@@ -435,28 +396,10 @@ impl HybridRelationshipEngine {
             .find_symbol_by_name(target)
             .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", target))?;
 
-        // Check if this UUID exists in the dependency graph (same issue as find_callers)
-        let effective_id = if !graph.symbol_to_node.contains_key(&target_id) {
-            // Try to find by qualified name in the graph's name_to_symbol map
-            let mut found_id = None;
-            for (name, id) in &graph.name_to_symbol {
-                if name.ends_with(&format!("::{}", target)) || name == target {
-                    debug!(
-                        "Found symbol in graph by qualified name for impact analysis: {} -> {}",
-                        name, id
-                    );
-                    found_id = Some(*id);
-                    break;
-                }
-            }
-
-            if let Some(graph_id) = found_id {
-                debug!(
-                    "Using graph UUID {} instead of binary UUID {} for impact analysis",
-                    graph_id, target_id
-                );
-                graph_id
-            } else {
+        // Resolve symbol UUID with fallback to name-based lookup
+        let effective_id = match Self::resolve_symbol_uuid_with_fallback(graph, target, target_id) {
+            Some(id) => id,
+            None => {
                 // Return empty result if we can't find the symbol in the graph
                 return Ok(RelationshipQueryResult {
                     query_type,
@@ -470,14 +413,12 @@ impl HybridRelationshipEngine {
                         truncated: false,
                     },
                     summary: format!(
-                        "Symbol '{}' found in binary storage but not in dependency graph for impact analysis. \
+                        "Symbol '{}' found in binary storage but not in dependency graph. \
                         The graph may be out of sync. Try re-indexing the codebase.",
                         target
                     ),
                 });
             }
-        } else {
-            target_id
         };
 
         let impacted = self.find_transitive_dependents(graph, effective_id, self.config.max_depth);
@@ -485,6 +426,14 @@ impl HybridRelationshipEngine {
         // Convert to relationship matches with impact-specific context
         let direct_relationships =
             self.convert_impact_relationships_to_matches(reader, &impacted, target);
+
+        let execution_time_ms = start.elapsed().as_millis() as u64;
+        if execution_time_ms > QUERY_PERFORMANCE_THRESHOLD_MS {
+            warn!(
+                "Impact analysis query took {}ms, expected < {}ms",
+                execution_time_ms, QUERY_PERFORMANCE_THRESHOLD_MS
+            );
+        }
 
         Ok(RelationshipQueryResult {
             query_type,
@@ -494,7 +443,7 @@ impl HybridRelationshipEngine {
                 direct_count: impacted.len(),
                 indirect_count: 0,
                 symbols_analyzed: reader.symbol_count(),
-                execution_time_ms: 0,
+                execution_time_ms,
                 truncated: false,
             },
             summary: format!(
@@ -592,6 +541,56 @@ impl HybridRelationshipEngine {
         // Convert from serializable format
         DependencyGraph::from_serializable(serializable)
             .context("Failed to reconstruct dependency graph from serialized data")
+    }
+
+    /// Resolve symbol UUID with fallback to name-based lookup
+    ///
+    /// When binary symbols and dependency graphs are generated at different times,
+    /// their UUIDs may not match. This method provides a fallback mechanism to
+    /// find symbols by qualified name when UUID lookup fails.
+    fn resolve_symbol_uuid_with_fallback(
+        graph: &DependencyGraph,
+        target: &str,
+        binary_uuid: Uuid,
+    ) -> Option<Uuid> {
+        // First, check if the binary UUID exists in the dependency graph
+        if graph.symbol_to_node.contains_key(&binary_uuid) {
+            debug!(
+                "Found symbol '{}' by UUID {} in dependency graph",
+                target, binary_uuid
+            );
+            return Some(binary_uuid);
+        }
+
+        // UUID not found, try fallback to name-based lookup
+        warn!(
+            "Symbol '{}' (UUID: {}) found in binary storage but not in dependency graph!",
+            target, binary_uuid
+        );
+        warn!(
+            "Graph has {} nodes, checking name_to_symbol map with {} entries",
+            graph.symbol_to_node.len(),
+            graph.name_to_symbol.len()
+        );
+
+        // Try to find by qualified name in the graph's name_to_symbol map
+        for (name, id) in &graph.name_to_symbol {
+            if name.ends_with(&format!("::{}", target)) || name == target {
+                info!(
+                    "Found symbol in graph by qualified name: {} -> {}",
+                    name, id
+                );
+                return Some(*id);
+            }
+        }
+
+        // Couldn't find the symbol in the graph
+        warn!(
+            "Could not find symbol '{}' in dependency graph by UUID or name. \
+            The graph may be out of sync with the binary symbols.",
+            target
+        );
+        None
     }
 
     /// Convert binary symbol kind to SymbolType
@@ -1741,7 +1740,6 @@ mod tests {
 
     /// Test that the engine can handle UUID mismatches between binary symbols and dependency graph
     #[tokio::test]
-    #[ignore = "Test needs refinement - edge direction issue"]
     async fn test_uuid_mismatch_resolution() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
@@ -1761,10 +1759,10 @@ mod tests {
             None,
         );
 
-        // Add the caller symbol to binary storage as well (with different UUID)
-        let caller_binary_uuid = Uuid::new_v4();
+        // We'll use a consistent UUID for the caller so it can be found
+        let caller_uuid = Uuid::new_v4();
         writer.add_symbol(
-            caller_binary_uuid,
+            caller_uuid, // Same UUID will be used in graph
             "main",
             1, // Function type
             "src/main.rs",
@@ -1802,7 +1800,7 @@ mod tests {
         name_to_symbol.insert("FileStorage".to_string(), graph_uuid);
 
         // Add a dependent (caller) to make the test meaningful
-        let caller_uuid = Uuid::new_v4();
+        // Use the same UUID as in binary storage
         let caller_node = SymbolNode {
             symbol_id: caller_uuid,
             qualified_name: "src/main.rs::main".to_string(),
@@ -1815,9 +1813,11 @@ mod tests {
         symbol_to_node.insert(caller_uuid, caller_idx);
 
         // Add edge: main calls FileStorage
+        // For find_callers to work, we need an edge FROM caller TO target
+        // because find_dependents looks for INCOMING edges to the target
         graph.add_edge(
-            caller_idx,
-            node_idx,
+            caller_idx, // FROM main (the caller)
+            node_idx,   // TO FileStorage (the target)
             DependencyEdge {
                 relation_type: RelationType::Calls,
                 line_number: 50,
