@@ -765,7 +765,7 @@ impl DependencyExtractor {
         language: SupportedLanguage,
     ) -> Result<Vec<CodeReference>> {
         tracing::info!("🎯 Extracting references for {:?} language", language);
-        
+
         let queries = self
             .queries
             .get(&language)
@@ -793,13 +793,13 @@ impl DependencyExtractor {
                         })?;
 
                         tracing::info!(
-                            "📝 Found {} '{}' at line {}: {:?}", 
-                            query_name, 
-                            text, 
+                            "📝 Found {} '{}' at line {}: {:?}",
+                            query_name,
+                            text,
                             pos.row + 1,
                             ref_type
                         );
-                        
+
                         references.push(CodeReference {
                             name: text.to_string(),
                             ref_type: ref_type.clone(),
@@ -1175,25 +1175,28 @@ impl DependencyExtractor {
         // is stored as "kotadb::file_storage::FileStorage"
         if !name.contains("::") {
             // Performance optimization: Only iterate if reasonable number of symbols
-            if name_to_symbol.len() < 10000 { // Threshold for direct iteration
+            if name_to_symbol.len() < 10000 {
+                // Threshold for direct iteration
                 // Find any symbol name that ends with "::name" (exact boundary match)
                 let pattern = format!("::{}", name);
                 let mut matches = Vec::new();
-                
+
                 for (qualified_name, &id) in name_to_symbol {
                     // Ensure it's a true suffix match with :: boundary
-                    if qualified_name.ends_with(&pattern) && 
-                       (qualified_name.len() == name.len() || 
-                        qualified_name.len() > pattern.len()) {
+                    if qualified_name.ends_with(&pattern)
+                        && (qualified_name.len() == name.len()
+                            || qualified_name.len() > pattern.len())
+                    {
                         matches.push((qualified_name.clone(), id));
-                        
+
                         // Early termination for performance
-                        if matches.len() > 5 { // Don't collect too many matches
+                        if matches.len() > 5 {
+                            // Don't collect too many matches
                             break;
                         }
                     }
                 }
-            
+
                 // Process matches
                 return self.process_suffix_matches(name, matches);
             } else {
@@ -1213,8 +1216,8 @@ impl DependencyExtractor {
 
         None
     }
-    
-    /// Process suffix matches for symbol resolution 
+
+    /// Process suffix matches for symbol resolution
     fn process_suffix_matches(&self, name: &str, matches: Vec<(String, Uuid)>) -> Option<Uuid> {
         // If we have exactly one match, use it
         if matches.len() == 1 {
