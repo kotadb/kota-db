@@ -100,6 +100,46 @@ pub enum SymbolType {
     Other(String),
 }
 
+impl std::fmt::Display for SymbolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SymbolType::Function => write!(f, "function"),
+            SymbolType::Method => write!(f, "method"),
+            SymbolType::Class => write!(f, "class"),
+            SymbolType::Struct => write!(f, "struct"),
+            SymbolType::Interface => write!(f, "interface"),
+            SymbolType::Enum => write!(f, "enum"),
+            SymbolType::Variable => write!(f, "variable"),
+            SymbolType::Constant => write!(f, "constant"),
+            SymbolType::Module => write!(f, "module"),
+            SymbolType::Import => write!(f, "import"),
+            SymbolType::Comment => write!(f, "comment"),
+            SymbolType::Other(s) => write!(f, "other({})", s),
+        }
+    }
+}
+
+impl TryFrom<u8> for SymbolType {
+    type Error = ();
+
+    /// Convert from binary representation back to SymbolType
+    /// This mapping matches the encoding used in git/ingestion.rs
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SymbolType::Other("unknown".to_string())),
+            1 => Ok(SymbolType::Function),
+            2 => Ok(SymbolType::Method),
+            3 => Ok(SymbolType::Class),
+            4 => Ok(SymbolType::Struct),
+            5 => Ok(SymbolType::Enum),
+            6 => Ok(SymbolType::Variable),
+            7 => Ok(SymbolType::Constant),
+            8 => Ok(SymbolType::Module),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Kind of symbol visibility/access
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolKind {
