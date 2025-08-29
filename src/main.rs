@@ -219,8 +219,18 @@ enum Commands {
         context: String,
     },
 
-    /// Show database statistics
-    Stats,
+    /// Show comprehensive database statistics (documents, symbols, relationships)
+    Stats {
+        /// Show only basic document statistics
+        #[arg(long, help = "Show only document count and size statistics")]
+        basic: bool,
+        /// Show detailed symbol analysis
+        #[arg(long, help = "Show symbol extraction and type breakdown")]
+        symbols: bool,
+        /// Show relationship and dependency data
+        #[arg(long, help = "Show relationship graph and dependency analysis")]
+        relationships: bool,
+    },
 
     /// Validate search functionality
     Validate,
@@ -327,10 +337,6 @@ enum Commands {
         )]
         limit: Option<usize>,
     },
-
-    /// Show statistics about extracted code symbols (functions, classes, variables)
-    #[cfg(feature = "tree-sitter-parsing")]
-    SymbolStats,
 
     /// Run performance benchmarks on database operations
     ///
@@ -973,6 +979,145 @@ async fn create_relationship_engine(
     Ok(hybrid_engine)
 }
 
+/// Display symbol statistics from the binary symbol database
+#[cfg(feature = "tree-sitter-parsing")]
+async fn show_symbol_statistics(db_path: &std::path::Path, quiet: bool) -> Result<()> {
+    use std::collections::HashMap;
+
+    let symbol_db_path = db_path.join("symbols.kota");
+
+    if !symbol_db_path.exists() {
+        return Ok(()); // No symbols to show
+    }
+
+    qprintln!(quiet, "\n🔤 Symbol Analysis:");
+
+    // Read binary symbols
+    let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
+    let binary_symbol_count = reader.symbol_count();
+
+    // Collect statistics from binary symbols
+    let mut symbols_by_type: HashMap<String, usize> = HashMap::new();
+    let mut symbols_by_language: HashMap<String, usize> = HashMap::new();
+    let mut unique_files = std::collections::HashSet::new();
+
+    for symbol in reader.iter_symbols() {
+        // Count by type
+        let type_name = format!("{}", symbol.kind);
+        *symbols_by_type.entry(type_name).or_insert(0) += 1;
+
+        // Count by language (inferred from file extension)
+        if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
+            unique_files.insert(file_path.clone());
+            if let Some(ext) = std::path::Path::new(&file_path).extension() {
+                let lang = match ext.to_str() {
+                    Some("rs") => "Rust",
+                    Some("py") => "Python",
+                    Some("js") | Some("jsx") => "JavaScript",
+                    Some("ts") | Some("tsx") => "TypeScript",
+                    Some("go") => "Go",
+                    Some("java") => "Java",
+                    Some("cpp") | Some("cc") | Some("cxx") => "C++",
+                    Some("c") | Some("h") => "C",
+                    _ => "Other",
+                };
+                *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    qprintln!(quiet, "   Path: {:?}", symbol_db_path);
+    qprintln!(quiet, "   Total symbols: {}", binary_symbol_count);
+    qprintln!(quiet, "   Total files: {}", unique_files.len());
+
+    if !symbols_by_type.is_empty() {
+        qprintln!(quiet, "\n📝 Symbols by Type:");
+        let mut types: Vec<_> = symbols_by_type.into_iter().collect();
+        types.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+        for (symbol_type, count) in types {
+            qprintln!(quiet, "   {}: {}", symbol_type, count);
+        }
+    }
+
+    if !symbols_by_language.is_empty() {
+        qprintln!(quiet, "\n🌐 Symbols by Language:");
+        let mut langs: Vec<_> = symbols_by_language.into_iter().collect();
+        langs.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+        for (language, count) in langs {
+            qprintln!(quiet, "   {}: {}", language, count);
+        }
+    }
+
+    if binary_symbol_count > 0 {
+        qprintln!(quiet, "\n📍 Binary Symbol Database:");
+        qprintln!(quiet, "   Format: KotaDB Binary Format (.kota)");
+        qprintln!(quiet, "   Performance: 10x faster than JSON");
+        qprintln!(quiet, "   Features: Memory-mapped, zero-copy access");
+    }
+
+    Ok(())
+}
+
+/// Display relationship and dependency graph statistics
+#[cfg(feature = "tree-sitter-parsing")]
+async fn show_relationship_statistics(db_path: &std::path::Path, quiet: bool) -> Result<()> {
+    qprintln!(quiet, "\n🔗 Relationship Analysis:");
+
+    // Check for binary dependency graph
+    let graph_db_path = db_path.join("dependency_graph.bin");
+    if graph_db_path.exists() {
+        match std::fs::read(&graph_db_path) {
+            Ok(graph_binary) => {
+                match bincode::deserialize::<
+                    kotadb::dependency_extractor::SerializableDependencyGraph,
+                >(&graph_binary)
+                {
+                    Ok(serializable) => {
+                        qprintln!(quiet, "   Path: {:?}", graph_db_path);
+                        qprintln!(
+                            quiet,
+                            "   Total relationships: {}",
+                            serializable.stats.edge_count
+                        );
+                        qprintln!(
+                            quiet,
+                            "   Total symbols in graph: {}",
+                            serializable.stats.node_count
+                        );
+                    }
+                    Err(e) => {
+                        qprintln!(
+                            quiet,
+                            "   ⚠️  Failed to deserialize dependency graph: {}",
+                            e
+                        );
+                        qprintln!(
+                            quiet,
+                            "   Unable to read dependency graph. Re-index to rebuild."
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                qprintln!(quiet, "   ⚠️  Failed to read dependency graph: {}", e);
+                qprintln!(
+                    quiet,
+                    "   Unable to read dependency graph. Re-index to rebuild."
+                );
+            }
+        }
+    } else {
+        qprintln!(quiet, "   No dependency graph found.");
+        qprintln!(
+            quiet,
+            "\n   💡 Tip: To build dependency graph, re-index with symbol extraction:"
+        );
+        qprintln!(quiet, "      kotadb ingest-repo /path/to/repo");
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse CLI args first to get verbose flag
@@ -1344,13 +1489,59 @@ async fn main() -> Result<()> {
             }
 
 
-            Commands::Stats => {
-                let (count, total_size) = db.stats().await?;
-                qprintln!(quiet, "Database Statistics");
-                qprintln!(quiet, "  total_documents: {count}");
-                qprintln!(quiet, "  total_size: {total_size} bytes");
-                if count > 0 {
-                    qprintln!(quiet, "  average_size: {} bytes", total_size / count);
+            Commands::Stats { basic, symbols, relationships } => {
+                // Determine what to show - if no flags specified, show everything
+                let show_basic = basic || (!symbols && !relationships);
+                let show_symbols = symbols || (!basic && !relationships);
+                let show_relationships = relationships || (!basic && !symbols);
+
+                // Show basic document statistics
+                if show_basic {
+                    let (count, total_size) = db.stats().await?;
+                    qprintln!(quiet, "📊 Database Statistics");
+                    qprintln!(quiet, "═══════════════════════════════");
+                    qprintln!(quiet, "\n📄 Document Storage:");
+                    qprintln!(quiet, "   Total documents: {count}");
+                    qprintln!(quiet, "   Total size: {total_size} bytes");
+                    if count > 0 {
+                        qprintln!(quiet, "   Average size: {} bytes", total_size / count);
+                    }
+                }
+
+                // Show symbol statistics (if tree-sitter feature is enabled)
+                #[cfg(feature = "tree-sitter-parsing")]
+                if show_symbols {
+                    show_symbol_statistics(&cli.db_path, quiet).await?;
+                }
+
+                // Show relationship statistics
+                #[cfg(feature = "tree-sitter-parsing")]
+                if show_relationships {
+                    show_relationship_statistics(&cli.db_path, quiet).await?;
+                }
+
+                // Add helpful tips and next steps
+                #[cfg(feature = "tree-sitter-parsing")]
+                if show_symbols || show_relationships {
+                    let symbol_db_path = cli.db_path.join("symbols.kota");
+                    if !symbol_db_path.exists() {
+                        qprintln!(quiet, "\n❌ No symbols found in database.");
+                        qprintln!(quiet, "   Required steps:");
+                        qprintln!(quiet, "   1. Index a codebase: kotadb ingest-repo /path/to/repo");
+                        qprintln!(quiet, "   2. Verify indexing: kotadb stats --symbols");
+                    } else {
+                        // Show success tips if symbols exist
+                        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
+                        let binary_symbol_count = reader.symbol_count();
+
+                        if binary_symbol_count > 0 {
+                            qprintln!(quiet, "\n✅ Codebase intelligence ready! Try these commands:");
+                            qprintln!(quiet, "   • find-callers <symbol>     - Find what calls a function");
+                            qprintln!(quiet, "   • analyze-impact <symbol>   - Analyze change impact");
+                            qprintln!(quiet, "   • search-symbols <pattern>  - Search code symbols");
+                            qprintln!(quiet, "   • search-code <query>       - Full-text code search");
+                        }
+                    }
                 }
             }
 
@@ -1911,127 +2102,6 @@ async fn main() -> Result<()> {
                 }
             }
 
-            #[cfg(feature = "tree-sitter-parsing")]
-            Commands::SymbolStats => {
-                println!("📊 Symbol Storage Statistics");
-                println!("═══════════════════════════════");
-
-                // Check for binary symbols (the only symbol storage now)
-                let symbol_db_path = cli.db_path.join("symbols.kota");
-
-                if !symbol_db_path.exists() {
-                    println!("\n❌ No symbols found in database.");
-                    println!("   Required steps:");
-                    println!("   1. Index a codebase: kotadb ingest-repo /path/to/repo");
-                    println!("   2. Verify indexing: kotadb symbol-stats");
-                    return Ok(());
-                }
-
-                // Read binary symbols
-                let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
-                let binary_symbol_count = reader.symbol_count();
-
-                // Collect statistics from binary symbols
-                let mut symbols_by_type: HashMap<String, usize> = HashMap::new();
-                let mut symbols_by_language: HashMap<String, usize> = HashMap::new();
-                let mut unique_files = std::collections::HashSet::new();
-
-                for symbol in reader.iter_symbols() {
-                    // Count by type
-                    let type_name = format!("{}", symbol.kind);
-                    *symbols_by_type.entry(type_name).or_insert(0) += 1;
-
-                    // Count by language (inferred from file extension)
-                    if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
-                        unique_files.insert(file_path.clone());
-                        if let Some(ext) = std::path::Path::new(&file_path).extension() {
-                            let lang = match ext.to_str() {
-                                Some("rs") => "Rust",
-                                Some("py") => "Python",
-                                Some("js") | Some("jsx") => "JavaScript",
-                                Some("ts") | Some("tsx") => "TypeScript",
-                                Some("go") => "Go",
-                                Some("java") => "Java",
-                                Some("cpp") | Some("cc") | Some("cxx") => "C++",
-                                Some("c") | Some("h") => "C",
-                                _ => "Other",
-                            };
-                            *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
-                        }
-                    }
-                }
-
-                println!("\n📦 Symbol Storage Location:");
-                println!("   Path: {:?}", symbol_db_path);
-
-                println!("\n🔤 Symbol Statistics:");
-                println!("   Total symbols: {}", binary_symbol_count);
-                println!("   Total files: {}", unique_files.len());
-
-                if !symbols_by_type.is_empty() {
-                    println!("\n📝 Symbols by Type:");
-                    let mut types: Vec<_> = symbols_by_type.into_iter().collect();
-                    types.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
-                    for (symbol_type, count) in types {
-                        println!("   {}: {}", symbol_type, count);
-                    }
-                }
-
-                if !symbols_by_language.is_empty() {
-                    println!("\n🌐 Symbols by Language:");
-                    let mut langs: Vec<_> = symbols_by_language.into_iter().collect();
-                    langs.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
-                    for (language, count) in langs {
-                        println!("   {}: {}", language, count);
-                    }
-                }
-
-                println!("\n🔗 Dependency Graph:");
-                // Check for binary dependency graph first (new system)
-                let graph_db_path = cli.db_path.join("dependency_graph.bin");
-                if graph_db_path.exists() {
-                    match std::fs::read(&graph_db_path) {
-                        Ok(graph_binary) => {
-                            match bincode::deserialize::<kotadb::dependency_extractor::SerializableDependencyGraph>(&graph_binary) {
-                                Ok(serializable) => {
-                                    println!("   Total relationships: {}", serializable.stats.edge_count);
-                                    println!("   Total symbols in graph: {}", serializable.stats.node_count);
-                                }
-                                Err(e) => {
-                                    println!("   ⚠️  Failed to deserialize dependency graph: {}", e);
-                                    println!("   Unable to read dependency graph. Re-index to rebuild.");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("   ⚠️  Failed to read dependency graph: {}", e);
-                            println!("   Unable to read dependency graph. Re-index to rebuild.");
-                        }
-                    }
-                } else {
-                    println!("   No dependency graph found.");
-                    println!("\n   💡 Tip: To build dependency graph, re-index with symbol extraction:");
-                    println!("      kotadb ingest-repo /path/to/repo");
-                }
-
-                if binary_symbol_count == 0 {
-                    println!("\n💡 Tip: Run 'ingest-repo' on a repository to extract symbols");
-                } else {
-                    println!("\n✅ Symbol storage is ready for relationship queries!");
-                    println!("💡 Try commands like:");
-                    println!("   • find-callers <symbol>");
-                    println!("   • analyze-impact <symbol>");
-                    println!("   • search-symbols <pattern>");
-                }
-
-                // Show binary symbol database info
-                if binary_symbol_count > 0 {
-                    println!("\n📍 Binary Symbol Database:");
-                    println!("   Format: KotaDB Binary Format (.kota)");
-                    println!("   Performance: 10x faster than JSON");
-                    println!("   Features: Memory-mapped, zero-copy access");
-                }
-            }
 
             Commands::Benchmark {
                 operations,
