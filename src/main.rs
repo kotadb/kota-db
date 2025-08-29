@@ -934,15 +934,15 @@ mod tests {
 #[cfg(feature = "tree-sitter-parsing")]
 async fn create_relationship_engine(
     db_path: &Path,
-) -> Result<kotadb::hybrid_relationship_engine::HybridRelationshipEngine> {
-    // Create hybrid relationship engine with direct binary symbol access
+) -> Result<kotadb::binary_relationship_engine::BinaryRelationshipEngine> {
+    // Create binary relationship engine with direct binary symbol access
     // The engine loads symbols directly from symbols.kota and dependency_graph.bin
     let config = kotadb::relationship_query::RelationshipQueryConfig::default();
-    let hybrid_engine =
-        kotadb::hybrid_relationship_engine::HybridRelationshipEngine::new(db_path, config).await?;
+    let binary_engine =
+        kotadb::binary_relationship_engine::BinaryRelationshipEngine::new(db_path, config).await?;
 
     // Check if we have any symbols or relationships loaded
-    let stats = hybrid_engine.get_stats();
+    let stats = binary_engine.get_stats();
     if !stats.using_binary_path && stats.binary_symbols_loaded == 0 {
         return Err(anyhow::anyhow!(
             "No symbols found in database. Required steps:\n\
@@ -952,7 +952,7 @@ async fn create_relationship_engine(
         ));
     }
 
-    Ok(hybrid_engine)
+    Ok(binary_engine)
 }
 
 /// Display symbol statistics from the binary symbol database
