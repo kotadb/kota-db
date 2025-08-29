@@ -1932,6 +1932,7 @@ async fn main() -> Result<()> {
 
                 // Search symbols
                 let mut matches = Vec::new();
+                let mut seen_symbols = std::collections::HashSet::new();
                 let pattern_lower = pattern.to_lowercase();
 
                 for packed_symbol in reader.iter_symbols() {
@@ -1962,9 +1963,15 @@ async fn main() -> Result<()> {
                             let file_path = reader.get_symbol_file_path(&packed_symbol)
                                 .unwrap_or_else(|_| "<unknown>".to_string());
 
-                            matches.push((symbol_name, packed_symbol, file_path));
-                            if matches.len() >= limit {
-                                break;
+                            // Create a unique key for deduplication (name + file + line)
+                            let unique_key = format!("{}:{}:{}", symbol_name, file_path, packed_symbol.start_line);
+
+                            // Only add if we haven't seen this exact symbol before
+                            if seen_symbols.insert(unique_key) {
+                                matches.push((symbol_name, packed_symbol, file_path));
+                                if matches.len() >= limit {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1988,11 +1995,10 @@ async fn main() -> Result<()> {
                     }
 
                     for (name, symbol, file_path) in matches {
-                        println!("{}", name);
+                        // Always show the qualified symbol with file location
+                        println!("{} - {}:{}", name, file_path, symbol.start_line);
                         if !quiet {
                             println!("  type: {}", symbol.kind);
-                            println!("  file: {}", file_path);
-                            println!("  line: {}", symbol.start_line);
                             println!();
                         }
                     }
