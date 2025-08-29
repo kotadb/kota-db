@@ -26,6 +26,115 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+/// Match a string against a wildcard pattern
+/// Supports patterns like "*.rs", "*Controller.rs", "test_*", "create_*", etc.
+/// Copied from primary_index.rs to make it available for symbol search
+fn matches_wildcard_pattern(text: &str, pattern: &str) -> bool {
+    // Handle pure wildcard
+    if pattern == "*" {
+        return true;
+    }
+
+    // Split pattern by '*' to get fixed parts
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // Handle patterns with wildcards
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue; // Skip empty parts (from consecutive * or leading/trailing *)
+        }
+
+        // First part must match at beginning unless pattern starts with *
+        if i == 0 && !pattern.starts_with('*') {
+            if !text.starts_with(part) {
+                return false;
+            }
+            pos = part.len();
+        }
+        // Last part must match at end unless pattern ends with *
+        else if i == parts.len() - 1 && !pattern.ends_with('*') {
+            if !text.ends_with(part) {
+                return false;
+            }
+        }
+        // Middle parts or wildcard-bounded parts can appear anywhere after current position
+        else if let Some(found_pos) = text[pos..].find(part) {
+            pos += found_pos + part.len();
+        } else {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod wildcard_tests {
+    use super::*;
+
+    #[test]
+    fn test_matches_wildcard_pattern() {
+        // Test pure wildcard
+        assert!(matches_wildcard_pattern("anything", "*"));
+        assert!(matches_wildcard_pattern("create_file_storage", "*"));
+        assert!(matches_wildcard_pattern("", "*"));
+
+        // Test prefix wildcard patterns
+        assert!(matches_wildcard_pattern("create_file_storage", "create_*"));
+        assert!(matches_wildcard_pattern("create_index", "create_*"));
+        assert!(matches_wildcard_pattern("create_", "create_*"));
+        assert!(!matches_wildcard_pattern("make_create", "create_*"));
+        assert!(!matches_wildcard_pattern("file_storage", "create_*"));
+
+        // Test suffix wildcard patterns
+        assert!(matches_wildcard_pattern("file_storage", "*_storage"));
+        assert!(matches_wildcard_pattern("memory_storage", "*_storage"));
+        assert!(matches_wildcard_pattern("_storage", "*_storage"));
+        assert!(!matches_wildcard_pattern("storage_file", "*_storage"));
+        assert!(!matches_wildcard_pattern("file_index", "*_storage"));
+
+        // Test middle wildcard patterns
+        assert!(matches_wildcard_pattern("create_file_storage", "*file*"));
+        assert!(matches_wildcard_pattern("file", "*file*"));
+        assert!(matches_wildcard_pattern("myfile", "*file*"));
+        assert!(matches_wildcard_pattern("filetest", "*file*"));
+        assert!(matches_wildcard_pattern("myfiletest", "*file*"));
+        assert!(!matches_wildcard_pattern("storage", "*file*"));
+
+        // Test exact matches (no wildcards)
+        assert!(matches_wildcard_pattern(
+            "create_file_storage",
+            "create_file_storage"
+        ));
+        assert!(!matches_wildcard_pattern(
+            "create_file_storage",
+            "create_index"
+        ));
+        assert!(!matches_wildcard_pattern(
+            "create_index",
+            "create_file_storage"
+        ));
+
+        // Test complex patterns
+        assert!(matches_wildcard_pattern("BinaryTrigramIndex", "*Index"));
+        assert!(matches_wildcard_pattern("PrimaryIndex", "*Index"));
+        assert!(!matches_wildcard_pattern("IndexHelper", "*Index"));
+
+        // Test multiple wildcards
+        assert!(matches_wildcard_pattern(
+            "create_file_storage_impl",
+            "create_*_*"
+        ));
+        assert!(matches_wildcard_pattern(
+            "create_memory_index_impl",
+            "create_*_*"
+        ));
+        assert!(!matches_wildcard_pattern("create_file", "create_*_*"));
+        assert!(!matches_wildcard_pattern("make_file_storage", "create_*_*"));
+    }
+}
+
 #[derive(Parser)]
 #[command(
     author,
@@ -1654,8 +1763,18 @@ async fn main() -> Result<()> {
                 for packed_symbol in reader.iter_symbols() {
                     // Get the symbol name
                     if let Ok(symbol_name) = reader.get_symbol_name(&packed_symbol) {
-                        // Match against pattern (case-insensitive)
-                        if symbol_name.to_lowercase().contains(&pattern_lower) {
+                        let symbol_name_lower = symbol_name.to_lowercase();
+
+                        // Match against pattern - check for wildcards first, then substring
+                        let is_match = if pattern_lower.contains('*') {
+                            // Use wildcard pattern matching if pattern contains '*'
+                            matches_wildcard_pattern(&symbol_name_lower, &pattern_lower)
+                        } else {
+                            // Use substring matching for patterns without wildcards
+                            symbol_name_lower.contains(&pattern_lower)
+                        };
+
+                        if is_match {
                             // Filter by type if specified
                             if let Some(ref filter_type) = symbol_type {
                                 let filter_lower = filter_type.to_lowercase();
