@@ -167,8 +167,9 @@ struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
-    /// Suppress all non-essential output for LLM-friendly results (ERROR level logging only)
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    /// Suppress all non-essential output for LLM-friendly results (default: true for AI assistants)
+    /// Use --quiet=false to show detailed output
+    #[arg(short, long, global = true, conflicts_with = "verbose", default_value = "true", action = clap::ArgAction::Set)]
     quiet: bool,
 
     /// Database directory path
@@ -293,10 +294,11 @@ enum Commands {
         symbol_type: Option<String>,
     },
 
-    /// Find all places where a symbol (function, class, variable) is called or referenced
+    /// Find all places where a symbol is referenced (includes function calls, type usage, struct instantiations)
     #[cfg(feature = "tree-sitter-parsing")]
     FindCallers {
         /// Name or qualified name of the target symbol (e.g., 'FileStorage' or 'storage::FileStorage')
+        /// Note: Includes constructor calls (Type::new), type annotations, and parameter types
         target: String,
         /// Maximum number of results to return (default: unlimited)
         #[arg(
