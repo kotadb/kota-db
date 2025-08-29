@@ -135,9 +135,15 @@ init-db path="./test-data":
   mkdir -p {{path}}
   KOTADB_DATA_DIR={{path}} cargo run --bin kotadb -- stats
 
-# Benchmark database operations
+# Benchmark codebase intelligence operations
 db-bench:
-  cargo bench --features bench
+  @echo "Running KotaDB Codebase Intelligence Benchmarks"
+  @echo "Testing: Repository indexing, code search, symbol queries, relationship analysis"
+  @echo ""
+  cargo bench --features bench --bench codebase_intelligence_bench
+  @echo ""
+  @echo "Running resource usage and concurrent operation benchmarks"
+  cargo bench --features bench --bench resource_usage_bench
 
 # === Container Development ===
 
