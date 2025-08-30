@@ -360,6 +360,8 @@ impl BinaryRelationshipBridge {
         // Extract references based on language
         let references = match language {
             SupportedLanguage::Rust => self.extract_rust_references(&tree, content)?,
+            SupportedLanguage::TypeScript => self.extract_typescript_references(&tree, content)?,
+            SupportedLanguage::JavaScript => self.extract_javascript_references(&tree, content)?,
         };
 
         // Return parser to pool
@@ -805,6 +807,34 @@ impl BinaryRelationshipBridge {
         }
     }
 
+    /// Extract references from TypeScript code (stub implementation)
+    fn extract_typescript_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        // TODO: Implement TypeScript-specific reference extraction
+        // For now, return empty references as a stub
+        tracing::warn!(
+            "TypeScript reference extraction not yet implemented, returning empty references"
+        );
+        Ok(Vec::new())
+    }
+
+    /// Extract references from JavaScript code (stub implementation)
+    fn extract_javascript_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        // TODO: Implement JavaScript-specific reference extraction
+        // For now, return empty references as a stub
+        tracing::warn!(
+            "JavaScript reference extraction not yet implemented, returning empty references"
+        );
+        Ok(Vec::new())
+    }
+
     /// Return a parser to the pool
     fn return_parser(&self, parser: Parser) {
         let mut pool = self.parser_pool.lock().unwrap();
@@ -815,6 +845,8 @@ impl BinaryRelationshipBridge {
     fn set_parser_language(&self, parser: &mut Parser, language: SupportedLanguage) -> Result<()> {
         let ts_language = match language {
             SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+            SupportedLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            SupportedLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
         };
 
         parser

@@ -1034,6 +1034,9 @@ impl SymbolStorage {
                 SymbolType::Constant => "constant",
                 SymbolType::Module => "module",
                 SymbolType::Import => "import",
+                SymbolType::Export => "export",
+                SymbolType::Type => "type",
+                SymbolType::Component => "component",
                 SymbolType::Comment => "comment",
                 SymbolType::Other(s) => s,
             }
