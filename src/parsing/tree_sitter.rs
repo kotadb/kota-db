@@ -584,7 +584,9 @@ impl CodeParser {
             Some(SymbolType::Interface) // TypeScript interfaces and type aliases
         } else if get_enum_nodes().contains(node_type) {
             Some(SymbolType::Enum)
-        } else if get_variable_nodes().contains(node_type) || PYTHON_VARIABLE_NODES.contains(&node_type) {
+        } else if get_variable_nodes().contains(node_type)
+            || PYTHON_VARIABLE_NODES.contains(&node_type)
+        {
             Some(SymbolType::Variable)
         } else if get_const_nodes().contains(node_type) {
             Some(SymbolType::Constant)

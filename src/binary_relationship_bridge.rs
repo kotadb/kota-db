@@ -1295,10 +1295,13 @@ impl BinaryRelationshipBridge {
                 }
 
                 // Skip Python private/internal names except important ones
-                if symbol_name.starts_with('_') && symbol_name != "__init__" && symbol_name != "__main__" {
+                if symbol_name.starts_with('_')
+                    && symbol_name != "__init__"
+                    && symbol_name != "__main__"
+                {
                     continue;
                 }
-                
+
                 // Map Python-specific captures to reference types
                 let reference_type = match *capture_name {
                     "function_name" | "async_function_name" => ReferenceType::FunctionCall,
