@@ -95,6 +95,7 @@ kota-db-data/
 # Benchmark results
 /benchmarks/results/
 criterion/
+benchmark-data/
 
 # Local development
 .local/

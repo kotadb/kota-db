@@ -424,6 +424,11 @@ impl LLMSearchEngine {
 
     /// Calculate proximity score (how close query terms are to each other)
     fn calculate_proximity_score(&self, content_lower: &str, query: &str) -> f32 {
+        // Handle empty content edge case
+        if content_lower.is_empty() {
+            return 0.0;
+        }
+
         let terms: Vec<&str> = query.split_whitespace().collect();
         if terms.len() < 2 {
             return 0.0; // No proximity for single terms
@@ -441,10 +446,36 @@ impl LLMSearchEngine {
                     }
 
                     // Search in a window around this term
-                    let window_start =
+                    // Use UTF-8 aware slicing to avoid character boundary issues
+                    let window_start_target =
                         pos.saturating_sub(self.context_config.proximity_window_size);
-                    let window_end = (pos + self.context_config.proximity_window_size * 2)
-                        .min(content_lower.len());
+                    let window_end_target =
+                        (pos + term.len() + self.context_config.proximity_window_size)
+                            .min(content_lower.len());
+
+                    // Find valid UTF-8 boundaries
+                    let window_start = if window_start_target == 0 {
+                        0
+                    } else {
+                        // Find the start of the character at or before window_start_target
+                        let mut start = window_start_target;
+                        while start > 0 && !content_lower.is_char_boundary(start) {
+                            start -= 1;
+                        }
+                        start
+                    };
+
+                    let window_end = if window_end_target == content_lower.len() {
+                        content_lower.len()
+                    } else {
+                        // Find the start of the character at or after window_end_target
+                        let mut end = window_end_target;
+                        while end < content_lower.len() && !content_lower.is_char_boundary(end) {
+                            end += 1;
+                        }
+                        end
+                    };
+
                     let window = &content_lower[window_start..window_end];
 
                     if window.contains(other_term) {
@@ -991,9 +1022,10 @@ impl LLMSearchEngine {
 
     /// Compress a search result to fit within token constraints
     async fn compress_result(&self, result: &LLMSearchResult) -> Result<LLMSearchResult> {
-        // Create a compressed version with shorter snippet
-        let compressed_snippet = if result.content_snippet.len() > 200 {
-            format!("{}...", &result.content_snippet[..200])
+        // Create a compressed version with shorter snippet using UTF-8 safe truncation
+        let compressed_snippet = if result.content_snippet.chars().count() > 200 {
+            let truncated: String = result.content_snippet.chars().take(200).collect();
+            format!("{}...", truncated)
         } else {
             result.content_snippet.clone()
         };

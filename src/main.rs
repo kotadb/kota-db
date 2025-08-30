@@ -164,9 +164,8 @@ struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
-    /// Suppress all non-essential output for LLM-friendly results (default: true for AI assistants)
-    /// Use --quiet=false to show detailed output
-    #[arg(short, long, global = true, conflicts_with = "verbose", default_value = "true", action = clap::ArgAction::Set)]
+    /// Suppress detailed output (default: false to show benchmark progress)
+    #[arg(short, long, global = true, conflicts_with = "verbose", default_value = "false", action = clap::ArgAction::Set)]
     quiet: bool,
 
     /// Database directory path
@@ -670,7 +669,45 @@ async fn run_benchmarks(
             rebuild_duration.as_secs_f64()
         );
 
-        // Test search operations
+        results.push(BenchmarkResult {
+            operation: "index_rebuild".to_string(),
+            total_operations: 1,
+            total_duration: rebuild_duration,
+            ops_per_second: 1.0 / rebuild_duration.as_secs_f64(),
+            avg_latency_ms: rebuild_duration.as_secs_f64() * 1000.0,
+            min_latency_ms: rebuild_duration.as_secs_f64() * 1000.0,
+            max_latency_ms: rebuild_duration.as_secs_f64() * 1000.0,
+        });
+    }
+
+    // Search benchmarks
+    if benchmark_type == "search" || benchmark_type == "all" {
+        qprintln!(quiet, "\n🔍 Search Benchmarks");
+
+        // Ensure we have documents and indices
+        let all_docs = database.storage.lock().await.list_all().await?;
+        if all_docs.is_empty() {
+            qprintln!(
+                quiet,
+                "   ⚠️  No documents found. Creating test documents..."
+            );
+            // Create some test documents
+            for i in 0..operations.min(100) {
+                let doc = DocumentBuilder::new()
+                    .path(format!("benchmark/doc_{}.md", i))?
+                    .title(format!("Benchmark Document {}", i))?
+                    .content(
+                        format!("Benchmark document {} content with some test data", i).as_bytes(),
+                    )
+                    .build()?;
+                database.storage.lock().await.insert(doc).await?;
+            }
+        }
+
+        // Rebuild indices to ensure search will work
+        qprintln!(quiet, "   Rebuilding indices for search benchmarks...");
+        database.rebuild_indices().await?;
+
         qprintln!(quiet, "   Testing search operations...");
 
         let search_limit = operations.min(max_search_queries);
