@@ -284,6 +284,7 @@ impl RepositoryIngester {
 
                     for symbol in symbols {
                         // Convert symbol type to byte representation
+                        // Mapping must match TryFrom<u8> implementation in tree_sitter.rs
                         let kind = match symbol.symbol_type {
                             crate::parsing::SymbolType::Function => 1,
                             crate::parsing::SymbolType::Method => 2,
@@ -293,7 +294,13 @@ impl RepositoryIngester {
                             crate::parsing::SymbolType::Variable => 6,
                             crate::parsing::SymbolType::Constant => 7,
                             crate::parsing::SymbolType::Module => 8,
-                            _ => 0,
+                            crate::parsing::SymbolType::Import => 9,
+                            crate::parsing::SymbolType::Export => 10,
+                            crate::parsing::SymbolType::Type => 11,
+                            crate::parsing::SymbolType::Component => 12,
+                            crate::parsing::SymbolType::Interface => 13,
+                            crate::parsing::SymbolType::Comment => 14,
+                            crate::parsing::SymbolType::Other(_) => 0,
                         };
 
                         // TODO: Implement parent relationship tracking
