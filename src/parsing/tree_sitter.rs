@@ -181,9 +181,9 @@ static SPECIAL_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
 fn get_special_nodes() -> &'static HashSet<&'static str> {
     SPECIAL_NODES.get_or_init(|| {
         HashSet::from_iter([
-            "trait_item",               // Rust traits
-            "impl_item",                // Rust implementations
-            "type_alias_declaration",   // TypeScript type aliases
+            "trait_item",             // Rust traits
+            "impl_item",              // Rust implementations
+            "type_alias_declaration", // TypeScript type aliases
         ])
     })
 }
@@ -568,7 +568,7 @@ impl CodeParser {
             // Handle special nodes with specific logic
             match node_type {
                 "trait_item" => Some(SymbolType::Interface), // Rust traits
-                "impl_item" => Some(SymbolType::Class),     // Rust implementations
+                "impl_item" => Some(SymbolType::Class),      // Rust implementations
                 "type_alias_declaration" => Some(SymbolType::Type), // TypeScript type aliases
                 _ => None,
             }

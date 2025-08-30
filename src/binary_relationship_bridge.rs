@@ -930,7 +930,8 @@ impl BinaryRelationshipBridge {
         .context("Failed to create TypeScript query")?;
 
         let mut query_cursor = tree_sitter::QueryCursor::new();
-        let mut matches = query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
 
         while let Some(query_match) = matches.next() {
             for capture in query_match.captures {
@@ -948,7 +949,9 @@ impl BinaryRelationshipBridge {
                 let reference_type = match *capture_name {
                     "function_name" => ReferenceType::FunctionCall,
                     "method_name" => ReferenceType::MethodCall,
-                    "type_name" | "class_name" | "interface_name" | "type_alias_name" => ReferenceType::TypeUsage,
+                    "type_name" | "class_name" | "interface_name" | "type_alias_name" => {
+                        ReferenceType::TypeUsage
+                    }
                     "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
                     "variable_name" | "param_name" => ReferenceType::FieldAccess,
                     "enum_name" => ReferenceType::TypeUsage,
@@ -969,11 +972,8 @@ impl BinaryRelationshipBridge {
             }
         }
 
-        tracing::debug!(
-            "Extracted {} TypeScript references",
-            references.len()
-        );
-        
+        tracing::debug!("Extracted {} TypeScript references", references.len());
+
         Ok(references)
     }
 
@@ -1120,7 +1120,8 @@ impl BinaryRelationshipBridge {
         .context("Failed to create JavaScript query")?;
 
         let mut query_cursor = tree_sitter::QueryCursor::new();
-        let mut matches = query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
 
         while let Some(query_match) = matches.next() {
             for capture in query_match.captures {
@@ -1131,10 +1132,11 @@ impl BinaryRelationshipBridge {
                     .unwrap_or(&"unknown");
 
                 let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
-                if symbol_name.is_empty() 
+                if symbol_name.is_empty()
                     || symbol_name.chars().all(char::is_whitespace)
                     || symbol_name.len() > 100  // Skip very long names (likely not real symbols)
-                    || symbol_name.contains('\n')  // Skip multi-line captures
+                    || symbol_name.contains('\n')
+                // Skip multi-line captures
                 {
                     continue;
                 }
@@ -1144,10 +1146,14 @@ impl BinaryRelationshipBridge {
                     "method_name" => ReferenceType::MethodCall,
                     "class_name" | "parent_class_name" => ReferenceType::TypeUsage,
                     "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
-                    "variable_name" | "param_name" | "iterator_name" | "error_name" => ReferenceType::FieldAccess,
-                    "object_name" | "property_name" | "attribute_name" => ReferenceType::FieldAccess,
+                    "variable_name" | "param_name" | "iterator_name" | "error_name" => {
+                        ReferenceType::FieldAccess
+                    }
+                    "object_name" | "property_name" | "attribute_name" => {
+                        ReferenceType::FieldAccess
+                    }
                     "component_name" => ReferenceType::TypeUsage, // JSX components
-                    _ => ReferenceType::FunctionCall, // Default to FunctionCall
+                    _ => ReferenceType::FunctionCall,             // Default to FunctionCall
                 };
 
                 let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
@@ -1161,11 +1167,8 @@ impl BinaryRelationshipBridge {
             }
         }
 
-        tracing::debug!(
-            "Extracted {} JavaScript references",
-            references.len()
-        );
-        
+        tracing::debug!("Extracted {} JavaScript references", references.len());
+
         Ok(references)
     }
 

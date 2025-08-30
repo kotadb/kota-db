@@ -514,8 +514,16 @@ fn calculate() -> i32 {
         let app_id = Uuid::new_v4();
 
         // Add symbols representing TypeScript constructs
-        writer.add_symbol(user_service_id, "UserService", 2, "user-service.ts", 1, 10, None); // Class
-        writer.add_symbol(config_id, "Config", 6, "config.ts", 1, 5, None); // Type/Interface  
+        writer.add_symbol(
+            user_service_id,
+            "UserService",
+            2,
+            "user-service.ts",
+            1,
+            10,
+            None,
+        ); // Class
+        writer.add_symbol(config_id, "Config", 6, "config.ts", 1, 5, None); // Type/Interface
         writer.add_symbol(app_id, "Application", 2, "main.ts", 10, 25, None); // Class
 
         writer.write_to_file(&symbol_db_path)?;
@@ -564,7 +572,10 @@ export interface Config {
 
         let files = vec![
             (PathBuf::from("main.ts"), main_ts.as_bytes().to_vec()),
-            (PathBuf::from("user-service.ts"), user_service_ts.as_bytes().to_vec()),
+            (
+                PathBuf::from("user-service.ts"),
+                user_service_ts.as_bytes().to_vec(),
+            ),
             (PathBuf::from("config.ts"), config_ts.as_bytes().to_vec()),
         ];
 
@@ -574,7 +585,10 @@ export interface Config {
 
         // Verify graph structure
         assert!(graph.stats.node_count > 0, "Graph should have nodes");
-        assert_eq!(graph.stats.node_count, 3, "Should have 3 TypeScript symbols");
+        assert_eq!(
+            graph.stats.node_count, 3,
+            "Should have 3 TypeScript symbols"
+        );
 
         println!("TypeScript Graph stats: {:?}", graph.stats);
         println!(
@@ -599,7 +613,15 @@ export interface Config {
         let app_id = Uuid::new_v4();
 
         // Add symbols representing JavaScript constructs
-        writer.add_symbol(user_manager_id, "UserManager", 2, "user-manager.js", 1, 10, None); // Class
+        writer.add_symbol(
+            user_manager_id,
+            "UserManager",
+            2,
+            "user-manager.js",
+            1,
+            10,
+            None,
+        ); // Class
         writer.add_symbol(create_config_id, "createConfig", 1, "config.js", 1, 5, None); // Function
         writer.add_symbol(app_id, "Application", 2, "main.js", 5, 20, None); // Class
 
@@ -651,7 +673,10 @@ module.exports = { createConfig };
 
         let files = vec![
             (PathBuf::from("main.js"), main_js.as_bytes().to_vec()),
-            (PathBuf::from("user-manager.js"), user_manager_js.as_bytes().to_vec()),
+            (
+                PathBuf::from("user-manager.js"),
+                user_manager_js.as_bytes().to_vec(),
+            ),
             (PathBuf::from("config.js"), config_js.as_bytes().to_vec()),
         ];
 
@@ -661,7 +686,10 @@ module.exports = { createConfig };
 
         // Verify graph structure
         assert!(graph.stats.node_count > 0, "Graph should have nodes");
-        assert_eq!(graph.stats.node_count, 3, "Should have 3 JavaScript symbols");
+        assert_eq!(
+            graph.stats.node_count, 3,
+            "Should have 3 JavaScript symbols"
+        );
 
         println!("JavaScript Graph stats: {:?}", graph.stats);
         println!(
@@ -756,7 +784,10 @@ export { UserProcessor };
 
         // Verify graph structure
         assert!(graph.stats.node_count > 0, "Graph should have nodes");
-        assert_eq!(graph.stats.node_count, 4, "Should have 4 mixed language symbols");
+        assert_eq!(
+            graph.stats.node_count, 4,
+            "Should have 4 mixed language symbols"
+        );
 
         println!("Mixed Project Graph stats: {:?}", graph.stats);
         println!(
