@@ -17,10 +17,7 @@ use kotadb::{
     ValidatedPath, ValidationStatus,
 };
 
-#[cfg(feature = "tree-sitter-parsing")]
-use kotadb::relationship_query::{
-    parse_natural_language_relationship_query, RelationshipQueryType,
-};
+use kotadb::relationship_query::RelationshipQueryType;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -156,7 +153,7 @@ EXAMPLES:
   # Analyze code relationships
   kotadb find-callers FileStorage
   kotadb analyze-impact Config
-  kotadb relationship-query 'what calls MyFunction?'
+  kotadb find-unused --type Function
 
   # System management
   kotadb stats
@@ -316,21 +313,6 @@ enum Commands {
         /// Name or qualified name of the target symbol (e.g., 'StorageError' or 'errors::StorageError')
         target: String,
         /// Maximum number of impacted items to show (default: unlimited)
-        #[arg(
-            short,
-            long,
-            default_value = "50",
-            help = "Control number of results returned"
-        )]
-        limit: Option<usize>,
-    },
-
-    /// Natural language queries about code symbols and relationships
-    #[cfg(feature = "tree-sitter-parsing")]
-    RelationshipQuery {
-        /// Natural language query (e.g., 'what calls FileStorage?', 'who uses Config?', 'find unused functions')
-        query: String,
-        /// Maximum number of results to return
         #[arg(
             short,
             long,
@@ -2020,40 +2002,6 @@ async fn main() -> Result<()> {
                 let mut result = relationship_engine.execute_query(query_type).await?;
 
                 // Apply limit if specified
-                if let Some(limit_value) = limit {
-                    result.limit_results(limit_value);
-                }
-                if quiet {
-                    // In quiet mode, output minimal information
-                    let markdown = result.to_markdown();
-                    for line in markdown.lines() {
-                        if line.starts_with("- ") {
-                            println!("{}", line.trim_start_matches("- "));
-                        }
-                    }
-                } else {
-                    println!("{}", result.to_markdown());
-                }
-            }
-
-            #[cfg(feature = "tree-sitter-parsing")]
-            Commands::RelationshipQuery { query, limit } => {
-                let query_type = parse_natural_language_relationship_query(&query)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Could not parse query '{}'\n\
-                            Valid query patterns:\n\
-                            - what calls [symbol]?\n\
-                            - what would break if I change [symbol]?\n\
-                            - find unused functions\n\
-                            - who uses [symbol]?\n\
-                            - find callers of [symbol]",
-                            query
-                        )
-                    })?;
-
-                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
-                let mut result = relationship_engine.execute_query(query_type).await?;
                 if let Some(limit_value) = limit {
                     result.limit_results(limit_value);
                 }

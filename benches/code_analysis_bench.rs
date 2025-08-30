@@ -7,8 +7,6 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::dependency_extractor::DependencyExtractor;
 #[cfg(feature = "tree-sitter-parsing")]
-use kotadb::natural_language_query::NaturalLanguageQueryProcessor;
-#[cfg(feature = "tree-sitter-parsing")]
 use kotadb::symbol_index::{create_symbol_index, SymbolIndex};
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::{contracts::Index, file_storage::create_file_storage, QueryBuilder};
@@ -187,37 +185,6 @@ fn benchmark_dependency_extraction(c: &mut Criterion) {
 }
 
 #[cfg(feature = "tree-sitter-parsing")]
-fn benchmark_natural_language_processing(c: &mut Criterion) {
-    let _rt = Runtime::new().unwrap();
-    let _nlp = NaturalLanguageQueryProcessor::new();
-
-    let mut group = c.benchmark_group("natural_language");
-    group.measurement_time(Duration::from_secs(10));
-
-    let queries = vec![
-        "find all test functions",
-        "show error handling code",
-        "find async functions",
-        "what uses Result type",
-        "search for validation functions",
-        "find all structs with new method",
-    ];
-
-    // Benchmark query parsing (simplified)
-    group.bench_function("parse_query", |b| {
-        b.iter(|| {
-            for query in &queries {
-                // Simplified - just benchmark query processing overhead
-                let query_len = query.len();
-                black_box(query_len);
-            }
-        });
-    });
-
-    group.finish();
-}
-
-#[cfg(feature = "tree-sitter-parsing")]
 fn benchmark_concurrent_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
@@ -384,7 +351,6 @@ criterion_group!(
     benches,
     benchmark_symbol_search,
     benchmark_dependency_extraction,
-    benchmark_natural_language_processing,
     benchmark_concurrent_operations,
     benchmark_index_operations,
     benchmark_query_latency_targets,

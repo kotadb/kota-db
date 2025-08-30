@@ -56,10 +56,6 @@ pub mod symbol_index;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod dependency_extractor;
 
-// Natural language query processing for code analysis
-#[cfg(feature = "tree-sitter-parsing")]
-pub mod natural_language_query;
-
 // Relationship query interface for dependency graph navigation
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod relationship_query;

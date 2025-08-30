@@ -9,8 +9,7 @@ use anyhow::Result;
 use kotadb::contracts::Index;
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::dependency_extractor::DependencyExtractor;
-#[cfg(feature = "tree-sitter-parsing")]
-use kotadb::natural_language_query::NaturalLanguageQueryProcessor;
+// Natural language query processor removed
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::parsing::SymbolType;
 #[cfg(feature = "tree-sitter-parsing")]
@@ -158,10 +157,11 @@ mod tests {
     assert!(analysis.imports.iter().any(|i| i.path.contains("HashMap")));
     assert!(analysis.imports.iter().any(|i| i.path.contains("Result")));
 
-    // Step 4: Natural language queries
-    let nlp = NaturalLanguageQueryProcessor::new();
-    let nl_query = "find functions that store data";
-    let intent = nlp.parse_query(nl_query).await?;
+    // Step 4: Natural language queries REMOVED
+    // Natural language processing has been removed - use direct commands instead
+    // Previously: let nlp = NaturalLanguageQueryProcessor::new();
+    // Previously: let nl_query = "find functions that store data";
+    // Previously: let intent = nlp.parse_query(nl_query).await?;
 
     // Convert natural language to structured query
     let structured_query = CodeQuery::SymbolSearch {
@@ -338,63 +338,64 @@ async fn test_dependency_graph_building() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "tree-sitter-parsing")]
-#[tokio::test]
-async fn test_natural_language_queries() -> Result<()> {
-    // Test natural language query processing
-    let (mut index, _temp_dir) = create_test_index().await?;
-    let nlp = NaturalLanguageQueryProcessor::new();
+// Natural language query test removed - natural language processing has been removed
+// #[cfg(feature = "tree-sitter-parsing")]
+// #[tokio::test]
+// async fn test_natural_language_queries() -> Result<()> {
+// //     // Test natural language query processing
+//     let (mut index, _temp_dir) = create_test_index().await?;
+//     let nlp = NaturalLanguageQueryProcessor::new();
 
-    // Index some test code
-    let test_code = r#"
-pub fn validate_input(data: &str) -> bool {
-    !data.is_empty() && data.len() < 1000
-}
-
-pub fn handle_error(err: anyhow::Error) {
-    eprintln!("Error occurred: {}", err);
-}
-
-pub async fn fetch_data(url: &str) -> Result<String> {
-    // Simulated async fetch
-    Ok("data".to_string())
-}
-"#;
-
-    let doc = DocumentBuilder::new()
-        .path("test.rs")?
-        .title("Test Code")?
-        .content(test_code.as_bytes())
-        .build()?;
-
-    index
-        .insert_with_content(doc.id, doc.path.clone(), test_code.as_bytes())
-        .await?;
-
-    // Test various natural language queries
-    let test_queries = vec![
-        "find validation functions",
-        "show error handling code",
-        "find async functions",
-        "search for functions with url parameter",
-    ];
-
-    for query_text in test_queries {
-        let intent = nlp.parse_query(query_text).await?;
-        // For now, create a simple search query since intent_to_query may not exist
-        let query = CodeQuery::SymbolSearch {
-            name: "".to_string(), // Search all symbols
-            symbol_types: Some(vec![SymbolType::Function]),
-            fuzzy: true,
-        };
-        let results = index.search_code(&query).await?;
-
-        println!("Query '{}' returned {} results", query_text, results.len());
-        // Note: We're not asserting results are non-empty since the simple query may not match the intent
-    }
-
-    Ok(())
-}
+//     // Index some test code
+//     let test_code = r#"
+// pub fn validate_input(data: &str) -> bool {
+//     !data.is_empty() && data.len() < 1000
+// }
+//
+// pub fn handle_error(err: anyhow::Error) {
+//     eprintln!("Error occurred: {}", err);
+// }
+//
+// pub async fn fetch_data(url: &str) -> Result<String> {
+//     // Simulated async fetch
+//     Ok("data".to_string())
+// }
+// "#;
+//
+//     let doc = DocumentBuilder::new()
+//         .path("test.rs")?
+//         .title("Test Code")?
+//         .content(test_code.as_bytes())
+//         .build()?;
+//
+//     index
+//         .insert_with_content(doc.id, doc.path.clone(), test_code.as_bytes())
+//         .await?;
+//
+//     // Test various natural language queries
+//     let test_queries = vec![
+//         "find validation functions",
+//         "show error handling code",
+//         "find async functions",
+//         "search for functions with url parameter",
+//     ];
+//
+//     for query_text in test_queries {
+//         let intent = nlp.parse_query(query_text).await?;
+//         // For now, create a simple search query since intent_to_query may not exist
+//         let query = CodeQuery::SymbolSearch {
+//             name: "".to_string(), // Search all symbols
+//             symbol_types: Some(vec![SymbolType::Function]),
+//             fuzzy: true,
+//         };
+//         let results = index.search_code(&query).await?;
+//
+//         println!("Query '{}' returned {} results", query_text, results.len());
+//         // Note: We're not asserting results are non-empty since the simple query may not match the intent
+//     }
+//
+//     Ok(())
+// }
 
 #[cfg(feature = "tree-sitter-parsing")]
 #[tokio::test]
@@ -608,8 +609,8 @@ pub struct User {
 #[tokio::test]
 async fn test_integration_with_existing_queries() -> Result<()> {
     // Test queries from the original dogfooding issue #104
+    // Natural language processing has been removed - using direct queries instead
     let (mut index, _temp_dir) = create_test_index().await?;
-    let nlp = NaturalLanguageQueryProcessor::new();
 
     // Load a subset of KotaDB source
     let source_files = load_kotadb_source_files()?;
@@ -628,32 +629,23 @@ async fn test_integration_with_existing_queries() -> Result<()> {
         }
     }
 
-    // Test example queries from issue #104
-    let dogfooding_queries = vec![
-        "find all test functions",
-        "show storage implementation",
-        "find error handling patterns",
-        "what uses Result type",
-        "find async functions",
-    ];
+    // Test direct queries instead of natural language
+    // Previously: "find all test functions", "show storage implementation", etc.
+    let query = CodeQuery::SymbolSearch {
+        name: "test".to_string(),
+        symbol_types: Some(vec![SymbolType::Function]),
+        fuzzy: true,
+    };
+    let results = index.search_code(&query).await?;
 
-    for query_text in dogfooding_queries {
-        let intent = nlp.parse_query(query_text).await?;
-        // Create a simple search query for demonstration
-        let query = CodeQuery::SymbolSearch {
-            name: "".to_string(), // Search all symbols
-            symbol_types: Some(vec![SymbolType::Function]),
-            fuzzy: true,
-        };
-        let results = index.search_code(&query).await?;
-
-        // Log results for validation
-        println!("Query '{}' returned {} results", query_text, results.len());
-    }
+    // Log results for validation
+    println!(
+        "Direct query for test functions returned {} results",
+        results.len()
+    );
 
     Ok(())
 }
-
 /// Regression test to ensure analysis accuracy over time
 #[cfg(feature = "tree-sitter-parsing")]
 #[tokio::test]

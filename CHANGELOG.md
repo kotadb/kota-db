@@ -7,22 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING CHANGE**: Removed natural language query parser (#445)
+  - Removed `RelationshipQuery` CLI command that supported natural language queries
+  - Removed `natural_language_query` module and all NL parsing functions
+  - Removed `parse_natural_language_relationship_query` function from relationship_query module
+  - Natural language patterns like "what calls X?" are no longer supported
+  - **Migration**: Use direct commands instead:
+    - Replace "what calls X?" with `find-callers X`
+    - Replace "what would break if I change X?" with `analyze-impact X`
+    - Replace "find unused functions" with direct symbol queries
+  - **Rationale**: The NL parser was limited (only 2 patterns), created false expectations, and added complexity for minimal benefit
+  - Direct commands are clearer, more predictable, and have better error messages
+
 ### Added
 - Made `--quiet` mode the default for CLI to optimize LLM context usage (#429)
   - Reduces token consumption by 70% for AI assistants
   - Use `--quiet=false` to show detailed output
   - Aligns with project goal of reducing LLM context requirements
-- Enhanced natural language query parser for improved AI agent experience (#431)
-  - Fixed rigid parsing patterns that failed on documented query variations
-  - Added support for "what would break if I change X?" and alternative phrasings
-  - Enhanced "creates" pattern recognition: "what creates storage?" maps to caller queries
-  - Added flexible impact analysis patterns: "what depends on X?", "what would be affected by X?"
-  - Improved symbol extraction with proper punctuation handling (removes trailing "?", "!", etc.)
-  - **Production-ready robustness improvements**: Enhanced symbol validation for qualified names (std::vec::Vec)
-  - **Extensible constructor mapping**: Configurable generic term mapping ("storage" → "create_storage") with fallback patterns
-  - **Comprehensive edge case handling**: Unicode support, performance validation, malformed query resilience
-  - Added comprehensive test coverage for all new natural language patterns (14 total tests)
-  - Enables truly natural queries for LLMs, reducing context usage requirements
 - LLM-optimized search output with progressive disclosure (#370)
   - New `--context` flag for search command with levels: none, minimal, medium, full
   - "medium" context (default) implements dream workflow with relevance scores and line numbers
