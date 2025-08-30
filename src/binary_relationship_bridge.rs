@@ -10,8 +10,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use thiserror::Error;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 use uuid::Uuid;
 
@@ -23,44 +22,6 @@ use crate::{
     parsing::{SupportedLanguage, SymbolType},
     types::RelationType,
 };
-
-// Performance tuning constants - made configurable for different use cases
-const MAX_SUFFIX_MATCHES: usize = 5;
-const SYMBOL_COUNT_THRESHOLD: usize = 10_000;
-const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
-
-/// Reverse lookup index for efficient suffix matching
-#[derive(Debug, Clone)]
-struct ReverseIndex {
-    /// Maps symbol suffixes to qualified names and UUIDs
-    suffix_to_symbols: HashMap<String, Vec<(String, Uuid)>>,
-}
-
-impl ReverseIndex {
-    /// Build reverse index from name map for O(1) suffix lookups
-    fn build_from_name_map(name_map: &HashMap<String, Uuid>) -> Self {
-        let mut suffix_to_symbols = HashMap::new();
-
-        for (qualified_name, &uuid) in name_map {
-            // Extract suffixes of different lengths for flexible matching
-            let parts: Vec<&str> = qualified_name.split("::").collect();
-            for i in 1..=parts.len() {
-                let suffix = parts[parts.len() - i..].join("::");
-                suffix_to_symbols
-                    .entry(suffix)
-                    .or_insert_with(Vec::new)
-                    .push((qualified_name.clone(), uuid));
-            }
-        }
-
-        Self { suffix_to_symbols }
-    }
-
-    /// Find symbols matching a suffix pattern
-    fn find_by_suffix(&self, pattern: &str) -> Option<&Vec<(String, Uuid)>> {
-        self.suffix_to_symbols.get(pattern)
-    }
-}
 
 /// Configuration for relationship extraction
 #[derive(Debug, Clone)]
@@ -76,8 +37,8 @@ pub struct RelationshipExtractionConfig {
 impl Default for RelationshipExtractionConfig {
     fn default() -> Self {
         Self {
-            max_threads: None, // Use rayon default
-            max_file_size: Some(DEFAULT_MAX_FILE_SIZE),
+            max_threads: None,                     // Use rayon default
+            max_file_size: Some(10 * 1024 * 1024), // 10MB
             languages: None,
         }
     }
@@ -223,19 +184,17 @@ impl BinaryRelationshipBridge {
         let references: Vec<_> = files
             .par_iter()
             .filter_map(|(path, content)| {
-                // Skip if file is too large - create structured error
+                // Skip if file is too large
                 if let Some(max_size) = self.config.max_file_size {
                     if content.len() > max_size {
-                        let error = PythonParsingError::FileSizeError {
-                            file_path: path.clone(),
-                            size: content.len(),
-                            max_size,
-                        };
-                        debug!("Skipping large file: {}", error);
+                        debug!("Skipping large file: {}", path.display());
                         return Some(FileReferences {
                             file_path: path.clone(),
                             references: Vec::new(),
-                            extraction_errors: vec![error.to_string()],
+                            extraction_errors: vec![format!(
+                                "File too large: {} bytes",
+                                content.len()
+                            )],
                         });
                     }
                 }
@@ -244,14 +203,10 @@ impl BinaryRelationshipBridge {
                 let extension = match path.extension().and_then(|e| e.to_str()) {
                     Some(ext) => ext,
                     None => {
-                        let error = PythonParsingError::UnsupportedLanguageError {
-                            file_path: path.clone(),
-                            extension: "none".to_string(),
-                        };
                         return Some(FileReferences {
                             file_path: path.clone(),
                             references: Vec::new(),
-                            extraction_errors: vec![error.to_string()],
+                            extraction_errors: vec!["No file extension".to_string()],
                         });
                     }
                 };
@@ -259,14 +214,10 @@ impl BinaryRelationshipBridge {
                 let language = match SupportedLanguage::from_extension(extension) {
                     Some(lang) => lang,
                     None => {
-                        let error = PythonParsingError::UnsupportedLanguageError {
-                            file_path: path.clone(),
-                            extension: extension.to_string(),
-                        };
                         return Some(FileReferences {
                             file_path: path.clone(),
                             references: Vec::new(),
-                            extraction_errors: vec![error.to_string()],
+                            extraction_errors: vec![format!("Unsupported language: {}", extension)],
                         });
                     }
                 };
@@ -289,25 +240,19 @@ impl BinaryRelationshipBridge {
                         references,
                         recoverable_errors,
                     } => {
-                        // Log structured error details for better debugging
-                        for error in &recoverable_errors {
-                            warn!("Recoverable parsing error in {}: {}", path.display(), error);
-                            debug!("Error details: {:?}", error);
-                        }
                         warn!(
-                            "Partial extraction from {}: {} recoverable errors",
+                            "Partial extraction from {}: {} errors",
                             path.display(),
                             recoverable_errors.len()
                         );
                         Some(references)
                     }
                     ExtractionResult::Failure(e) => {
-                        error!("Complete extraction failure for {}: {}", path.display(), e);
-                        debug!("Failure details: {:?}", e);
+                        warn!("Failed to extract from {}: {}", path.display(), e);
                         Some(FileReferences {
                             file_path: path.clone(),
                             references: Vec::new(),
-                            extraction_errors: vec![e.to_string()],
+                            extraction_errors: vec![e],
                         })
                     }
                 }
@@ -341,38 +286,14 @@ impl BinaryRelationshipBridge {
         match self.extract_file_references(file_path, content, language) {
             Ok(refs) => ExtractionResult::Success(refs),
             Err(e) => {
-                // Create structured error based on the failure cause
-                let structured_error = if e.to_string().contains("Failed to parse file") {
-                    PythonParsingError::TreeSitterError {
-                        message: e.to_string(),
-                        file_path: file_path.to_path_buf(),
-                        language: format!("{:?}", language),
-                    }
-                } else if e.to_string().contains("UTF-8") {
-                    PythonParsingError::Utf8DecodingError {
-                        message: e.to_string(),
-                        file_path: file_path.to_path_buf(),
-                        line: 0, // Default to start of file
-                        column: None,
-                    }
-                } else {
-                    PythonParsingError::TreeSitterError {
-                        message: format!("General parsing error: {}", e),
-                        file_path: file_path.to_path_buf(),
-                        language: format!("{:?}", language),
-                    }
-                };
-
                 // Try to recover with partial parsing
                 let mut partial_refs = Vec::new();
+                let errors = vec![e.to_string()];
 
                 // Attempt line-by-line extraction for simple references
                 for (line_num, line) in content.lines().enumerate() {
                     // Simple heuristic: look for function calls
-                    if line.contains("(")
-                        && !line.trim().starts_with("//")
-                        && !line.trim().starts_with("#")
-                    {
+                    if line.contains("(") && !line.trim().starts_with("//") {
                         if let Some(name) = Self::extract_simple_reference(line) {
                             partial_refs.push(CodeReference {
                                 name,
@@ -390,12 +311,12 @@ impl BinaryRelationshipBridge {
                         references: FileReferences {
                             file_path: file_path.to_path_buf(),
                             references: partial_refs,
-                            extraction_errors: vec![structured_error.to_string()],
+                            extraction_errors: errors,
                         },
-                        recoverable_errors: vec![structured_error],
+                        recoverable_errors: vec!["Fell back to heuristic extraction".to_string()],
                     }
                 } else {
-                    ExtractionResult::Failure(structured_error)
+                    ExtractionResult::Failure(format!("Complete extraction failure: {}", e))
                 }
             }
         }
@@ -439,6 +360,8 @@ impl BinaryRelationshipBridge {
         // Extract references based on language
         let references = match language {
             SupportedLanguage::Rust => self.extract_rust_references(&tree, content)?,
+            SupportedLanguage::TypeScript => self.extract_typescript_references(&tree, content)?,
+            SupportedLanguage::JavaScript => self.extract_javascript_references(&tree, content)?,
             SupportedLanguage::Python => self.extract_python_references(&tree, content)?,
         };
 
@@ -624,203 +547,6 @@ impl BinaryRelationshipBridge {
         Ok(references)
     }
 
-    /// Extract references from Python code using tree-sitter queries
-    fn extract_python_references(
-        &self,
-        tree: &tree_sitter::Tree,
-        content: &str,
-    ) -> Result<Vec<CodeReference>> {
-        let mut references = Vec::new();
-        let language = tree_sitter_python::LANGUAGE.into();
-
-        // Comprehensive Python-specific queries including modern language features
-        let python_query = Query::new(
-            &language,
-            r#"
-            ; Function calls
-            (call
-                function: (identifier) @function_name)
-            (call
-                function: (attribute
-                    attribute: (identifier) @method_name))
-
-            ; Async function definitions
-            (function_definition
-                (async) @async_modifier
-                name: (identifier) @async_function)
-
-            ; Await expressions  
-            (await
-                (call
-                    function: (identifier) @awaited_function))
-            (await
-                (call
-                    function: (attribute
-                        attribute: (identifier) @awaited_method)))
-
-            ; Import statements
-            (import_statement
-                name: (dotted_name) @import_name)
-            (import_from_statement
-                name: (dotted_name) @import_name)
-            (import_from_statement
-                name: (aliased_import
-                    name: (identifier) @import_name))
-
-            ; Class references and inheritance
-            (class_definition
-                superclasses: (argument_list
-                    (identifier) @base_class))
-
-            ; Decorator references
-            (decorator
-                (identifier) @decorator_name)
-            (decorator
-                (attribute
-                    attribute: (identifier) @decorator_name))
-
-            ; Type annotations and hints
-            (type_annotation
-                type: (identifier) @type_hint)
-            (type_annotation
-                type: (subscript
-                    value: (identifier) @generic_type))
-            (type_annotation
-                type: (attribute
-                    attribute: (identifier) @qualified_type))
-
-            ; Match statements (Python 3.10+)
-            (match_statement
-                subject: (identifier) @match_subject)
-            (case_pattern
-                (identifier) @pattern_variable)
-
-            ; List/Dict/Set comprehensions
-            (list_comprehension
-                (call
-                    function: (identifier) @comprehension_function))
-            (dictionary_comprehension
-                (call
-                    function: (identifier) @comprehension_function))
-            (set_comprehension
-                (call
-                    function: (identifier) @comprehension_function))
-
-            ; Generator expressions
-            (generator_expression
-                (call
-                    function: (identifier) @generator_function))
-
-            ; Attribute access
-            (attribute
-                attribute: (identifier) @attribute_name)
-
-            ; With statements and context managers
-            (with_statement
-                (with_item
-                    (call
-                        function: (identifier) @context_manager)))
-            "#,
-        )
-        .map_err(|e| {
-            anyhow::anyhow!(PythonParsingError::QueryCompilationError {
-                message: format!("Python query compilation failed: {}", e),
-                language: "Python".to_string(),
-                query_text: "Python comprehensive query".to_string(),
-            })
-        })?;
-
-        let root_node = tree.root_node();
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&python_query, root_node, content.as_bytes());
-
-        while let Some(query_match) = matches.next() {
-            for capture in query_match.captures {
-                let node = capture.node;
-
-                // Handle potential UTF-8 issues in tree-sitter text extraction with structured errors
-                let reference_text = match node.utf8_text(content.as_bytes()) {
-                    Ok(text) => text.to_string(),
-                    Err(_) => {
-                        let point = node.start_position();
-                        debug!(
-                            "UTF-8 decoding error at line {}, column {}",
-                            point.row + 1,
-                            point.column + 1
-                        );
-
-                        // Fall back to lossy conversion for the node's byte range
-                        let start = node.start_byte();
-                        let end = node.end_byte();
-                        let bytes = &content.as_bytes()[start..end];
-                        String::from_utf8_lossy(bytes).into_owned()
-                    }
-                };
-
-                let point = node.start_position();
-
-                let capture_name = python_query.capture_names()[capture.index as usize];
-                let ref_type = match capture_name {
-                    // Basic function and method calls
-                    "function_name" => ReferenceType::FunctionCall,
-                    "method_name" => ReferenceType::FunctionCall,
-
-                    // Async/await patterns
-                    "async_function" => ReferenceType::FunctionDefinition,
-                    "awaited_function" => ReferenceType::AsyncCall,
-                    "awaited_method" => ReferenceType::AsyncCall,
-
-                    // Import patterns
-                    "import_name" => ReferenceType::Import,
-
-                    // Class and inheritance
-                    "base_class" => ReferenceType::Inheritance,
-
-                    // Decorators
-                    "decorator_name" => ReferenceType::Decorator,
-
-                    // Type annotations and hints
-                    "type_hint" => ReferenceType::TypeAnnotation,
-                    "generic_type" => ReferenceType::TypeAnnotation,
-                    "qualified_type" => ReferenceType::TypeAnnotation,
-
-                    // Pattern matching (Python 3.10+)
-                    "match_subject" => ReferenceType::PatternMatch,
-                    "pattern_variable" => ReferenceType::PatternBinding,
-
-                    // Comprehensions and generators
-                    "comprehension_function" => ReferenceType::FunctionCall,
-                    "generator_function" => ReferenceType::FunctionCall,
-
-                    // Attribute access and context managers
-                    "attribute_name" => ReferenceType::FieldAccess,
-                    "context_manager" => ReferenceType::ContextManager,
-
-                    _ => ReferenceType::Other,
-                };
-
-                references.push(CodeReference {
-                    name: reference_text.clone(),
-                    ref_type,
-                    line: point.row + 1,
-                    column: point.column + 1,
-                    text: {
-                        // Extract the whole line for context, similar to the Rust version
-                        let _start_byte = node.start_byte();
-                        let content_lines: Vec<&str> = content.lines().collect();
-                        if point.row < content_lines.len() {
-                            content_lines[point.row].to_string()
-                        } else {
-                            reference_text
-                        }
-                    },
-                });
-            }
-        }
-
-        Ok(references)
-    }
-
     /// Enhanced symbol reference resolution with suffix matching fallback
     fn resolve_symbol_reference(
         &self,
@@ -837,33 +563,23 @@ impl BinaryRelationshipBridge {
         // is stored as "kotadb::file_storage::FileStorage"
         if !name.contains("::") {
             // Performance optimization: Only iterate if reasonable number of symbols
-            if name_map.len() < SYMBOL_COUNT_THRESHOLD {
+            if name_map.len() < 10000 {
                 // Find any symbol name that ends with "::name" (exact boundary match)
                 let pattern = format!("::{}", name);
                 let mut matches = Vec::new();
 
-                // Use reverse index for better O(1) lookups when available
-                let reverse_index = ReverseIndex::build_from_name_map(name_map);
+                for (qualified_name, &id) in name_map {
+                    // Ensure it's a true suffix match with :: boundary
+                    if qualified_name.ends_with(&pattern)
+                        && (qualified_name.len() == name.len()
+                            || qualified_name.len() > pattern.len())
+                    {
+                        matches.push((qualified_name.clone(), id));
 
-                // Try direct suffix lookup first
-                if let Some(index_matches) = reverse_index.find_by_suffix(name) {
-                    matches.extend(index_matches.iter().take(MAX_SUFFIX_MATCHES).cloned());
-                }
-
-                // If no matches from index, fall back to pattern matching
-                if matches.is_empty() {
-                    for (qualified_name, &id) in name_map {
-                        // Ensure it's a true suffix match with :: boundary
-                        if qualified_name.ends_with(&pattern)
-                            && (qualified_name.len() == name.len()
-                                || qualified_name.len() > pattern.len())
-                        {
-                            matches.push((qualified_name.clone(), id));
-
-                            // Early termination for performance
-                            if matches.len() > MAX_SUFFIX_MATCHES {
-                                break;
-                            }
+                        // Early termination for performance
+                        if matches.len() > 5 {
+                            // Don't collect too many matches
+                            break;
                         }
                     }
                 }
@@ -1092,6 +808,529 @@ impl BinaryRelationshipBridge {
         }
     }
 
+    /// Extract references from TypeScript code
+    fn extract_typescript_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        let mut references = Vec::new();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+
+        // Comprehensive TypeScript query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call_expression
+                function: (identifier) @function_name)
+            (call_expression
+                function: (member_expression
+                    property: (property_identifier) @method_name))
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @type_name
+                    property: (property_identifier) @method_name))
+            
+            ; Type references
+            (type_identifier) @type_name
+            (predefined_type) @type_name
+            
+            ; Interface references
+            (interface_declaration
+                name: (type_identifier) @interface_name)
+            (extends_clause
+                value: (identifier) @type_name)
+            (implements_clause
+                types: (type_identifier) @type_name)
+            
+            ; Class references
+            (class_declaration
+                name: (type_identifier) @class_name)
+            (class_expression
+                name: (type_identifier) @class_name)
+            (extends_clause_value
+                (identifier) @type_name)
+            (new_expression
+                constructor: (identifier) @type_name)
+            
+            ; Generic type parameters
+            (type_parameters
+                (type_parameter
+                    name: (type_identifier) @type_name))
+            (type_arguments
+                (type_identifier) @type_name)
+            
+            ; Variable and parameter types
+            (type_annotation
+                (type_identifier) @type_name)
+            (type_annotation
+                (generic_type
+                    name: (type_identifier) @type_name))
+            
+            ; Import/export references  
+            (import_specifier
+                name: (identifier) @import_name)
+            (import_specifier
+                imported: (identifier) @import_name)
+            (namespace_import
+                (identifier) @import_name)
+            (export_specifier
+                name: (identifier) @export_name)
+            
+            ; Method calls on objects
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @method_name))
+            
+            ; Property access
+            (member_expression
+                object: (identifier) @object_name
+                property: (property_identifier) @property_name)
+            
+            ; Function declarations and expressions
+            (function_declaration
+                name: (identifier) @function_name)
+            (function_expression
+                name: (identifier) @function_name)
+            (arrow_function
+                parameter: (identifier) @param_name)
+            
+            ; Variable declarations
+            (variable_declarator
+                name: (identifier) @variable_name)
+            (lexical_declaration
+                (variable_declarator
+                    name: (identifier) @variable_name))
+            
+            ; Enum references
+            (enum_declaration
+                name: (identifier) @enum_name)
+            (member_expression
+                object: (identifier) @enum_name)
+            
+            ; Namespace references
+            (namespace_declaration
+                name: (identifier) @namespace_name)
+            (qualified_name
+                left: (identifier) @namespace_name)
+                
+            ; Type aliases
+            (type_alias_declaration
+                name: (type_identifier) @type_alias_name)
+            
+            ; JSX/TSX elements
+            (jsx_element
+                open_tag: (jsx_opening_element
+                    name: (identifier) @component_name))
+            (jsx_self_closing_element
+                name: (identifier) @component_name)
+            "#,
+        )
+        .context("Failed to create TypeScript query")?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty() || symbol_name.chars().all(char::is_whitespace) {
+                    continue; // Skip empty or whitespace-only names
+                }
+
+                let reference_type = match *capture_name {
+                    "function_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "type_name" | "class_name" | "interface_name" | "type_alias_name" => {
+                        ReferenceType::TypeUsage
+                    }
+                    "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
+                    "variable_name" | "param_name" => ReferenceType::FieldAccess,
+                    "enum_name" => ReferenceType::TypeUsage,
+                    "namespace_name" => ReferenceType::TypeUsage, // Use TypeUsage for namespaces
+                    "component_name" => ReferenceType::TypeUsage, // JSX components
+                    "object_name" | "property_name" => ReferenceType::FieldAccess,
+                    _ => ReferenceType::FunctionCall, // Default to FunctionCall
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!("Extracted {} TypeScript references", references.len());
+
+        Ok(references)
+    }
+
+    /// Extract references from JavaScript code
+    fn extract_javascript_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        let mut references = Vec::new();
+        let language = tree_sitter_javascript::LANGUAGE.into();
+
+        // Comprehensive JavaScript query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call_expression
+                function: (identifier) @function_name)
+            (call_expression
+                function: (member_expression
+                    property: (property_identifier) @method_name))
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @method_name))
+            
+            ; Constructor calls
+            (new_expression
+                constructor: (identifier) @constructor_name)
+            (new_expression
+                constructor: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @constructor_name))
+            
+            ; Variable and identifier references
+            (identifier) @variable_name
+            
+            ; Function declarations and expressions
+            (function_declaration
+                name: (identifier) @function_name)
+            (function_expression
+                name: (identifier) @function_name)
+            (arrow_function
+                parameter: (identifier) @param_name)
+            
+            ; Class declarations and expressions
+            (class_declaration
+                name: (identifier) @class_name)
+            (class_expression
+                name: (identifier) @class_name)
+            (extends_clause
+                value: (identifier) @parent_class_name)
+            
+            ; Variable declarations
+            (variable_declarator
+                name: (identifier) @variable_name)
+            (assignment_expression
+                left: (identifier) @variable_name)
+            
+            ; Property access
+            (member_expression
+                object: (identifier) @object_name
+                property: (property_identifier) @property_name)
+            
+            ; Import/export references
+            (import_specifier
+                name: (identifier) @import_name)
+            (import_specifier
+                imported: (identifier) @import_name)
+            (namespace_import
+                (identifier) @import_name)
+            (import_default_specifier
+                (identifier) @import_name)
+            (export_specifier
+                name: (identifier) @export_name)
+            (export_specifier
+                exported: (identifier) @export_name)
+            
+            ; Method definitions in classes
+            (method_definition
+                name: (property_identifier) @method_name)
+            (property_definition
+                name: (property_identifier) @property_name)
+            
+            ; Object properties
+            (pair
+                key: (property_identifier) @property_name)
+            (pair
+                key: (identifier) @property_name)
+            
+            ; For loops and iterators
+            (for_in_statement
+                left: (identifier) @iterator_name)
+            (for_of_statement
+                left: (identifier) @iterator_name)
+            
+            ; Try-catch error handling
+            (catch_clause
+                parameter: (identifier) @error_name)
+            
+            ; JSX elements (if JavaScript with JSX)
+            (jsx_element
+                open_tag: (jsx_opening_element
+                    name: (identifier) @component_name))
+            (jsx_self_closing_element
+                name: (identifier) @component_name)
+            (jsx_attribute
+                name: (property_identifier) @attribute_name)
+            
+            ; Computed property access
+            (subscript_expression
+                object: (identifier) @object_name)
+            
+            ; Function parameters in various contexts
+            (formal_parameters
+                (identifier) @param_name)
+            (formal_parameters
+                (assignment_pattern
+                    left: (identifier) @param_name))
+            (rest_parameter
+                (identifier) @param_name)
+            
+            ; Async/await patterns
+            (await_expression
+                argument: (call_expression
+                    function: (identifier) @function_name))
+            
+            ; Template literal expressions
+            (template_substitution
+                (identifier) @variable_name)
+            
+            ; Destructuring assignments
+            (object_pattern
+                (shorthand_property_identifier) @variable_name)
+            (object_pattern
+                (pair
+                    key: (property_identifier) @property_name
+                    value: (identifier) @variable_name))
+            (array_pattern
+                (identifier) @variable_name)
+            "#,
+        )
+        .context("Failed to create JavaScript query")?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty()
+                    || symbol_name.chars().all(char::is_whitespace)
+                    || symbol_name.len() > 100  // Skip very long names (likely not real symbols)
+                    || symbol_name.contains('\n')
+                // Skip multi-line captures
+                {
+                    continue;
+                }
+
+                let reference_type = match *capture_name {
+                    "function_name" | "constructor_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "class_name" | "parent_class_name" => ReferenceType::TypeUsage,
+                    "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
+                    "variable_name" | "param_name" | "iterator_name" | "error_name" => {
+                        ReferenceType::FieldAccess
+                    }
+                    "object_name" | "property_name" | "attribute_name" => {
+                        ReferenceType::FieldAccess
+                    }
+                    "component_name" => ReferenceType::TypeUsage, // JSX components
+                    _ => ReferenceType::FunctionCall,             // Default to FunctionCall
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!("Extracted {} JavaScript references", references.len());
+
+        Ok(references)
+    }
+
+    /// Extract code references from Python source code using tree-sitter
+    /// This includes function calls, method calls, imports, class definitions, and variable references
+    fn extract_python_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        let mut references = Vec::new();
+        let language = tree_sitter_python::LANGUAGE.into();
+
+        // Comprehensive Python query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call
+                function: (identifier) @function_name)
+            (call
+                function: (attribute
+                    attribute: (identifier) @method_name))
+            (call
+                function: (attribute
+                    object: (identifier) @object_name
+                    attribute: (identifier) @method_name))
+            
+            ; Function definitions
+            (function_definition
+                name: (identifier) @function_name)
+            (lambda
+                parameters: (lambda_parameters
+                    (identifier) @param_name))
+            
+            ; Class definitions and inheritance
+            (class_definition
+                name: (identifier) @class_name)
+            (class_definition
+                superclasses: (argument_list
+                    (identifier) @parent_class_name))
+            
+            ; Variable references and assignments
+            (identifier) @variable_name
+            (assignment
+                left: (identifier) @variable_name)
+            (augmented_assignment
+                left: (identifier) @variable_name)
+            (named_expression
+                name: (identifier) @variable_name)
+            
+            ; Import statements
+            (import_statement
+                name: (dotted_name
+                    (identifier) @module_name))
+            (import_from_statement
+                module_name: (dotted_name
+                    (identifier) @module_name))
+            (import_from_statement
+                name: (dotted_name
+                    (identifier) @imported_name))
+            (import_from_statement
+                name: (import_list
+                    (import_from_list
+                        (identifier) @imported_name)))
+            (aliased_import
+                name: (identifier) @imported_name)
+            (aliased_import
+                alias: (identifier) @alias_name)
+            
+            ; Decorators
+            (decorator
+                (identifier) @decorator_name)
+            (decorator
+                (call
+                    function: (identifier) @decorator_function))
+            
+            ; List and dictionary comprehensions
+            (list_comprehension
+                (identifier) @iterator_name)
+            (dictionary_comprehension
+                (identifier) @iterator_name)
+            (set_comprehension
+                (identifier) @iterator_name)
+            (generator_expression
+                (identifier) @iterator_name)
+            
+            ; Exception handling
+            (try_statement
+                (except_clause
+                    type: (identifier) @exception_type))
+            (raise_statement
+                (identifier) @exception_name)
+            
+            ; Async/await constructs
+            (await
+                (call
+                    function: (identifier) @async_function_name))
+            
+            ; Context managers (with statement)
+            (with_statement
+                (with_clause
+                    (with_item
+                        value: (identifier) @context_manager_name)))
+            "#,
+        )?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty() || symbol_name.chars().all(char::is_whitespace) {
+                    continue; // Skip empty or whitespace-only names
+                }
+
+                // Skip Python private/internal names except important ones
+                if symbol_name.starts_with('_')
+                    && symbol_name != "__init__"
+                    && symbol_name != "__main__"
+                {
+                    continue;
+                }
+
+                // Map Python-specific captures to reference types
+                let reference_type = match *capture_name {
+                    "function_name" | "async_function_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "class_name" | "parent_class_name" => ReferenceType::TypeUsage,
+                    "variable_name" | "param_name" | "iterator_name" => ReferenceType::FieldAccess,
+                    "object_name" | "context_manager_name" => ReferenceType::FieldAccess,
+                    "module_name" | "imported_name" | "alias_name" => ReferenceType::FunctionCall,
+                    "decorator_name" | "decorator_function" => ReferenceType::FunctionCall,
+                    "exception_type" | "exception_name" => ReferenceType::TypeUsage,
+                    _ => ReferenceType::FunctionCall,
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!("Extracted {} Python references", references.len());
+
+        Ok(references)
+    }
+
     /// Return a parser to the pool
     fn return_parser(&self, parser: Parser) {
         let mut pool = self.parser_pool.lock().unwrap();
@@ -1102,6 +1341,8 @@ impl BinaryRelationshipBridge {
     fn set_parser_language(&self, parser: &mut Parser, language: SupportedLanguage) -> Result<()> {
         let ts_language = match language {
             SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+            SupportedLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            SupportedLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             SupportedLanguage::Python => tree_sitter_python::LANGUAGE.into(),
         };
 
@@ -1157,119 +1398,15 @@ struct FileReferences {
     extraction_errors: Vec<String>,
 }
 
-/// Structured error types for comprehensive debugging context
-#[derive(Error, Debug)]
-pub enum PythonParsingError {
-    #[error("Tree-sitter parsing failed in {file_path:?} ({language}): {message}")]
-    TreeSitterError {
-        message: String,
-        file_path: PathBuf,
-        language: String,
-    },
-
-    #[error("Query compilation failed for {language}: {message} (query: {query_text})")]
-    QueryCompilationError {
-        message: String,
-        language: String,
-        query_text: String,
-    },
-
-    #[error("UTF-8 decoding error in {file_path:?} at line {line}: {message}")]
-    Utf8DecodingError {
-        message: String,
-        file_path: PathBuf,
-        line: usize,
-        column: Option<usize>,
-    },
-
-    #[error("Symbol resolution failed for '{symbol_name}' in {file_path:?}:{line} (available: {available_symbols})")]
-    SymbolResolutionError {
-        symbol_name: String,
-        file_path: PathBuf,
-        line: usize,
-        available_symbols: usize,
-    },
-
-    #[error("Parser pool exhausted for {requested_language} (max retries: {max_retries})")]
-    ParserPoolExhaustedError {
-        requested_language: String,
-        max_retries: usize,
-    },
-
-    #[error("File too large: {file_path:?} has {size} bytes, exceeds limit {max_size}")]
-    FileSizeError {
-        file_path: PathBuf,
-        size: usize,
-        max_size: usize,
-    },
-
-    #[error("Unsupported language '.{extension}' for file: {file_path:?}")]
-    UnsupportedLanguageError {
-        file_path: PathBuf,
-        extension: String,
-    },
-
-    #[error("Async pattern parsing failed in {file_path:?}:{line} ({pattern_type}): {message}")]
-    AsyncPatternError {
-        message: String,
-        file_path: PathBuf,
-        line: usize,
-        pattern_type: String,
-    },
-
-    #[error(
-        "Type annotation parsing failed in {file_path:?}:{line} ('{annotation_text}'): {message}"
-    )]
-    TypeAnnotationError {
-        message: String,
-        file_path: PathBuf,
-        line: usize,
-        annotation_text: String,
-    },
-
-    #[error("Python import resolution failed for '{import_name}' in {file_path:?}:{line} ({import_type})")]
-    ImportResolutionError {
-        import_name: String,
-        file_path: PathBuf,
-        line: usize,
-        import_type: String,
-    },
-
-    #[error("Pattern matching syntax error in {file_path:?}:{line} ('{pattern_text}'): {message}")]
-    PatternMatchingError {
-        message: String,
-        file_path: PathBuf,
-        line: usize,
-        pattern_text: String,
-    },
-
-    #[error(
-        "Comprehension parsing failed in {file_path:?}:{line} ({comprehension_type}): {message}"
-    )]
-    ComprehensionError {
-        message: String,
-        file_path: PathBuf,
-        line: usize,
-        comprehension_type: String,
-    },
-
-    #[error("Memory limit exceeded during parsing {file_path:?}: estimated {estimated_memory} bytes > limit {limit}")]
-    MemoryLimitError {
-        file_path: PathBuf,
-        estimated_memory: usize,
-        limit: usize,
-    },
-}
-
-/// Enhanced extraction result with structured error context
+/// Result of reference extraction with partial success support
 #[derive(Debug)]
 enum ExtractionResult {
     Success(FileReferences),
     PartialSuccess {
         references: FileReferences,
-        recoverable_errors: Vec<PythonParsingError>,
+        recoverable_errors: Vec<String>,
     },
-    Failure(PythonParsingError),
+    Failure(String),
 }
 
 /// Hierarchical representation of symbols for accurate containment
@@ -1403,114 +1540,5 @@ fn process_data() {
         // Verify graph was built
         assert_eq!(graph.stats.node_count, 2);
         // Note: edge count might be 0 initially as reference resolution needs improvement
-    }
-
-    #[test]
-    fn test_structured_error_types() {
-        // Test various structured error types to ensure proper context is provided
-        use std::path::PathBuf;
-
-        let test_path = PathBuf::from("test.py");
-
-        // Test TreeSitterError
-        let tree_error = PythonParsingError::TreeSitterError {
-            message: "Syntax error in Python code".to_string(),
-            file_path: test_path.clone(),
-            language: "Python".to_string(),
-        };
-        let error_message = tree_error.to_string();
-        assert!(error_message.contains("Tree-sitter parsing failed"));
-        assert!(error_message.contains("test.py"));
-        assert!(error_message.contains("Python"));
-
-        // Test QueryCompilationError
-        let query_error = PythonParsingError::QueryCompilationError {
-            message: "Invalid tree-sitter query".to_string(),
-            language: "Python".to_string(),
-            query_text: "(invalid_query)".to_string(),
-        };
-        let query_message = query_error.to_string();
-        assert!(query_message.contains("Query compilation failed"));
-        assert!(query_message.contains("Python"));
-
-        // Test Utf8DecodingError
-        let utf8_error = PythonParsingError::Utf8DecodingError {
-            message: "Invalid UTF-8 sequence".to_string(),
-            file_path: test_path.clone(),
-            line: 42,
-            column: Some(10),
-        };
-        let utf8_message = utf8_error.to_string();
-        assert!(utf8_message.contains("UTF-8 decoding error"));
-        assert!(utf8_message.contains("test.py"));
-        assert!(utf8_message.contains("line 42"));
-
-        // Test FileSizeError
-        let size_error = PythonParsingError::FileSizeError {
-            file_path: test_path.clone(),
-            size: 5000000,
-            max_size: 1000000,
-        };
-        let size_message = size_error.to_string();
-        assert!(size_message.contains("File too large"));
-        assert!(size_message.contains("test.py"));
-        assert!(size_message.contains("5000000"));
-        assert!(size_message.contains("1000000"));
-
-        // Test AsyncPatternError
-        let async_error = PythonParsingError::AsyncPatternError {
-            message: "Invalid async syntax".to_string(),
-            file_path: test_path.clone(),
-            line: 15,
-            pattern_type: "await_expression".to_string(),
-        };
-        assert!(async_error
-            .to_string()
-            .contains("Async pattern parsing failed"));
-
-        // Test TypeAnnotationError
-        let type_error = PythonParsingError::TypeAnnotationError {
-            message: "Complex type annotation failed".to_string(),
-            file_path: test_path.clone(),
-            line: 28,
-            annotation_text: "List[Dict[str, Optional[int]]]".to_string(),
-        };
-        assert!(type_error
-            .to_string()
-            .contains("Type annotation parsing failed"));
-
-        // Test ImportResolutionError
-        let import_error = PythonParsingError::ImportResolutionError {
-            import_name: "nonexistent_module".to_string(),
-            file_path: test_path.clone(),
-            line: 1,
-            import_type: "from_import".to_string(),
-        };
-        assert!(import_error
-            .to_string()
-            .contains("Python import resolution failed"));
-        assert!(import_error.to_string().contains("nonexistent_module"));
-
-        // Test PatternMatchingError
-        let pattern_error = PythonParsingError::PatternMatchingError {
-            message: "Invalid match pattern".to_string(),
-            file_path: test_path.clone(),
-            line: 50,
-            pattern_text: "case [x, *rest, y]:".to_string(),
-        };
-        assert!(pattern_error
-            .to_string()
-            .contains("Pattern matching syntax error"));
-
-        // Test ComprehensionError
-        let comp_error = PythonParsingError::ComprehensionError {
-            message: "Nested comprehension too complex".to_string(),
-            file_path: test_path,
-            line: 35,
-            comprehension_type: "list_comprehension".to_string(),
-        };
-        assert!(comp_error
-            .to_string()
-            .contains("Comprehension parsing failed"));
     }
 }

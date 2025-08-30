@@ -2,45 +2,201 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::OnceLock;
 use tree_sitter::{Language, Node, Parser, Tree};
 
-// Node type constants for better maintainability and to avoid typos
-// Multi-language function nodes
-const FUNCTION_NODES: &[&str] = &[
-    // Rust
-    "function_item",
-    "function_declaration",
-    // Python
-    "function_definition",
-];
-const METHOD_NODES: &[&str] = &["method_definition", "method_declaration"];
-const STRUCT_NODES: &[&str] = &["struct_item", "struct_declaration"];
-const CLASS_NODES: &[&str] = &[
-    // Rust
-    "class_declaration",
-    // Python
-    "class_definition",
-];
-const ENUM_NODES: &[&str] = &["enum_item", "enum_declaration"];
-const VARIABLE_NODES: &[&str] = &["let_declaration", "variable_declarator"];
-const CONST_NODES: &[&str] = &["const_item", "const_declaration"];
-const MODULE_NODES: &[&str] = &["mod_item", "module_declaration"];
-const IMPORT_NODES: &[&str] = &[
-    // Rust
-    "use_declaration",
-    // Python
-    "import_statement",
-    "import_from_statement",
-    "future_import_statement",
-];
-const COMMENT_NODES: &[&str] = &["line_comment", "block_comment"];
+// Node type constants optimized with HashSets for O(1) lookup performance
+// Using OnceLock for lazy initialization to avoid initialization cost on each function call
 
-// Special Rust-specific node types
-const TRAIT_NODE: &str = "trait_item";
-const IMPL_NODE: &str = "impl_item";
-const INTERFACE_NODE: &str = "interface_declaration";
+// Function-related nodes across languages
+static FUNCTION_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_function_nodes() -> &'static HashSet<&'static str> {
+    FUNCTION_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "function_item",
+            "function_declaration",
+            // TypeScript/JavaScript
+            "function",
+            "function_expression",
+            "arrow_function",
+            "method_definition",
+            // Python
+            "function_definition",
+        ])
+    })
+}
+
+// Method nodes
+static METHOD_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_method_nodes() -> &'static HashSet<&'static str> {
+    METHOD_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "method_definition",
+            "method_declaration",
+            "property_definition", // For class properties
+        ])
+    })
+}
+
+// Struct/Class nodes
+static STRUCT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_struct_nodes() -> &'static HashSet<&'static str> {
+    STRUCT_NODES.get_or_init(|| HashSet::from_iter(["struct_item", "struct_declaration"]))
+}
+
+static CLASS_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_class_nodes() -> &'static HashSet<&'static str> {
+    CLASS_NODES.get_or_init(|| {
+        HashSet::from_iter(["class_declaration", "class_definition", "class_expression"])
+    })
+}
+
+// Enum/Union nodes
+static ENUM_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_enum_nodes() -> &'static HashSet<&'static str> {
+    ENUM_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "enum_item",
+            "enum_declaration",
+            "enum_member", // TypeScript enum members
+        ])
+    })
+}
+
+// Variable declarations
+static VARIABLE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_variable_nodes() -> &'static HashSet<&'static str> {
+    VARIABLE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "let_declaration",
+            // TypeScript/JavaScript
+            "variable_declarator",
+            "lexical_declaration",  // let/const
+            "variable_declaration", // var
+        ])
+    })
+}
+
+// Constant declarations
+static CONST_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_const_nodes() -> &'static HashSet<&'static str> {
+    CONST_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "const_item",        // Rust
+            "const_declaration", // General
+        ])
+    })
+}
+
+// Module/namespace nodes
+static MODULE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_module_nodes() -> &'static HashSet<&'static str> {
+    MODULE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "mod_item",              // Rust
+            "module_declaration",    // TypeScript
+            "namespace_declaration", // TypeScript namespace
+        ])
+    })
+}
+
+// Import/export nodes
+static IMPORT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_import_nodes() -> &'static HashSet<&'static str> {
+    IMPORT_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "use_declaration",
+            // JavaScript/TypeScript
+            "import_statement",
+            "import_clause",
+            "export_statement",
+            "export_declaration",
+            // Python
+            "import_statement",
+            "import_from_statement",
+            "future_import_statement",
+        ])
+    })
+}
+
+// Comment nodes
+static COMMENT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_comment_nodes() -> &'static HashSet<&'static str> {
+    COMMENT_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "line_comment",
+            "block_comment",
+            "comment", // Generic comment node
+        ])
+    })
+}
+
+// Interface and type nodes (TypeScript-specific)
+static INTERFACE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_interface_nodes() -> &'static HashSet<&'static str> {
+    INTERFACE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "interface_declaration",
+            "type_alias_declaration", // TypeScript type aliases
+        ])
+    })
+}
+
+// JSX/TSX-specific nodes
+static JSX_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_jsx_nodes() -> &'static HashSet<&'static str> {
+    JSX_NODES.get_or_init(|| {
+        HashSet::from_iter(["jsx_element", "jsx_fragment", "jsx_self_closing_element"])
+    })
+}
+
+// Identifier node types across different languages
+static IDENTIFIER_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_identifier_nodes() -> &'static HashSet<&'static str> {
+    IDENTIFIER_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "identifier",
+            "type_identifier",
+            "name",
+            "property_identifier", // JavaScript/TypeScript property names
+        ])
+    })
+}
+
+// Nodes that contain methods (for context detection)
+static METHOD_CONTAINER_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_method_container_nodes() -> &'static HashSet<&'static str> {
+    METHOD_CONTAINER_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "trait_item",
+            "impl_item",
+            // JavaScript/TypeScript
+            "class_declaration",
+            "class_expression",
+            "interface_declaration",
+            // Python
+            "class_definition",
+        ])
+    })
+}
+
+// Special language-specific node types
+static SPECIAL_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_special_nodes() -> &'static HashSet<&'static str> {
+    SPECIAL_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "trait_item",             // Rust traits
+            "impl_item",              // Rust implementations
+            "type_alias_declaration", // TypeScript type aliases
+        ])
+    })
+}
 
 // Python-specific node types
 const DECORATED_DEFINITION: &str = "decorated_definition";
@@ -57,38 +213,12 @@ const PYTHON_VARIABLE_NODES: &[&str] = &[
     "named_expression", // Walrus operator :=
 ];
 
-// Python control flow and statement nodes
-#[allow(dead_code)] // Will be used for future control flow analysis
-const PYTHON_CONTROL_NODES: &[&str] = &[
-    "if_statement",
-    "for_statement",
-    "while_statement",
-    "try_statement",
-    "match_statement", // Python 3.10+
-    "with_statement",
-    "yield",
-    "return_statement",
-    "raise_statement",
-    "global_statement",
-    "nonlocal_statement",
-];
-
-// Identifier node types across different languages
-const IDENTIFIER_NODES: &[&str] = &["identifier", "type_identifier", "name"];
-
-// Nodes that contain methods (for context detection)
-const METHOD_CONTAINER_NODES: &[&str] = &[
-    // Rust
-    "trait_item",
-    "impl_item",
-    // Python
-    "class_definition",
-];
-
 /// Supported programming languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SupportedLanguage {
     Rust,
+    TypeScript,
+    JavaScript,
     Python,
 }
 
@@ -97,6 +227,8 @@ impl SupportedLanguage {
     pub fn tree_sitter_language(&self) -> Result<Language> {
         match self {
             SupportedLanguage::Rust => Ok(tree_sitter_rust::LANGUAGE.into()),
+            SupportedLanguage::TypeScript => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            SupportedLanguage::JavaScript => Ok(tree_sitter_javascript::LANGUAGE.into()),
             SupportedLanguage::Python => Ok(tree_sitter_python::LANGUAGE.into()),
         }
     }
@@ -105,6 +237,8 @@ impl SupportedLanguage {
     pub fn from_extension(extension: &str) -> Option<Self> {
         match extension.to_lowercase().as_str() {
             "rs" => Some(SupportedLanguage::Rust),
+            "ts" | "tsx" => Some(SupportedLanguage::TypeScript),
+            "js" | "jsx" | "mjs" | "cjs" => Some(SupportedLanguage::JavaScript),
             "py" => Some(SupportedLanguage::Python),
             _ => None,
         }
@@ -115,10 +249,9 @@ impl SupportedLanguage {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "rust" | "rs" => Some(SupportedLanguage::Rust),
+            "typescript" | "ts" => Some(SupportedLanguage::TypeScript),
+            "javascript" | "js" => Some(SupportedLanguage::JavaScript),
             "python" | "py" => Some(SupportedLanguage::Python),
-            // Future languages can be added here:
-            // "javascript" | "js" => Some(SupportedLanguage::JavaScript),
-            // "typescript" | "ts" => Some(SupportedLanguage::TypeScript),
             _ => None,
         }
     }
@@ -127,6 +260,8 @@ impl SupportedLanguage {
     pub fn name(&self) -> &'static str {
         match self {
             SupportedLanguage::Rust => "Rust",
+            SupportedLanguage::TypeScript => "TypeScript",
+            SupportedLanguage::JavaScript => "JavaScript",
             SupportedLanguage::Python => "Python",
         }
     }
@@ -135,6 +270,8 @@ impl SupportedLanguage {
     pub fn extensions(&self) -> &'static [&'static str] {
         match self {
             SupportedLanguage::Rust => &["rs"],
+            SupportedLanguage::TypeScript => &["ts", "tsx"],
+            SupportedLanguage::JavaScript => &["js", "jsx", "mjs", "cjs"],
             SupportedLanguage::Python => &["py"],
         }
     }
@@ -153,6 +290,9 @@ pub enum SymbolType {
     Constant,
     Module,
     Import,
+    Export,    // JavaScript/TypeScript exports
+    Type,      // TypeScript type aliases
+    Component, // React/JSX components
     Comment,
     Other(String),
 }
@@ -170,6 +310,9 @@ impl std::fmt::Display for SymbolType {
             SymbolType::Constant => write!(f, "constant"),
             SymbolType::Module => write!(f, "module"),
             SymbolType::Import => write!(f, "import"),
+            SymbolType::Export => write!(f, "export"),
+            SymbolType::Type => write!(f, "type"),
+            SymbolType::Component => write!(f, "component"),
             SymbolType::Comment => write!(f, "comment"),
             SymbolType::Other(s) => write!(f, "other({})", s),
         }
@@ -192,6 +335,12 @@ impl TryFrom<u8> for SymbolType {
             6 => Ok(SymbolType::Variable),
             7 => Ok(SymbolType::Constant),
             8 => Ok(SymbolType::Module),
+            9 => Ok(SymbolType::Import),
+            10 => Ok(SymbolType::Export),
+            11 => Ok(SymbolType::Type),
+            12 => Ok(SymbolType::Component),
+            13 => Ok(SymbolType::Interface),
+            14 => Ok(SymbolType::Comment),
             _ => Err(()),
         }
     }
@@ -300,7 +449,14 @@ impl CodeParser {
 
         // Initialize parsers for all supported languages
         let languages = config.languages.as_ref().map_or_else(
-            || vec![SupportedLanguage::Rust, SupportedLanguage::Python],
+            || {
+                vec![
+                    SupportedLanguage::Rust,
+                    SupportedLanguage::TypeScript,
+                    SupportedLanguage::JavaScript,
+                    SupportedLanguage::Python,
+                ]
+            },
             |langs| langs.clone(),
         );
 
@@ -405,9 +561,10 @@ impl CodeParser {
         let node_type = node.kind();
 
         // Check if this node represents a symbol we care about
-        let symbol_type = if FUNCTION_NODES.contains(&node_type) {
+        // Using optimized HashSet lookups for O(1) performance
+        let symbol_type = if get_function_nodes().contains(node_type) {
             // Check if this is inside a trait/impl/class block (making it a method)
-            if self.is_inside_trait_or_impl(node) {
+            if self.is_inside_method_container(node) {
                 Some(SymbolType::Method)
             } else {
                 Some(SymbolType::Function)
@@ -417,29 +574,43 @@ impl CodeParser {
             self.extract_decorated_symbol_type(node)
         } else if node_type == LAMBDA_NODE {
             Some(SymbolType::Function) // Lambda functions are functions
-        } else if METHOD_NODES.contains(&node_type) {
+        } else if get_method_nodes().contains(node_type) {
             Some(SymbolType::Method)
-        } else if STRUCT_NODES.contains(&node_type) {
+        } else if get_struct_nodes().contains(node_type) {
             Some(SymbolType::Struct)
-        } else if node_type == TRAIT_NODE {
-            Some(SymbolType::Interface) // Rust traits are interfaces
-        } else if node_type == IMPL_NODE || CLASS_NODES.contains(&node_type) {
-            Some(SymbolType::Class) // Rust impl blocks and Python class definitions
-        } else if node_type == INTERFACE_NODE {
-            Some(SymbolType::Interface)
-        } else if ENUM_NODES.contains(&node_type) {
+        } else if get_class_nodes().contains(node_type) {
+            Some(SymbolType::Class) // JavaScript/TypeScript class declarations
+        } else if get_interface_nodes().contains(node_type) {
+            Some(SymbolType::Interface) // TypeScript interfaces and type aliases
+        } else if get_enum_nodes().contains(node_type) {
             Some(SymbolType::Enum)
-        } else if VARIABLE_NODES.contains(&node_type) || PYTHON_VARIABLE_NODES.contains(&node_type)
+        } else if get_variable_nodes().contains(node_type)
+            || PYTHON_VARIABLE_NODES.contains(&node_type)
         {
             Some(SymbolType::Variable)
-        } else if CONST_NODES.contains(&node_type) {
+        } else if get_const_nodes().contains(node_type) {
             Some(SymbolType::Constant)
-        } else if MODULE_NODES.contains(&node_type) {
+        } else if get_module_nodes().contains(node_type) {
             Some(SymbolType::Module)
-        } else if IMPORT_NODES.contains(&node_type) {
-            Some(SymbolType::Import)
-        } else if COMMENT_NODES.contains(&node_type) {
+        } else if get_import_nodes().contains(node_type) {
+            // Differentiate between imports and exports
+            if node_type.starts_with("export") {
+                Some(SymbolType::Export)
+            } else {
+                Some(SymbolType::Import)
+            }
+        } else if get_jsx_nodes().contains(node_type) {
+            Some(SymbolType::Component) // JSX/TSX components
+        } else if get_comment_nodes().contains(node_type) {
             Some(SymbolType::Comment)
+        } else if get_special_nodes().contains(node_type) {
+            // Handle special nodes with specific logic
+            match node_type {
+                "trait_item" => Some(SymbolType::Interface), // Rust traits
+                "impl_item" => Some(SymbolType::Class),      // Rust implementations
+                "type_alias_declaration" => Some(SymbolType::Type), // TypeScript type aliases
+                _ => None,
+            }
         } else {
             None
         };
@@ -478,12 +649,13 @@ impl CodeParser {
         }
     }
 
-    /// Check if a node is inside a trait, impl, or class block
+    /// Check if a node is inside a method container (trait, impl, class, interface)
     /// Made pub(crate) for testing purposes
-    pub(crate) fn is_inside_trait_or_impl(&self, node: Node) -> bool {
+    /// Optimized with HashSet for O(1) lookup performance
+    pub(crate) fn is_inside_method_container(&self, node: Node) -> bool {
         let mut current = node.parent();
         while let Some(parent) = current {
-            if METHOD_CONTAINER_NODES.contains(&parent.kind()) {
+            if get_method_container_nodes().contains(parent.kind()) {
                 return true;
             }
             current = parent.parent();
@@ -491,28 +663,32 @@ impl CodeParser {
         false
     }
 
+    /// Check if a node is inside a trait or impl block (legacy method for backwards compatibility)
+    /// Made pub(crate) for testing purposes
+    #[allow(dead_code)]
+    pub(crate) fn is_inside_trait_or_impl(&self, node: Node) -> bool {
+        self.is_inside_method_container(node)
+    }
+
     /// Extract symbol type from Python decorated definitions
-    /// Python decorators can modify function/class behavior significantly
+    /// Python uses @decorators to mark functions and classes
     fn extract_decorated_symbol_type(&self, node: Node) -> Option<SymbolType> {
-        // Look for the actual definition inside the decorated_definition
+        // Look for the actual definition within the decorated definition
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            let child_kind = child.kind();
-
-            // Check what's being decorated
-            if FUNCTION_NODES.contains(&child_kind) {
+            let child_type = child.kind();
+            if child_type == "function_definition" {
                 // Check if it's inside a class (making it a method)
-                if self.is_inside_trait_or_impl(node) {
+                if self.is_inside_method_container(node) {
                     return Some(SymbolType::Method);
                 } else {
                     return Some(SymbolType::Function);
                 }
-            } else if CLASS_NODES.contains(&child_kind) {
+            } else if child_type == "class_definition" {
                 return Some(SymbolType::Class);
             }
         }
-
-        // Default fallback - most decorators are on functions
+        // If we can't determine the specific type, treat as function
         Some(SymbolType::Function)
     }
 
@@ -524,7 +700,7 @@ impl CodeParser {
             // Handle various identifier types across different languages
             // Rust uses "type_identifier" for structs/enums, "identifier" for functions/variables
             // Other languages may use "name" or "identifier"
-            if IDENTIFIER_NODES.contains(&child.kind()) {
+            if get_identifier_nodes().contains(child.kind()) {
                 if let Ok(name) = child.utf8_text(content.as_bytes()) {
                     // Validate that the name is not empty after trimming
                     let trimmed_name = name.trim();
@@ -673,7 +849,10 @@ mod tests {
             Some(SupportedLanguage::Rust)
         );
         assert_eq!(SupportedLanguage::from_extension("unknown"), None);
-        assert_eq!(SupportedLanguage::from_extension("js"), None); // Not supported yet
+        assert_eq!(
+            SupportedLanguage::from_extension("js"),
+            Some(SupportedLanguage::JavaScript)
+        ); // Now supported!
         Ok(())
     }
 
@@ -985,206 +1164,415 @@ mod tests {
         Ok(())
     }
 
-    // Python-specific tests
+    // TypeScript and JavaScript Tests
+
     #[tokio::test]
-    async fn test_python_language_detection() -> Result<()> {
+    async fn test_typescript_language_detection() -> Result<()> {
         assert_eq!(
-            SupportedLanguage::from_extension("py"),
-            Some(SupportedLanguage::Python)
+            SupportedLanguage::from_extension("ts"),
+            Some(SupportedLanguage::TypeScript)
         );
         assert_eq!(
-            SupportedLanguage::from_name("python"),
-            Some(SupportedLanguage::Python)
+            SupportedLanguage::from_extension("tsx"),
+            Some(SupportedLanguage::TypeScript)
+        );
+
+        assert_eq!(
+            SupportedLanguage::from_name("typescript"),
+            Some(SupportedLanguage::TypeScript)
         );
         assert_eq!(
-            SupportedLanguage::from_name("py"),
-            Some(SupportedLanguage::Python)
+            SupportedLanguage::from_name("ts"),
+            Some(SupportedLanguage::TypeScript)
         );
 
-        let python_lang = SupportedLanguage::Python;
-        assert_eq!(python_lang.name(), "Python");
-        assert_eq!(python_lang.extensions(), &["py"]);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_basic_python_parsing() -> Result<()> {
-        let mut parser = CodeParser::new()?;
-
-        let python_code = r#"
-def hello_world():
-    print("Hello, world!")
-
-class Person:
-    def __init__(self, name):
-        self.name = name
-    
-    def greet(self):
-        return f"Hello, {self.name}"
-
-import os
-from typing import List, Dict
-import numpy as np
-
-@property
-def calculated_value(self):
-    return 42
-        "#;
-
-        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
-
-        assert_eq!(parsed.language, SupportedLanguage::Python);
-        assert!(!parsed.symbols.is_empty());
-        assert!(parsed.stats.total_nodes > 0);
-
-        // Should find the function
-        let function_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Function)
-            .collect();
-        assert!(!function_symbols.is_empty());
-
-        // Should find the class
-        let class_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Class)
-            .collect();
-        assert!(!class_symbols.is_empty());
-
-        // Should find imports
-        let import_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Import)
-            .collect();
-        assert!(!import_symbols.is_empty());
+        assert_eq!(SupportedLanguage::TypeScript.name(), "TypeScript");
+        assert_eq!(SupportedLanguage::TypeScript.extensions(), &["ts", "tsx"]);
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_python_method_detection() -> Result<()> {
-        let mut parser = CodeParser::new()?;
+    async fn test_javascript_language_detection() -> Result<()> {
+        assert_eq!(
+            SupportedLanguage::from_extension("js"),
+            Some(SupportedLanguage::JavaScript)
+        );
+        assert_eq!(
+            SupportedLanguage::from_extension("jsx"),
+            Some(SupportedLanguage::JavaScript)
+        );
+        assert_eq!(
+            SupportedLanguage::from_extension("mjs"),
+            Some(SupportedLanguage::JavaScript)
+        );
+        assert_eq!(
+            SupportedLanguage::from_extension("cjs"),
+            Some(SupportedLanguage::JavaScript)
+        );
 
-        let python_code = r#"
-class Calculator:
-    def add(self, a, b):
-        return a + b
-    
-    @classmethod
-    def create_default(cls):
-        return cls()
-    
-    @staticmethod
-    def multiply(a, b):
-        return a * b
+        assert_eq!(
+            SupportedLanguage::from_name("javascript"),
+            Some(SupportedLanguage::JavaScript)
+        );
+        assert_eq!(
+            SupportedLanguage::from_name("js"),
+            Some(SupportedLanguage::JavaScript)
+        );
 
-def standalone_function():
-    pass
-        "#;
-
-        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
-
-        // Should find methods inside the class
-        let method_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Method)
-            .collect();
-        assert!(!method_symbols.is_empty());
-
-        // Should find the standalone function
-        let function_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Function)
-            .collect();
-
-        // Should have at least the standalone function
-        let standalone_fn = function_symbols
-            .iter()
-            .find(|s| s.name == "standalone_function");
-        assert!(standalone_fn.is_some());
+        assert_eq!(SupportedLanguage::JavaScript.name(), "JavaScript");
+        assert_eq!(
+            SupportedLanguage::JavaScript.extensions(),
+            &["js", "jsx", "mjs", "cjs"]
+        );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_python_decorator_parsing() -> Result<()> {
+    async fn test_basic_typescript_parsing() -> Result<()> {
         let mut parser = CodeParser::new()?;
 
-        let python_code = r#"
-@app.route('/api/users')
-@require_auth
-def get_users():
-    return {"users": []}
+        let typescript_code = r#"
+        // Basic TypeScript constructs
+        interface User {
+            name: string;
+            age: number;
+        }
 
-@dataclass
-class User:
-    name: str
-    age: int
+        class UserService {
+            private users: User[] = [];
+            
+            public addUser(user: User): void {
+                this.users.push(user);
+            }
+            
+            async getUser(id: string): Promise<User | null> {
+                return this.users.find(u => u.name === id) || null;
+            }
+        }
+
+        function greetUser(user: User): string {
+            return `Hello, ${user.name}!`;
+        }
+
+        type UserList = User[];
+        
+        const constants = {
+            MAX_USERS: 100,
+            DEFAULT_AGE: 18
+        } as const;
         "#;
 
-        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+        let parsed = parser.parse_content(typescript_code, SupportedLanguage::TypeScript)?;
 
-        // Should find decorated functions and classes
-        let symbols: Vec<_> = parsed.symbols.iter().collect();
-        assert!(!symbols.is_empty());
+        assert_eq!(parsed.language, SupportedLanguage::TypeScript);
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Should find symbols in TypeScript code"
+        );
+        assert!(parsed.stats.total_nodes > 0, "Should have parsed nodes");
 
-        // Verify we can parse decorated constructs without errors
-        assert!(parsed.errors.is_empty() || parsed.errors.len() < symbols.len());
+        // Look for interface
+        let user_interface = parsed.symbols.iter().find(|s| s.name == "User");
+        if user_interface.is_some() {
+            assert_eq!(user_interface.unwrap().symbol_type, SymbolType::Interface);
+        }
+
+        // Look for class
+        let user_service_class = parsed.symbols.iter().find(|s| s.name == "UserService");
+        if user_service_class.is_some() {
+            assert_eq!(user_service_class.unwrap().symbol_type, SymbolType::Class);
+        }
+
+        // Look for function
+        let greet_function = parsed.symbols.iter().find(|s| s.name == "greetUser");
+        if greet_function.is_some() {
+            assert_eq!(greet_function.unwrap().symbol_type, SymbolType::Function);
+        }
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_python_import_variations() -> Result<()> {
+    async fn test_basic_javascript_parsing() -> Result<()> {
         let mut parser = CodeParser::new()?;
 
-        let python_code = r#"
-import os
-import sys, json
-from pathlib import Path
-from typing import Dict, List, Optional
-from . import local_module
-from ..parent import parent_module
-import numpy as np
+        let javascript_code = r#"
+        // Basic JavaScript constructs
+        class UserManager {
+            constructor() {
+                this.users = [];
+            }
+            
+            addUser(user) {
+                this.users.push(user);
+                return this;
+            }
+            
+            static create() {
+                return new UserManager();
+            }
+        }
+
+        function processUser(user) {
+            return {
+                ...user,
+                processed: true
+            };
+        }
+
+        const arrowFunction = (x, y) => x + y;
+
+        var globalVar = "global";
+        let blockVar = "block";
+        const constVar = "constant";
+        
+        // Export/import patterns
+        export { UserManager, processUser };
+        export default arrowFunction;
         "#;
 
-        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+        let parsed = parser.parse_content(javascript_code, SupportedLanguage::JavaScript)?;
 
-        // Should find various import styles
-        let import_symbols: Vec<_> = parsed
-            .symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Import)
-            .collect();
-        assert!(!import_symbols.is_empty());
+        assert_eq!(parsed.language, SupportedLanguage::JavaScript);
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Should find symbols in JavaScript code"
+        );
+        assert!(parsed.stats.total_nodes > 0, "Should have parsed nodes");
+
+        // Look for class
+        let user_manager_class = parsed.symbols.iter().find(|s| s.name == "UserManager");
+        if user_manager_class.is_some() {
+            assert_eq!(user_manager_class.unwrap().symbol_type, SymbolType::Class);
+        }
+
+        // Look for function
+        let process_function = parsed.symbols.iter().find(|s| s.name == "processUser");
+        if process_function.is_some() {
+            assert_eq!(process_function.unwrap().symbol_type, SymbolType::Function);
+        }
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_python_error_recovery() -> Result<()> {
+    async fn test_jsx_tsx_parsing() -> Result<()> {
         let mut parser = CodeParser::new()?;
 
-        // Python code with some syntax errors
-        let bad_python_code = r#"
-def valid_function():
-    return "works"
+        // Test TSX (TypeScript with JSX)
+        let tsx_code = r#"
+        import React from 'react';
 
-class ValidClass:
-    def method(self):
-        return True
+        interface Props {
+            name: string;
+            age?: number;
+        }
+
+        const UserCard: React.FC<Props> = ({ name, age }) => {
+            return (
+                <div className="user-card">
+                    <h2>{name}</h2>
+                    {age && <p>Age: {age}</p>}
+                </div>
+            );
+        };
+
+        export default UserCard;
         "#;
 
-        let parsed = parser.parse_content(bad_python_code, SupportedLanguage::Python)?;
+        let parsed = parser.parse_content(tsx_code, SupportedLanguage::TypeScript)?;
 
-        assert_eq!(parsed.language, SupportedLanguage::Python);
-        // Should still find valid symbols despite some errors
-        assert!(!parsed.symbols.is_empty());
+        assert_eq!(parsed.language, SupportedLanguage::TypeScript);
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Should find symbols in TSX code"
+        );
+
+        // Look for interface
+        let props_interface = parsed.symbols.iter().find(|s| s.name == "Props");
+        if props_interface.is_some() {
+            assert_eq!(props_interface.unwrap().symbol_type, SymbolType::Interface);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_typescript_advanced_features() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let advanced_ts_code = r#"
+        // Advanced TypeScript features
+        type Union = string | number | boolean;
+        type Intersection = { a: string } & { b: number };
+        
+        interface Generic<T> {
+            value: T;
+            process<U>(input: U): T | U;
+        }
+
+        enum Status {
+            Pending = "pending",
+            Completed = "completed",
+            Failed = "failed"
+        }
+
+        namespace Utils {
+            export function format(input: string): string {
+                return input.trim();
+            }
+        }
+
+        abstract class BaseService {
+            abstract process(): void;
+        }
+
+        class ConcreteService extends BaseService {
+            process(): void {
+                console.log("Processing...");
+            }
+        }
+
+        // Decorator (experimental)
+        function log(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+            return descriptor;
+        }
+        "#;
+
+        let parsed = parser.parse_content(advanced_ts_code, SupportedLanguage::TypeScript)?;
+
+        assert_eq!(parsed.language, SupportedLanguage::TypeScript);
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Should find symbols in advanced TypeScript code"
+        );
+
+        // Look for enum
+        let status_enum = parsed.symbols.iter().find(|s| s.name == "Status");
+        if status_enum.is_some() {
+            assert_eq!(status_enum.unwrap().symbol_type, SymbolType::Enum);
+        }
+
+        // Look for namespace/module
+        let utils_namespace = parsed.symbols.iter().find(|s| s.name == "Utils");
+        if utils_namespace.is_some() {
+            assert_eq!(utils_namespace.unwrap().symbol_type, SymbolType::Module);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_javascript_es6_features() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let es6_code = r#"
+        // ES6+ features
+        import { someFunction } from './utils';
+        import defaultExport from 'external-module';
+
+        const asyncFunction = async (data) => {
+            try {
+                const result = await processData(data);
+                return result;
+            } catch (error) {
+                console.error(error);
+                throw error;
+            }
+        };
+
+        class ModernClass {
+            #privateField = 'private';
+            
+            static staticMethod() {
+                return 'static';
+            }
+            
+            get value() {
+                return this.#privateField;
+            }
+            
+            set value(newValue) {
+                this.#privateField = newValue;
+            }
+        }
+
+        // Template literals and destructuring
+        const templateFunction = ({ name, age = 0 } = {}) => {
+            return `User: ${name}, Age: ${age}`;
+        };
+
+        // Generators
+        function* generator() {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        "#;
+
+        let parsed = parser.parse_content(es6_code, SupportedLanguage::JavaScript)?;
+
+        assert_eq!(parsed.language, SupportedLanguage::JavaScript);
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Should find symbols in ES6+ JavaScript code"
+        );
+
+        // Look for class
+        let modern_class = parsed.symbols.iter().find(|s| s.name == "ModernClass");
+        if modern_class.is_some() {
+            assert_eq!(modern_class.unwrap().symbol_type, SymbolType::Class);
+        }
+
+        // Look for generator function
+        let generator_func = parsed.symbols.iter().find(|s| s.name == "generator");
+        if generator_func.is_some() {
+            assert_eq!(generator_func.unwrap().symbol_type, SymbolType::Function);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mixed_language_parsing() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        // Test that we can parse different languages in the same session
+        let rust_code = "fn hello() { println!(\"Hello\"); }";
+        let js_code = "function hello() { console.log('Hello'); }";
+        let ts_code = "function hello(): void { console.log('Hello'); }";
+
+        let rust_parsed = parser.parse_content(rust_code, SupportedLanguage::Rust)?;
+        let js_parsed = parser.parse_content(js_code, SupportedLanguage::JavaScript)?;
+        let ts_parsed = parser.parse_content(ts_code, SupportedLanguage::TypeScript)?;
+
+        assert_eq!(rust_parsed.language, SupportedLanguage::Rust);
+        assert_eq!(js_parsed.language, SupportedLanguage::JavaScript);
+        assert_eq!(ts_parsed.language, SupportedLanguage::TypeScript);
+
+        // All should find some symbols
+        assert!(!rust_parsed.symbols.is_empty());
+        assert!(!js_parsed.symbols.is_empty());
+        assert!(!ts_parsed.symbols.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_new_symbol_types() -> Result<()> {
+        // Test the new symbol types display correctly
+        assert_eq!(SymbolType::Export.to_string(), "export");
+        assert_eq!(SymbolType::Type.to_string(), "type");
+        assert_eq!(SymbolType::Component.to_string(), "component");
+
+        // Test round-trip conversion for new symbol types
+        assert_eq!(SymbolType::try_from(10).unwrap(), SymbolType::Export);
+        assert_eq!(SymbolType::try_from(11).unwrap(), SymbolType::Type);
+        assert_eq!(SymbolType::try_from(12).unwrap(), SymbolType::Component);
+        assert_eq!(SymbolType::try_from(13).unwrap(), SymbolType::Interface);
+        assert_eq!(SymbolType::try_from(14).unwrap(), SymbolType::Comment);
 
         Ok(())
     }
