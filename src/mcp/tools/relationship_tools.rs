@@ -435,37 +435,13 @@ impl RelationshipTools {
         &self,
         request: NaturalLanguageRelationshipRequest,
     ) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        // Parse the natural language query
-        if let Some(query_type) =
-            crate::relationship_query::parse_natural_language_relationship_query(&request.query)
-        {
-            let result = engine.execute_query(query_type).await?;
-
-            tracing::info!(
-                "Natural language relationship query completed: '{}' in {}ms",
-                request.query,
-                result.stats.execution_time_ms
-            );
-
-            Ok(serde_json::json!({
-                "success": true,
-                "query": request.query,
-                "result": result,
-                "markdown": result.to_markdown()
-            }))
-        } else {
-            Err(anyhow::anyhow!(
-                "Could not parse relationship query: '{}'. Try queries like 'what calls FileStorage?' or 'what would break if I change StorageError?'",
-                request.query
-            ))
-        }
+        Err(anyhow::anyhow!(
+            "Natural language query '{}' is not supported. Use direct commands instead:\n\
+            - Use 'find-callers <symbol>' instead of 'what calls X?'\n\
+            - Use 'analyze-impact <symbol>' instead of 'what would break if I change X?'\n\
+            - Use direct symbol search commands",
+            request.query
+        ))
     }
 }
 

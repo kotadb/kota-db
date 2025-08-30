@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING CHANGE**: Removed natural language query parser (#445)
+  - Removed `RelationshipQuery` CLI command that supported natural language queries
+  - Removed `natural_language_query` module and all NL parsing functions
+  - Removed `parse_natural_language_relationship_query` function from relationship_query module
+  - Natural language patterns like "what calls X?" are no longer supported
+  - **Migration**: Use direct commands instead:
+    - Replace "what calls X?" with `find-callers X`
+    - Replace "what would break if I change X?" with `analyze-impact X`
+    - Replace "find unused functions" with direct symbol queries
+  - **Rationale**: The NL parser was limited (only 2 patterns), created false expectations, and added complexity for minimal benefit
+  - Direct commands are clearer, more predictable, and have better error messages
+
 ### Added
 - Made `--quiet` mode the default for CLI to optimize LLM context usage (#429)
   - Reduces token consumption by 70% for AI assistants

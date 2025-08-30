@@ -16,9 +16,7 @@ use tempfile::TempDir;
 use kotadb::{
     git::{IngestionConfig, IngestionOptions, RepositoryIngester},
     parsing::CodeParser,
-    relationship_query::{
-        parse_natural_language_relationship_query, RelationshipQueryEngine, RelationshipQueryType,
-    },
+    relationship_query::{RelationshipQueryEngine, RelationshipQueryType},
     symbol_storage::SymbolStorage,
 };
 
@@ -210,14 +208,13 @@ async fn test_complete_relationship_query_pipeline() -> Result<()> {
         unused_result.direct_relationships.len()
     );
 
-    // Test natural language query parsing
-    if let Some(query_type) = parse_natural_language_relationship_query("find unused symbols") {
-        let nl_result = relationship_engine.execute_query(query_type).await?;
-        println!(
-            "✅ Natural language query executed: {} symbols analyzed",
-            nl_result.stats.symbols_analyzed
-        );
-    }
+    // Test direct unused symbols query (was natural language query)
+    let query_type = RelationshipQueryType::UnusedSymbols { symbol_type: None };
+    let nl_result = relationship_engine.execute_query(query_type).await?;
+    println!(
+        "✅ Direct query executed: {} symbols analyzed",
+        nl_result.stats.symbols_analyzed
+    );
 
     println!("✅ Issue 264 verified: Relationship query engine integrated successfully");
 
