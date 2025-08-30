@@ -86,6 +86,7 @@ git2 = { version = "0.18", optional = true }
 # Tree-sitter for multi-language code parsing - using compatible newer versions
 tree-sitter = { version = "0.25", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.23", optional = true }
 
 # Bitmaps
 roaring = "0.10"
@@ -146,10 +147,11 @@ mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-
 embeddings-onnx = ["ort", "tokenizers", "ndarray"]           # ONNX Runtime embeddings (default)
 # Git repository integration
 git-integration = ["git2"]
-# Tree-sitter code parsing (starting with Rust support)
+# Tree-sitter code parsing (Rust and Python support)
 tree-sitter-parsing = [
     "tree-sitter",
-    "tree-sitter-rust"
+    "tree-sitter-rust",
+    "tree-sitter-python"
 ]
 # Benchmarking
 bench = ["criterion", "proptest"]

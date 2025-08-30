@@ -55,6 +55,7 @@ pub mod stub {
     #[derive(Debug, Clone)]
     pub enum SupportedLanguage {
         Rust,
+        Python,
     }
 
     impl CodeParser {

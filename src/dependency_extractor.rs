@@ -154,6 +154,11 @@ pub enum ReferenceType {
     ClosureCall,
     TurbofishCall,
     OperatorOverload,
+    // Python-specific reference types
+    Import,
+    Inheritance,
+    Decorator,
+    Other,
 }
 
 impl ReferenceType {
@@ -174,6 +179,11 @@ impl ReferenceType {
             ReferenceType::FieldAccess => RelationType::References,
             ReferenceType::TraitImpl => RelationType::Implements,
             ReferenceType::TraitBound => RelationType::Implements,
+            // Python-specific mappings
+            ReferenceType::Import => RelationType::References,
+            ReferenceType::Inheritance => RelationType::Extends,
+            ReferenceType::Decorator => RelationType::References,
+            ReferenceType::Other => RelationType::References,
         }
     }
 
@@ -194,6 +204,11 @@ impl ReferenceType {
             ReferenceType::MacroInvocation => RelationType::Custom("invokes_macro".to_string()),
             ReferenceType::FieldAccess => RelationType::Custom("accesses_field".to_string()),
             ReferenceType::OperatorOverload => RelationType::Custom("uses_operator".to_string()),
+            // Python-specific descriptive mappings
+            ReferenceType::Import => RelationType::Custom("imports".to_string()),
+            ReferenceType::Inheritance => RelationType::Custom("inherits_from".to_string()),
+            ReferenceType::Decorator => RelationType::Custom("decorated_by".to_string()),
+            ReferenceType::Other => RelationType::References,
         }
     }
 }

@@ -360,6 +360,7 @@ impl BinaryRelationshipBridge {
         // Extract references based on language
         let references = match language {
             SupportedLanguage::Rust => self.extract_rust_references(&tree, content)?,
+            SupportedLanguage::Python => self.extract_python_references(&tree, content)?,
         };
 
         // Return parser to pool
@@ -535,6 +536,109 @@ impl BinaryRelationshipBridge {
                             let end = node.end_byte();
                             let bytes = &content.as_bytes()[start..end];
                             String::from_utf8_lossy(bytes).into_owned()
+                        }
+                    },
+                });
+            }
+        }
+
+        Ok(references)
+    }
+
+    /// Extract references from Python code using tree-sitter queries
+    fn extract_python_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        let mut references = Vec::new();
+        let language = tree_sitter_python::LANGUAGE.into();
+
+        // Python-specific queries for function calls, imports, and type references
+        let python_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call
+                function: (identifier) @function_name)
+            (call
+                function: (attribute
+                    attribute: (identifier) @method_name))
+
+            ; Import statements
+            (import_statement
+                name: (dotted_name) @import_name)
+            (import_from_statement
+                name: (dotted_name) @import_name)
+            (import_from_statement
+                name: (aliased_import
+                    name: (identifier) @import_name))
+
+            ; Class references
+            (class_definition
+                superclasses: (argument_list
+                    (identifier) @base_class))
+
+            ; Decorator references
+            (decorator
+                (identifier) @decorator_name)
+            (decorator
+                (attribute
+                    attribute: (identifier) @decorator_name))
+
+            ; Attribute access
+            (attribute
+                attribute: (identifier) @attribute_name)
+            "#,
+        )
+        .context("Failed to create Python query")?;
+
+        let root_node = tree.root_node();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&python_query, root_node, content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+
+                // Handle potential UTF-8 issues in tree-sitter text extraction
+                let reference_text = match node.utf8_text(content.as_bytes()) {
+                    Ok(text) => text.to_string(),
+                    Err(_) => {
+                        // Fall back to lossy conversion for the node's byte range
+                        let start = node.start_byte();
+                        let end = node.end_byte();
+                        let bytes = &content.as_bytes()[start..end];
+                        String::from_utf8_lossy(bytes).into_owned()
+                    }
+                };
+
+                let point = node.start_position();
+
+                let capture_name = python_query.capture_names()[capture.index as usize];
+                let ref_type = match capture_name {
+                    "function_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::FunctionCall, // Method calls are function calls
+                    "import_name" => ReferenceType::Import,
+                    "base_class" => ReferenceType::Inheritance,
+                    "decorator_name" => ReferenceType::Decorator,
+                    "attribute_name" => ReferenceType::FieldAccess,
+                    _ => ReferenceType::Other,
+                };
+
+                references.push(CodeReference {
+                    name: reference_text.clone(),
+                    ref_type,
+                    line: point.row + 1,
+                    column: point.column + 1,
+                    text: {
+                        // Extract the whole line for context, similar to the Rust version
+                        let _start_byte = node.start_byte();
+                        let content_lines: Vec<&str> = content.lines().collect();
+                        if point.row < content_lines.len() {
+                            content_lines[point.row].to_string()
+                        } else {
+                            reference_text
                         }
                     },
                 });
@@ -815,6 +919,7 @@ impl BinaryRelationshipBridge {
     fn set_parser_language(&self, parser: &mut Parser, language: SupportedLanguage) -> Result<()> {
         let ts_language = match language {
             SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+            SupportedLanguage::Python => tree_sitter_python::LANGUAGE.into(),
         };
 
         parser

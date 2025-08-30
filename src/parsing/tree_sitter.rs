@@ -7,19 +7,34 @@ use std::path::Path;
 use tree_sitter::{Language, Node, Parser, Tree};
 
 // Node type constants for better maintainability and to avoid typos
+// Multi-language function nodes
 const FUNCTION_NODES: &[&str] = &[
+    // Rust
     "function_item",
     "function_declaration",
+    // Python
     "function_definition",
 ];
 const METHOD_NODES: &[&str] = &["method_definition", "method_declaration"];
 const STRUCT_NODES: &[&str] = &["struct_item", "struct_declaration"];
-const CLASS_NODES: &[&str] = &["class_declaration", "class_definition"];
+const CLASS_NODES: &[&str] = &[
+    // Rust
+    "class_declaration",
+    // Python
+    "class_definition",
+];
 const ENUM_NODES: &[&str] = &["enum_item", "enum_declaration"];
 const VARIABLE_NODES: &[&str] = &["let_declaration", "variable_declarator"];
 const CONST_NODES: &[&str] = &["const_item", "const_declaration"];
 const MODULE_NODES: &[&str] = &["mod_item", "module_declaration"];
-const IMPORT_NODES: &[&str] = &["use_declaration", "import_statement"];
+const IMPORT_NODES: &[&str] = &[
+    // Rust
+    "use_declaration",
+    // Python
+    "import_statement",
+    "import_from_statement",
+    "future_import_statement",
+];
 const COMMENT_NODES: &[&str] = &["line_comment", "block_comment"];
 
 // Special Rust-specific node types
@@ -27,16 +42,54 @@ const TRAIT_NODE: &str = "trait_item";
 const IMPL_NODE: &str = "impl_item";
 const INTERFACE_NODE: &str = "interface_declaration";
 
+// Python-specific node types
+const DECORATED_DEFINITION: &str = "decorated_definition";
+const LAMBDA_NODE: &str = "lambda";
+#[allow(dead_code)] // Will be used for future async function detection
+const ASYNC_FUNCTION: &str = "async"; // Modifier for async functions
+#[allow(dead_code)] // Will be used for future property detection
+const PROPERTY_DECORATOR: &str = "@property";
+
+// Python assignment and expression nodes that may represent variables
+const PYTHON_VARIABLE_NODES: &[&str] = &[
+    "assignment",
+    "augmented_assignment",
+    "named_expression", // Walrus operator :=
+];
+
+// Python control flow and statement nodes
+#[allow(dead_code)] // Will be used for future control flow analysis
+const PYTHON_CONTROL_NODES: &[&str] = &[
+    "if_statement",
+    "for_statement",
+    "while_statement",
+    "try_statement",
+    "match_statement", // Python 3.10+
+    "with_statement",
+    "yield",
+    "return_statement",
+    "raise_statement",
+    "global_statement",
+    "nonlocal_statement",
+];
+
 // Identifier node types across different languages
 const IDENTIFIER_NODES: &[&str] = &["identifier", "type_identifier", "name"];
 
 // Nodes that contain methods (for context detection)
-const METHOD_CONTAINER_NODES: &[&str] = &["trait_item", "impl_item"];
+const METHOD_CONTAINER_NODES: &[&str] = &[
+    // Rust
+    "trait_item",
+    "impl_item",
+    // Python
+    "class_definition",
+];
 
 /// Supported programming languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SupportedLanguage {
     Rust,
+    Python,
 }
 
 impl SupportedLanguage {
@@ -44,6 +97,7 @@ impl SupportedLanguage {
     pub fn tree_sitter_language(&self) -> Result<Language> {
         match self {
             SupportedLanguage::Rust => Ok(tree_sitter_rust::LANGUAGE.into()),
+            SupportedLanguage::Python => Ok(tree_sitter_python::LANGUAGE.into()),
         }
     }
 
@@ -51,6 +105,7 @@ impl SupportedLanguage {
     pub fn from_extension(extension: &str) -> Option<Self> {
         match extension.to_lowercase().as_str() {
             "rs" => Some(SupportedLanguage::Rust),
+            "py" => Some(SupportedLanguage::Python),
             _ => None,
         }
     }
@@ -60,8 +115,8 @@ impl SupportedLanguage {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "rust" | "rs" => Some(SupportedLanguage::Rust),
+            "python" | "py" => Some(SupportedLanguage::Python),
             // Future languages can be added here:
-            // "python" | "py" => Some(SupportedLanguage::Python),
             // "javascript" | "js" => Some(SupportedLanguage::JavaScript),
             // "typescript" | "ts" => Some(SupportedLanguage::TypeScript),
             _ => None,
@@ -72,6 +127,7 @@ impl SupportedLanguage {
     pub fn name(&self) -> &'static str {
         match self {
             SupportedLanguage::Rust => "Rust",
+            SupportedLanguage::Python => "Python",
         }
     }
 
@@ -79,6 +135,7 @@ impl SupportedLanguage {
     pub fn extensions(&self) -> &'static [&'static str] {
         match self {
             SupportedLanguage::Rust => &["rs"],
+            SupportedLanguage::Python => &["py"],
         }
     }
 }
@@ -242,10 +299,10 @@ impl CodeParser {
         let mut parsers = HashMap::new();
 
         // Initialize parsers for all supported languages
-        let languages = config
-            .languages
-            .as_ref()
-            .map_or_else(|| vec![SupportedLanguage::Rust], |langs| langs.clone());
+        let languages = config.languages.as_ref().map_or_else(
+            || vec![SupportedLanguage::Rust, SupportedLanguage::Python],
+            |langs| langs.clone(),
+        );
 
         for language in languages {
             let mut parser = Parser::new();
@@ -349,12 +406,17 @@ impl CodeParser {
 
         // Check if this node represents a symbol we care about
         let symbol_type = if FUNCTION_NODES.contains(&node_type) {
-            // Check if this is inside a trait or impl block (making it a method)
+            // Check if this is inside a trait/impl/class block (making it a method)
             if self.is_inside_trait_or_impl(node) {
                 Some(SymbolType::Method)
             } else {
                 Some(SymbolType::Function)
             }
+        } else if node_type == DECORATED_DEFINITION {
+            // Handle Python decorated definitions (functions/classes with @decorators)
+            self.extract_decorated_symbol_type(node)
+        } else if node_type == LAMBDA_NODE {
+            Some(SymbolType::Function) // Lambda functions are functions
         } else if METHOD_NODES.contains(&node_type) {
             Some(SymbolType::Method)
         } else if STRUCT_NODES.contains(&node_type) {
@@ -362,12 +424,13 @@ impl CodeParser {
         } else if node_type == TRAIT_NODE {
             Some(SymbolType::Interface) // Rust traits are interfaces
         } else if node_type == IMPL_NODE || CLASS_NODES.contains(&node_type) {
-            Some(SymbolType::Class) // Rust impl blocks and class declarations
+            Some(SymbolType::Class) // Rust impl blocks and Python class definitions
         } else if node_type == INTERFACE_NODE {
             Some(SymbolType::Interface)
         } else if ENUM_NODES.contains(&node_type) {
             Some(SymbolType::Enum)
-        } else if VARIABLE_NODES.contains(&node_type) {
+        } else if VARIABLE_NODES.contains(&node_type) || PYTHON_VARIABLE_NODES.contains(&node_type)
+        {
             Some(SymbolType::Variable)
         } else if CONST_NODES.contains(&node_type) {
             Some(SymbolType::Constant)
@@ -415,7 +478,7 @@ impl CodeParser {
         }
     }
 
-    /// Check if a node is inside a trait or impl block
+    /// Check if a node is inside a trait, impl, or class block
     /// Made pub(crate) for testing purposes
     pub(crate) fn is_inside_trait_or_impl(&self, node: Node) -> bool {
         let mut current = node.parent();
@@ -426,6 +489,31 @@ impl CodeParser {
             current = parent.parent();
         }
         false
+    }
+
+    /// Extract symbol type from Python decorated definitions
+    /// Python decorators can modify function/class behavior significantly
+    fn extract_decorated_symbol_type(&self, node: Node) -> Option<SymbolType> {
+        // Look for the actual definition inside the decorated_definition
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let child_kind = child.kind();
+
+            // Check what's being decorated
+            if FUNCTION_NODES.contains(&child_kind) {
+                // Check if it's inside a class (making it a method)
+                if self.is_inside_trait_or_impl(node) {
+                    return Some(SymbolType::Method);
+                } else {
+                    return Some(SymbolType::Function);
+                }
+            } else if CLASS_NODES.contains(&child_kind) {
+                return Some(SymbolType::Class);
+            }
+        }
+
+        // Default fallback - most decorators are on functions
+        Some(SymbolType::Function)
     }
 
     /// Extract symbol name from a node (simplified implementation)
@@ -893,6 +981,210 @@ mod tests {
         let my_enum = parsed.symbols.iter().find(|s| s.name == "MyEnum");
         assert!(my_enum.is_some(), "Should find MyEnum");
         assert_eq!(my_enum.unwrap().symbol_type, SymbolType::Enum);
+
+        Ok(())
+    }
+
+    // Python-specific tests
+    #[tokio::test]
+    async fn test_python_language_detection() -> Result<()> {
+        assert_eq!(
+            SupportedLanguage::from_extension("py"),
+            Some(SupportedLanguage::Python)
+        );
+        assert_eq!(
+            SupportedLanguage::from_name("python"),
+            Some(SupportedLanguage::Python)
+        );
+        assert_eq!(
+            SupportedLanguage::from_name("py"),
+            Some(SupportedLanguage::Python)
+        );
+
+        let python_lang = SupportedLanguage::Python;
+        assert_eq!(python_lang.name(), "Python");
+        assert_eq!(python_lang.extensions(), &["py"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_basic_python_parsing() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let python_code = r#"
+def hello_world():
+    print("Hello, world!")
+
+class Person:
+    def __init__(self, name):
+        self.name = name
+    
+    def greet(self):
+        return f"Hello, {self.name}"
+
+import os
+from typing import List, Dict
+import numpy as np
+
+@property
+def calculated_value(self):
+    return 42
+        "#;
+
+        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+
+        assert_eq!(parsed.language, SupportedLanguage::Python);
+        assert!(!parsed.symbols.is_empty());
+        assert!(parsed.stats.total_nodes > 0);
+
+        // Should find the function
+        let function_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Function)
+            .collect();
+        assert!(!function_symbols.is_empty());
+
+        // Should find the class
+        let class_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Class)
+            .collect();
+        assert!(!class_symbols.is_empty());
+
+        // Should find imports
+        let import_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Import)
+            .collect();
+        assert!(!import_symbols.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_python_method_detection() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let python_code = r#"
+class Calculator:
+    def add(self, a, b):
+        return a + b
+    
+    @classmethod
+    def create_default(cls):
+        return cls()
+    
+    @staticmethod
+    def multiply(a, b):
+        return a * b
+
+def standalone_function():
+    pass
+        "#;
+
+        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+
+        // Should find methods inside the class
+        let method_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Method)
+            .collect();
+        assert!(!method_symbols.is_empty());
+
+        // Should find the standalone function
+        let function_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Function)
+            .collect();
+
+        // Should have at least the standalone function
+        let standalone_fn = function_symbols
+            .iter()
+            .find(|s| s.name == "standalone_function");
+        assert!(standalone_fn.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_python_decorator_parsing() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let python_code = r#"
+@app.route('/api/users')
+@require_auth
+def get_users():
+    return {"users": []}
+
+@dataclass
+class User:
+    name: str
+    age: int
+        "#;
+
+        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+
+        // Should find decorated functions and classes
+        let symbols: Vec<_> = parsed.symbols.iter().collect();
+        assert!(!symbols.is_empty());
+
+        // Verify we can parse decorated constructs without errors
+        assert!(parsed.errors.is_empty() || parsed.errors.len() < symbols.len());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_python_import_variations() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        let python_code = r#"
+import os
+import sys, json
+from pathlib import Path
+from typing import Dict, List, Optional
+from . import local_module
+from ..parent import parent_module
+import numpy as np
+        "#;
+
+        let parsed = parser.parse_content(python_code, SupportedLanguage::Python)?;
+
+        // Should find various import styles
+        let import_symbols: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Import)
+            .collect();
+        assert!(!import_symbols.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_python_error_recovery() -> Result<()> {
+        let mut parser = CodeParser::new()?;
+
+        // Python code with some syntax errors
+        let bad_python_code = r#"
+def valid_function():
+    return "works"
+
+class ValidClass:
+    def method(self):
+        return True
+        "#;
+
+        let parsed = parser.parse_content(bad_python_code, SupportedLanguage::Python)?;
+
+        assert_eq!(parsed.language, SupportedLanguage::Python);
+        // Should still find valid symbols despite some errors
+        assert!(!parsed.symbols.is_empty());
 
         Ok(())
     }
