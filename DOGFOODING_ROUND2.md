@@ -24,10 +24,10 @@ Some critical issues have been addressed, but the most important one (logging ve
 - Need to verify if this is truly fixed
 
 ### 🔴 Issue #369: Natural Language Query Parser
-**Status**: ✅ FIXED!
-- `relationship-query "who uses FileStorage?"` now works
-- Returns results (though 0 relationships found)
-- Parser accepts documented patterns correctly
+**Status**: ✅ FIXED! (Note: NL parser was later removed in #445 in favor of direct commands)
+- Direct commands now used: `find-callers FileStorage`
+- More reliable and predictable than NL parsing
+- All functionality preserved through explicit commands
 
 ### 🟡 Issue #370: Add Code Snippets to Search Results
 **Status**: ✅ FIXED!

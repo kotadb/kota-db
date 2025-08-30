@@ -153,7 +153,7 @@ EXAMPLES:
   # Analyze code relationships
   kotadb find-callers FileStorage
   kotadb analyze-impact Config
-  kotadb relationship-query 'what calls MyFunction?'
+  kotadb find-unused --type Function
 
   # System management
   kotadb stats
