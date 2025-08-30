@@ -30,6 +30,7 @@ fn run_cli_command(db_path: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(binary_path)
         .arg("--db-path")
         .arg(db_path)
+        .arg("--quiet") // Add quiet flag to suppress verbose output for test parsing
         .args(args)
         .output()?;
 
