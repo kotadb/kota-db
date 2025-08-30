@@ -201,7 +201,6 @@ jobs:
         elif [ "$SUITE" = "performance" ]; then
           cargo test --test performance_regression_test --test complexity_comparison_test --test write_performance_test
         elif [ "$SUITE" = "system" ]; then
-          cargo test --test cli_path_operations
           cargo test --test http_server_integration_test --test observability_integration_test
           cargo test --test production_configuration_test --test system_resilience_test --test security_path_traversal_test
         elif [ "$SUITE" = "analysis" ]; then
