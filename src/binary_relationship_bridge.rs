@@ -362,6 +362,7 @@ impl BinaryRelationshipBridge {
             SupportedLanguage::Rust => self.extract_rust_references(&tree, content)?,
             SupportedLanguage::TypeScript => self.extract_typescript_references(&tree, content)?,
             SupportedLanguage::JavaScript => self.extract_javascript_references(&tree, content)?,
+            SupportedLanguage::Python => self.extract_python_references(&tree, content)?,
         };
 
         // Return parser to pool
@@ -1172,6 +1173,161 @@ impl BinaryRelationshipBridge {
         Ok(references)
     }
 
+    /// Extract code references from Python source code using tree-sitter
+    /// This includes function calls, method calls, imports, class definitions, and variable references
+    fn extract_python_references(
+        &self,
+        tree: &tree_sitter::Tree,
+        content: &str,
+    ) -> Result<Vec<CodeReference>> {
+        let mut references = Vec::new();
+        let language = tree_sitter_python::LANGUAGE.into();
+
+        // Comprehensive Python query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call
+                function: (identifier) @function_name)
+            (call
+                function: (attribute
+                    attribute: (identifier) @method_name))
+            (call
+                function: (attribute
+                    object: (identifier) @object_name
+                    attribute: (identifier) @method_name))
+            
+            ; Function definitions
+            (function_definition
+                name: (identifier) @function_name)
+            (lambda
+                parameters: (lambda_parameters
+                    (identifier) @param_name))
+            
+            ; Class definitions and inheritance
+            (class_definition
+                name: (identifier) @class_name)
+            (class_definition
+                superclasses: (argument_list
+                    (identifier) @parent_class_name))
+            
+            ; Variable references and assignments
+            (identifier) @variable_name
+            (assignment
+                left: (identifier) @variable_name)
+            (augmented_assignment
+                left: (identifier) @variable_name)
+            (named_expression
+                name: (identifier) @variable_name)
+            
+            ; Import statements
+            (import_statement
+                name: (dotted_name
+                    (identifier) @module_name))
+            (import_from_statement
+                module_name: (dotted_name
+                    (identifier) @module_name))
+            (import_from_statement
+                name: (dotted_name
+                    (identifier) @imported_name))
+            (import_from_statement
+                name: (import_list
+                    (import_from_list
+                        (identifier) @imported_name)))
+            (aliased_import
+                name: (identifier) @imported_name)
+            (aliased_import
+                alias: (identifier) @alias_name)
+            
+            ; Decorators
+            (decorator
+                (identifier) @decorator_name)
+            (decorator
+                (call
+                    function: (identifier) @decorator_function))
+            
+            ; List and dictionary comprehensions
+            (list_comprehension
+                (identifier) @iterator_name)
+            (dictionary_comprehension
+                (identifier) @iterator_name)
+            (set_comprehension
+                (identifier) @iterator_name)
+            (generator_expression
+                (identifier) @iterator_name)
+            
+            ; Exception handling
+            (try_statement
+                (except_clause
+                    type: (identifier) @exception_type))
+            (raise_statement
+                (identifier) @exception_name)
+            
+            ; Async/await constructs
+            (await
+                (call
+                    function: (identifier) @async_function_name))
+            
+            ; Context managers (with statement)
+            (with_statement
+                (with_clause
+                    (with_item
+                        value: (identifier) @context_manager_name)))
+            "#,
+        )?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches =
+            query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty() || symbol_name.chars().all(char::is_whitespace) {
+                    continue; // Skip empty or whitespace-only names
+                }
+
+                // Skip Python private/internal names except important ones
+                if symbol_name.starts_with('_') && symbol_name != "__init__" && symbol_name != "__main__" {
+                    continue;
+                }
+                
+                // Map Python-specific captures to reference types
+                let reference_type = match *capture_name {
+                    "function_name" | "async_function_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "class_name" | "parent_class_name" => ReferenceType::TypeUsage,
+                    "variable_name" | "param_name" | "iterator_name" => ReferenceType::FieldAccess,
+                    "object_name" | "context_manager_name" => ReferenceType::FieldAccess,
+                    "module_name" | "imported_name" | "alias_name" => ReferenceType::FunctionCall,
+                    "decorator_name" | "decorator_function" => ReferenceType::FunctionCall,
+                    "exception_type" | "exception_name" => ReferenceType::TypeUsage,
+                    _ => ReferenceType::FunctionCall,
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!("Extracted {} Python references", references.len());
+
+        Ok(references)
+    }
+
     /// Return a parser to the pool
     fn return_parser(&self, parser: Parser) {
         let mut pool = self.parser_pool.lock().unwrap();
@@ -1184,6 +1340,7 @@ impl BinaryRelationshipBridge {
             SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
             SupportedLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             SupportedLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+            SupportedLanguage::Python => tree_sitter_python::LANGUAGE.into(),
         };
 
         parser

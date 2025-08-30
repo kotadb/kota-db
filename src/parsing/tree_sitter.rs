@@ -18,13 +18,13 @@ fn get_function_nodes() -> &'static HashSet<&'static str> {
             // Rust
             "function_item",
             "function_declaration",
-            "function_definition",
             // TypeScript/JavaScript
-            "function_declaration",
             "function",
             "function_expression",
             "arrow_function",
             "method_definition",
+            // Python
+            "function_definition",
         ])
     })
 }
@@ -109,11 +109,17 @@ static IMPORT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
 fn get_import_nodes() -> &'static HashSet<&'static str> {
     IMPORT_NODES.get_or_init(|| {
         HashSet::from_iter([
-            "use_declaration",    // Rust
-            "import_statement",   // JavaScript/TypeScript
-            "import_clause",      // ES modules
-            "export_statement",   // JavaScript/TypeScript exports
-            "export_declaration", // Named exports
+            // Rust
+            "use_declaration",
+            // JavaScript/TypeScript
+            "import_statement",
+            "import_clause",
+            "export_statement",
+            "export_declaration",
+            // Python
+            "import_statement",
+            "import_from_statement",
+            "future_import_statement",
         ])
     })
 }
@@ -167,11 +173,15 @@ static METHOD_CONTAINER_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new()
 fn get_method_container_nodes() -> &'static HashSet<&'static str> {
     METHOD_CONTAINER_NODES.get_or_init(|| {
         HashSet::from_iter([
-            "trait_item",            // Rust traits
-            "impl_item",             // Rust implementations
-            "class_declaration",     // JavaScript/TypeScript classes
-            "class_expression",      // JavaScript/TypeScript class expressions
-            "interface_declaration", // TypeScript interfaces
+            // Rust
+            "trait_item",
+            "impl_item",
+            // JavaScript/TypeScript
+            "class_declaration",
+            "class_expression",
+            "interface_declaration",
+            // Python
+            "class_definition",
         ])
     })
 }
@@ -188,12 +198,28 @@ fn get_special_nodes() -> &'static HashSet<&'static str> {
     })
 }
 
+// Python-specific node types
+const DECORATED_DEFINITION: &str = "decorated_definition";
+const LAMBDA_NODE: &str = "lambda";
+#[allow(dead_code)] // Will be used for future async function detection
+const ASYNC_FUNCTION: &str = "async"; // Modifier for async functions
+#[allow(dead_code)] // Will be used for future property detection
+const PROPERTY_DECORATOR: &str = "@property";
+
+// Python assignment and expression nodes that may represent variables
+const PYTHON_VARIABLE_NODES: &[&str] = &[
+    "assignment",
+    "augmented_assignment",
+    "named_expression", // Walrus operator :=
+];
+
 /// Supported programming languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SupportedLanguage {
     Rust,
     TypeScript,
     JavaScript,
+    Python,
 }
 
 impl SupportedLanguage {
@@ -203,6 +229,7 @@ impl SupportedLanguage {
             SupportedLanguage::Rust => Ok(tree_sitter_rust::LANGUAGE.into()),
             SupportedLanguage::TypeScript => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             SupportedLanguage::JavaScript => Ok(tree_sitter_javascript::LANGUAGE.into()),
+            SupportedLanguage::Python => Ok(tree_sitter_python::LANGUAGE.into()),
         }
     }
 
@@ -212,6 +239,7 @@ impl SupportedLanguage {
             "rs" => Some(SupportedLanguage::Rust),
             "ts" | "tsx" => Some(SupportedLanguage::TypeScript),
             "js" | "jsx" | "mjs" | "cjs" => Some(SupportedLanguage::JavaScript),
+            "py" => Some(SupportedLanguage::Python),
             _ => None,
         }
     }
@@ -223,6 +251,7 @@ impl SupportedLanguage {
             "rust" | "rs" => Some(SupportedLanguage::Rust),
             "typescript" | "ts" => Some(SupportedLanguage::TypeScript),
             "javascript" | "js" => Some(SupportedLanguage::JavaScript),
+            "python" | "py" => Some(SupportedLanguage::Python),
             _ => None,
         }
     }
@@ -233,6 +262,7 @@ impl SupportedLanguage {
             SupportedLanguage::Rust => "Rust",
             SupportedLanguage::TypeScript => "TypeScript",
             SupportedLanguage::JavaScript => "JavaScript",
+            SupportedLanguage::Python => "Python",
         }
     }
 
@@ -242,6 +272,7 @@ impl SupportedLanguage {
             SupportedLanguage::Rust => &["rs"],
             SupportedLanguage::TypeScript => &["ts", "tsx"],
             SupportedLanguage::JavaScript => &["js", "jsx", "mjs", "cjs"],
+            SupportedLanguage::Python => &["py"],
         }
     }
 }
@@ -423,6 +454,7 @@ impl CodeParser {
                     SupportedLanguage::Rust,
                     SupportedLanguage::TypeScript,
                     SupportedLanguage::JavaScript,
+                    SupportedLanguage::Python,
                 ]
             },
             |langs| langs.clone(),
@@ -537,6 +569,11 @@ impl CodeParser {
             } else {
                 Some(SymbolType::Function)
             }
+        } else if node_type == DECORATED_DEFINITION {
+            // Handle Python decorated definitions (functions/classes with @decorators)
+            self.extract_decorated_symbol_type(node)
+        } else if node_type == LAMBDA_NODE {
+            Some(SymbolType::Function) // Lambda functions are functions
         } else if get_method_nodes().contains(node_type) {
             Some(SymbolType::Method)
         } else if get_struct_nodes().contains(node_type) {
@@ -547,7 +584,7 @@ impl CodeParser {
             Some(SymbolType::Interface) // TypeScript interfaces and type aliases
         } else if get_enum_nodes().contains(node_type) {
             Some(SymbolType::Enum)
-        } else if get_variable_nodes().contains(node_type) {
+        } else if get_variable_nodes().contains(node_type) || PYTHON_VARIABLE_NODES.contains(&node_type) {
             Some(SymbolType::Variable)
         } else if get_const_nodes().contains(node_type) {
             Some(SymbolType::Constant)
@@ -629,6 +666,28 @@ impl CodeParser {
     #[allow(dead_code)]
     pub(crate) fn is_inside_trait_or_impl(&self, node: Node) -> bool {
         self.is_inside_method_container(node)
+    }
+
+    /// Extract symbol type from Python decorated definitions
+    /// Python uses @decorators to mark functions and classes
+    fn extract_decorated_symbol_type(&self, node: Node) -> Option<SymbolType> {
+        // Look for the actual definition within the decorated definition
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let child_type = child.kind();
+            if child_type == "function_definition" {
+                // Check if it's inside a class (making it a method)
+                if self.is_inside_method_container(node) {
+                    return Some(SymbolType::Method);
+                } else {
+                    return Some(SymbolType::Function);
+                }
+            } else if child_type == "class_definition" {
+                return Some(SymbolType::Class);
+            }
+        }
+        // If we can't determine the specific type, treat as function
+        Some(SymbolType::Function)
     }
 
     /// Extract symbol name from a node (simplified implementation)
