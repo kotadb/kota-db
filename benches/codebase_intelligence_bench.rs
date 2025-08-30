@@ -19,16 +19,54 @@
 //! fully reflect real-world AI assistant usage patterns.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
-use std::path::Path;
+use once_cell::sync::Lazy;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 // Performance targets and configuration
 const TARGET_QUERY_LATENCY_MS: u64 = 10;
-const INDEXING_SAMPLE_SIZE: usize = 5; // Fewer samples for long-running repository indexing operations
+const INDEXING_SAMPLE_SIZE: usize = 10; // Minimum samples for criterion (was 5, but criterion requires >= 10)
 const QUERY_SAMPLE_SIZE: usize = 10; // Standard sample size for query operations
 const MEASUREMENT_TIME_SECS: u64 = 30; // Measurement time for query benchmarks
+
+/// Shared benchmark database that's indexed once and reused across all benchmarks.
+/// This follows the pattern from binary_relationship_engine_bench.rs to avoid
+/// re-indexing the repository for each benchmark function.
+static SHARED_BENCHMARK_DB: Lazy<Arc<(TempDir, PathBuf)>> = Lazy::new(|| {
+    println!("Setting up shared benchmark database (one-time indexing)...");
+
+    let temp_db = TempDir::new().expect("Failed to create shared benchmark database directory");
+    let db_path = temp_db.path().to_path_buf();
+
+    // Index the current repository once
+    let index_output = Command::new("cargo")
+        .args([
+            "run",
+            "--release",
+            "--bin",
+            "kotadb",
+            "--",
+            "-d",
+            db_path.to_str().expect("Invalid UTF-8 in path"),
+            "index-codebase",
+            ".",
+        ])
+        .output()
+        .expect("Failed to index repository for shared benchmark database");
+
+    if !index_output.status.success() {
+        panic!(
+            "Failed to set up shared benchmark database - cannot proceed with benchmarks: {}",
+            String::from_utf8_lossy(&index_output.stderr)
+        );
+    }
+
+    println!("Shared benchmark database ready at: {:?}", db_path);
+    Arc::new((temp_db, db_path))
+});
 
 /// Benchmark codebase indexing performance across different repository sizes
 fn benchmark_codebase_indexing(c: &mut Criterion) {
@@ -51,6 +89,7 @@ fn benchmark_codebase_indexing(c: &mut Criterion) {
     }
 
     // Test indexing on the current KotaDB repository (dogfooding approach)
+    // Note: This still measures full indexing performance, but separately from query benchmarks
     if current_repo.exists() {
         group.bench_function("kotadb_self_index", |b| {
             b.iter(|| {
@@ -98,32 +137,8 @@ fn benchmark_codebase_indexing(c: &mut Criterion) {
 
 /// Benchmark code search performance (<10ms target)
 fn benchmark_code_search(c: &mut Criterion) {
-    // Set up indexed database first
-    let temp_db = TempDir::new().unwrap();
-    let db_path = temp_db.path().to_str().unwrap();
-
-    // Index current repository for testing
-    let index_output = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--bin",
-            "kotadb",
-            "--",
-            "-d",
-            db_path,
-            "index-codebase",
-            ".",
-        ])
-        .output()
-        .expect("Failed to index repository for benchmarking");
-
-    if !index_output.status.success() {
-        panic!(
-            "Failed to set up code search benchmark database - cannot proceed with benchmarks: {}",
-            String::from_utf8_lossy(&index_output.stderr)
-        );
-    }
+    // Use the shared pre-indexed database
+    let db_path = SHARED_BENCHMARK_DB.1.to_str().unwrap();
 
     let mut group = c.benchmark_group("code_search");
     group.sampling_mode(SamplingMode::Flat);
@@ -182,35 +197,8 @@ fn benchmark_code_search(c: &mut Criterion) {
 
 /// Benchmark symbol search performance
 fn benchmark_symbol_search(c: &mut Criterion) {
-    let temp_db =
-        TempDir::new().expect("Failed to create temporary directory for symbol search benchmark");
-    let db_path = temp_db
-        .path()
-        .to_str()
-        .expect("Temporary directory path contains invalid UTF-8");
-
-    // Index current repository
-    let index_output = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--bin",
-            "kotadb",
-            "--",
-            "-d",
-            db_path,
-            "index-codebase",
-            ".",
-        ])
-        .output()
-        .expect("Failed to execute symbol search indexing command");
-
-    if !index_output.status.success() {
-        panic!(
-            "Failed to set up symbol search benchmark database: {}",
-            String::from_utf8_lossy(&index_output.stderr)
-        );
-    }
+    // Use the shared pre-indexed database
+    let db_path = SHARED_BENCHMARK_DB.1.to_str().unwrap();
 
     let mut group = c.benchmark_group("symbol_search");
     group.sampling_mode(SamplingMode::Flat);
@@ -274,35 +262,8 @@ fn benchmark_symbol_search(c: &mut Criterion) {
 
 /// Benchmark relationship queries (find-callers, analyze-impact)
 fn benchmark_relationship_queries(c: &mut Criterion) {
-    let temp_db = TempDir::new()
-        .expect("Failed to create temporary directory for relationship query benchmark");
-    let db_path = temp_db
-        .path()
-        .to_str()
-        .expect("Temporary directory path contains invalid UTF-8");
-
-    // Index current repository
-    let index_output = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--bin",
-            "kotadb",
-            "--",
-            "-d",
-            db_path,
-            "index-codebase",
-            ".",
-        ])
-        .output()
-        .expect("Failed to execute relationship query indexing command");
-
-    if !index_output.status.success() {
-        panic!(
-            "Failed to set up relationship query benchmark database: {}",
-            String::from_utf8_lossy(&index_output.stderr)
-        );
-    }
+    // Use the shared pre-indexed database
+    let db_path = SHARED_BENCHMARK_DB.1.to_str().unwrap();
 
     let mut group = c.benchmark_group("relationship_queries");
     group.sampling_mode(SamplingMode::Flat);
@@ -404,34 +365,8 @@ fn benchmark_relationship_queries(c: &mut Criterion) {
 
 /// Benchmark database statistics performance
 fn benchmark_stats_queries(c: &mut Criterion) {
-    let temp_db = TempDir::new().expect("Failed to create temporary directory for stats benchmark");
-    let db_path = temp_db
-        .path()
-        .to_str()
-        .expect("Temporary directory path contains invalid UTF-8");
-
-    // Index current repository
-    let index_output = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--bin",
-            "kotadb",
-            "--",
-            "-d",
-            db_path,
-            "index-codebase",
-            ".",
-        ])
-        .output()
-        .expect("Failed to execute stats benchmark indexing command");
-
-    if !index_output.status.success() {
-        panic!(
-            "Failed to set up stats benchmark database: {}",
-            String::from_utf8_lossy(&index_output.stderr)
-        );
-    }
+    // Use the shared pre-indexed database
+    let db_path = SHARED_BENCHMARK_DB.1.to_str().unwrap();
 
     let mut group = c.benchmark_group("stats_queries");
 
