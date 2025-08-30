@@ -499,4 +499,271 @@ fn calculate() -> i32 {
 
         Ok(())
     }
+
+    /// Test TypeScript relationship extraction
+    #[test]
+    fn test_typescript_relationship_extraction() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let symbol_db_path = temp_dir.path().join("symbols.db");
+
+        // Create sample symbols for TypeScript
+        let mut writer = BinarySymbolWriter::new();
+
+        let user_service_id = Uuid::new_v4();
+        let config_id = Uuid::new_v4();
+        let app_id = Uuid::new_v4();
+
+        // Add symbols representing TypeScript constructs
+        writer.add_symbol(user_service_id, "UserService", 2, "user-service.ts", 1, 10, None); // Class
+        writer.add_symbol(config_id, "Config", 6, "config.ts", 1, 5, None); // Type/Interface  
+        writer.add_symbol(app_id, "Application", 2, "main.ts", 10, 25, None); // Class
+
+        writer.write_to_file(&symbol_db_path)?;
+
+        // Create sample TypeScript files with relationships
+        let main_ts = r#"
+import { UserService } from './user-service';
+import { Config } from './config';
+
+class Application {
+    private userService: UserService;
+    private config: Config;
+    
+    constructor(config: Config) {
+        this.config = config;
+        this.userService = new UserService(config.database);
+    }
+    
+    async initialize(): Promise<void> {
+        await this.userService.connect();
+        console.log('Application initialized');
+    }
+}
+
+export { Application };
+        "#;
+
+        let user_service_ts = r#"
+export class UserService {
+    constructor(config) {
+        this.config = config;
+    }
+    
+    async connect(): Promise<void> {
+        // Connection logic
+    }
+}
+        "#;
+
+        let config_ts = r#"
+export interface Config {
+    database: any;
+    apiKey: string;
+}
+        "#;
+
+        let files = vec![
+            (PathBuf::from("main.ts"), main_ts.as_bytes().to_vec()),
+            (PathBuf::from("user-service.ts"), user_service_ts.as_bytes().to_vec()),
+            (PathBuf::from("config.ts"), config_ts.as_bytes().to_vec()),
+        ];
+
+        // Extract relationships
+        let bridge = BinaryRelationshipBridge::new();
+        let graph = bridge.extract_relationships(&symbol_db_path, temp_dir.path(), &files)?;
+
+        // Verify graph structure
+        assert!(graph.stats.node_count > 0, "Graph should have nodes");
+        assert_eq!(graph.stats.node_count, 3, "Should have 3 TypeScript symbols");
+
+        println!("TypeScript Graph stats: {:?}", graph.stats);
+        println!(
+            "TypeScript Nodes: {}, Edges: {}",
+            graph.stats.node_count, graph.stats.edge_count
+        );
+
+        Ok(())
+    }
+
+    /// Test JavaScript relationship extraction
+    #[test]
+    fn test_javascript_relationship_extraction() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let symbol_db_path = temp_dir.path().join("symbols.db");
+
+        // Create sample symbols for JavaScript
+        let mut writer = BinarySymbolWriter::new();
+
+        let user_manager_id = Uuid::new_v4();
+        let create_config_id = Uuid::new_v4();
+        let app_id = Uuid::new_v4();
+
+        // Add symbols representing JavaScript constructs
+        writer.add_symbol(user_manager_id, "UserManager", 2, "user-manager.js", 1, 10, None); // Class
+        writer.add_symbol(create_config_id, "createConfig", 1, "config.js", 1, 5, None); // Function
+        writer.add_symbol(app_id, "Application", 2, "main.js", 5, 20, None); // Class
+
+        writer.write_to_file(&symbol_db_path)?;
+
+        // Create sample JavaScript files with relationships
+        let main_js = r#"
+const { UserManager } = require('./user-manager');
+const { createConfig } = require('./config');
+
+class Application {
+    constructor() {
+        this.config = createConfig();
+        this.userManager = new UserManager(this.config);
+    }
+    
+    async start() {
+        await this.userManager.initialize();
+        console.log('Application started');
+    }
+}
+
+module.exports = { Application };
+        "#;
+
+        let user_manager_js = r#"
+class UserManager {
+    constructor(config) {
+        this.config = config;
+    }
+    
+    async initialize() {
+        console.log('UserManager initialized');
+    }
+}
+
+module.exports = { UserManager };
+        "#;
+
+        let config_js = r#"
+function createConfig() {
+    return {
+        apiKey: 'dev-key'
+    };
+}
+
+module.exports = { createConfig };
+        "#;
+
+        let files = vec![
+            (PathBuf::from("main.js"), main_js.as_bytes().to_vec()),
+            (PathBuf::from("user-manager.js"), user_manager_js.as_bytes().to_vec()),
+            (PathBuf::from("config.js"), config_js.as_bytes().to_vec()),
+        ];
+
+        // Extract relationships
+        let bridge = BinaryRelationshipBridge::new();
+        let graph = bridge.extract_relationships(&symbol_db_path, temp_dir.path(), &files)?;
+
+        // Verify graph structure
+        assert!(graph.stats.node_count > 0, "Graph should have nodes");
+        assert_eq!(graph.stats.node_count, 3, "Should have 3 JavaScript symbols");
+
+        println!("JavaScript Graph stats: {:?}", graph.stats);
+        println!(
+            "JavaScript Nodes: {}, Edges: {}",
+            graph.stats.node_count, graph.stats.edge_count
+        );
+
+        Ok(())
+    }
+
+    /// Test mixed TypeScript and JavaScript relationship extraction
+    #[test]
+    fn test_mixed_ts_js_relationship_extraction() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let symbol_db_path = temp_dir.path().join("symbols.db");
+
+        // Create sample symbols for mixed project
+        let mut writer = BinarySymbolWriter::new();
+
+        let user_id = Uuid::new_v4();
+        let config_id = Uuid::new_v4();
+        let format_user_id = Uuid::new_v4();
+        let processor_id = Uuid::new_v4();
+
+        // Add symbols representing mixed TypeScript/JavaScript constructs
+        writer.add_symbol(user_id, "User", 6, "types.ts", 1, 5, None); // Interface
+        writer.add_symbol(config_id, "Config", 6, "types.ts", 6, 10, None); // Interface
+        writer.add_symbol(format_user_id, "formatUser", 1, "utils.js", 1, 5, None); // Function
+        writer.add_symbol(processor_id, "UserProcessor", 2, "main.ts", 5, 20, None); // Class
+
+        writer.write_to_file(&symbol_db_path)?;
+
+        // Create mixed TypeScript and JavaScript files with cross-references
+        let types_ts = r#"
+export interface User {
+    id: string;
+    name: string;
+    email: string;
+}
+
+export interface Config {
+    apiUrl: string;
+    timeout: number;
+}
+        "#;
+
+        let utils_js = r#"
+function formatUser(user) {
+    return `${user.name} <${user.email}>`;
+}
+
+function validateEmail(email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+}
+
+module.exports = { formatUser, validateEmail };
+        "#;
+
+        let main_ts = r#"
+import { User, Config } from './types';
+const { formatUser, validateEmail } = require('./utils');
+
+class UserProcessor {
+    private config: Config;
+    
+    constructor(config: Config) {
+        this.config = config;
+    }
+    
+    processUser(user: User): string {
+        if (!validateEmail(user.email)) {
+            throw new Error('Invalid email');
+        }
+        
+        return formatUser(user);
+    }
+}
+
+export { UserProcessor };
+        "#;
+
+        let files = vec![
+            (PathBuf::from("types.ts"), types_ts.as_bytes().to_vec()),
+            (PathBuf::from("utils.js"), utils_js.as_bytes().to_vec()),
+            (PathBuf::from("main.ts"), main_ts.as_bytes().to_vec()),
+        ];
+
+        // Extract relationships
+        let bridge = BinaryRelationshipBridge::new();
+        let graph = bridge.extract_relationships(&symbol_db_path, temp_dir.path(), &files)?;
+
+        // Verify graph structure
+        assert!(graph.stats.node_count > 0, "Graph should have nodes");
+        assert_eq!(graph.stats.node_count, 4, "Should have 4 mixed language symbols");
+
+        println!("Mixed Project Graph stats: {:?}", graph.stats);
+        println!(
+            "Mixed Nodes: {}, Edges: {}",
+            graph.stats.node_count, graph.stats.edge_count
+        );
+
+        Ok(())
+    }
 }

@@ -807,32 +807,366 @@ impl BinaryRelationshipBridge {
         }
     }
 
-    /// Extract references from TypeScript code (stub implementation)
+    /// Extract references from TypeScript code
     fn extract_typescript_references(
         &self,
         tree: &tree_sitter::Tree,
         content: &str,
     ) -> Result<Vec<CodeReference>> {
-        // TODO: Implement TypeScript-specific reference extraction
-        // For now, return empty references as a stub
-        tracing::warn!(
-            "TypeScript reference extraction not yet implemented, returning empty references"
+        let mut references = Vec::new();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+
+        // Comprehensive TypeScript query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call_expression
+                function: (identifier) @function_name)
+            (call_expression
+                function: (member_expression
+                    property: (property_identifier) @method_name))
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @type_name
+                    property: (property_identifier) @method_name))
+            
+            ; Type references
+            (type_identifier) @type_name
+            (predefined_type) @type_name
+            
+            ; Interface references
+            (interface_declaration
+                name: (type_identifier) @interface_name)
+            (extends_clause
+                value: (identifier) @type_name)
+            (implements_clause
+                types: (type_identifier) @type_name)
+            
+            ; Class references
+            (class_declaration
+                name: (type_identifier) @class_name)
+            (class_expression
+                name: (type_identifier) @class_name)
+            (extends_clause_value
+                (identifier) @type_name)
+            (new_expression
+                constructor: (identifier) @type_name)
+            
+            ; Generic type parameters
+            (type_parameters
+                (type_parameter
+                    name: (type_identifier) @type_name))
+            (type_arguments
+                (type_identifier) @type_name)
+            
+            ; Variable and parameter types
+            (type_annotation
+                (type_identifier) @type_name)
+            (type_annotation
+                (generic_type
+                    name: (type_identifier) @type_name))
+            
+            ; Import/export references  
+            (import_specifier
+                name: (identifier) @import_name)
+            (import_specifier
+                imported: (identifier) @import_name)
+            (namespace_import
+                (identifier) @import_name)
+            (export_specifier
+                name: (identifier) @export_name)
+            
+            ; Method calls on objects
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @method_name))
+            
+            ; Property access
+            (member_expression
+                object: (identifier) @object_name
+                property: (property_identifier) @property_name)
+            
+            ; Function declarations and expressions
+            (function_declaration
+                name: (identifier) @function_name)
+            (function_expression
+                name: (identifier) @function_name)
+            (arrow_function
+                parameter: (identifier) @param_name)
+            
+            ; Variable declarations
+            (variable_declarator
+                name: (identifier) @variable_name)
+            (lexical_declaration
+                (variable_declarator
+                    name: (identifier) @variable_name))
+            
+            ; Enum references
+            (enum_declaration
+                name: (identifier) @enum_name)
+            (member_expression
+                object: (identifier) @enum_name)
+            
+            ; Namespace references
+            (namespace_declaration
+                name: (identifier) @namespace_name)
+            (qualified_name
+                left: (identifier) @namespace_name)
+                
+            ; Type aliases
+            (type_alias_declaration
+                name: (type_identifier) @type_alias_name)
+            
+            ; JSX/TSX elements
+            (jsx_element
+                open_tag: (jsx_opening_element
+                    name: (identifier) @component_name))
+            (jsx_self_closing_element
+                name: (identifier) @component_name)
+            "#,
+        )
+        .context("Failed to create TypeScript query")?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty() || symbol_name.chars().all(char::is_whitespace) {
+                    continue; // Skip empty or whitespace-only names
+                }
+
+                let reference_type = match *capture_name {
+                    "function_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "type_name" | "class_name" | "interface_name" | "type_alias_name" => ReferenceType::TypeUsage,
+                    "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
+                    "variable_name" | "param_name" => ReferenceType::FieldAccess,
+                    "enum_name" => ReferenceType::TypeUsage,
+                    "namespace_name" => ReferenceType::TypeUsage, // Use TypeUsage for namespaces
+                    "component_name" => ReferenceType::TypeUsage, // JSX components
+                    "object_name" | "property_name" => ReferenceType::FieldAccess,
+                    _ => ReferenceType::FunctionCall, // Default to FunctionCall
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!(
+            "Extracted {} TypeScript references",
+            references.len()
         );
-        Ok(Vec::new())
+        
+        Ok(references)
     }
 
-    /// Extract references from JavaScript code (stub implementation)
+    /// Extract references from JavaScript code
     fn extract_javascript_references(
         &self,
         tree: &tree_sitter::Tree,
         content: &str,
     ) -> Result<Vec<CodeReference>> {
-        // TODO: Implement JavaScript-specific reference extraction
-        // For now, return empty references as a stub
-        tracing::warn!(
-            "JavaScript reference extraction not yet implemented, returning empty references"
+        let mut references = Vec::new();
+        let language = tree_sitter_javascript::LANGUAGE.into();
+
+        // Comprehensive JavaScript query for all reference types
+        let comprehensive_query = Query::new(
+            &language,
+            r#"
+            ; Function calls
+            (call_expression
+                function: (identifier) @function_name)
+            (call_expression
+                function: (member_expression
+                    property: (property_identifier) @method_name))
+            (call_expression
+                function: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @method_name))
+            
+            ; Constructor calls
+            (new_expression
+                constructor: (identifier) @constructor_name)
+            (new_expression
+                constructor: (member_expression
+                    object: (identifier) @object_name
+                    property: (property_identifier) @constructor_name))
+            
+            ; Variable and identifier references
+            (identifier) @variable_name
+            
+            ; Function declarations and expressions
+            (function_declaration
+                name: (identifier) @function_name)
+            (function_expression
+                name: (identifier) @function_name)
+            (arrow_function
+                parameter: (identifier) @param_name)
+            
+            ; Class declarations and expressions
+            (class_declaration
+                name: (identifier) @class_name)
+            (class_expression
+                name: (identifier) @class_name)
+            (extends_clause
+                value: (identifier) @parent_class_name)
+            
+            ; Variable declarations
+            (variable_declarator
+                name: (identifier) @variable_name)
+            (assignment_expression
+                left: (identifier) @variable_name)
+            
+            ; Property access
+            (member_expression
+                object: (identifier) @object_name
+                property: (property_identifier) @property_name)
+            
+            ; Import/export references
+            (import_specifier
+                name: (identifier) @import_name)
+            (import_specifier
+                imported: (identifier) @import_name)
+            (namespace_import
+                (identifier) @import_name)
+            (import_default_specifier
+                (identifier) @import_name)
+            (export_specifier
+                name: (identifier) @export_name)
+            (export_specifier
+                exported: (identifier) @export_name)
+            
+            ; Method definitions in classes
+            (method_definition
+                name: (property_identifier) @method_name)
+            (property_definition
+                name: (property_identifier) @property_name)
+            
+            ; Object properties
+            (pair
+                key: (property_identifier) @property_name)
+            (pair
+                key: (identifier) @property_name)
+            
+            ; For loops and iterators
+            (for_in_statement
+                left: (identifier) @iterator_name)
+            (for_of_statement
+                left: (identifier) @iterator_name)
+            
+            ; Try-catch error handling
+            (catch_clause
+                parameter: (identifier) @error_name)
+            
+            ; JSX elements (if JavaScript with JSX)
+            (jsx_element
+                open_tag: (jsx_opening_element
+                    name: (identifier) @component_name))
+            (jsx_self_closing_element
+                name: (identifier) @component_name)
+            (jsx_attribute
+                name: (property_identifier) @attribute_name)
+            
+            ; Computed property access
+            (subscript_expression
+                object: (identifier) @object_name)
+            
+            ; Function parameters in various contexts
+            (formal_parameters
+                (identifier) @param_name)
+            (formal_parameters
+                (assignment_pattern
+                    left: (identifier) @param_name))
+            (rest_parameter
+                (identifier) @param_name)
+            
+            ; Async/await patterns
+            (await_expression
+                argument: (call_expression
+                    function: (identifier) @function_name))
+            
+            ; Template literal expressions
+            (template_substitution
+                (identifier) @variable_name)
+            
+            ; Destructuring assignments
+            (object_pattern
+                (shorthand_property_identifier) @variable_name)
+            (object_pattern
+                (pair
+                    key: (property_identifier) @property_name
+                    value: (identifier) @variable_name))
+            (array_pattern
+                (identifier) @variable_name)
+            "#,
+        )
+        .context("Failed to create JavaScript query")?;
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(&comprehensive_query, tree.root_node(), content.as_bytes());
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = comprehensive_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .unwrap_or(&"unknown");
+
+                let symbol_name = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                if symbol_name.is_empty() 
+                    || symbol_name.chars().all(char::is_whitespace)
+                    || symbol_name.len() > 100  // Skip very long names (likely not real symbols)
+                    || symbol_name.contains('\n')  // Skip multi-line captures
+                {
+                    continue;
+                }
+
+                let reference_type = match *capture_name {
+                    "function_name" | "constructor_name" => ReferenceType::FunctionCall,
+                    "method_name" => ReferenceType::MethodCall,
+                    "class_name" | "parent_class_name" => ReferenceType::TypeUsage,
+                    "import_name" | "export_name" => ReferenceType::FunctionCall, // Use available type
+                    "variable_name" | "param_name" | "iterator_name" | "error_name" => ReferenceType::FieldAccess,
+                    "object_name" | "property_name" | "attribute_name" => ReferenceType::FieldAccess,
+                    "component_name" => ReferenceType::TypeUsage, // JSX components
+                    _ => ReferenceType::FunctionCall, // Default to FunctionCall
+                };
+
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
+                references.push(CodeReference {
+                    name: symbol_name,
+                    ref_type: reference_type,
+                    line: node.start_position().row + 1,
+                    column: node.start_position().column + 1,
+                    text: symbol_text,
+                });
+            }
+        }
+
+        tracing::debug!(
+            "Extracted {} JavaScript references",
+            references.len()
         );
-        Ok(Vec::new())
+        
+        Ok(references)
     }
 
     /// Return a parser to the pool

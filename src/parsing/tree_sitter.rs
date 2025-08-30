@@ -2,112 +2,191 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::OnceLock;
 use tree_sitter::{Language, Node, Parser, Tree};
 
-// Node type constants for better maintainability and to avoid typos
+// Node type constants optimized with HashSets for O(1) lookup performance
+// Using OnceLock for lazy initialization to avoid initialization cost on each function call
 
 // Function-related nodes across languages
-const FUNCTION_NODES: &[&str] = &[
-    // Rust
-    "function_item",
-    "function_declaration",
-    "function_definition",
-    // TypeScript/JavaScript
-    "function_declaration",
-    "function",
-    "function_expression",
-    "arrow_function",
-    "method_definition",
-];
+static FUNCTION_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_function_nodes() -> &'static HashSet<&'static str> {
+    FUNCTION_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "function_item",
+            "function_declaration",
+            "function_definition",
+            // TypeScript/JavaScript
+            "function_declaration",
+            "function",
+            "function_expression",
+            "arrow_function",
+            "method_definition",
+        ])
+    })
+}
 
 // Method nodes
-const METHOD_NODES: &[&str] = &[
-    "method_definition",
-    "method_declaration",
-    "property_definition", // For class properties
-];
+static METHOD_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_method_nodes() -> &'static HashSet<&'static str> {
+    METHOD_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "method_definition",
+            "method_declaration",
+            "property_definition", // For class properties
+        ])
+    })
+}
 
 // Struct/Class nodes
-const STRUCT_NODES: &[&str] = &["struct_item", "struct_declaration"];
-const CLASS_NODES: &[&str] = &["class_declaration", "class_definition", "class_expression"];
+static STRUCT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_struct_nodes() -> &'static HashSet<&'static str> {
+    STRUCT_NODES.get_or_init(|| HashSet::from_iter(["struct_item", "struct_declaration"]))
+}
+
+static CLASS_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_class_nodes() -> &'static HashSet<&'static str> {
+    CLASS_NODES.get_or_init(|| {
+        HashSet::from_iter(["class_declaration", "class_definition", "class_expression"])
+    })
+}
 
 // Enum/Union nodes
-const ENUM_NODES: &[&str] = &[
-    "enum_item",
-    "enum_declaration",
-    "enum_member", // TypeScript enum members
-];
+static ENUM_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_enum_nodes() -> &'static HashSet<&'static str> {
+    ENUM_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "enum_item",
+            "enum_declaration",
+            "enum_member", // TypeScript enum members
+        ])
+    })
+}
 
 // Variable declarations
-const VARIABLE_NODES: &[&str] = &[
-    // Rust
-    "let_declaration",
-    // TypeScript/JavaScript
-    "variable_declarator",
-    "lexical_declaration",  // let/const
-    "variable_declaration", // var
-];
+static VARIABLE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_variable_nodes() -> &'static HashSet<&'static str> {
+    VARIABLE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            // Rust
+            "let_declaration",
+            // TypeScript/JavaScript
+            "variable_declarator",
+            "lexical_declaration",  // let/const
+            "variable_declaration", // var
+        ])
+    })
+}
 
 // Constant declarations
-const CONST_NODES: &[&str] = &[
-    "const_item",        // Rust
-    "const_declaration", // General
-];
+static CONST_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_const_nodes() -> &'static HashSet<&'static str> {
+    CONST_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "const_item",        // Rust
+            "const_declaration", // General
+        ])
+    })
+}
 
 // Module/namespace nodes
-const MODULE_NODES: &[&str] = &[
-    "mod_item",              // Rust
-    "module_declaration",    // TypeScript
-    "namespace_declaration", // TypeScript namespace
-];
+static MODULE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_module_nodes() -> &'static HashSet<&'static str> {
+    MODULE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "mod_item",              // Rust
+            "module_declaration",    // TypeScript
+            "namespace_declaration", // TypeScript namespace
+        ])
+    })
+}
 
 // Import/export nodes
-const IMPORT_NODES: &[&str] = &[
-    "use_declaration",    // Rust
-    "import_statement",   // JavaScript/TypeScript
-    "import_clause",      // ES modules
-    "export_statement",   // JavaScript/TypeScript exports
-    "export_declaration", // Named exports
-];
+static IMPORT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_import_nodes() -> &'static HashSet<&'static str> {
+    IMPORT_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "use_declaration",    // Rust
+            "import_statement",   // JavaScript/TypeScript
+            "import_clause",      // ES modules
+            "export_statement",   // JavaScript/TypeScript exports
+            "export_declaration", // Named exports
+        ])
+    })
+}
 
 // Comment nodes
-const COMMENT_NODES: &[&str] = &[
-    "line_comment",
-    "block_comment",
-    "comment", // Generic comment node
-];
+static COMMENT_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_comment_nodes() -> &'static HashSet<&'static str> {
+    COMMENT_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "line_comment",
+            "block_comment",
+            "comment", // Generic comment node
+        ])
+    })
+}
 
 // Interface and type nodes (TypeScript-specific)
-const INTERFACE_NODES: &[&str] = &[
-    "interface_declaration",
-    "type_alias_declaration", // TypeScript type aliases
-];
-
-// Special language-specific node types
-const TRAIT_NODE: &str = "trait_item"; // Rust traits
-const IMPL_NODE: &str = "impl_item"; // Rust implementations
+static INTERFACE_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_interface_nodes() -> &'static HashSet<&'static str> {
+    INTERFACE_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "interface_declaration",
+            "type_alias_declaration", // TypeScript type aliases
+        ])
+    })
+}
 
 // JSX/TSX-specific nodes
-const JSX_NODES: &[&str] = &["jsx_element", "jsx_fragment", "jsx_self_closing_element"];
+static JSX_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_jsx_nodes() -> &'static HashSet<&'static str> {
+    JSX_NODES.get_or_init(|| {
+        HashSet::from_iter(["jsx_element", "jsx_fragment", "jsx_self_closing_element"])
+    })
+}
 
 // Identifier node types across different languages
-const IDENTIFIER_NODES: &[&str] = &[
-    "identifier",
-    "type_identifier",
-    "name",
-    "property_identifier", // JavaScript/TypeScript property names
-];
+static IDENTIFIER_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_identifier_nodes() -> &'static HashSet<&'static str> {
+    IDENTIFIER_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "identifier",
+            "type_identifier",
+            "name",
+            "property_identifier", // JavaScript/TypeScript property names
+        ])
+    })
+}
 
 // Nodes that contain methods (for context detection)
-const METHOD_CONTAINER_NODES: &[&str] = &[
-    "trait_item",            // Rust traits
-    "impl_item",             // Rust implementations
-    "class_declaration",     // JavaScript/TypeScript classes
-    "class_expression",      // JavaScript/TypeScript class expressions
-    "interface_declaration", // TypeScript interfaces
-];
+static METHOD_CONTAINER_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_method_container_nodes() -> &'static HashSet<&'static str> {
+    METHOD_CONTAINER_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "trait_item",            // Rust traits
+            "impl_item",             // Rust implementations
+            "class_declaration",     // JavaScript/TypeScript classes
+            "class_expression",      // JavaScript/TypeScript class expressions
+            "interface_declaration", // TypeScript interfaces
+        ])
+    })
+}
+
+// Special language-specific node types
+static SPECIAL_NODES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn get_special_nodes() -> &'static HashSet<&'static str> {
+    SPECIAL_NODES.get_or_init(|| {
+        HashSet::from_iter([
+            "trait_item",               // Rust traits
+            "impl_item",                // Rust implementations
+            "type_alias_declaration",   // TypeScript type aliases
+        ])
+    })
+}
 
 /// Supported programming languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -450,44 +529,49 @@ impl CodeParser {
         let node_type = node.kind();
 
         // Check if this node represents a symbol we care about
-        let symbol_type = if FUNCTION_NODES.contains(&node_type) {
+        // Using optimized HashSet lookups for O(1) performance
+        let symbol_type = if get_function_nodes().contains(node_type) {
             // Check if this is inside a trait/impl/class block (making it a method)
             if self.is_inside_method_container(node) {
                 Some(SymbolType::Method)
             } else {
                 Some(SymbolType::Function)
             }
-        } else if METHOD_NODES.contains(&node_type) {
+        } else if get_method_nodes().contains(node_type) {
             Some(SymbolType::Method)
-        } else if STRUCT_NODES.contains(&node_type) {
+        } else if get_struct_nodes().contains(node_type) {
             Some(SymbolType::Struct)
-        } else if node_type == TRAIT_NODE {
-            Some(SymbolType::Interface) // Rust traits are interfaces
-        } else if node_type == IMPL_NODE || CLASS_NODES.contains(&node_type) {
-            Some(SymbolType::Class) // Rust impl blocks and JavaScript/TypeScript class declarations
-        } else if INTERFACE_NODES.contains(&node_type) {
+        } else if get_class_nodes().contains(node_type) {
+            Some(SymbolType::Class) // JavaScript/TypeScript class declarations
+        } else if get_interface_nodes().contains(node_type) {
             Some(SymbolType::Interface) // TypeScript interfaces and type aliases
-        } else if ENUM_NODES.contains(&node_type) {
+        } else if get_enum_nodes().contains(node_type) {
             Some(SymbolType::Enum)
-        } else if VARIABLE_NODES.contains(&node_type) {
+        } else if get_variable_nodes().contains(node_type) {
             Some(SymbolType::Variable)
-        } else if CONST_NODES.contains(&node_type) {
+        } else if get_const_nodes().contains(node_type) {
             Some(SymbolType::Constant)
-        } else if MODULE_NODES.contains(&node_type) {
+        } else if get_module_nodes().contains(node_type) {
             Some(SymbolType::Module)
-        } else if IMPORT_NODES.contains(&node_type) {
+        } else if get_import_nodes().contains(node_type) {
             // Differentiate between imports and exports
             if node_type.starts_with("export") {
                 Some(SymbolType::Export)
             } else {
                 Some(SymbolType::Import)
             }
-        } else if JSX_NODES.contains(&node_type) {
+        } else if get_jsx_nodes().contains(node_type) {
             Some(SymbolType::Component) // JSX/TSX components
-        } else if COMMENT_NODES.contains(&node_type) {
+        } else if get_comment_nodes().contains(node_type) {
             Some(SymbolType::Comment)
-        } else if node_type == "type_alias_declaration" {
-            Some(SymbolType::Type) // TypeScript type aliases
+        } else if get_special_nodes().contains(node_type) {
+            // Handle special nodes with specific logic
+            match node_type {
+                "trait_item" => Some(SymbolType::Interface), // Rust traits
+                "impl_item" => Some(SymbolType::Class),     // Rust implementations
+                "type_alias_declaration" => Some(SymbolType::Type), // TypeScript type aliases
+                _ => None,
+            }
         } else {
             None
         };
@@ -528,10 +612,11 @@ impl CodeParser {
 
     /// Check if a node is inside a method container (trait, impl, class, interface)
     /// Made pub(crate) for testing purposes
+    /// Optimized with HashSet for O(1) lookup performance
     pub(crate) fn is_inside_method_container(&self, node: Node) -> bool {
         let mut current = node.parent();
         while let Some(parent) = current {
-            if METHOD_CONTAINER_NODES.contains(&parent.kind()) {
+            if get_method_container_nodes().contains(parent.kind()) {
                 return true;
             }
             current = parent.parent();
@@ -554,7 +639,7 @@ impl CodeParser {
             // Handle various identifier types across different languages
             // Rust uses "type_identifier" for structs/enums, "identifier" for functions/variables
             // Other languages may use "name" or "identifier"
-            if IDENTIFIER_NODES.contains(&child.kind()) {
+            if get_identifier_nodes().contains(child.kind()) {
                 if let Ok(name) = child.utf8_text(content.as_bytes()) {
                     // Validate that the name is not empty after trimming
                     let trimmed_name = name.trim();
