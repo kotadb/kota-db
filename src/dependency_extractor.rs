@@ -154,6 +154,18 @@ pub enum ReferenceType {
     ClosureCall,
     TurbofishCall,
     OperatorOverload,
+    // Python-specific reference types
+    Import,
+    Inheritance,
+    Decorator,
+    // Modern Python language constructs
+    FunctionDefinition,
+    AsyncCall,
+    TypeAnnotation,
+    PatternMatch,
+    PatternBinding,
+    ContextManager,
+    Other,
 }
 
 impl ReferenceType {
@@ -174,6 +186,17 @@ impl ReferenceType {
             ReferenceType::FieldAccess => RelationType::References,
             ReferenceType::TraitImpl => RelationType::Implements,
             ReferenceType::TraitBound => RelationType::Implements,
+            // Python-specific mappings
+            ReferenceType::Import => RelationType::Imports,
+            ReferenceType::Inheritance => RelationType::Extends,
+            ReferenceType::Decorator => RelationType::References,
+            ReferenceType::FunctionDefinition => RelationType::References,
+            ReferenceType::AsyncCall => RelationType::Calls,
+            ReferenceType::TypeAnnotation => RelationType::References,
+            ReferenceType::PatternMatch => RelationType::References,
+            ReferenceType::PatternBinding => RelationType::References,
+            ReferenceType::ContextManager => RelationType::References,
+            ReferenceType::Other => RelationType::References,
         }
     }
 
@@ -194,6 +217,21 @@ impl ReferenceType {
             ReferenceType::MacroInvocation => RelationType::Custom("invokes_macro".to_string()),
             ReferenceType::FieldAccess => RelationType::Custom("accesses_field".to_string()),
             ReferenceType::OperatorOverload => RelationType::Custom("uses_operator".to_string()),
+            // Python-specific descriptive mappings
+            ReferenceType::Import => RelationType::Custom("imports".to_string()),
+            ReferenceType::Inheritance => RelationType::Custom("inherits_from".to_string()),
+            ReferenceType::Decorator => RelationType::Custom("decorated_by".to_string()),
+            ReferenceType::FunctionDefinition => {
+                RelationType::Custom("defines_function".to_string())
+            }
+            ReferenceType::AsyncCall => RelationType::Custom("awaits".to_string()),
+            ReferenceType::TypeAnnotation => {
+                RelationType::Custom("annotated_with_type".to_string())
+            }
+            ReferenceType::PatternMatch => RelationType::Custom("matches_pattern".to_string()),
+            ReferenceType::PatternBinding => RelationType::Custom("binds_pattern".to_string()),
+            ReferenceType::ContextManager => RelationType::Custom("enters_context".to_string()),
+            ReferenceType::Other => RelationType::References,
         }
     }
 }
