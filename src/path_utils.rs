@@ -398,6 +398,176 @@ fn normalize_for_comparison(path: &str) -> String {
     normalized
 }
 
+/// Detect programming language from file extension
+///
+/// Returns the human-readable language name based on file extension.
+/// This provides a centralized location for language detection logic
+/// used across the codebase.
+pub fn detect_language_from_extension(path: &Path) -> &'static str {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| match ext {
+            "rs" => "Rust",
+            "py" => "Python",
+            "js" | "jsx" | "mjs" | "cjs" => "JavaScript",
+            "ts" | "tsx" | "mts" | "cts" => "TypeScript",
+            "go" => "Go",
+            "java" => "Java",
+            "cpp" | "cc" | "cxx" | "c++" => "C++",
+            "c" | "h" => "C",
+            "rb" => "Ruby",
+            "php" => "PHP",
+            "cs" => "C#",
+            "swift" => "Swift",
+            "kt" | "kts" => "Kotlin",
+            "scala" | "sc" => "Scala",
+            "r" | "R" => "R",
+            "m" | "mm" => "Objective-C",
+            "lua" => "Lua",
+            "jl" => "Julia",
+            "dart" => "Dart",
+            "nim" => "Nim",
+            "zig" => "Zig",
+            "ex" | "exs" => "Elixir",
+            "clj" | "cljs" | "cljc" => "Clojure",
+            "hs" | "lhs" => "Haskell",
+            "ml" | "mli" => "OCaml",
+            "fs" | "fsx" | "fsi" => "F#",
+            "vb" => "Visual Basic",
+            "pas" | "pp" => "Pascal",
+            "pl" | "pm" => "Perl",
+            "sh" | "bash" | "zsh" | "fish" => "Shell",
+            "ps1" | "psm1" | "psd1" => "PowerShell",
+            "yml" | "yaml" => "YAML",
+            "json" => "JSON",
+            "xml" => "XML",
+            "toml" => "TOML",
+            "sql" => "SQL",
+            "vue" => "Vue",
+            "svelte" => "Svelte",
+            _ => "Other",
+        })
+        .unwrap_or("Other")
+}
+
+/// Detect if a file path represents a test file
+///
+/// Uses common patterns across different languages and frameworks
+/// to identify test files.
+pub fn is_test_file(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+
+    // Check path components for test directories
+    if path_str.contains("/test/")
+        || path_str.contains("/tests/")
+        || path_str.contains("/spec/")
+        || path_str.contains("/__tests__/")
+    {
+        return true;
+    }
+
+    // Check filename patterns
+    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+        // Common test file patterns
+        if file_name.starts_with("test_")
+            || file_name.starts_with("spec_")
+            || file_name.ends_with("_test.rs")
+            || file_name.ends_with("_test.go")
+            || file_name.ends_with("_test.py")
+            || file_name.ends_with("_test.js")
+            || file_name.ends_with("_test.ts")
+            || file_name.ends_with(".test.js")
+            || file_name.ends_with(".test.ts")
+            || file_name.ends_with(".spec.js")
+            || file_name.ends_with(".spec.ts")
+            || file_name.ends_with("_spec.rb")
+            || file_name.ends_with("Test.java")
+            || file_name.ends_with("Tests.java")
+            || file_name.ends_with("Test.cs")
+            || file_name.ends_with("Tests.cs")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Detect if a symbol name represents a potential entry point
+///
+/// Uses language-specific patterns to identify entry points like
+/// main functions, constructors, and initialization functions.
+pub fn is_potential_entry_point(symbol_name: &str, symbol_type: Option<&str>) -> bool {
+    // Skip if it's not a function/method type
+    if let Some(ty) = symbol_type {
+        if !matches!(ty, "Function" | "Method" | "Constructor") {
+            return false;
+        }
+    }
+
+    // Main function patterns
+    if symbol_name == "main"
+        || symbol_name == "Main"
+        || symbol_name.ends_with("::main")
+        || symbol_name.ends_with(".main")
+    {
+        return true;
+    }
+
+    // Constructor patterns (but more selective)
+    if symbol_name.ends_with("::new") {
+        // Only consider it an entry point if it's a top-level struct/class
+        // Not if it's a nested or helper type
+        let parts: Vec<&str> = symbol_name.split("::").collect();
+        if parts.len() == 2 {
+            // Simple Type::new pattern - likely a main type
+            return true;
+        }
+    }
+
+    // Initialization patterns
+    if symbol_name == "init"
+        || symbol_name == "initialize"
+        || symbol_name == "start"
+        || symbol_name == "run"
+        || symbol_name == "execute"
+        || symbol_name == "launch"
+        || symbol_name.ends_with("::init")
+        || symbol_name.ends_with("::start")
+        || symbol_name.ends_with("::run")
+    {
+        return true;
+    }
+
+    // Web framework entry points
+    if symbol_name == "index"
+        || symbol_name == "handler"
+        || symbol_name == "serve"
+        || symbol_name == "listen"
+        || symbol_name.contains("Route")
+        || symbol_name.contains("Controller")
+    {
+        return true;
+    }
+
+    // CLI entry points
+    if symbol_name.contains("Command")
+        || symbol_name.contains("Cli")
+        || symbol_name == "parse_args"
+        || symbol_name == "parse_arguments"
+    {
+        return true;
+    }
+
+    // Test entry points (but only for test context)
+    if symbol_name.starts_with("test_") {
+        // Could check if it's in a test file for more accuracy
+        return true;
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,6 +838,109 @@ mod tests {
             assert!(result.is_ok());
         } else {
             assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_detect_language_from_extension() {
+        let test_cases = vec![
+            ("main.rs", "Rust"),
+            ("script.py", "Python"),
+            ("app.js", "JavaScript"),
+            ("component.tsx", "TypeScript"),
+            ("server.go", "Go"),
+            ("Main.java", "Java"),
+            ("program.cpp", "C++"),
+            ("header.h", "C"),
+            ("app.rb", "Ruby"),
+            ("index.php", "PHP"),
+            ("Program.cs", "C#"),
+            ("app.swift", "Swift"),
+            ("main.kt", "Kotlin"),
+            ("script.lua", "Lua"),
+            ("compute.jl", "Julia"),
+            ("app.dart", "Dart"),
+            ("main.nim", "Nim"),
+            ("program.zig", "Zig"),
+            ("unknown.xyz", "Other"),
+            ("no_extension", "Other"),
+        ];
+
+        for (filename, expected_lang) in test_cases {
+            let path = Path::new(filename);
+            assert_eq!(
+                detect_language_from_extension(path),
+                expected_lang,
+                "Failed for file: {}",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_test_file() {
+        let test_cases = vec![
+            // Test files
+            ("tests/integration_test.rs", true),
+            ("test/unit_test.py", true),
+            ("src/__tests__/component.test.js", true),
+            ("spec/feature_spec.rb", true),
+            ("test_module.py", true),
+            ("module_test.go", true),
+            ("MyClassTest.java", true),
+            ("MyClassTests.cs", true),
+            ("component.test.ts", true),
+            ("feature.spec.js", true),
+            // Non-test files
+            ("src/main.rs", false),
+            ("lib/helper.py", false),
+            ("app/component.js", false),
+            ("README.md", false),
+            ("build.gradle", false),
+        ];
+
+        for (path_str, expected) in test_cases {
+            let path = Path::new(path_str);
+            assert_eq!(
+                is_test_file(path),
+                expected,
+                "Failed for path: {}",
+                path_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_potential_entry_point() {
+        let test_cases = vec![
+            // Entry points
+            ("main", Some("Function"), true),
+            ("Main", Some("Function"), true),
+            ("MyApp::main", Some("Function"), true),
+            ("Server::new", Some("Constructor"), true),
+            ("init", Some("Function"), true),
+            ("start", Some("Function"), true),
+            ("run", Some("Method"), true),
+            ("index", Some("Function"), true),
+            ("handler", Some("Function"), true),
+            ("parse_args", Some("Function"), true),
+            ("test_something", Some("Function"), true),
+            // Not entry points
+            ("helper", Some("Function"), false),
+            ("process_data", Some("Function"), false),
+            ("MyStruct::field", Some("Field"), false), // Not a function
+            ("nested::module::Type::new", Some("Constructor"), false), // Too nested
+            ("main", Some("Variable"), false),         // Not a function type
+        ];
+
+        for (name, typ, expected) in test_cases {
+            assert_eq!(
+                is_potential_entry_point(name, typ),
+                expected,
+                "Failed for symbol: {} with type: {:?}",
+                name,
+                typ
+            );
         }
     }
 }

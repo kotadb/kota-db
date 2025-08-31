@@ -1004,6 +1004,9 @@ async fn generate_codebase_overview(
     entry_points_limit: usize,
     quiet: bool,
 ) -> Result<()> {
+    use kotadb::path_utils::{
+        detect_language_from_extension, is_potential_entry_point, is_test_file,
+    };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
@@ -1026,47 +1029,31 @@ async fn generate_codebase_overview(
     let mut total_symbols = 0;
 
     if symbol_db_path.exists() {
-        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
-        total_symbols = reader.symbol_count();
+        // Try to open the symbols database, but continue if it fails
+        match kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path) {
+            Ok(reader) => {
+                total_symbols = reader.symbol_count();
 
-        for symbol in reader.iter_symbols() {
-            // Count by type
-            let type_name = match kotadb::parsing::SymbolType::try_from(symbol.kind) {
-                Ok(symbol_type) => format!("{}", symbol_type),
-                Err(_) => format!("unknown({})", symbol.kind),
-            };
-            *symbols_by_type.entry(type_name).or_insert(0) += 1;
-
-            // Count by language (inferred from file extension)
-            if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
-                unique_files.insert(file_path.clone());
-                if let Some(ext) = std::path::Path::new(&file_path).extension() {
-                    let lang = match ext.to_str() {
-                        Some("rs") => "Rust",
-                        Some("py") => "Python",
-                        Some("js") | Some("jsx") => "JavaScript",
-                        Some("ts") | Some("tsx") => "TypeScript",
-                        Some("go") => "Go",
-                        Some("java") => "Java",
-                        Some("cpp") | Some("cc") | Some("cxx") => "C++",
-                        Some("c") | Some("h") => "C",
-                        Some("rb") => "Ruby",
-                        Some("php") => "PHP",
-                        Some("cs") => "C#",
-                        Some("swift") => "Swift",
-                        Some("kt") | Some("kts") => "Kotlin",
-                        Some("scala") => "Scala",
-                        Some("r") => "R",
-                        Some("m") => "Objective-C",
-                        Some("lua") => "Lua",
-                        Some("jl") => "Julia",
-                        Some("dart") => "Dart",
-                        Some("nim") => "Nim",
-                        Some("zig") => "Zig",
-                        _ => "Other",
+                for symbol in reader.iter_symbols() {
+                    // Count by type
+                    let type_name = match kotadb::parsing::SymbolType::try_from(symbol.kind) {
+                        Ok(symbol_type) => format!("{}", symbol_type),
+                        Err(_) => format!("unknown({})", symbol.kind),
                     };
-                    *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
+                    *symbols_by_type.entry(type_name).or_insert(0) += 1;
+
+                    // Count by language (inferred from file extension)
+                    if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
+                        unique_files.insert(file_path.clone());
+                        let path = std::path::Path::new(&file_path);
+                        let lang = detect_language_from_extension(path);
+                        *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
+                    }
                 }
+            }
+            Err(e) => {
+                // Log warning but continue with overview generation
+                tracing::warn!("Failed to read symbols database: {}", e);
             }
         }
     }
@@ -1125,14 +1112,28 @@ async fn generate_codebase_overview(
                     all_symbol_ids.insert(node.symbol_id);
                 }
 
-                entry_points = all_symbol_ids
-                    .difference(&has_incoming)
-                    .filter_map(|id| id_to_name.get(id))
-                    .filter(|s| {
-                        s.contains("main") || s.ends_with("::new") || s.starts_with("test_")
-                    })
+                // Find entry points with improved heuristics
+                let mut potential_entry_points: Vec<String> = Vec::new();
+                for symbol_id in all_symbol_ids.difference(&has_incoming) {
+                    if let Some(symbol_name) = id_to_name.get(symbol_id) {
+                        // Get symbol type if available from nodes
+                        let symbol_type = serializable
+                            .nodes
+                            .iter()
+                            .find(|n| n.symbol_id == *symbol_id)
+                            .map(|n| format!("{}", n.symbol_type));
+
+                        if is_potential_entry_point(symbol_name, symbol_type.as_deref()) {
+                            potential_entry_points.push(symbol_name.clone());
+                        }
+                    }
+                }
+
+                // Sort and limit entry points
+                potential_entry_points.sort();
+                entry_points = potential_entry_points
+                    .into_iter()
                     .take(entry_points_limit)
-                    .cloned()
                     .collect();
             }
         }
@@ -1151,13 +1152,15 @@ async fn generate_codebase_overview(
 
     let all_docs = db.storage.lock().await.list_all().await?;
     for doc in &all_docs {
-        let path_str = doc.path.as_str();
-        if path_str.contains("/test") || path_str.contains("_test.") || path_str.contains("/tests/")
-        {
+        let path = std::path::Path::new(doc.path.as_str());
+
+        if is_test_file(path) {
             test_files += 1;
-        } else if path_str.ends_with(".md")
-            || path_str.ends_with(".rst")
-            || path_str.ends_with(".txt")
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext, "md" | "rst" | "txt" | "adoc" | "org"))
+            .unwrap_or(false)
         {
             doc_files += 1;
         } else {
@@ -1272,6 +1275,7 @@ async fn generate_codebase_overview(
 /// Display symbol statistics from the binary symbol database
 #[cfg(feature = "tree-sitter-parsing")]
 async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
+    use kotadb::path_utils::detect_language_from_extension;
     use std::collections::HashMap;
 
     let symbol_db_path = db_path.join("symbols.kota");
@@ -1302,20 +1306,9 @@ async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Resu
         // Count by language (inferred from file extension)
         if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
             unique_files.insert(file_path.clone());
-            if let Some(ext) = std::path::Path::new(&file_path).extension() {
-                let lang = match ext.to_str() {
-                    Some("rs") => "Rust",
-                    Some("py") => "Python",
-                    Some("js") | Some("jsx") => "JavaScript",
-                    Some("ts") | Some("tsx") => "TypeScript",
-                    Some("go") => "Go",
-                    Some("java") => "Java",
-                    Some("cpp") | Some("cc") | Some("cxx") => "C++",
-                    Some("c") | Some("h") => "C",
-                    _ => "Other",
-                };
-                *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
-            }
+            let path = std::path::Path::new(&file_path);
+            let lang = detect_language_from_extension(path);
+            *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -2651,5 +2644,84 @@ mod codebase_overview_tests {
         .await;
 
         assert!(result.is_ok(), "Should respect custom limits");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_with_populated_data() {
+        use kotadb::builders::DocumentBuilder;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database and populate with test data
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Insert various types of files
+        let test_files = vec![
+            ("src/main.rs", "fn main() { println!(\"Hello\"); }", false),
+            ("src/lib.rs", "pub fn process() { }", false),
+            (
+                "tests/integration_test.rs",
+                "fn test_something() { assert!(true); }",
+                true,
+            ),
+            ("src/utils.py", "def helper():\n    pass", false),
+            (
+                "test_module.py",
+                "def test_feature():\n    assert True",
+                true,
+            ),
+            ("README.md", "# Project Documentation", false),
+        ];
+
+        for (path, content, _is_test) in test_files {
+            let doc = DocumentBuilder::new()
+                .path(path)
+                .expect("Failed to set path")
+                .title(path)
+                .expect("Failed to set title")
+                .content(content.as_bytes())
+                .build()
+                .expect("Failed to build document");
+
+            db.storage
+                .lock()
+                .await
+                .insert(doc)
+                .await
+                .expect("Failed to insert document");
+        }
+
+        // Run codebase overview
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(
+            result.is_ok(),
+            "Should generate overview with populated data"
+        );
+
+        // Could parse JSON output here to verify structure if needed
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_error_handling() {
+        use std::fs;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Create a corrupted symbols file
+        let symbols_path = db_path.join("symbols.kota");
+        fs::write(&symbols_path, b"corrupted data").expect("Failed to write file");
+
+        // Should handle corrupted file gracefully
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        // The function should still succeed but skip the corrupted symbol data
+        assert!(result.is_ok(), "Should handle corrupted files gracefully");
     }
 }
