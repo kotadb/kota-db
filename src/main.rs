@@ -300,8 +300,7 @@ enum Commands {
         #[arg(
             short,
             long,
-            default_value = "50",
-            help = "Control number of results returned"
+            help = "Control number of results (default: unlimited, use -l 50 to limit)"
         )]
         limit: Option<usize>,
     },
@@ -315,8 +314,7 @@ enum Commands {
         #[arg(
             short,
             long,
-            default_value = "50",
-            help = "Control number of results returned"
+            help = "Control number of results (default: unlimited, use -l 50 to limit)"
         )]
         limit: Option<usize>,
     },
@@ -1149,6 +1147,7 @@ async fn generate_codebase_overview(
     let mut test_files = 0;
     let mut source_files = 0;
     let mut doc_files = 0;
+    let mut other_files = 0;
 
     let all_docs = db.storage.lock().await.list_all().await?;
     for doc in &all_docs {
@@ -1163,14 +1162,62 @@ async fn generate_codebase_overview(
             .unwrap_or(false)
         {
             doc_files += 1;
-        } else {
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| {
+                // Only count actual source code files
+                matches!(
+                    ext,
+                    "rs" | "py"
+                        | "js"
+                        | "ts"
+                        | "jsx"
+                        | "tsx"
+                        | "c"
+                        | "cpp"
+                        | "cc"
+                        | "cxx"
+                        | "h"
+                        | "hpp"
+                        | "java"
+                        | "go"
+                        | "rb"
+                        | "php"
+                        | "cs"
+                        | "swift"
+                        | "kt"
+                        | "scala"
+                        | "clj"
+                        | "ex"
+                        | "exs"
+                        | "erl"
+                        | "hrl"
+                        | "ml"
+                        | "mli"
+                        | "hs"
+                        | "lua"
+                        | "pl"
+                        | "sh"
+                        | "bash"
+                        | "zsh"
+                        | "fish"
+                        | "vim"
+                        | "el"
+                )
+            })
+            .unwrap_or(false)
+        {
             source_files += 1;
+        } else {
+            other_files += 1;
         }
     }
 
     file_organization.insert("test_files", test_files);
     file_organization.insert("source_files", source_files);
     file_organization.insert("documentation_files", doc_files);
+    file_organization.insert("other_files", other_files);
     overview_data.insert("file_organization", json!(file_organization));
 
     // 5. Test coverage indicators
@@ -1252,19 +1299,35 @@ async fn generate_codebase_overview(
 
             println!();
             println!("File Organization:");
-            println!("- Core library: {} files", source_files);
+            println!("- Source code: {} files", source_files);
             println!("- Test files: {} files", test_files);
             println!("- Documentation: {} files", doc_files);
+            if other_files > 0 {
+                println!("- Other files: {} files (config, data, etc.)", other_files);
+            }
 
             println!();
             println!("Test Coverage Indicators:");
             println!("- Test-to-code ratio: {:.2}", test_to_code_ratio);
 
-            if !unique_files.is_empty() {
-                let files_with_tests = test_files.min(source_files);
-                let test_coverage_pct =
-                    (files_with_tests as f64 / source_files as f64 * 100.0) as usize;
-                println!("- Estimated test coverage: {}%", test_coverage_pct);
+            if source_files > 0 {
+                // More realistic coverage estimate based on test-to-code ratio
+                // Assuming good test coverage when ratio is >= 0.5
+                let coverage_estimate = if test_to_code_ratio >= 1.0 {
+                    90 // Excellent coverage likely
+                } else if test_to_code_ratio >= 0.5 {
+                    70 // Good coverage likely
+                } else if test_to_code_ratio >= 0.3 {
+                    50 // Moderate coverage likely
+                } else if test_to_code_ratio >= 0.1 {
+                    30 // Basic coverage likely
+                } else {
+                    10 // Minimal coverage likely
+                };
+                println!(
+                    "- Estimated test coverage: ~{}% (based on test-to-code ratio)",
+                    coverage_estimate
+                );
             }
         }
     }
