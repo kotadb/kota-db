@@ -39,8 +39,9 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
         // In verbose mode, show debug info for kotadb and info for others
         EnvFilter::new("kotadb=debug,info")
     } else {
-        // Default: warnings for kotadb and others
-        EnvFilter::new("kotadb=warn,warn")
+        // Default: only show errors to avoid log spam in production CLI usage
+        // Users can enable more logging with --verbose or RUST_LOG env var
+        EnvFilter::new("error")
     };
 
     // Quiet flag takes precedence over environment variable
