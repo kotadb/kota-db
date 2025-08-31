@@ -296,12 +296,11 @@ enum Commands {
         /// Name or qualified name of the target symbol (e.g., 'FileStorage' or 'storage::FileStorage')
         /// Note: Includes constructor calls (Type::new), type annotations, and parameter types
         target: String,
-        /// Maximum number of results to return (default: 10000, use --limit 0 for unlimited)
+        /// Maximum number of results to return (default: unlimited)
         #[arg(
             short,
             long,
-            default_value = "10000",
-            help = "Control number of results returned (0 for unlimited)"
+            help = "Control number of results (default: unlimited, use -l 50 to limit)"
         )]
         limit: Option<usize>,
     },
@@ -311,12 +310,11 @@ enum Commands {
     AnalyzeImpact {
         /// Name or qualified name of the target symbol (e.g., 'StorageError' or 'errors::StorageError')
         target: String,
-        /// Maximum number of impacted items to show (default: 10000, use --limit 0 for unlimited)
+        /// Maximum number of impacted items to show (default: unlimited)
         #[arg(
             short,
             long,
-            default_value = "10000",
-            help = "Control number of results returned (0 for unlimited)"
+            help = "Control number of results (default: unlimited, use -l 50 to limit)"
         )]
         limit: Option<usize>,
     },
@@ -1254,7 +1252,7 @@ async fn generate_codebase_overview(
 
             println!();
             println!("File Organization:");
-            println!("- Core library: {} files", source_files);
+            println!("- Source code: {} files", source_files);
             println!("- Test files: {} files", test_files);
             println!("- Documentation: {} files", doc_files);
 
