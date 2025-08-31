@@ -1131,17 +1131,19 @@ async fn main() -> Result<()> {
                 let wrapped_storage = create_wrapped_storage(storage, 1000).await;
                 let shared_storage = Arc::new(tokio::sync::Mutex::new(wrapped_storage));
 
-                println!("🚀 Starting KotaDB HTTP server on port {port}");
+                println!("🚀 Starting KotaDB Codebase Intelligence API on port {port}");
                 println!("📄 API endpoints:");
-                println!("   POST   /documents       - Create document");
-                println!("   GET    /documents/:id   - Get document");
-                println!("   PUT    /documents/:id   - Update document");
-                println!("   DELETE /documents/:id   - Delete document");
-                println!("   GET    /documents/search - Search documents");
-                println!("   GET    /health         - Health check");
+                println!("   GET    /health                     - Health check");
+                println!("   GET    /info                        - Server information");
+                println!("   POST   /api/repositories            - Index a repository");
+                println!("   POST   /api/search/code             - Search code");
+                println!("   POST   /api/search/symbols          - Search symbols");
+                println!("   GET    /api/symbols/:symbol/callers - Find callers of a symbol");
+                println!("   GET    /api/symbols/:symbol/impact  - Analyze impact of changes");
+                println!("   GET    /api/analysis/stats          - Get codebase statistics");
                 println!();
 
-                start_server(shared_storage, port).await?;
+                start_server(shared_storage, port, cli.db_path.clone()).await?;
             }
 
 

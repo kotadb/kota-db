@@ -113,7 +113,7 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
-pub use http_server::{create_server, create_server_with_pool, start_server};
+pub use http_server::start_server;
 
 // Re-export index implementations
 pub use binary_trigram_index::{create_binary_trigram_index, BinaryTrigramIndex};

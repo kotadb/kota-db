@@ -33,7 +33,9 @@ async fn start_test_server() -> (u16, TempDir, tokio::task::JoinHandle<Result<()
     drop(listener); // Close the listener so the server can bind to it
 
     let storage_clone = storage.clone();
-    let server_handle = tokio::spawn(async move { start_server(storage_clone, port).await });
+    let db_path = std::path::PathBuf::from(temp_dir.path());
+    let server_handle =
+        tokio::spawn(async move { start_server(storage_clone, port, db_path).await });
 
     // Give the server a moment to start
     tokio::time::sleep(Duration::from_millis(100)).await;
