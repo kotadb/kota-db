@@ -343,6 +343,25 @@ enum Commands {
         )]
         max_search_queries: usize,
     },
+
+    /// Generate comprehensive codebase overview for AI assistants
+    ///
+    /// Aggregates existing KotaDB data into a structured overview that enables
+    /// AI assistants to quickly understand codebase architecture without requiring
+    /// interpretation or analysis. Reports only objective facts: symbol names,
+    /// counts, locations, and relationships.
+    #[cfg(feature = "tree-sitter-parsing")]
+    CodebaseOverview {
+        /// Output format (human, json)
+        #[arg(short = 'f', long, default_value = "human", value_parser = ["human", "json"])]
+        format: String,
+        /// Limit number of top symbols shown
+        #[arg(long, default_value = "10")]
+        top_symbols_limit: usize,
+        /// Limit number of entry points shown
+        #[arg(long, default_value = "10")]
+        entry_points_limit: usize,
+    },
 }
 
 struct Database {
@@ -974,6 +993,280 @@ async fn create_relationship_engine(
     }
 
     Ok(binary_engine)
+}
+
+/// Generate comprehensive codebase overview for AI assistants
+#[cfg(feature = "tree-sitter-parsing")]
+async fn generate_codebase_overview(
+    db_path: &std::path::Path,
+    format: &str,
+    top_symbols_limit: usize,
+    entry_points_limit: usize,
+    quiet: bool,
+) -> Result<()> {
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+
+    // Initialize database for basic stats
+    let db = Database::new(db_path, true).await?;
+
+    // Collect all overview data
+    let mut overview_data = HashMap::new();
+
+    // 1. Basic scale metrics
+    let (doc_count, total_size) = db.stats().await?;
+    overview_data.insert("total_files", json!(doc_count));
+    overview_data.insert("total_size_bytes", json!(total_size));
+
+    // 2. Symbol analysis (if available)
+    let symbol_db_path = db_path.join("symbols.kota");
+    let mut symbols_by_type: HashMap<String, usize> = HashMap::new();
+    let mut symbols_by_language: HashMap<String, usize> = HashMap::new();
+    let mut unique_files = HashSet::new();
+    let mut total_symbols = 0;
+
+    if symbol_db_path.exists() {
+        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
+        total_symbols = reader.symbol_count();
+
+        for symbol in reader.iter_symbols() {
+            // Count by type
+            let type_name = match kotadb::parsing::SymbolType::try_from(symbol.kind) {
+                Ok(symbol_type) => format!("{}", symbol_type),
+                Err(_) => format!("unknown({})", symbol.kind),
+            };
+            *symbols_by_type.entry(type_name).or_insert(0) += 1;
+
+            // Count by language (inferred from file extension)
+            if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
+                unique_files.insert(file_path.clone());
+                if let Some(ext) = std::path::Path::new(&file_path).extension() {
+                    let lang = match ext.to_str() {
+                        Some("rs") => "Rust",
+                        Some("py") => "Python",
+                        Some("js") | Some("jsx") => "JavaScript",
+                        Some("ts") | Some("tsx") => "TypeScript",
+                        Some("go") => "Go",
+                        Some("java") => "Java",
+                        Some("cpp") | Some("cc") | Some("cxx") => "C++",
+                        Some("c") | Some("h") => "C",
+                        Some("rb") => "Ruby",
+                        Some("php") => "PHP",
+                        Some("cs") => "C#",
+                        Some("swift") => "Swift",
+                        Some("kt") | Some("kts") => "Kotlin",
+                        Some("scala") => "Scala",
+                        Some("r") => "R",
+                        Some("m") => "Objective-C",
+                        Some("lua") => "Lua",
+                        Some("jl") => "Julia",
+                        Some("dart") => "Dart",
+                        Some("nim") => "Nim",
+                        Some("zig") => "Zig",
+                        _ => "Other",
+                    };
+                    *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    overview_data.insert("total_symbols", json!(total_symbols));
+    overview_data.insert("code_files", json!(unique_files.len()));
+    overview_data.insert("symbols_by_type", json!(symbols_by_type));
+    overview_data.insert("symbols_by_language", json!(symbols_by_language));
+
+    // 3. Relationship and dependency analysis
+    let mut total_relationships = 0;
+    let mut connected_symbols = 0;
+    let mut top_referenced_symbols = Vec::new();
+    let mut entry_points = Vec::new();
+
+    let graph_db_path = db_path.join("dependency_graph.bin");
+    if graph_db_path.exists() {
+        if let Ok(graph_binary) = std::fs::read(&graph_db_path) {
+            if let Ok(serializable) = bincode::deserialize::<
+                kotadb::dependency_extractor::SerializableDependencyGraph,
+            >(&graph_binary)
+            {
+                total_relationships = serializable.stats.edge_count;
+                connected_symbols = serializable.stats.node_count;
+
+                // Build a map from UUID to qualified name
+                let mut id_to_name: HashMap<uuid::Uuid, String> = HashMap::new();
+                for node in &serializable.nodes {
+                    id_to_name.insert(node.symbol_id, node.qualified_name.clone());
+                }
+
+                // Find top referenced symbols (most incoming edges)
+                let mut reference_counts: HashMap<String, usize> = HashMap::new();
+                for edge in &serializable.edges {
+                    if let Some(target_name) = id_to_name.get(&edge.to_id) {
+                        *reference_counts.entry(target_name.clone()).or_insert(0) += 1;
+                    }
+                }
+
+                let mut sorted_refs: Vec<_> = reference_counts.into_iter().collect();
+                sorted_refs.sort_by(|a, b| b.1.cmp(&a.1));
+                top_referenced_symbols = sorted_refs
+                    .into_iter()
+                    .take(top_symbols_limit)
+                    .map(|(name, count)| json!({"symbol": name, "references": count}))
+                    .collect();
+
+                // Find entry points (symbols with no incoming edges)
+                let mut has_incoming: HashSet<uuid::Uuid> = HashSet::new();
+                for edge in &serializable.edges {
+                    has_incoming.insert(edge.to_id);
+                }
+
+                let mut all_symbol_ids: HashSet<uuid::Uuid> = HashSet::new();
+                for node in &serializable.nodes {
+                    all_symbol_ids.insert(node.symbol_id);
+                }
+
+                entry_points = all_symbol_ids
+                    .difference(&has_incoming)
+                    .filter_map(|id| id_to_name.get(id))
+                    .filter(|s| {
+                        s.contains("main") || s.ends_with("::new") || s.starts_with("test_")
+                    })
+                    .take(entry_points_limit)
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+
+    overview_data.insert("total_relationships", json!(total_relationships));
+    overview_data.insert("connected_symbols", json!(connected_symbols));
+    overview_data.insert("top_referenced_symbols", json!(top_referenced_symbols));
+    overview_data.insert("entry_points", json!(entry_points));
+
+    // 4. File organization patterns
+    let mut file_organization = HashMap::new();
+    let mut test_files = 0;
+    let mut source_files = 0;
+    let mut doc_files = 0;
+
+    let all_docs = db.storage.lock().await.list_all().await?;
+    for doc in &all_docs {
+        let path_str = doc.path.as_str();
+        if path_str.contains("/test") || path_str.contains("_test.") || path_str.contains("/tests/")
+        {
+            test_files += 1;
+        } else if path_str.ends_with(".md")
+            || path_str.ends_with(".rst")
+            || path_str.ends_with(".txt")
+        {
+            doc_files += 1;
+        } else {
+            source_files += 1;
+        }
+    }
+
+    file_organization.insert("test_files", test_files);
+    file_organization.insert("source_files", source_files);
+    file_organization.insert("documentation_files", doc_files);
+    overview_data.insert("file_organization", json!(file_organization));
+
+    // 5. Test coverage indicators
+    let test_to_code_ratio = if source_files > 0 {
+        test_files as f64 / source_files as f64
+    } else {
+        0.0
+    };
+    overview_data.insert(
+        "test_to_code_ratio",
+        json!(format!("{:.2}", test_to_code_ratio)),
+    );
+
+    // Output in requested format
+    match format {
+        "json" => {
+            let json_output = json!(overview_data);
+            println!("{}", serde_json::to_string_pretty(&json_output)?);
+        }
+        _ => {
+            // Human-readable format
+            println!("=== CODEBASE OVERVIEW ===");
+            println!();
+
+            println!("Scale Metrics:");
+            println!("- Total files: {}", doc_count);
+            println!("- Code files: {}", unique_files.len());
+            println!("- Test files: {}", test_files);
+            println!("- Total symbols: {}", total_symbols);
+
+            if !symbols_by_type.is_empty() {
+                println!();
+                println!("Symbol Types:");
+                let mut sorted_types: Vec<_> = symbols_by_type.iter().collect();
+                sorted_types.sort_by(|a, b| b.1.cmp(a.1));
+                for (sym_type, count) in sorted_types.iter().take(5) {
+                    println!("- {}: {}", sym_type, count);
+                }
+            }
+
+            if !symbols_by_language.is_empty() {
+                println!();
+                println!("Languages Detected:");
+                let mut sorted_langs: Vec<_> = symbols_by_language.iter().collect();
+                sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
+                for (lang, count) in sorted_langs {
+                    println!("- {}: {} symbols", lang, count);
+                }
+            }
+
+            if total_relationships > 0 {
+                println!();
+                println!("Relationships:");
+                println!("- Total relationships tracked: {}", total_relationships);
+                println!("- Connected symbols: {}", connected_symbols);
+            }
+
+            if !top_referenced_symbols.is_empty() {
+                println!();
+                println!("Top Referenced Symbols:");
+                for ref_obj in &top_referenced_symbols {
+                    if let Some(obj) = ref_obj.as_object() {
+                        if let (Some(symbol), Some(refs)) =
+                            (obj.get("symbol"), obj.get("references"))
+                        {
+                            println!("- {} ({} references)", symbol.as_str().unwrap_or(""), refs);
+                        }
+                    }
+                }
+            }
+
+            if !entry_points.is_empty() {
+                println!();
+                println!("Entry Points (0 callers):");
+                for entry in &entry_points {
+                    println!("- {}", entry);
+                }
+            }
+
+            println!();
+            println!("File Organization:");
+            println!("- Core library: {} files", source_files);
+            println!("- Test files: {} files", test_files);
+            println!("- Documentation: {} files", doc_files);
+
+            println!();
+            println!("Test Coverage Indicators:");
+            println!("- Test-to-code ratio: {:.2}", test_to_code_ratio);
+
+            if !unique_files.is_empty() {
+                let files_with_tests = test_files.min(source_files);
+                let test_coverage_pct =
+                    (files_with_tests as f64 / source_files as f64 * 100.0) as usize;
+                println!("- Estimated test coverage: {}%", test_coverage_pct);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Display symbol statistics from the binary symbol database
@@ -2077,6 +2370,21 @@ async fn main() -> Result<()> {
                     quiet,
                 ).await?;
             }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::CodebaseOverview {
+                format,
+                top_symbols_limit,
+                entry_points_limit,
+            } => {
+                generate_codebase_overview(
+                    &cli.db_path,
+                    &format,
+                    top_symbols_limit,
+                    entry_points_limit,
+                    quiet,
+                ).await?;
+            }
         }
 
         Ok::<(), anyhow::Error>(())
@@ -2259,5 +2567,89 @@ mod stats_tests {
             show_relationships,
             "Should show relationships when all flags specified"
         );
+    }
+}
+
+#[cfg(all(test, feature = "tree-sitter-parsing"))]
+mod codebase_overview_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_codebase_overview_empty_database() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Run codebase overview on empty database
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should handle empty database gracefully");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_json_format() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database with some test data
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Insert a test document
+        let doc = DocumentBuilder::new()
+            .path("test/file.rs")
+            .expect("Failed to set path")
+            .title("Test File")
+            .expect("Failed to set title")
+            .content(b"fn main() {}")
+            .build()
+            .expect("Failed to build document");
+
+        db.storage
+            .lock()
+            .await
+            .insert(doc)
+            .await
+            .expect("Failed to insert document");
+
+        // Run codebase overview with JSON format
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should generate JSON overview successfully");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_human_format() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Run codebase overview with human-readable format
+        let result = generate_codebase_overview(db_path, "human", 5, 5, true).await;
+
+        assert!(
+            result.is_ok(),
+            "Should generate human-readable overview successfully"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_with_limits() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Test with custom limits
+        let result = generate_codebase_overview(
+            db_path, "human", 3, // top_symbols_limit
+            2, // entry_points_limit
+            true,
+        )
+        .await;
+
+        assert!(result.is_ok(), "Should respect custom limits");
     }
 }
