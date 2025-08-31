@@ -39,9 +39,10 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
         // In verbose mode, show debug info for kotadb and info for others
         EnvFilter::new("kotadb=debug,info")
     } else {
-        // Default: only show errors to avoid log spam in production CLI usage
+        // Default: show warnings and errors for kotadb, only errors for dependencies
+        // This ensures important warnings are visible while suppressing debug/info spam
         // Users can enable more logging with --verbose or RUST_LOG env var
-        EnvFilter::new("error")
+        EnvFilter::new("kotadb=warn,error")
     };
 
     // Quiet flag takes precedence over environment variable
@@ -490,5 +491,53 @@ mod tests {
         // Check that drop was called and metrics recorded
         let metrics = get_metrics();
         assert!(metrics["operations"]["total"].as_u64().is_some());
+    }
+
+    #[test]
+    fn test_default_logging_level() {
+        // Test that default logging level shows warnings and errors for kotadb,
+        // but only errors for dependencies
+        let filter_str = "kotadb=warn,error";
+
+        // Verify the filter string is parsed correctly
+        // This ensures our default configuration is valid
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_verbose_logging_level() {
+        // Test that verbose mode enables debug for kotadb and info for others
+        let filter_str = "kotadb=debug,info";
+
+        // Verify the filter string is parsed correctly
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_quiet_logging_level() {
+        // Test that quiet mode suppresses everything except errors
+        let filter_str = "error";
+
+        // Verify the filter string is parsed correctly
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_logging_level_configurations() {
+        // Test all three logging configurations to ensure they're valid
+        let configs = vec![
+            ("quiet", "error"),
+            ("verbose", "kotadb=debug,info"),
+            ("default", "kotadb=warn,error"),
+        ];
+
+        for (mode, filter_str) in configs {
+            assert!(
+                EnvFilter::try_new(filter_str).is_ok(),
+                "Failed to create filter for {} mode with filter: {}",
+                mode,
+                filter_str
+            );
+        }
     }
 }

@@ -160,7 +160,7 @@ EXAMPLES:
   kotadb serve --port 8080"
 )]
 struct Cli {
-    /// Enable verbose logging (DEBUG level). Default is ERROR level to prevent log spam.
+    /// Enable verbose logging (DEBUG level). Default shows warnings/errors only.
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
