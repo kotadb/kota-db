@@ -953,11 +953,14 @@ impl RelationshipQueryEngine {
 impl RelationshipQueryResult {
     /// Limit the number of results returned
     pub fn limit_results(&mut self, limit: usize) {
+        let mut was_truncated = false;
+
         // Truncate direct relationships if they exceed the limit
         if self.direct_relationships.len() > limit {
             self.direct_relationships.truncate(limit);
             // Update stats to reflect the truncation
             self.stats.direct_count = limit;
+            was_truncated = true;
         }
 
         // Truncate indirect relationships/call paths if they exceed the limit
@@ -965,10 +968,12 @@ impl RelationshipQueryResult {
             self.indirect_relationships.truncate(limit);
             // Update stats to reflect the truncation
             self.stats.indirect_count = limit;
+            was_truncated = true;
         }
 
-        // Update summary to indicate results were limited
-        if self.stats.direct_count == limit || self.stats.indirect_count == limit {
+        // Update truncated flag and summary to indicate results were limited
+        if was_truncated {
+            self.stats.truncated = true;
             self.summary = format!("{} (limited to {} results)", self.summary, limit);
         }
     }
@@ -1043,7 +1048,7 @@ impl RelationshipQueryResult {
             self.stats.execution_time_ms
         ));
         if self.stats.truncated {
-            output.push_str("- **Note:** Results were truncated\n");
+            output.push_str("\n**⚠️ WARNING:** Results have been truncated to limit. Use `--limit 0` for unlimited results or increase the limit with `--limit <number>`.\n");
         }
 
         output

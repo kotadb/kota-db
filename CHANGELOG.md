@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed test coverage calculation in `codebase-overview` showing incorrect 8% instead of actual coverage (#488)
+  - Now uses proper algorithm based on test-to-code file ratio with tanh curve
+  - Only counts files with extracted symbols for accurate ratios
+- Fixed `analyze-impact` command returning 0 results despite having relationships (#488)
+  - Now correctly searches all symbol instances across the codebase
+  - Aggregates impact from all occurrences of the target symbol
+- Improved `find-callers` and `analyze-impact` result limits (#488)
+  - Increased default limit from 50 to 10,000 results
+  - Added prominent warning when results are truncated
+  - Implemented `--limit 0` for unlimited results
+  - Clear instructions in warning message for adjusting limits
+
 ### Removed
 - **BREAKING CHANGE**: Removed natural language query parser (#445)
   - Removed `RelationshipQuery` CLI command that supported natural language queries

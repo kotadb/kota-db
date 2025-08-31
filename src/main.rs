@@ -1147,11 +1147,11 @@ async fn generate_codebase_overview(
     let mut test_files = 0;
     let mut source_files = 0;
     let mut doc_files = 0;
-    let mut other_files = 0;
 
-    let all_docs = db.storage.lock().await.list_all().await?;
-    for doc in &all_docs {
-        let path = std::path::Path::new(doc.path.as_str());
+    // Only count files that have actual code symbols extracted
+    // This gives us accurate test coverage ratios
+    for file_path in &unique_files {
+        let path = std::path::Path::new(file_path);
 
         if is_test_file(path) {
             test_files += 1;
@@ -1162,72 +1162,15 @@ async fn generate_codebase_overview(
             .unwrap_or(false)
         {
             doc_files += 1;
-        } else if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| {
-                // Only count actual source code files
-                matches!(
-                    ext,
-                    "rs" | "py"
-                        | "js"
-                        | "ts"
-                        | "jsx"
-                        | "tsx"
-                        | "c"
-                        | "cpp"
-                        | "cc"
-                        | "cxx"
-                        | "h"
-                        | "hpp"
-                        | "java"
-                        | "go"
-                        | "rb"
-                        | "php"
-                        | "cs"
-                        | "swift"
-                        | "kt"
-                        | "scala"
-                        | "clj"
-                        | "ex"
-                        | "exs"
-                        | "erl"
-                        | "hrl"
-                        | "ml"
-                        | "mli"
-                        | "hs"
-                        | "lua"
-                        | "pl"
-                        | "sh"
-                        | "bash"
-                        | "zsh"
-                        | "fish"
-                        | "vim"
-                        | "el"
-                        | "dart"
-                        | "r"
-                        | "m"
-                        | "mm"
-                        | "f90"
-                        | "f95"
-                        | "f03"
-                        | "jl"
-                        | "nim"
-                        | "v"
-                )
-            })
-            .unwrap_or(false)
-        {
-            source_files += 1;
         } else {
-            other_files += 1;
+            // This is an actual source code file with symbols
+            source_files += 1;
         }
     }
 
     file_organization.insert("test_files", test_files);
     file_organization.insert("source_files", source_files);
     file_organization.insert("documentation_files", doc_files);
-    file_organization.insert("other_files", other_files);
     overview_data.insert("file_organization", json!(file_organization));
 
     // 5. Test coverage indicators
@@ -1312,32 +1255,30 @@ async fn generate_codebase_overview(
             println!("- Source code: {} files", source_files);
             println!("- Test files: {} files", test_files);
             println!("- Documentation: {} files", doc_files);
-            if other_files > 0 {
-                println!("- Other files: {} files (config, data, etc.)", other_files);
-            }
 
             println!();
             println!("Test Coverage Indicators:");
             println!("- Test-to-code ratio: {:.2}", test_to_code_ratio);
 
             if source_files > 0 {
-                // More realistic coverage estimate based on test-to-code ratio
-                // Assuming good test coverage when ratio is >= 0.5
-                let coverage_estimate = if test_to_code_ratio >= 1.0 {
-                    90 // Excellent coverage likely
-                } else if test_to_code_ratio >= 0.5 {
-                    70 // Good coverage likely
-                } else if test_to_code_ratio >= 0.3 {
-                    50 // Moderate coverage likely
-                } else if test_to_code_ratio >= 0.1 {
-                    30 // Basic coverage likely
+                // Calculate estimated test coverage based on test-to-code ratio
+                // This is a general heuristic that works across different project types:
+                // - Some projects have many small test files (high ratio)
+                // - Others have fewer but comprehensive test suites (lower ratio)
+                // - We use a sigmoid-like curve that plateaus around 90%
+
+                // Using tanh for a smooth S-curve that's project-agnostic
+                // This maps: 0 -> 0%, 0.5 -> ~45%, 1.0 -> ~70%, 2.0 -> ~85%, 3.0+ -> ~90%
+                let coverage_estimate = 90.0 * (test_to_code_ratio * 0.8).tanh();
+
+                // Add a small baseline for projects with any tests at all
+                let final_estimate = if test_files > 0 {
+                    (coverage_estimate + 10.0).min(90.0) // Cap at 90% as 100% is rare
                 } else {
-                    10 // Minimal coverage likely
+                    0.0
                 };
-                println!(
-                    "- Estimated test coverage: ~{}% (based on test-to-code ratio)",
-                    coverage_estimate
-                );
+
+                println!("- Estimated test coverage: {:.0}%", final_estimate);
             }
         }
     }
@@ -2371,9 +2312,12 @@ async fn main() -> Result<()> {
 
                 let mut result = relationship_engine.execute_query(query_type).await?;
 
-                // Apply limit if specified
+                // Apply limit if specified (0 means unlimited)
                 if let Some(limit_value) = limit {
-                    result.limit_results(limit_value);
+                    if limit_value > 0 {
+                        result.limit_results(limit_value);
+                    }
+                    // limit_value == 0 means unlimited, so don't apply any limit
                 }
                 if quiet {
                     // In quiet mode, output minimal information
@@ -2397,9 +2341,12 @@ async fn main() -> Result<()> {
 
                 let mut result = relationship_engine.execute_query(query_type).await?;
 
-                // Apply limit if specified
+                // Apply limit if specified (0 means unlimited)
                 if let Some(limit_value) = limit {
-                    result.limit_results(limit_value);
+                    if limit_value > 0 {
+                        result.limit_results(limit_value);
+                    }
+                    // limit_value == 0 means unlimited, so don't apply any limit
                 }
                 if quiet {
                     // In quiet mode, output minimal information
