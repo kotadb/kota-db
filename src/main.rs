@@ -296,12 +296,12 @@ enum Commands {
         /// Name or qualified name of the target symbol (e.g., 'FileStorage' or 'storage::FileStorage')
         /// Note: Includes constructor calls (Type::new), type annotations, and parameter types
         target: String,
-        /// Maximum number of results to return (default: unlimited)
+        /// Maximum number of results to return (default: 10000, use --limit 0 for unlimited)
         #[arg(
             short,
             long,
-            default_value = "50",
-            help = "Control number of results returned"
+            default_value = "10000",
+            help = "Control number of results returned (0 for unlimited)"
         )]
         limit: Option<usize>,
     },
@@ -311,12 +311,12 @@ enum Commands {
     AnalyzeImpact {
         /// Name or qualified name of the target symbol (e.g., 'StorageError' or 'errors::StorageError')
         target: String,
-        /// Maximum number of impacted items to show (default: unlimited)
+        /// Maximum number of impacted items to show (default: 10000, use --limit 0 for unlimited)
         #[arg(
             short,
             long,
-            default_value = "50",
-            help = "Control number of results returned"
+            default_value = "10000",
+            help = "Control number of results returned (0 for unlimited)"
         )]
         limit: Option<usize>,
     },
@@ -1150,9 +1150,10 @@ async fn generate_codebase_overview(
     let mut source_files = 0;
     let mut doc_files = 0;
 
-    let all_docs = db.storage.lock().await.list_all().await?;
-    for doc in &all_docs {
-        let path = std::path::Path::new(doc.path.as_str());
+    // Only count files that have actual code symbols extracted
+    // This gives us accurate test coverage ratios
+    for file_path in &unique_files {
+        let path = std::path::Path::new(file_path);
 
         if is_test_file(path) {
             test_files += 1;
@@ -1164,6 +1165,7 @@ async fn generate_codebase_overview(
         {
             doc_files += 1;
         } else {
+            // This is an actual source code file with symbols
             source_files += 1;
         }
     }
@@ -1260,11 +1262,25 @@ async fn generate_codebase_overview(
             println!("Test Coverage Indicators:");
             println!("- Test-to-code ratio: {:.2}", test_to_code_ratio);
 
-            if !unique_files.is_empty() {
-                let files_with_tests = test_files.min(source_files);
-                let test_coverage_pct =
-                    (files_with_tests as f64 / source_files as f64 * 100.0) as usize;
-                println!("- Estimated test coverage: {}%", test_coverage_pct);
+            if source_files > 0 {
+                // Calculate estimated test coverage based on test-to-code ratio
+                // This is a general heuristic that works across different project types:
+                // - Some projects have many small test files (high ratio)
+                // - Others have fewer but comprehensive test suites (lower ratio)
+                // - We use a sigmoid-like curve that plateaus around 90%
+
+                // Using tanh for a smooth S-curve that's project-agnostic
+                // This maps: 0 -> 0%, 0.5 -> ~45%, 1.0 -> ~70%, 2.0 -> ~85%, 3.0+ -> ~90%
+                let coverage_estimate = 90.0 * (test_to_code_ratio * 0.8).tanh();
+
+                // Add a small baseline for projects with any tests at all
+                let final_estimate = if test_files > 0 {
+                    (coverage_estimate + 10.0).min(90.0) // Cap at 90% as 100% is rare
+                } else {
+                    0.0
+                };
+
+                println!("- Estimated test coverage: {:.0}%", final_estimate);
             }
         }
     }
@@ -2298,9 +2314,12 @@ async fn main() -> Result<()> {
 
                 let mut result = relationship_engine.execute_query(query_type).await?;
 
-                // Apply limit if specified
+                // Apply limit if specified (0 means unlimited)
                 if let Some(limit_value) = limit {
-                    result.limit_results(limit_value);
+                    if limit_value > 0 {
+                        result.limit_results(limit_value);
+                    }
+                    // limit_value == 0 means unlimited, so don't apply any limit
                 }
                 if quiet {
                     // In quiet mode, output minimal information
@@ -2324,9 +2343,12 @@ async fn main() -> Result<()> {
 
                 let mut result = relationship_engine.execute_query(query_type).await?;
 
-                // Apply limit if specified
+                // Apply limit if specified (0 means unlimited)
                 if let Some(limit_value) = limit {
-                    result.limit_results(limit_value);
+                    if limit_value > 0 {
+                        result.limit_results(limit_value);
+                    }
+                    // limit_value == 0 means unlimited, so don't apply any limit
                 }
                 if quiet {
                     // In quiet mode, output minimal information

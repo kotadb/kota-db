@@ -425,38 +425,93 @@ impl BinaryRelationshipEngine {
         let graph_ref = self.get_dependency_graph()?;
         let graph = &*graph_ref;
 
-        // For impact analysis, find all transitive dependencies
-        debug!("Looking for symbol '{}' for impact analysis", target);
-        let (_symbol, target_id) = reader
-            .find_symbol_by_name(target)
-            .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", target))?;
+        // For impact analysis, find ALL symbols with this name across the codebase
+        debug!(
+            "Looking for all symbols named '{}' for impact analysis",
+            target
+        );
+        let all_symbols = self.find_all_symbols_by_name(reader, target);
 
-        // Resolve symbol UUID with fallback to name-based lookup
-        let effective_id = match Self::resolve_symbol_uuid_with_fallback(graph, target, target_id) {
-            Some(id) => id,
-            None => {
-                // Return empty result if we can't find the symbol in the graph
-                return Ok(RelationshipQueryResult {
-                    query_type,
-                    direct_relationships: vec![],
-                    indirect_relationships: vec![],
-                    stats: RelationshipStats {
-                        direct_count: 0,
-                        indirect_count: 0,
-                        symbols_analyzed: reader.symbol_count(),
-                        execution_time_ms: 0,
-                        truncated: false,
-                    },
-                    summary: format!(
-                        "Symbol '{}' found in binary storage but not in dependency graph. \
-                        The graph may be out of sync. Try re-indexing the codebase.",
-                        target
-                    ),
-                });
+        if all_symbols.is_empty() {
+            return Ok(RelationshipQueryResult {
+                query_type,
+                direct_relationships: vec![],
+                indirect_relationships: vec![],
+                stats: RelationshipStats {
+                    direct_count: 0,
+                    indirect_count: 0,
+                    symbols_analyzed: reader.symbol_count(),
+                    execution_time_ms: 0,
+                    truncated: false,
+                },
+                summary: format!("Symbol '{}' not found in binary storage", target),
+            });
+        }
+
+        // Collect all impacted symbols from all instances of the target symbol
+        let mut all_impacted = Vec::new();
+        let mut found_in_graph = false;
+
+        for (_symbol, symbol_id) in &all_symbols {
+            debug!(
+                "Checking symbol '{}' with UUID: {} for impact",
+                target, symbol_id
+            );
+
+            // Resolve symbol UUID with fallback to name-based lookup
+            if let Some(effective_id) =
+                Self::resolve_symbol_uuid_with_fallback(graph, target, *symbol_id)
+            {
+                found_in_graph = true;
+                let impacted =
+                    self.find_transitive_dependents(graph, effective_id, self.config.max_depth);
+                if !impacted.is_empty() {
+                    debug!(
+                        "Found {} impacted symbols for '{}' (UUID: {})",
+                        impacted.len(),
+                        target,
+                        symbol_id
+                    );
+                    all_impacted.extend(impacted);
+                }
+            } else {
+                debug!(
+                    "Symbol '{}' (UUID: {}) not found in dependency graph",
+                    target, symbol_id
+                );
             }
-        };
+        }
 
-        let impacted = self.find_transitive_dependents(graph, effective_id, self.config.max_depth);
+        // If none of the symbol instances were found in the graph
+        if !found_in_graph {
+            return Ok(RelationshipQueryResult {
+                query_type,
+                direct_relationships: vec![],
+                indirect_relationships: vec![],
+                stats: RelationshipStats {
+                    direct_count: 0,
+                    indirect_count: 0,
+                    symbols_analyzed: reader.symbol_count(),
+                    execution_time_ms: 0,
+                    truncated: false,
+                },
+                summary: format!(
+                    "Symbol '{}' found in binary storage but not in dependency graph. \
+                    The graph may be out of sync. Try re-indexing the codebase.",
+                    target
+                ),
+            });
+        }
+
+        // Deduplicate impacted symbols (a symbol might be impacted through multiple paths)
+        let mut unique_impacted = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (id, rel_type) in all_impacted {
+            if seen.insert(id) {
+                unique_impacted.push((id, rel_type));
+            }
+        }
+        let impacted = unique_impacted;
 
         // Convert to relationship matches with impact-specific context
         let direct_relationships =
