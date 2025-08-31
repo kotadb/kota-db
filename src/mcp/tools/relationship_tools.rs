@@ -411,7 +411,8 @@ impl RelationshipTools {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
 
-        let limit = request.limit.unwrap_or(10).min(50);
+        // Use requested limit or reasonable default for MCP (no artificial max)
+        let limit = request.limit.unwrap_or(100); // Default 100 for MCP to prevent overwhelming responses
         let query_type = RelationshipQueryType::HotPaths { limit: Some(limit) };
 
         let result = engine.execute_query(query_type).await?;
