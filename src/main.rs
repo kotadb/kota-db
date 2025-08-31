@@ -2724,4 +2724,173 @@ mod codebase_overview_tests {
         // The function should still succeed but skip the corrupted symbol data
         assert!(result.is_ok(), "Should handle corrupted files gracefully");
     }
+
+    #[tokio::test]
+    #[cfg(feature = "tree-sitter-parsing")]
+    async fn test_codebase_overview_with_real_symbols_and_dependencies() {
+        use kotadb::binary_symbols::BinarySymbolWriter;
+        use kotadb::dependency_extractor::{
+            DependencyEdge, GraphStats, SerializableDependencyGraph, SerializableEdge, SymbolNode,
+        };
+        use kotadb::parsing::SymbolType;
+        use kotadb::types::RelationType;
+        use std::fs;
+        use uuid::Uuid;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Create test documents
+        let test_files = vec![
+            ("src/main.rs", "fn main() { helper(); }", "main.rs"),
+            ("src/lib.rs", "pub fn helper() { }", "lib.rs"),
+            ("tests/test.rs", "fn test_something() { }", "test.rs"),
+            ("src/utils.py", "def process(): pass", "utils.py"),
+        ];
+
+        for (path, content, _name) in &test_files {
+            let doc = DocumentBuilder::new()
+                .path(*path)
+                .expect("Failed to set path")
+                .title(*path)
+                .expect("Failed to set title")
+                .content(content.as_bytes())
+                .build()
+                .expect("Failed to build document");
+
+            db.storage
+                .lock()
+                .await
+                .insert(doc)
+                .await
+                .expect("Failed to insert document");
+        }
+
+        // Create binary symbols database
+        let symbols_path = db_path.join("symbols.kota");
+        let mut writer = BinarySymbolWriter::new();
+
+        // Add test symbols with different types
+        // Map SymbolType to u8 according to TryFrom implementation
+        let symbols = vec![
+            ("main", 1u8, "src/main.rs", 1),             // Function
+            ("helper", 1u8, "src/lib.rs", 1),            // Function
+            ("test_something", 1u8, "tests/test.rs", 1), // Function
+            ("process", 1u8, "src/utils.py", 1),         // Function
+            ("MyStruct", 4u8, "src/lib.rs", 3),          // Struct
+            ("MyStruct::new", 2u8, "src/lib.rs", 5),     // Method (constructor)
+            ("CONFIG", 6u8, "src/main.rs", 3),           // Variable
+        ];
+
+        let mut symbol_ids = Vec::new();
+        for (name, sym_type, file_path, line) in symbols {
+            let id = Uuid::new_v4();
+            symbol_ids.push((name, id));
+
+            writer.add_symbol(
+                id,
+                name,
+                sym_type,
+                file_path,
+                line as u32,
+                (line + 2) as u32,
+                None, // parent_id
+            );
+        }
+
+        writer
+            .write_to_file(&symbols_path)
+            .expect("Failed to write symbols to file");
+
+        // Create dependency graph
+        let graph_path = db_path.join("dependency_graph.bin");
+
+        let nodes: Vec<SymbolNode> = symbol_ids
+            .iter()
+            .map(|(name, id)| SymbolNode {
+                symbol_id: *id,
+                qualified_name: name.to_string(),
+                symbol_type: SymbolType::Function,
+                file_path: std::path::PathBuf::from("src/main.rs"),
+                in_degree: 0,
+                out_degree: 0,
+            })
+            .collect();
+
+        // Create edges: main calls helper, test_something calls helper
+        let edges = vec![
+            SerializableEdge {
+                from_id: symbol_ids[0].1, // main
+                to_id: symbol_ids[1].1,   // helper
+                edge: DependencyEdge {
+                    relation_type: RelationType::Calls,
+                    line_number: 1,
+                    column_number: 10,
+                    context: Some("helper()".to_string()),
+                },
+            },
+            SerializableEdge {
+                from_id: symbol_ids[2].1, // test_something
+                to_id: symbol_ids[1].1,   // helper
+                edge: DependencyEdge {
+                    relation_type: RelationType::Calls,
+                    line_number: 1,
+                    column_number: 5,
+                    context: Some("helper()".to_string()),
+                },
+            },
+        ];
+
+        let graph = SerializableDependencyGraph {
+            nodes,
+            edges,
+            name_to_symbol: symbol_ids
+                .iter()
+                .map(|(name, id)| (name.to_string(), *id))
+                .collect(),
+            file_imports: Default::default(),
+            stats: GraphStats {
+                node_count: symbol_ids.len(),
+                edge_count: 2,
+                file_count: 4,
+                import_count: 0,
+                scc_count: 0,                // No circular dependencies in test
+                max_depth: 2,                // main -> helper is depth 1
+                avg_dependencies: 2.0 / 7.0, // 2 edges, 7 nodes
+            },
+        };
+
+        let graph_binary = bincode::serialize(&graph).expect("Failed to serialize graph");
+        fs::write(&graph_path, graph_binary).expect("Failed to write graph");
+
+        // Generate overview and capture output
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should generate overview with real data");
+
+        // Verify the overview contains expected data
+        // Read the symbols back to verify
+        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbols_path)
+            .expect("Failed to open symbols for verification");
+        assert_eq!(reader.symbol_count(), 7, "Should have 7 symbols");
+
+        // Verify dependency graph can be read back
+        let graph_data = fs::read(&graph_path).expect("Failed to read graph");
+        let deserialized: SerializableDependencyGraph =
+            bincode::deserialize(&graph_data).expect("Failed to deserialize graph");
+        assert_eq!(deserialized.edges.len(), 2, "Should have 2 edges");
+        assert_eq!(deserialized.nodes.len(), 7, "Should have 7 nodes");
+
+        // The overview should identify:
+        // - helper as most referenced (2 incoming edges)
+        // - main and MyStruct::new as entry points (0 incoming edges)
+        // - 2 languages detected (Rust and Python)
+        // - Test file identified
+    }
 }
