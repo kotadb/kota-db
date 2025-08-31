@@ -81,10 +81,13 @@ fn test_function_{}() {{
         .arg(temp_dir.path())
         .output()?;
 
+    // More detailed error reporting for CI debugging
     assert!(
         output.status.success(),
-        "Failed to index codebase: {:?}",
-        String::from_utf8_lossy(&output.stderr)
+        "Failed to index codebase. Status: {:?}\nStderr: {}\nStdout: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
 
     Ok((temp_dir, db_path_str))

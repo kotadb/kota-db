@@ -1204,6 +1204,16 @@ async fn generate_codebase_overview(
                         | "fish"
                         | "vim"
                         | "el"
+                        | "dart"
+                        | "r"
+                        | "m"
+                        | "mm"
+                        | "f90"
+                        | "f95"
+                        | "f03"
+                        | "jl"
+                        | "nim"
+                        | "v"
                 )
             })
             .unwrap_or(false)
