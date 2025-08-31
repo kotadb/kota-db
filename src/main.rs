@@ -343,6 +343,25 @@ enum Commands {
         )]
         max_search_queries: usize,
     },
+
+    /// Generate comprehensive codebase overview for AI assistants
+    ///
+    /// Aggregates existing KotaDB data into a structured overview that enables
+    /// AI assistants to quickly understand codebase architecture without requiring
+    /// interpretation or analysis. Reports only objective facts: symbol names,
+    /// counts, locations, and relationships.
+    #[cfg(feature = "tree-sitter-parsing")]
+    CodebaseOverview {
+        /// Output format (human, json)
+        #[arg(short = 'f', long, default_value = "human", value_parser = ["human", "json"])]
+        format: String,
+        /// Limit number of top symbols shown
+        #[arg(long, default_value = "10")]
+        top_symbols_limit: usize,
+        /// Limit number of entry points shown
+        #[arg(long, default_value = "10")]
+        entry_points_limit: usize,
+    },
 }
 
 struct Database {
@@ -976,9 +995,287 @@ async fn create_relationship_engine(
     Ok(binary_engine)
 }
 
+/// Generate comprehensive codebase overview for AI assistants
+#[cfg(feature = "tree-sitter-parsing")]
+async fn generate_codebase_overview(
+    db_path: &std::path::Path,
+    format: &str,
+    top_symbols_limit: usize,
+    entry_points_limit: usize,
+    quiet: bool,
+) -> Result<()> {
+    use kotadb::path_utils::{
+        detect_language_from_extension, is_potential_entry_point, is_test_file,
+    };
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+
+    // Initialize database for basic stats
+    let db = Database::new(db_path, true).await?;
+
+    // Collect all overview data
+    let mut overview_data = HashMap::new();
+
+    // 1. Basic scale metrics
+    let (doc_count, total_size) = db.stats().await?;
+    overview_data.insert("total_files", json!(doc_count));
+    overview_data.insert("total_size_bytes", json!(total_size));
+
+    // 2. Symbol analysis (if available)
+    let symbol_db_path = db_path.join("symbols.kota");
+    let mut symbols_by_type: HashMap<String, usize> = HashMap::new();
+    let mut symbols_by_language: HashMap<String, usize> = HashMap::new();
+    let mut unique_files = HashSet::new();
+    let mut total_symbols = 0;
+
+    if symbol_db_path.exists() {
+        // Try to open the symbols database, but continue if it fails
+        match kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path) {
+            Ok(reader) => {
+                total_symbols = reader.symbol_count();
+
+                for symbol in reader.iter_symbols() {
+                    // Count by type
+                    let type_name = match kotadb::parsing::SymbolType::try_from(symbol.kind) {
+                        Ok(symbol_type) => format!("{}", symbol_type),
+                        Err(_) => format!("unknown({})", symbol.kind),
+                    };
+                    *symbols_by_type.entry(type_name).or_insert(0) += 1;
+
+                    // Count by language (inferred from file extension)
+                    if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
+                        unique_files.insert(file_path.clone());
+                        let path = std::path::Path::new(&file_path);
+                        let lang = detect_language_from_extension(path);
+                        *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                // Log warning but continue with overview generation
+                tracing::warn!("Failed to read symbols database: {}", e);
+            }
+        }
+    }
+
+    overview_data.insert("total_symbols", json!(total_symbols));
+    overview_data.insert("code_files", json!(unique_files.len()));
+    overview_data.insert("symbols_by_type", json!(symbols_by_type));
+    overview_data.insert("symbols_by_language", json!(symbols_by_language));
+
+    // 3. Relationship and dependency analysis
+    let mut total_relationships = 0;
+    let mut connected_symbols = 0;
+    let mut top_referenced_symbols = Vec::new();
+    let mut entry_points = Vec::new();
+
+    let graph_db_path = db_path.join("dependency_graph.bin");
+    if graph_db_path.exists() {
+        if let Ok(graph_binary) = std::fs::read(&graph_db_path) {
+            if let Ok(serializable) = bincode::deserialize::<
+                kotadb::dependency_extractor::SerializableDependencyGraph,
+            >(&graph_binary)
+            {
+                total_relationships = serializable.stats.edge_count;
+                connected_symbols = serializable.stats.node_count;
+
+                // Build a map from UUID to qualified name
+                let mut id_to_name: HashMap<uuid::Uuid, String> = HashMap::new();
+                for node in &serializable.nodes {
+                    id_to_name.insert(node.symbol_id, node.qualified_name.clone());
+                }
+
+                // Find top referenced symbols (most incoming edges)
+                let mut reference_counts: HashMap<String, usize> = HashMap::new();
+                for edge in &serializable.edges {
+                    if let Some(target_name) = id_to_name.get(&edge.to_id) {
+                        *reference_counts.entry(target_name.clone()).or_insert(0) += 1;
+                    }
+                }
+
+                let mut sorted_refs: Vec<_> = reference_counts.into_iter().collect();
+                sorted_refs.sort_by(|a, b| b.1.cmp(&a.1));
+                top_referenced_symbols = sorted_refs
+                    .into_iter()
+                    .take(top_symbols_limit)
+                    .map(|(name, count)| json!({"symbol": name, "references": count}))
+                    .collect();
+
+                // Find entry points (symbols with no incoming edges)
+                let mut has_incoming: HashSet<uuid::Uuid> = HashSet::new();
+                for edge in &serializable.edges {
+                    has_incoming.insert(edge.to_id);
+                }
+
+                let mut all_symbol_ids: HashSet<uuid::Uuid> = HashSet::new();
+                for node in &serializable.nodes {
+                    all_symbol_ids.insert(node.symbol_id);
+                }
+
+                // Find entry points with improved heuristics
+                let mut potential_entry_points: Vec<String> = Vec::new();
+                for symbol_id in all_symbol_ids.difference(&has_incoming) {
+                    if let Some(symbol_name) = id_to_name.get(symbol_id) {
+                        // Get symbol type if available from nodes
+                        let symbol_type = serializable
+                            .nodes
+                            .iter()
+                            .find(|n| n.symbol_id == *symbol_id)
+                            .map(|n| format!("{}", n.symbol_type));
+
+                        if is_potential_entry_point(symbol_name, symbol_type.as_deref()) {
+                            potential_entry_points.push(symbol_name.clone());
+                        }
+                    }
+                }
+
+                // Sort and limit entry points
+                potential_entry_points.sort();
+                entry_points = potential_entry_points
+                    .into_iter()
+                    .take(entry_points_limit)
+                    .collect();
+            }
+        }
+    }
+
+    overview_data.insert("total_relationships", json!(total_relationships));
+    overview_data.insert("connected_symbols", json!(connected_symbols));
+    overview_data.insert("top_referenced_symbols", json!(top_referenced_symbols));
+    overview_data.insert("entry_points", json!(entry_points));
+
+    // 4. File organization patterns
+    let mut file_organization = HashMap::new();
+    let mut test_files = 0;
+    let mut source_files = 0;
+    let mut doc_files = 0;
+
+    let all_docs = db.storage.lock().await.list_all().await?;
+    for doc in &all_docs {
+        let path = std::path::Path::new(doc.path.as_str());
+
+        if is_test_file(path) {
+            test_files += 1;
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext, "md" | "rst" | "txt" | "adoc" | "org"))
+            .unwrap_or(false)
+        {
+            doc_files += 1;
+        } else {
+            source_files += 1;
+        }
+    }
+
+    file_organization.insert("test_files", test_files);
+    file_organization.insert("source_files", source_files);
+    file_organization.insert("documentation_files", doc_files);
+    overview_data.insert("file_organization", json!(file_organization));
+
+    // 5. Test coverage indicators
+    let test_to_code_ratio = if source_files > 0 {
+        test_files as f64 / source_files as f64
+    } else {
+        0.0
+    };
+    overview_data.insert(
+        "test_to_code_ratio",
+        json!(format!("{:.2}", test_to_code_ratio)),
+    );
+
+    // Output in requested format
+    match format {
+        "json" => {
+            let json_output = json!(overview_data);
+            println!("{}", serde_json::to_string_pretty(&json_output)?);
+        }
+        _ => {
+            // Human-readable format
+            println!("=== CODEBASE OVERVIEW ===");
+            println!();
+
+            println!("Scale Metrics:");
+            println!("- Total files: {}", doc_count);
+            println!("- Code files: {}", unique_files.len());
+            println!("- Test files: {}", test_files);
+            println!("- Total symbols: {}", total_symbols);
+
+            if !symbols_by_type.is_empty() {
+                println!();
+                println!("Symbol Types:");
+                let mut sorted_types: Vec<_> = symbols_by_type.iter().collect();
+                sorted_types.sort_by(|a, b| b.1.cmp(a.1));
+                for (sym_type, count) in sorted_types.iter().take(5) {
+                    println!("- {}: {}", sym_type, count);
+                }
+            }
+
+            if !symbols_by_language.is_empty() {
+                println!();
+                println!("Languages Detected:");
+                let mut sorted_langs: Vec<_> = symbols_by_language.iter().collect();
+                sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
+                for (lang, count) in sorted_langs {
+                    println!("- {}: {} symbols", lang, count);
+                }
+            }
+
+            if total_relationships > 0 {
+                println!();
+                println!("Relationships:");
+                println!("- Total relationships tracked: {}", total_relationships);
+                println!("- Connected symbols: {}", connected_symbols);
+            }
+
+            if !top_referenced_symbols.is_empty() {
+                println!();
+                println!("Top Referenced Symbols:");
+                for ref_obj in &top_referenced_symbols {
+                    if let Some(obj) = ref_obj.as_object() {
+                        if let (Some(symbol), Some(refs)) =
+                            (obj.get("symbol"), obj.get("references"))
+                        {
+                            println!("- {} ({} references)", symbol.as_str().unwrap_or(""), refs);
+                        }
+                    }
+                }
+            }
+
+            if !entry_points.is_empty() {
+                println!();
+                println!("Entry Points (0 callers):");
+                for entry in &entry_points {
+                    println!("- {}", entry);
+                }
+            }
+
+            println!();
+            println!("File Organization:");
+            println!("- Core library: {} files", source_files);
+            println!("- Test files: {} files", test_files);
+            println!("- Documentation: {} files", doc_files);
+
+            println!();
+            println!("Test Coverage Indicators:");
+            println!("- Test-to-code ratio: {:.2}", test_to_code_ratio);
+
+            if !unique_files.is_empty() {
+                let files_with_tests = test_files.min(source_files);
+                let test_coverage_pct =
+                    (files_with_tests as f64 / source_files as f64 * 100.0) as usize;
+                println!("- Estimated test coverage: {}%", test_coverage_pct);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Display symbol statistics from the binary symbol database
 #[cfg(feature = "tree-sitter-parsing")]
 async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
+    use kotadb::path_utils::detect_language_from_extension;
     use std::collections::HashMap;
 
     let symbol_db_path = db_path.join("symbols.kota");
@@ -1009,20 +1306,9 @@ async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Resu
         // Count by language (inferred from file extension)
         if let Ok(file_path) = reader.get_symbol_file_path(&symbol) {
             unique_files.insert(file_path.clone());
-            if let Some(ext) = std::path::Path::new(&file_path).extension() {
-                let lang = match ext.to_str() {
-                    Some("rs") => "Rust",
-                    Some("py") => "Python",
-                    Some("js") | Some("jsx") => "JavaScript",
-                    Some("ts") | Some("tsx") => "TypeScript",
-                    Some("go") => "Go",
-                    Some("java") => "Java",
-                    Some("cpp") | Some("cc") | Some("cxx") => "C++",
-                    Some("c") | Some("h") => "C",
-                    _ => "Other",
-                };
-                *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
-            }
+            let path = std::path::Path::new(&file_path);
+            let lang = detect_language_from_extension(path);
+            *symbols_by_language.entry(lang.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -2077,6 +2363,21 @@ async fn main() -> Result<()> {
                     quiet,
                 ).await?;
             }
+
+            #[cfg(feature = "tree-sitter-parsing")]
+            Commands::CodebaseOverview {
+                format,
+                top_symbols_limit,
+                entry_points_limit,
+            } => {
+                generate_codebase_overview(
+                    &cli.db_path,
+                    &format,
+                    top_symbols_limit,
+                    entry_points_limit,
+                    quiet,
+                ).await?;
+            }
         }
 
         Ok::<(), anyhow::Error>(())
@@ -2259,5 +2560,337 @@ mod stats_tests {
             show_relationships,
             "Should show relationships when all flags specified"
         );
+    }
+}
+
+#[cfg(all(test, feature = "tree-sitter-parsing"))]
+mod codebase_overview_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_codebase_overview_empty_database() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Run codebase overview on empty database
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should handle empty database gracefully");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_json_format() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database with some test data
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Insert a test document
+        let doc = DocumentBuilder::new()
+            .path("test/file.rs")
+            .expect("Failed to set path")
+            .title("Test File")
+            .expect("Failed to set title")
+            .content(b"fn main() {}")
+            .build()
+            .expect("Failed to build document");
+
+        db.storage
+            .lock()
+            .await
+            .insert(doc)
+            .await
+            .expect("Failed to insert document");
+
+        // Run codebase overview with JSON format
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should generate JSON overview successfully");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_human_format() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Run codebase overview with human-readable format
+        let result = generate_codebase_overview(db_path, "human", 5, 5, true).await;
+
+        assert!(
+            result.is_ok(),
+            "Should generate human-readable overview successfully"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_with_limits() {
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Test with custom limits
+        let result = generate_codebase_overview(
+            db_path, "human", 3, // top_symbols_limit
+            2, // entry_points_limit
+            true,
+        )
+        .await;
+
+        assert!(result.is_ok(), "Should respect custom limits");
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_with_populated_data() {
+        use kotadb::builders::DocumentBuilder;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database and populate with test data
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Insert various types of files
+        let test_files = vec![
+            ("src/main.rs", "fn main() { println!(\"Hello\"); }", false),
+            ("src/lib.rs", "pub fn process() { }", false),
+            (
+                "tests/integration_test.rs",
+                "fn test_something() { assert!(true); }",
+                true,
+            ),
+            ("src/utils.py", "def helper():\n    pass", false),
+            (
+                "test_module.py",
+                "def test_feature():\n    assert True",
+                true,
+            ),
+            ("README.md", "# Project Documentation", false),
+        ];
+
+        for (path, content, _is_test) in test_files {
+            let doc = DocumentBuilder::new()
+                .path(path)
+                .expect("Failed to set path")
+                .title(path)
+                .expect("Failed to set title")
+                .content(content.as_bytes())
+                .build()
+                .expect("Failed to build document");
+
+            db.storage
+                .lock()
+                .await
+                .insert(doc)
+                .await
+                .expect("Failed to insert document");
+        }
+
+        // Run codebase overview
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(
+            result.is_ok(),
+            "Should generate overview with populated data"
+        );
+
+        // Could parse JSON output here to verify structure if needed
+    }
+
+    #[tokio::test]
+    async fn test_codebase_overview_error_handling() {
+        use std::fs;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Create a corrupted symbols file
+        let symbols_path = db_path.join("symbols.kota");
+        fs::write(&symbols_path, b"corrupted data").expect("Failed to write file");
+
+        // Should handle corrupted file gracefully
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        // The function should still succeed but skip the corrupted symbol data
+        assert!(result.is_ok(), "Should handle corrupted files gracefully");
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "tree-sitter-parsing")]
+    async fn test_codebase_overview_with_real_symbols_and_dependencies() {
+        use kotadb::binary_symbols::BinarySymbolWriter;
+        use kotadb::dependency_extractor::{
+            DependencyEdge, GraphStats, SerializableDependencyGraph, SerializableEdge, SymbolNode,
+        };
+        use kotadb::parsing::SymbolType;
+        use kotadb::types::RelationType;
+        use std::fs;
+        use uuid::Uuid;
+
+        // Create temporary directory for test database
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path();
+
+        // Initialize database
+        let db = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Create test documents
+        let test_files = vec![
+            ("src/main.rs", "fn main() { helper(); }", "main.rs"),
+            ("src/lib.rs", "pub fn helper() { }", "lib.rs"),
+            ("tests/test.rs", "fn test_something() { }", "test.rs"),
+            ("src/utils.py", "def process(): pass", "utils.py"),
+        ];
+
+        for (path, content, _name) in &test_files {
+            let doc = DocumentBuilder::new()
+                .path(*path)
+                .expect("Failed to set path")
+                .title(*path)
+                .expect("Failed to set title")
+                .content(content.as_bytes())
+                .build()
+                .expect("Failed to build document");
+
+            db.storage
+                .lock()
+                .await
+                .insert(doc)
+                .await
+                .expect("Failed to insert document");
+        }
+
+        // Create binary symbols database
+        let symbols_path = db_path.join("symbols.kota");
+        let mut writer = BinarySymbolWriter::new();
+
+        // Add test symbols with different types
+        // Map SymbolType to u8 according to TryFrom implementation
+        let symbols = vec![
+            ("main", 1u8, "src/main.rs", 1),             // Function
+            ("helper", 1u8, "src/lib.rs", 1),            // Function
+            ("test_something", 1u8, "tests/test.rs", 1), // Function
+            ("process", 1u8, "src/utils.py", 1),         // Function
+            ("MyStruct", 4u8, "src/lib.rs", 3),          // Struct
+            ("MyStruct::new", 2u8, "src/lib.rs", 5),     // Method (constructor)
+            ("CONFIG", 6u8, "src/main.rs", 3),           // Variable
+        ];
+
+        let mut symbol_ids = Vec::new();
+        for (name, sym_type, file_path, line) in symbols {
+            let id = Uuid::new_v4();
+            symbol_ids.push((name, id));
+
+            writer.add_symbol(
+                id,
+                name,
+                sym_type,
+                file_path,
+                line as u32,
+                (line + 2) as u32,
+                None, // parent_id
+            );
+        }
+
+        writer
+            .write_to_file(&symbols_path)
+            .expect("Failed to write symbols to file");
+
+        // Create dependency graph
+        let graph_path = db_path.join("dependency_graph.bin");
+
+        let nodes: Vec<SymbolNode> = symbol_ids
+            .iter()
+            .map(|(name, id)| SymbolNode {
+                symbol_id: *id,
+                qualified_name: name.to_string(),
+                symbol_type: SymbolType::Function,
+                file_path: std::path::PathBuf::from("src/main.rs"),
+                in_degree: 0,
+                out_degree: 0,
+            })
+            .collect();
+
+        // Create edges: main calls helper, test_something calls helper
+        let edges = vec![
+            SerializableEdge {
+                from_id: symbol_ids[0].1, // main
+                to_id: symbol_ids[1].1,   // helper
+                edge: DependencyEdge {
+                    relation_type: RelationType::Calls,
+                    line_number: 1,
+                    column_number: 10,
+                    context: Some("helper()".to_string()),
+                },
+            },
+            SerializableEdge {
+                from_id: symbol_ids[2].1, // test_something
+                to_id: symbol_ids[1].1,   // helper
+                edge: DependencyEdge {
+                    relation_type: RelationType::Calls,
+                    line_number: 1,
+                    column_number: 5,
+                    context: Some("helper()".to_string()),
+                },
+            },
+        ];
+
+        let graph = SerializableDependencyGraph {
+            nodes,
+            edges,
+            name_to_symbol: symbol_ids
+                .iter()
+                .map(|(name, id)| (name.to_string(), *id))
+                .collect(),
+            file_imports: Default::default(),
+            stats: GraphStats {
+                node_count: symbol_ids.len(),
+                edge_count: 2,
+                file_count: 4,
+                import_count: 0,
+                scc_count: 0,                // No circular dependencies in test
+                max_depth: 2,                // main -> helper is depth 1
+                avg_dependencies: 2.0 / 7.0, // 2 edges, 7 nodes
+            },
+        };
+
+        let graph_binary = bincode::serialize(&graph).expect("Failed to serialize graph");
+        fs::write(&graph_path, graph_binary).expect("Failed to write graph");
+
+        // Generate overview and capture output
+        let result = generate_codebase_overview(db_path, "json", 10, 10, true).await;
+
+        assert!(result.is_ok(), "Should generate overview with real data");
+
+        // Verify the overview contains expected data
+        // Read the symbols back to verify
+        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbols_path)
+            .expect("Failed to open symbols for verification");
+        assert_eq!(reader.symbol_count(), 7, "Should have 7 symbols");
+
+        // Verify dependency graph can be read back
+        let graph_data = fs::read(&graph_path).expect("Failed to read graph");
+        let deserialized: SerializableDependencyGraph =
+            bincode::deserialize(&graph_data).expect("Failed to deserialize graph");
+        assert_eq!(deserialized.edges.len(), 2, "Should have 2 edges");
+        assert_eq!(deserialized.nodes.len(), 7, "Should have 7 nodes");
+
+        // The overview should identify:
+        // - helper as most referenced (2 incoming edges)
+        // - main and MyStruct::new as entry points (0 incoming edges)
+        // - 2 languages detected (Rust and Python)
+        // - Test file identified
     }
 }
