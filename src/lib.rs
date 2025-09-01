@@ -64,6 +64,10 @@ pub mod relationship_query;
 #[cfg(feature = "tree-sitter-parsing")]
 pub mod binary_relationship_engine;
 
+// Async wrapper for binary relationship engine (thread-safe for HTTP handlers)
+#[cfg(feature = "tree-sitter-parsing")]
+pub mod binary_relationship_engine_async;
+
 // Path normalization utilities for consistent path handling
 pub mod path_utils;
 

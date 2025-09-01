@@ -4,9 +4,9 @@
 //! ensuring sub-10ms query latency while maintaining full API compatibility.
 
 use anyhow::{Context, Result};
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
@@ -90,10 +90,10 @@ const QUERY_PERFORMANCE_THRESHOLD_MS: u64 = 10;
 pub struct BinaryRelationshipEngine {
     /// Binary symbol reader for fast symbol lookup
     symbol_reader: Option<BinarySymbolReader>,
-    /// Dependency graph built from relationships (using RefCell for interior mutability)
-    dependency_graph: RefCell<Option<DependencyGraph>>,
+    /// Dependency graph built from relationships (using RwLock for thread-safe interior mutability)
+    dependency_graph: RwLock<Option<DependencyGraph>>,
     /// Cache metadata for dependency graph management
-    cache_metadata: RefCell<CacheMetadata>,
+    cache_metadata: RwLock<CacheMetadata>,
     /// Database path for on-demand relationship extraction
     db_path: std::path::PathBuf,
     /// Configuration
@@ -161,8 +161,8 @@ impl BinaryRelationshipEngine {
 
         Ok(Self {
             symbol_reader,
-            dependency_graph: RefCell::new(dependency_graph),
-            cache_metadata: RefCell::new(CacheMetadata::new()),
+            dependency_graph: RwLock::new(dependency_graph),
+            cache_metadata: RwLock::new(CacheMetadata::new()),
             db_path: db_path.to_path_buf(),
             config,
             extraction_config,
@@ -182,7 +182,7 @@ impl BinaryRelationshipEngine {
         let result = if self.symbol_reader.is_some() {
             debug!(
                 "Using binary symbol path for query (dependency graph available: {})",
-                self.dependency_graph.borrow().is_some()
+                self.dependency_graph.read().unwrap().is_some()
             );
             self.execute_binary_query(query_type.clone()).await
         } else {
@@ -303,7 +303,7 @@ impl BinaryRelationshipEngine {
 
         // Now we should have a graph, get it safely
         let graph_ref = self.get_dependency_graph()?;
-        let graph = &*graph_ref;
+        let graph = graph_ref.as_ref().unwrap();
 
         // Look up target symbol by name - find ALL symbols with this name
         debug!(
@@ -423,7 +423,7 @@ impl BinaryRelationshipEngine {
 
         // Now we should have a graph, get it safely
         let graph_ref = self.get_dependency_graph()?;
-        let graph = &*graph_ref;
+        let graph = graph_ref.as_ref().unwrap();
 
         // For impact analysis, find ALL symbols with this name across the codebase
         debug!(
@@ -718,19 +718,16 @@ impl BinaryRelationshipEngine {
     }
 
     /// Get a reference to the dependency graph, ensuring it exists
-    fn get_dependency_graph(&self) -> Result<std::cell::Ref<DependencyGraph>> {
-        let graph_ref = self.dependency_graph.borrow();
+    fn get_dependency_graph(&self) -> Result<std::sync::RwLockReadGuard<Option<DependencyGraph>>> {
+        let graph_ref = self.dependency_graph.read().unwrap();
         if graph_ref.is_none() {
             return Err(anyhow::anyhow!(
                 "Dependency graph unavailable - call ensure_dependency_graph() first"
             ));
         }
 
-        // This is safe because we just checked is_none() above
-        Ok(std::cell::Ref::map(graph_ref, |opt| {
-            opt.as_ref()
-                .expect("Graph should exist after is_none() check")
-        }))
+        // Return the guard directly - caller will need to access via as_ref()
+        Ok(graph_ref)
     }
 
     // Removed complex generic implementation in favor of specific implementations
@@ -857,7 +854,7 @@ impl BinaryRelationshipEngine {
     /// Ensure dependency graph is available, extracting on-demand if necessary
     #[instrument(skip(self))]
     async fn ensure_dependency_graph(&self, query_context: &str) -> Result<()> {
-        let has_graph = self.dependency_graph.borrow().is_some();
+        let has_graph = self.dependency_graph.read().unwrap().is_some();
         if has_graph {
             return Ok(());
         }
@@ -901,10 +898,10 @@ impl BinaryRelationshipEngine {
                 self.maybe_evict_cache(&extracted_graph);
 
                 // Store the extracted graph for future queries
-                *self.dependency_graph.borrow_mut() = Some(extracted_graph);
+                *self.dependency_graph.write().unwrap() = Some(extracted_graph);
 
                 // Update cache metadata
-                self.cache_metadata.borrow_mut().record_access();
+                self.cache_metadata.write().unwrap().record_access();
                 Ok(())
             }
             Err(e) => {
@@ -1288,7 +1285,7 @@ impl BinaryRelationshipEngine {
                 estimated_size > threshold_bytes
             }
             CacheEvictionPolicy::TimeBased { ttl_seconds } => {
-                let metadata = self.cache_metadata.borrow();
+                let metadata = self.cache_metadata.read().unwrap();
                 if let Some(last_access) = metadata.last_access {
                     let elapsed = last_access.elapsed().as_secs();
                     elapsed > ttl_seconds
@@ -1308,8 +1305,8 @@ impl BinaryRelationshipEngine {
                 "Evicting dependency graph cache due to policy: {:?}",
                 self.extraction_config.cache_eviction_policy
             );
-            *self.dependency_graph.borrow_mut() = None;
-            self.cache_metadata.borrow_mut().record_eviction();
+            *self.dependency_graph.write().unwrap() = None;
+            self.cache_metadata.write().unwrap().record_eviction();
         }
     }
 
@@ -1324,8 +1321,8 @@ impl BinaryRelationshipEngine {
 
     /// Get statistics about the binary engine
     pub fn get_stats(&self) -> BinaryEngineStats {
-        let graph_borrowed = self.dependency_graph.borrow();
-        let cache_metadata = self.cache_metadata.borrow();
+        let graph_borrowed = self.dependency_graph.read().unwrap();
+        let cache_metadata = self.cache_metadata.read().unwrap();
 
         BinaryEngineStats {
             binary_symbols_loaded: self
@@ -1614,8 +1611,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_extraction_safety() {
-        // Note: This test is limited because RefCell is not Sync
-        // In a real concurrent scenario, we would need to use RwLock or Mutex instead
+        // Test that RwLock allows safe concurrent access from multiple threads
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
         let config = RelationshipQueryConfig::default();
@@ -1626,7 +1622,7 @@ mod tests {
                 .await
                 .expect("Failed to create engine");
 
-        // Test sequential access safety (RefCell doesn't support true concurrency)
+        // Test concurrent access safety with RwLock
         for i in 0..3 {
             let context = format!("sequential test {}", i);
             // This should not panic even with multiple sequential calls
@@ -1773,7 +1769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_refcell_borrow_safety() {
+    async fn test_rwlock_safety() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
         let config = RelationshipQueryConfig::default();
@@ -1792,10 +1788,10 @@ mod tests {
             .to_string()
             .contains("Dependency graph unavailable"));
 
-        // Test that multiple calls don't cause borrow conflicts
+        // Test that multiple calls don't cause lock conflicts
         let _stats1 = engine.get_stats();
         let _stats2 = engine.get_stats();
-        // Should not panic with "already borrowed" error
+        // Should not panic with lock contention
     }
 
     #[test]
