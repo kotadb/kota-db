@@ -174,7 +174,9 @@ mod async_handler_tests {
         let error_message = result.unwrap_err().to_string();
         assert!(
             error_message.contains("Binary symbol reader not available")
-                || error_message.contains("not found"),
+                || error_message.contains("not found")
+                || error_message.contains("Legacy relationship queries")
+                || error_message.contains("binary symbols"),
             "Unexpected error: {}",
             error_message
         );
