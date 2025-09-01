@@ -243,7 +243,7 @@ just release-preview  # Preview next release
 │    Symbol Extraction + Dependency Analysis + Impact          │
 ├─────────────────────────────────────────────────────────────┤
 │                    Query Interface                           │
-│      Text Search + Semantic Search + Relationship Queries    │
+│      Text Search + Vector Search + Relationship Queries      │
 ├─────────────────────────────────────────────────────────────┤
 │                    Query Router                              │
 │         Automatic index selection based on query             │
@@ -385,9 +385,9 @@ results = db.query("rust programming")
 results = db.query("design patterns", limit=10)
 ```
 
-**Semantic Search** - Find conceptually similar documents:
+**Vector Search** - Find similar documents using embeddings:
 ```python
-# Semantic similarity search (requires embeddings)
+# Vector similarity search (requires embeddings)
 results = db.semantic_search("distributed systems concepts")
 ```
 
@@ -410,7 +410,7 @@ kotadb search "/projects/*"  # Documents in projects folder
 
 ⚠️ **Note**: The following features are part of our roadmap but are **not currently available**:
 
-- **Natural Language Queries**: "what functions call FileStorage?" 
+- **Relationship Queries**: Find callers, analyze impact, track dependencies 
 - **Cross-Language Support**: Beyond Rust (Python, JS, Go)
 - **Real-time Updates**: Live code change tracking
 - **Advanced Refactoring**: Automated safe refactoring suggestions
@@ -428,7 +428,7 @@ See the [Roadmap](#roadmap) section for implementation timeline.
 - **Lightning Fast Search**: <3ms trigram search (210x improvement)
 - **Storage Engine**: WAL, compression, crash recovery
 - **B+ Tree Index**: Path-based lookups, wildcard queries
-- **Semantic Search**: HNSW-based vector similarity
+- **Vector Search**: HNSW-based similarity search
 - **Client Libraries**: Python, TypeScript/JavaScript, Rust
 - **Binary Distribution**: Pre-built binaries for all platforms
 - **MCP Server**: Model Context Protocol integration
@@ -464,10 +464,10 @@ See the [Roadmap](#roadmap) section for implementation timeline.
 - ⏳ Pattern analysis
 - ⏳ Productivity metrics
 
-### Phase 5: Natural Language (Q4 2025)
-- ⏳ LLM-powered query parsing
-- ⏳ Natural language interface
-- ⏳ Context-aware search
+### Phase 5: Advanced Intelligence (Q4 2025)
+- ⏳ Enhanced code analysis patterns
+- ⏳ Intelligent query optimization
+- ⏳ Context-aware suggestions
 - ⏳ Query suggestions
 
 ---

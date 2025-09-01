@@ -32,27 +32,26 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
 
     // Determine the filter level based on flags
     let filter_level = if quiet {
-        // In quiet mode, suppress everything except errors
-        // This sets a global filter that affects all modules
-        EnvFilter::new("error")
+        // In quiet mode, suppress everything - no logs at all
+        // Users should see only the actual output they requested
+        EnvFilter::new("off")
     } else if verbose {
         // In verbose mode, show debug info for kotadb and info for others
         EnvFilter::new("kotadb=debug,info")
     } else {
-        // Default: only show errors to prevent log spam in CLI usage
-        // This ensures clean output by default while users can enable more logging
-        // with --verbose flag or RUST_LOG environment variable
-        EnvFilter::new("error")
+        // Normal mode: show warnings and errors only
+        // This provides important feedback without cluttering output
+        EnvFilter::new("warn")
     };
 
-    // Quiet flag takes precedence over environment variable
-    // This ensures that --quiet ALWAYS suppresses logs regardless of RUST_LOG
-    let env_filter = if quiet {
-        // Force error-only logging when quiet is enabled, ignoring RUST_LOG
-        EnvFilter::new("error")
-    } else if std::env::var("RUST_LOG").is_ok() {
-        // If not quiet, allow RUST_LOG to override the default
+    // Environment variable takes precedence for debugging flexibility
+    // This allows users to override verbosity for troubleshooting
+    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+        // RUST_LOG overrides everything for maximum flexibility
         EnvFilter::try_from_default_env().unwrap_or(filter_level)
+    } else if quiet {
+        // In quiet mode with no RUST_LOG, suppress all logs
+        EnvFilter::new("off")
     } else {
         // Use flag-based filter if RUST_LOG is not set
         filter_level

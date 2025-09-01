@@ -195,7 +195,7 @@ KotaDB is a codebase intelligence platform that helps AI assistants understand c
    - Fuzzy search tolerance with ranking
 
 3. **Vector Index** (`src/vector_index.rs`)
-   - HNSW (Hierarchical Navigable Small World) for semantic search
+   - HNSW (Hierarchical Navigable Small World) for vector similarity search
    - Supports embeddings from multiple providers
 
 #### Wrapper System (`src/wrappers.rs`)
@@ -215,7 +215,7 @@ Validated types ensure compile-time and runtime safety:
 #### Query System
 - **Code Intelligence**: Find callers, analyze impact, track dependencies
 - **Symbol Search**: Fast pattern-based symbol discovery (functions, classes, variables)
-- **Natural Language**: Query relationships like "what calls FileStorage?"
+- **Relationship Queries**: Find function calls, dependencies, and usage patterns
 - **Performance**: Sub-10ms query latency for code analysis operations
 
 ### MCP Server (`src/mcp/`)

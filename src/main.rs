@@ -160,12 +160,23 @@ EXAMPLES:
   kotadb serve --port 8080"
 )]
 struct Cli {
-    /// Enable verbose logging (DEBUG level)
-    #[arg(short, long, global = true)]
+    /// Set verbosity level (quiet, normal, verbose, debug)
+    #[arg(
+        short = 'v',
+        long,
+        global = true,
+        default_value = "quiet",
+        value_parser = ["quiet", "normal", "verbose", "debug"],
+        help = "Set output verbosity level"
+    )]
+    verbosity: String,
+
+    /// Legacy: Enable verbose logging (maps to --verbosity=verbose)
+    #[arg(long, global = true, hide = true, conflicts_with = "verbosity")]
     verbose: bool,
 
-    /// Suppress all output except errors
-    #[arg(short, long, global = true)]
+    /// Legacy: Suppress output (maps to --verbosity=quiet)
+    #[arg(short, long, global = true, hide = true, conflicts_with = "verbosity")]
     quiet: bool,
 
     /// Database directory path
@@ -1399,16 +1410,36 @@ async fn show_relationship_statistics(db_path: &std::path::Path, _quiet: bool) -
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse CLI args first to get verbose flag
+    // Parse CLI args first to get verbosity settings
     let cli = Cli::parse();
 
-    // Initialize logging with appropriate level based on verbose/quiet flags
-    // Default to quiet mode (no logs) unless verbose is explicitly requested
-    let effective_quiet = !cli.verbose && !cli.quiet;
-    let _ = init_logging_with_level(cli.verbose, effective_quiet || cli.quiet); // Ignore error if already initialized
+    // Determine effective verbosity level, supporting legacy flags
+    let verbosity_level = if cli.verbose {
+        "verbose"
+    } else if cli.quiet {
+        "quiet"
+    } else {
+        cli.verbosity.as_str()
+    };
 
-    // Store quiet flag for use in output
-    let quiet = cli.quiet;
+    // Initialize logging based on verbosity level
+    let (is_verbose, is_quiet) = match verbosity_level {
+        "quiet" => (false, true),
+        "normal" => (false, false),
+        "verbose" => (true, false),
+        "debug" => (true, false), // Debug mode uses verbose flag with RUST_LOG override
+        _ => (false, true),       // Default to quiet for unknown values
+    };
+
+    // Set RUST_LOG for debug mode
+    if verbosity_level == "debug" {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+
+    let _ = init_logging_with_level(is_verbose, is_quiet); // Ignore error if already initialized
+
+    // Store quiet flag for use in output (quiet for "quiet" level only)
+    let quiet = verbosity_level == "quiet";
 
     // Run everything within trace context
     with_trace_id("kotadb-cli", async move {
