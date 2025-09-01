@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New HTTP API endpoints for codebase intelligence features (#491)
+  - `GET /api/symbols/search` - Search for code symbols with pattern matching
+  - `GET /api/relationships/callers/:target` - Find all callers of a function or symbol
+  - `GET /api/analysis/impact/:target` - Analyze impact of changes to a component
+  - `GET /api/code/search` - Full-text code search using trigram indexing
+  - All endpoints use BinaryRelationshipEngine for <10ms query latency
+  - Proper JSON responses with performance metrics included
+  - Thread-safe async implementation using spawn_blocking for HTTP handlers
+- New `create_server_with_intelligence()` and `start_server_with_intelligence()` functions
+  - Initialize server with codebase intelligence support
+  - Automatically sets up BinaryRelationshipEngine and trigram indexing
+  - Provides detailed logging of available API endpoints on startup
+- Deprecation headers for legacy document CRUD endpoints
+  - Added RFC-compliant deprecation headers (Deprecation, Sunset, Link, Warning)
+  - Clear migration path to new codebase intelligence API
+  - Sunset date set to 3 months from implementation
+
 ### Fixed
 - Fixed test coverage calculation in `codebase-overview` showing incorrect 8% instead of actual coverage (#488)
   - Now uses proper algorithm based on test-to-code file ratio with tanh curve

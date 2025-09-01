@@ -3,6 +3,7 @@
 
 pub mod binary_trigram_index;
 pub mod builders;
+pub mod codebase_intelligence_api;
 pub mod connection_pool;
 pub mod contracts;
 pub mod coordinated_deletion;
@@ -117,7 +118,10 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
-pub use http_server::{create_server, create_server_with_pool, start_server};
+pub use http_server::{
+    create_server, create_server_with_intelligence, create_server_with_pool, start_server,
+    start_server_with_intelligence,
+};
 
 // Re-export index implementations
 pub use binary_trigram_index::{create_binary_trigram_index, BinaryTrigramIndex};
