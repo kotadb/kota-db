@@ -160,12 +160,12 @@ EXAMPLES:
   kotadb serve --port 8080"
 )]
 struct Cli {
-    /// Enable verbose logging (DEBUG level). Default shows warnings/errors only.
-    #[arg(short, long, global = true, conflicts_with = "quiet")]
+    /// Enable verbose logging (DEBUG level)
+    #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// Suppress detailed output (default: false to show benchmark progress)
-    #[arg(short, long, global = true, conflicts_with = "verbose", default_value = "false", action = clap::ArgAction::Set)]
+    /// Suppress all output except errors
+    #[arg(short, long, global = true)]
     quiet: bool,
 
     /// Database directory path
@@ -1403,7 +1403,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging with appropriate level based on verbose/quiet flags
-    let _ = init_logging_with_level(cli.verbose, cli.quiet); // Ignore error if already initialized
+    // Default to quiet mode (no logs) unless verbose is explicitly requested
+    let effective_quiet = !cli.verbose && !cli.quiet;
+    let _ = init_logging_with_level(cli.verbose, effective_quiet || cli.quiet); // Ignore error if already initialized
 
     // Store quiet flag for use in output
     let quiet = cli.quiet;
