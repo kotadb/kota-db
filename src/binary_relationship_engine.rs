@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -92,8 +93,8 @@ pub struct BinaryRelationshipEngine {
     symbol_reader: Option<BinarySymbolReader>,
     /// Dependency graph built from relationships (using RwLock for thread-safe interior mutability)
     dependency_graph: RwLock<Option<DependencyGraph>>,
-    /// Cache metadata for dependency graph management
-    cache_metadata: RwLock<CacheMetadata>,
+    /// Cache metadata for dependency graph management (using atomics for counters)
+    cache_metadata: CacheMetadata,
     /// Database path for on-demand relationship extraction
     db_path: std::path::PathBuf,
     /// Configuration
@@ -162,7 +163,7 @@ impl BinaryRelationshipEngine {
         Ok(Self {
             symbol_reader,
             dependency_graph: RwLock::new(dependency_graph),
-            cache_metadata: RwLock::new(CacheMetadata::new()),
+            cache_metadata: CacheMetadata::new(),
             db_path: db_path.to_path_buf(),
             config,
             extraction_config,
@@ -182,7 +183,10 @@ impl BinaryRelationshipEngine {
         let result = if self.symbol_reader.is_some() {
             debug!(
                 "Using binary symbol path for query (dependency graph available: {})",
-                self.dependency_graph.read().unwrap().is_some()
+                self.dependency_graph
+                    .read()
+                    .map(|g| g.is_some())
+                    .unwrap_or(false)
             );
             self.execute_binary_query(query_type.clone()).await
         } else {
@@ -719,7 +723,11 @@ impl BinaryRelationshipEngine {
 
     /// Get a reference to the dependency graph, ensuring it exists
     fn get_dependency_graph(&self) -> Result<std::sync::RwLockReadGuard<Option<DependencyGraph>>> {
-        let graph_ref = self.dependency_graph.read().unwrap();
+        let graph_ref = self.dependency_graph.read().map_err(|_| {
+            anyhow::anyhow!(
+                "Dependency graph lock poisoned - another thread panicked while holding the lock"
+            )
+        })?;
         if graph_ref.is_none() {
             return Err(anyhow::anyhow!(
                 "Dependency graph unavailable - call ensure_dependency_graph() first"
@@ -854,7 +862,11 @@ impl BinaryRelationshipEngine {
     /// Ensure dependency graph is available, extracting on-demand if necessary
     #[instrument(skip(self))]
     async fn ensure_dependency_graph(&self, query_context: &str) -> Result<()> {
-        let has_graph = self.dependency_graph.read().unwrap().is_some();
+        let has_graph = self
+            .dependency_graph
+            .read()
+            .map(|g| g.is_some())
+            .unwrap_or(false);
         if has_graph {
             return Ok(());
         }
@@ -898,10 +910,20 @@ impl BinaryRelationshipEngine {
                 self.maybe_evict_cache(&extracted_graph);
 
                 // Store the extracted graph for future queries
-                *self.dependency_graph.write().unwrap() = Some(extracted_graph);
+                match self.dependency_graph.write() {
+                    Ok(mut graph) => {
+                        *graph = Some(extracted_graph);
+                    }
+                    Err(poisoned) => {
+                        warn!("Dependency graph lock poisoned, attempting recovery");
+                        // Attempt to recover by getting the mutex anyway
+                        let mut graph = poisoned.into_inner();
+                        *graph = Some(extracted_graph);
+                    }
+                }
 
                 // Update cache metadata
-                self.cache_metadata.write().unwrap().record_access();
+                self.cache_metadata.record_access();
                 Ok(())
             }
             Err(e) => {
@@ -1285,8 +1307,7 @@ impl BinaryRelationshipEngine {
                 estimated_size > threshold_bytes
             }
             CacheEvictionPolicy::TimeBased { ttl_seconds } => {
-                let metadata = self.cache_metadata.read().unwrap();
-                if let Some(last_access) = metadata.last_access {
+                if let Some(last_access) = self.cache_metadata.get_last_access() {
                     let elapsed = last_access.elapsed().as_secs();
                     elapsed > ttl_seconds
                 } else {
@@ -1305,8 +1326,12 @@ impl BinaryRelationshipEngine {
                 "Evicting dependency graph cache due to policy: {:?}",
                 self.extraction_config.cache_eviction_policy
             );
-            *self.dependency_graph.write().unwrap() = None;
-            self.cache_metadata.write().unwrap().record_eviction();
+            if let Ok(mut graph) = self.dependency_graph.write() {
+                *graph = None;
+            } else {
+                warn!("Failed to evict graph from cache - lock poisoned");
+            }
+            self.cache_metadata.record_eviction();
         }
     }
 
@@ -1321,8 +1346,12 @@ impl BinaryRelationshipEngine {
 
     /// Get statistics about the binary engine
     pub fn get_stats(&self) -> BinaryEngineStats {
-        let graph_borrowed = self.dependency_graph.read().unwrap();
-        let cache_metadata = self.cache_metadata.read().unwrap();
+        let graph_borrowed = self.dependency_graph.read().unwrap_or_else(|poisoned| {
+            // If lock is poisoned, we can still try to recover the data
+            // This is safe for read-only stats gathering
+            warn!("Dependency graph lock poisoned, recovering data for stats");
+            poisoned.into_inner()
+        });
 
         BinaryEngineStats {
             binary_symbols_loaded: self
@@ -1335,13 +1364,13 @@ impl BinaryRelationshipEngine {
                 .map(|g| g.graph.node_count())
                 .unwrap_or(0),
             using_binary_path: self.symbol_reader.is_some() && graph_borrowed.is_some(),
-            cache_hits: cache_metadata.access_count,
-            cache_misses: if cache_metadata.access_count > 0 {
+            cache_hits: self.cache_metadata.get_access_count(),
+            cache_misses: if self.cache_metadata.get_access_count() > 0 {
                 1
             } else {
                 0
             }, // Simplified for single-entry cache
-            cache_evictions: cache_metadata.eviction_count,
+            cache_evictions: self.cache_metadata.get_eviction_count(),
         }
     }
 }
@@ -1358,29 +1387,44 @@ pub struct BinaryEngineStats {
 }
 
 /// Cache metadata for tracking usage and eviction
+/// Uses atomic counters to minimize lock contention
 #[derive(Debug)]
 struct CacheMetadata {
-    last_access: Option<std::time::Instant>,
-    access_count: u64,
-    eviction_count: u64,
+    last_access: RwLock<Option<std::time::Instant>>,
+    access_count: AtomicU64,
+    eviction_count: AtomicU64,
 }
 
 impl CacheMetadata {
     fn new() -> Self {
         Self {
-            last_access: None,
-            access_count: 0,
-            eviction_count: 0,
+            last_access: RwLock::new(None),
+            access_count: AtomicU64::new(0),
+            eviction_count: AtomicU64::new(0),
         }
     }
 
-    fn record_access(&mut self) {
-        self.last_access = Some(std::time::Instant::now());
-        self.access_count += 1;
+    fn record_access(&self) {
+        if let Ok(mut last_access) = self.last_access.write() {
+            *last_access = Some(std::time::Instant::now());
+        }
+        self.access_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn record_eviction(&mut self) {
-        self.eviction_count += 1;
+    fn record_eviction(&self) {
+        self.eviction_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get_last_access(&self) -> Option<std::time::Instant> {
+        self.last_access.read().ok().and_then(|guard| *guard)
+    }
+
+    fn get_access_count(&self) -> u64 {
+        self.access_count.load(Ordering::Relaxed)
+    }
+
+    fn get_eviction_count(&self) -> u64 {
+        self.eviction_count.load(Ordering::Relaxed)
     }
 }
 
@@ -1848,23 +1892,23 @@ mod tests {
 
     #[test]
     fn test_cache_metadata() {
-        let mut metadata = CacheMetadata::new();
+        let metadata = CacheMetadata::new();
 
         // Initial state
-        assert!(metadata.last_access.is_none());
-        assert_eq!(metadata.access_count, 0);
-        assert_eq!(metadata.eviction_count, 0);
+        assert!(metadata.get_last_access().is_none());
+        assert_eq!(metadata.get_access_count(), 0);
+        assert_eq!(metadata.get_eviction_count(), 0);
 
         // Record access
         metadata.record_access();
-        assert!(metadata.last_access.is_some());
-        assert_eq!(metadata.access_count, 1);
-        assert_eq!(metadata.eviction_count, 0);
+        assert!(metadata.get_last_access().is_some());
+        assert_eq!(metadata.get_access_count(), 1);
+        assert_eq!(metadata.get_eviction_count(), 0);
 
         // Record eviction
         metadata.record_eviction();
-        assert_eq!(metadata.access_count, 1);
-        assert_eq!(metadata.eviction_count, 1);
+        assert_eq!(metadata.get_access_count(), 1);
+        assert_eq!(metadata.get_eviction_count(), 1);
     }
 
     /// Test that the engine can handle UUID mismatches between binary symbols and dependency graph

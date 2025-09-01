@@ -5,14 +5,27 @@
 //! This is critical for HTTP API integration where blocking operations would degrade performance.
 
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument};
 
 use crate::{
     binary_relationship_engine::{BinaryRelationshipEngine, ExtractionConfig},
     relationship_query::{RelationshipQueryConfig, RelationshipQueryResult, RelationshipQueryType},
 };
+
+/// Shared runtime for executing blocking operations
+/// This avoids the overhead of creating a new runtime for each query
+static BLOCKING_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2) // Small pool for blocking operations
+        .thread_name("kotadb-blocking")
+        .enable_all()
+        .build()
+        .expect("Failed to create blocking runtime")
+});
 
 /// Thread-safe async wrapper for BinaryRelationshipEngine
 ///
@@ -68,15 +81,9 @@ impl AsyncBinaryRelationshipEngine {
         // Use spawn_blocking to run the query on a dedicated thread pool
         // This prevents blocking the tokio runtime
         let result = tokio::task::spawn_blocking(move || {
-            // Create a new tokio runtime for the blocking thread
-            // This is necessary because execute_query is async but we're in a blocking context
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .context("Failed to create runtime for blocking task")?;
-
-            // Execute the async query within the blocking thread's runtime
-            runtime.block_on(async move { engine.execute_query(query_type).await })
+            // Use the shared runtime pool instead of creating a new one each time
+            // This eliminates the ~1-2ms overhead of runtime creation
+            BLOCKING_RUNTIME.block_on(async move { engine.execute_query(query_type).await })
         })
         .await
         .context("Task join error")?;
