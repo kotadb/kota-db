@@ -5,7 +5,7 @@ use anyhow::Result;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
@@ -27,7 +27,6 @@ use crate::{
     contracts::{Document, Storage},
     observability::with_trace_id,
     relationship_query::RelationshipQueryConfig,
-    trigram_index::TrigramIndex,
     types::{ValidatedDocumentId, ValidatedTitle},
     validation::{index, path},
 };
@@ -58,6 +57,7 @@ static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy
 pub struct AppState {
     storage: Arc<Mutex<dyn Storage>>,
     connection_pool: Option<Arc<tokio::sync::Mutex<ConnectionPoolImpl>>>,
+    #[allow(dead_code)] // Used for router state composition
     codebase_intelligence: Option<CodebaseIntelligenceState>,
 }
 

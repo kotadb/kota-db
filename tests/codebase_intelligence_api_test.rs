@@ -2,12 +2,9 @@
 // Following anti-mock philosophy - uses real server and real HTTP calls
 
 use anyhow::Result;
-use kotadb::{
-    binary_relationship_engine_async::AsyncBinaryRelationshipEngine, create_file_storage,
-    create_server_with_intelligence, relationship_query::RelationshipQueryConfig,
-};
+use kotadb::create_file_storage;
 use reqwest::{Client, StatusCode};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;

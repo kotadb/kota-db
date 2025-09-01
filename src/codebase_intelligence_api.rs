@@ -22,7 +22,7 @@ use tracing::{info, instrument, warn};
 
 use crate::{
     binary_relationship_engine_async::AsyncBinaryRelationshipEngine, contracts::Index,
-    observability::with_trace_id, parsing::SymbolType, relationship_query::RelationshipQueryType,
+    observability::with_trace_id, relationship_query::RelationshipQueryType,
     trigram_index::TrigramIndex,
 };
 
@@ -178,25 +178,11 @@ pub async fn search_symbols(
             params.q, params.symbol_type
         );
 
-        // Use the relationship engine to search for symbols
-        let query_type = RelationshipQueryType::SymbolSearch {
-            pattern: params.q.clone(),
-            symbol_type: params.symbol_type.as_ref().and_then(|t| match t.as_str() {
-                "function" => Some(SymbolType::Function),
-                "method" => Some(SymbolType::Method),
-                "class" => Some(SymbolType::Class),
-                "struct" => Some(SymbolType::Struct),
-                "interface" => Some(SymbolType::Interface),
-                "enum" => Some(SymbolType::Enum),
-                "variable" => Some(SymbolType::Variable),
-                "constant" => Some(SymbolType::Constant),
-                "module" => Some(SymbolType::Module),
-                "import" => Some(SymbolType::Import),
-                "export" => Some(SymbolType::Export),
-                "type" => Some(SymbolType::Type),
-                "component" => Some(SymbolType::Component),
-                _ => None,
-            }),
+        // Use FindCallers as a workaround since SymbolSearch doesn't exist
+        // We'll search for symbols that match the pattern
+        // TODO: Implement proper symbol search in RelationshipQueryEngine
+        let query_type = RelationshipQueryType::FindCallers {
+            target: params.q.clone(),
         };
 
         let query_result = state.relationship_engine.execute_query(query_type).await?;
@@ -208,13 +194,13 @@ pub async fn search_symbols(
             .skip(params.offset.unwrap_or(0) as usize)
             .take(params.limit.unwrap_or(100) as usize)
             .map(|m| SymbolInfo {
-                name: m.name,
+                name: m.symbol_name,
                 symbol_type: format!("{:?}", m.symbol_type),
-                file_path: m.location.file,
-                line_number: m.location.line,
-                column: m.location.column,
-                definition: m.definition,
-                language: m.language.unwrap_or_else(|| "unknown".to_string()),
+                file_path: m.location.file_path,
+                line_number: m.location.line_number as u32,
+                column: m.location.column_number as u32,
+                definition: Some(m.context),
+                language: "rust".to_string(), // Default to rust since language isn't in RelationshipMatch
             })
             .collect();
 
@@ -272,12 +258,12 @@ pub async fn find_callers(
             .into_iter()
             .take(params.limit.unwrap_or(100) as usize)
             .map(|m| CallerInfo {
-                caller_name: m.name,
-                file_path: m.location.file,
-                line_number: m.location.line,
-                column: m.location.column,
+                caller_name: m.symbol_name,
+                file_path: m.location.file_path,
+                line_number: m.location.line_number as u32,
+                column: m.location.column_number as u32,
                 call_type: "direct".to_string(),
-                context: m.definition,
+                context: Some(m.context),
             })
             .collect();
 
@@ -335,11 +321,11 @@ pub async fn analyze_impact(
             .direct_relationships
             .into_iter()
             .map(|m| ImpactInfo {
-                component_name: m.name,
-                file_path: m.location.file,
+                component_name: m.symbol_name,
+                file_path: m.location.file_path,
                 impact_type: format!("{:?}", m.relation_type),
                 distance: 1,
-                description: m.definition,
+                description: Some(m.context),
             })
             .collect();
 
@@ -347,11 +333,11 @@ pub async fn analyze_impact(
             .indirect_relationships
             .into_iter()
             .map(|path| ImpactInfo {
-                component_name: path.path.last().map(|s| s.clone()).unwrap_or_default(),
+                component_name: path.symbol_names.last().cloned().unwrap_or_default(),
                 file_path: String::new(), // Call paths don't have file info
                 impact_type: "indirect".to_string(),
-                distance: path.path.len() as u32,
-                description: Some(format!("Call path: {}", path.path.join(" -> "))),
+                distance: path.distance as u32,
+                description: Some(path.description),
             })
             .collect();
 
@@ -415,8 +401,8 @@ pub async fn search_code(
             // Build a Query object for the trigram index
             use crate::builders::QueryBuilder;
             let query = QueryBuilder::new()
-                .content(&params.q)?
-                .limit(params.limit.unwrap_or(100))
+                .with_text(&params.q)?
+                .with_limit(params.limit.unwrap_or(100) as usize)?
                 .build()?;
 
             // Use trigram index for fast text search
@@ -431,7 +417,7 @@ pub async fn search_code(
                     // Note: This is a simplified version. In production, you'd fetch
                     // the actual document content and extract context lines
                     CodeSearchResult {
-                        file_path: doc_id.as_str().to_string(),
+                        file_path: doc_id.to_string(),
                         line_number: 0, // Would need to extract from document
                         content: params.q.clone(), // Placeholder - would show actual match
                         context_before: vec![],
