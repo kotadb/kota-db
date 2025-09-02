@@ -1,0 +1,36 @@
+# Ignore build artifacts
+target/
+Dockerfile*
+.dockerignore
+
+# Ignore Git files
+.git/
+.gitignore
+
+# Ignore documentation
+*.md
+docs/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore test data
+kota-db-data/
+data/
+*.db
+
+# Ignore scripts
+scripts/
+
+# Ignore CI/CD
+.github/
+
+# Ignore benchmark results
+benches/*.json
+
+# Ignore local environment files
+.env
+.env.*
