@@ -22,12 +22,13 @@ COPY Cargo.toml Cargo.lock ./
 COPY benches ./benches
 
 # Create dummy source files to build dependencies
-RUN mkdir src && \
+RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/main.rs && \
-    echo "fn main() {}" > src/lib.rs
+    echo "fn main() {}" > src/lib.rs && \
+    echo "fn main() {}" > src/bin/kotadb-api-server.rs
 
-# Build dependencies only
-RUN cargo build --release && \
+# Build dependencies only (this will fail but cache deps)
+RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server || true && \
     rm -rf src
 
 # Copy actual source code
