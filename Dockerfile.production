@@ -58,9 +58,8 @@ RUN mkdir -p /data && chown kotadb:kotadb /data
 # Copy binary from builder
 COPY --from=builder /app/target/release/kotadb-api-server /usr/local/bin/kotadb-api-server
 
-# Copy entrypoint script
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Copy entrypoint script (must be done as root before USER change)
+COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # Switch to non-root user
 USER kotadb

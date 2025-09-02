@@ -22,8 +22,9 @@ kota-db-data/
 data/
 *.db
 
-# Ignore scripts
-scripts/
+# Ignore scripts (except docker-entrypoint.sh)
+scripts/*
+!scripts/docker-entrypoint.sh
 
 # Ignore CI/CD
 .github/
