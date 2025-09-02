@@ -24,19 +24,20 @@ COPY benches ./benches
 # Create dummy source files to build dependencies
 RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/main.rs && \
-    echo "fn main() {}" > src/lib.rs && \
+    echo "" > src/lib.rs && \
     echo "fn main() {}" > src/bin/kotadb-api-server.rs
 
-# Build dependencies only (this will fail but cache deps)
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server || true && \
+# Build dependencies only
+RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 || echo "Dependency build completed" && \
     rm -rf src
 
 # Copy actual source code
 COPY src ./src
 # Note: build.rs not needed for this project
 
-# Build the actual application
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server
+# Build the actual application (ensure it completes successfully)
+RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 && \
+    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')"
 
 # Runtime stage
 FROM debian:bookworm-slim

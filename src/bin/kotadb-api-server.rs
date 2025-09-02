@@ -5,10 +5,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use kotadb::{
-    api_keys::ApiKeyConfig, create_file_storage, http_server::start_saas_server,
-    observability::init_logging,
-};
+use kotadb::{api_keys::ApiKeyConfig, create_file_storage, http_server::start_saas_server};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -52,11 +49,40 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging first, always, to capture any startup errors
-    init_logging().expect("Failed to initialize logging");
+    // Initialize logging first with proper RUST_LOG environment variable support
+    // For the API server, we always want to respect RUST_LOG environment variable
+    if let Err(e) = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init()
+    {
+        // Logging might already be initialized, that's ok
+        eprintln!("Note: Logging initialization returned: {:?}", e);
+    }
 
     info!("🔧 Parsing command line arguments...");
-    let args = Args::parse();
+
+    // Check environment variables before parsing
+    info!(
+        "DATABASE_URL env var present: {}",
+        std::env::var("DATABASE_URL").is_ok()
+    );
+    info!("PORT env var: {:?}", std::env::var("PORT"));
+    info!(
+        "KOTADB_DATA_DIR env var: {:?}",
+        std::env::var("KOTADB_DATA_DIR")
+    );
+
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("Failed to parse arguments: {}", e);
+            info!("Argument parsing error: {}", e);
+            return Err(anyhow::anyhow!("Failed to parse arguments: {}", e));
+        }
+    };
 
     info!("🚀 Starting KotaDB SaaS API Server");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));

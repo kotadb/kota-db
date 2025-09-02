@@ -36,13 +36,15 @@ echo "Command: kotadb-api-server"
 echo "Working directory: $(pwd)"
 echo "User: $(whoami)"
 
-# Execute with detailed error reporting
-exec kotadb-api-server || {
-    exit_code=$?
-    echo "ERROR: kotadb-api-server failed with exit code: $exit_code"
-    echo "Environment variables:"
-    env | sort
-    echo "Available files in /usr/local/bin/:"
-    ls -la /usr/local/bin/
-    exit $exit_code
-}
+# Check if binary is actually executable
+echo "================== DEBUG INFO =================="
+echo "Checking binary:"
+ls -la /usr/local/bin/kotadb-api-server
+file /usr/local/bin/kotadb-api-server
+ldd /usr/local/bin/kotadb-api-server 2>&1 || echo "ldd check finished"
+
+# Try to run the binary directly without exec
+echo "================== DIRECT EXECUTION =================="
+echo "Running kotadb-api-server directly (no exec):"
+/usr/local/bin/kotadb-api-server 2>&1
+echo "Binary exited with code: $?"
