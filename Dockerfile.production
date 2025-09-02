@@ -27,8 +27,11 @@ RUN mkdir -p src/bin && \
     echo "" > src/lib.rs && \
     echo "fn main() {}" > src/bin/kotadb-api-server.rs
 
-# Build dependencies only
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 || echo "Dependency build completed" && \
+# Build dependencies only (this will create a stub binary)
+RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 || true
+    
+# Remove the stub binary and source
+RUN rm -f target/release/kotadb-api-server && \
     rm -rf src
 
 # Copy actual source code
@@ -37,7 +40,8 @@ COPY src ./src
 
 # Build the actual application (ensure it completes successfully)
 RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 && \
-    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')"
+    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')" && \
+    test -f target/release/kotadb-api-server || (echo "ERROR: Binary not built!" && exit 1)
 
 # Runtime stage
 FROM debian:bookworm-slim

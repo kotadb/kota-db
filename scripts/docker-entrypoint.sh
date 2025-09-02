@@ -36,15 +36,6 @@ echo "Command: kotadb-api-server"
 echo "Working directory: $(pwd)"
 echo "User: $(whoami)"
 
-# Check if binary is actually executable
-echo "================== DEBUG INFO =================="
-echo "Checking binary:"
-ls -la /usr/local/bin/kotadb-api-server
-file /usr/local/bin/kotadb-api-server
-ldd /usr/local/bin/kotadb-api-server 2>&1 || echo "ldd check finished"
-
-# Try to run the binary directly without exec
-echo "================== DIRECT EXECUTION =================="
-echo "Running kotadb-api-server directly (no exec):"
-/usr/local/bin/kotadb-api-server 2>&1
-echo "Binary exited with code: $?"
+# Execute the actual server
+echo "Starting kotadb-api-server..."
+exec /usr/local/bin/kotadb-api-server 2>&1
