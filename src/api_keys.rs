@@ -417,10 +417,25 @@ impl ApiKeyService {
             return Ok(false);
         }
 
-        // Increment counter for current minute
-        let current_minute = Utc::now().timestamp() / 60 * 60; // Round down to minute
-        let window_timestamp = DateTime::from_timestamp(current_minute, 0)
-            .ok_or_else(|| anyhow::anyhow!("Failed to create timestamp for rate limit window"))?;
+        // Increment counter for current minute with bounds checking
+        let now = Utc::now();
+        let timestamp = now.timestamp();
+
+        // Check for timestamp bounds (avoid year 2038 problem and negative timestamps)
+        if !(0..=i64::MAX / 60).contains(&timestamp) {
+            return Err(anyhow::anyhow!(
+                "Timestamp out of bounds for rate limit calculation: {}",
+                timestamp
+            ));
+        }
+
+        let current_minute = timestamp / 60 * 60; // Round down to minute
+        let window_timestamp = DateTime::from_timestamp(current_minute, 0).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to create timestamp for rate limit window. Timestamp: {}",
+                current_minute
+            )
+        })?;
 
         sqlx::query(
             r#"

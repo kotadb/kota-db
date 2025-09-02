@@ -236,7 +236,8 @@ pub async fn auth_middleware(
         )
         .await
     {
-        warn!("Failed to record API usage: {}", e);
+        let error_id = Uuid::new_v4();
+        warn!("Failed to record API usage [{}]: {}", error_id, e);
         // Don't fail the request if usage recording fails
     }
 
