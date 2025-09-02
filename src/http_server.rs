@@ -4,8 +4,8 @@
 use anyhow::Result;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
-    http::StatusCode,
-    response::Json,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
@@ -19,14 +19,19 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    binary_relationship_engine_async::AsyncBinaryRelationshipEngine,
     builders::DocumentBuilder,
+    codebase_intelligence_api::{self, CodebaseIntelligenceState},
     connection_pool::ConnectionPoolImpl,
     contracts::connection_pool::ConnectionPool,
     contracts::{Document, Storage},
     observability::with_trace_id,
+    relationship_query::RelationshipQueryConfig,
     types::{ValidatedDocumentId, ValidatedTitle},
     validation::{index, path},
 };
+use std::path::PathBuf;
+use tokio::sync::RwLock;
 
 // Constants for default resource statistics
 const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
@@ -52,6 +57,8 @@ static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy
 pub struct AppState {
     storage: Arc<Mutex<dyn Storage>>,
     connection_pool: Option<Arc<tokio::sync::Mutex<ConnectionPoolImpl>>>,
+    #[allow(dead_code)] // Used for router state composition
+    codebase_intelligence: Option<CodebaseIntelligenceState>,
 }
 
 /// Request body for document creation
@@ -247,6 +254,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     let state = AppState {
         storage,
         connection_pool: None,
+        codebase_intelligence: None,
     };
 
     Router::new()
@@ -288,6 +296,7 @@ pub fn create_server_with_pool(
     let state = AppState {
         storage,
         connection_pool: Some(connection_pool),
+        codebase_intelligence: None,
     };
 
     Router::new()
@@ -321,12 +330,119 @@ pub fn create_server_with_pool(
         )
 }
 
+/// Create HTTP server with codebase intelligence support
+pub async fn create_server_with_intelligence(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+) -> Result<Router> {
+    // Initialize the BinaryRelationshipEngine for codebase intelligence
+    let config = RelationshipQueryConfig::default();
+    let relationship_engine = AsyncBinaryRelationshipEngine::new(&db_path, config).await?;
+
+    // Initialize trigram index (optional, can be None initially)
+    let trigram_index = Arc::new(RwLock::new(None));
+
+    let codebase_state = CodebaseIntelligenceState {
+        relationship_engine: Arc::new(relationship_engine),
+        trigram_index,
+        db_path,
+    };
+
+    let state = AppState {
+        storage,
+        connection_pool: None,
+        codebase_intelligence: Some(codebase_state.clone()),
+    };
+
+    // Create the codebase intelligence router with its own state
+    let intelligence_router = Router::new()
+        .route(
+            "/api/symbols/search",
+            get(codebase_intelligence_api::search_symbols),
+        )
+        .route(
+            "/api/relationships/callers/:target",
+            get(codebase_intelligence_api::find_callers),
+        )
+        .route(
+            "/api/analysis/impact/:target",
+            get(codebase_intelligence_api::analyze_impact),
+        )
+        .route(
+            "/api/code/search",
+            get(codebase_intelligence_api::search_code),
+        )
+        .with_state(codebase_state);
+
+    // Create the main router with document endpoints
+    let main_router = Router::new()
+        .route("/health", get(health_check))
+        // Legacy document endpoints (deprecated)
+        .route("/documents", post(create_document_deprecated))
+        .route("/documents", get(search_documents_deprecated))
+        .route("/documents/search", get(search_documents_deprecated))
+        .route("/documents/:id", get(get_document_deprecated))
+        .route("/documents/:id", put(update_document_deprecated))
+        .route("/documents/:id", delete(delete_document_deprecated))
+        // New search endpoints for client compatibility
+        .route("/search/semantic", post(semantic_search))
+        .route("/search/hybrid", post(hybrid_search))
+        // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
+        .with_state(state);
+
+    // Merge the routers
+    Ok(main_router.merge(intelligence_router).layer(
+        ServiceBuilder::new()
+            .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::permissive()),
+    ))
+}
+
 /// Start the HTTP server on the specified port
 pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result<()> {
     let app = create_server(storage);
     let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
 
     info!("KotaDB HTTP server starting on port {}", port);
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Start the HTTP server with codebase intelligence support
+pub async fn start_server_with_intelligence(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    port: u16,
+) -> Result<()> {
+    let app = create_server_with_intelligence(storage, db_path).await?;
+    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    info!(
+        "KotaDB HTTP server with codebase intelligence starting on port {}",
+        port
+    );
+    info!("API endpoints available:");
+    info!("  - GET /api/symbols/search - Search for code symbols");
+    info!("  - GET /api/relationships/callers/:target - Find callers of a function");
+    info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
+    info!("  - GET /api/code/search - Full-text code search");
     info!(
         "Maximum document size: {}MB",
         MAX_DOCUMENT_SIZE / (1024 * 1024)
@@ -348,7 +464,23 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-/// Create a new document
+/// Create a new document (deprecated - wrapper with deprecation headers)
+async fn create_document_deprecated(
+    state: State<AppState>,
+    request: Json<CreateDocumentRequest>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = create_document(state, request).await;
+
+    match result {
+        Ok((status, json)) => (status, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Create a new document (internal implementation)
 async fn create_document(
     State(state): State<AppState>,
     Json(request): Json<CreateDocumentRequest>,
@@ -395,7 +527,20 @@ async fn create_document(
     }
 }
 
-/// Get document by ID
+/// Get document by ID (deprecated - wrapper with deprecation headers)
+async fn get_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = get_document(state, id).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Get document by ID (internal implementation)
 async fn get_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -453,7 +598,24 @@ async fn get_document(
     }
 }
 
-/// Update document by ID
+/// Update document by ID (deprecated - wrapper with deprecation headers)
+async fn update_document_deprecated(
+    state: State<AppState>,
+    id: Path<String>,
+    request: Json<UpdateDocumentRequest>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = update_document(state, id, request).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Update document by ID (internal implementation)
 async fn update_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -568,7 +730,20 @@ async fn update_document(
     }
 }
 
-/// Delete document by ID
+/// Delete document by ID (deprecated - wrapper with deprecation headers)
+async fn delete_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = delete_document(state, id).await;
+
+    match result {
+        Ok(status) => (status, headers).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Delete document by ID (internal implementation)
 async fn delete_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -632,7 +807,23 @@ async fn delete_document(
     }
 }
 
-/// Search documents
+/// Search documents (deprecated - wrapper with deprecation headers)
+async fn search_documents_deprecated(
+    state: State<AppState>,
+    params: AxumQuery<SearchParams>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = search_documents(state, params).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Search documents (internal implementation)
 async fn search_documents(
     State(state): State<AppState>,
     AxumQuery(params): AxumQuery<SearchParams>,
