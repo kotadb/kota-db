@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     git \
     curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
