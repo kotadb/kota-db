@@ -121,8 +121,8 @@ pub use connection_pool::{
     TokenBucketRateLimiter,
 };
 pub use http_server::{
-    create_server, create_server_with_intelligence, create_server_with_pool, start_server,
-    start_server_with_intelligence,
+    create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
+    start_server, start_server_with_intelligence,
 };
 
 // Re-export index implementations

@@ -1,7 +1,7 @@
 # Production Dockerfile for KotaDB SaaS API
 # Multi-stage build for optimized image size and security
 
-# Build stage - using latest Rust for edition2024 support with Debian bookworm for GLIBC compatibility
+# Build stage - using latest Rust with static linking for GLIBC compatibility
 FROM rust:latest AS builder
 
 # Install build dependencies including C++ compiler for esaxx-rs
@@ -27,24 +27,26 @@ RUN mkdir -p src/bin && \
     echo "" > src/lib.rs && \
     echo "fn main() {}" > src/bin/kotadb-api-server.rs
 
-# Build dependencies only (this will create a stub binary)
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 || true
-    
-# Remove the stub binary and source
-RUN rm -f target/release/kotadb-api-server && \
-    rm -rf src
+# Build dependencies only (skip binary creation)
+RUN cargo build --release --lib --features tree-sitter-parsing,git-integration
+
+# Remove the stub source files but keep dependencies
+RUN rm -rf src
 
 # Copy actual source code
 COPY src ./src
 # Note: build.rs not needed for this project
 
 # Build the actual application (ensure it completes successfully)
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server 2>&1 && \
-    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')" && \
-    test -f target/release/kotadb-api-server || (echo "ERROR: Binary not built!" && exit 1)
+RUN echo "Building kotadb-api-server with full source code..." && \
+    cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server && \
+    echo "Binary size: $(ls -lh target/release/kotadb-api-server)" && \
+    test -f target/release/kotadb-api-server || (echo "ERROR: Binary not built!" && exit 1) && \
+    echo "Binary dependencies:" && \
+    ldd target/release/kotadb-api-server | head -10
 
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage - use same base as build stage to avoid GLIBC conflicts
+FROM debian:trixie-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
