@@ -74,14 +74,13 @@ docker run -d \
 
 ## API Endpoints
 
-Once running, the following endpoints are available:
+⚠️ **Updated**: Document CRUD endpoints have been removed. The following endpoints are available:
 
-- `POST /documents` - Create document
-- `GET /documents/:id` - Get document
-- `PUT /documents/:id` - Update document
-- `DELETE /documents/:id` - Delete document
-- `GET /documents/search` - Search documents
 - `GET /health` - Health check
+- `GET /stats` - System statistics
+- `POST /validate/*` - Validation endpoints
+
+**Migration**: For document operations, use the codebase intelligence API via MCP server or client libraries instead.
 
 ## Health Checks
 
