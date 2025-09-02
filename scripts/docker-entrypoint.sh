@@ -17,10 +17,6 @@ echo "DATABASE_URL is configured"
 # Create data directory
 mkdir -p "${KOTADB_DATA_DIR:-/data}" || true
 
-# Simple delay to let Railway's internal networking stabilize
-echo "Waiting 10 seconds for network initialization..."
-sleep 10
-
-# Start the server directly to see all output
+# Start the server directly
 echo "Starting server on port ${PORT:-8080}..."
 exec kotadb-api-server 2>&1
