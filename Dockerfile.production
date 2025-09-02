@@ -81,4 +81,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8080
 
 # Start with comprehensive error handling and debugging
-CMD ["sh", "-c", "echo 'Container starting...' && echo 'Environment check:' && env | grep -E '^(DATABASE_URL|PORT|RUST_LOG)' && echo 'Binary check:' && ls -la /usr/local/bin/kotadb-api-server && echo 'Starting binary...' && /usr/local/bin/kotadb-api-server --quiet=false 2>&1 || (echo 'Binary failed with exit code:' $? && sleep 30)"]
+CMD ["sh", "-c", "echo 'Container starting...' && echo 'Environment check:' && env | grep -E '^(DATABASE_URL|PORT|RUST_LOG)' && echo 'Binary check:' && ls -la /usr/local/bin/kotadb-api-server && echo 'Starting binary...' && /usr/local/bin/kotadb-api-server 2>&1 || (echo 'Binary failed with exit code:' $? && sleep 30)"]
