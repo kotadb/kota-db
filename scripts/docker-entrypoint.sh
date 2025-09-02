@@ -17,6 +17,6 @@ echo "DATABASE_URL is configured"
 # Create data directory
 mkdir -p "${KOTADB_DATA_DIR:-/data}" || true
 
-# Start the server directly with all output
+# Start the server directly to see all output
 echo "Starting server on port ${PORT:-8080}..."
 exec kotadb-api-server 2>&1
