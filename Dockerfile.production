@@ -1,8 +1,8 @@
 # Production Dockerfile for KotaDB SaaS API
 # Multi-stage build for optimized image size and security
 
-# Build stage - using latest stable Rust
-FROM rust:slim AS builder
+# Build stage - using Debian bookworm-based Rust for GLIBC compatibility
+FROM rust:1.81-bookworm AS builder
 
 # Install build dependencies including C++ compiler for esaxx-rs
 RUN apt-get update && apt-get install -y \
