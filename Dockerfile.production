@@ -1,0 +1,74 @@
+# Production Dockerfile for KotaDB SaaS API
+# Multi-stage build for optimized image size and security
+
+# Build stage
+FROM rust:1.75-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy dependency files first for better caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create dummy main.rs to build dependencies
+RUN mkdir src && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "fn main() {}" > src/lib.rs
+
+# Build dependencies only
+RUN cargo build --release && \
+    rm -rf src
+
+# Copy actual source code
+COPY src ./src
+COPY build.rs ./
+
+# Build the actual application
+RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -u 1001 -s /bin/bash kotadb
+
+# Create data directory
+RUN mkdir -p /data && chown kotadb:kotadb /data
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/kotadb-api-server /usr/local/bin/kotadb-api-server
+
+# Switch to non-root user
+USER kotadb
+
+# Set working directory
+WORKDIR /data
+
+# Environment variables
+ENV RUST_LOG=info,kotadb=debug \
+    KOTADB_DATA_DIR=/data \
+    PORT=8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Start the server
+CMD ["kotadb-api-server"]

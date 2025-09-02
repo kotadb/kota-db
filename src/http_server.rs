@@ -5,6 +5,7 @@ use anyhow::Result;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
     http::{HeaderMap, StatusCode},
+    middleware,
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
@@ -19,6 +20,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    api_keys::{ApiKeyConfig, ApiKeyService, CreateApiKeyRequest, CreateApiKeyResponse},
+    auth_middleware::{auth_middleware, internal_auth_middleware},
     binary_relationship_engine_async::AsyncBinaryRelationshipEngine,
     builders::DocumentBuilder,
     codebase_intelligence_api::{self, CodebaseIntelligenceState},
@@ -59,6 +62,8 @@ pub struct AppState {
     connection_pool: Option<Arc<tokio::sync::Mutex<ConnectionPoolImpl>>>,
     #[allow(dead_code)] // Used for router state composition
     codebase_intelligence: Option<CodebaseIntelligenceState>,
+    #[allow(dead_code)] // Used for authentication middleware
+    api_key_service: Option<Arc<ApiKeyService>>,
 }
 
 /// Request body for document creation
@@ -255,6 +260,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         storage,
         connection_pool: None,
         codebase_intelligence: None,
+        api_key_service: None,
     };
 
     Router::new()
@@ -297,6 +303,7 @@ pub fn create_server_with_pool(
         storage,
         connection_pool: Some(connection_pool),
         codebase_intelligence: None,
+        api_key_service: None,
     };
 
     Router::new()
@@ -353,6 +360,7 @@ pub async fn create_server_with_intelligence(
         storage,
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
+        api_key_service: None,
     };
 
     // Create the codebase intelligence router with its own state
@@ -456,6 +464,161 @@ pub async fn start_server_with_intelligence(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Create HTTP server with full SaaS features (API keys + codebase intelligence)
+pub async fn create_saas_server(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+) -> Result<Router> {
+    // Initialize API key service
+    let api_key_service = Arc::new(ApiKeyService::new(api_key_config).await?);
+    api_key_service.init_schema().await?;
+
+    // Initialize the BinaryRelationshipEngine for codebase intelligence
+    let config = RelationshipQueryConfig::default();
+    let relationship_engine = AsyncBinaryRelationshipEngine::new(&db_path, config).await?;
+
+    // Initialize trigram index (optional, can be None initially)
+    let trigram_index = Arc::new(RwLock::new(None));
+
+    let codebase_state = CodebaseIntelligenceState {
+        relationship_engine: Arc::new(relationship_engine),
+        trigram_index,
+        db_path,
+        storage: Some(storage.clone()),
+    };
+
+    let state = AppState {
+        storage,
+        connection_pool: None,
+        codebase_intelligence: Some(codebase_state.clone()),
+        api_key_service: Some(api_key_service.clone()),
+    };
+
+    // Create the codebase intelligence router with authentication
+    let intelligence_router = Router::new()
+        .route(
+            "/api/index",
+            post(codebase_intelligence_api::index_repository),
+        )
+        .route(
+            "/api/symbols/search",
+            get(codebase_intelligence_api::search_symbols),
+        )
+        .route(
+            "/api/relationships/callers/:target",
+            get(codebase_intelligence_api::find_callers),
+        )
+        .route(
+            "/api/analysis/impact/:target",
+            get(codebase_intelligence_api::analyze_impact),
+        )
+        .route(
+            "/api/code/search",
+            get(codebase_intelligence_api::search_code),
+        )
+        .layer(middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ))
+        .with_state(codebase_state);
+
+    // Create internal endpoints (protected by different auth)
+    let internal_router = Router::new()
+        .route("/internal/create-api-key", post(create_api_key_internal))
+        .layer(middleware::from_fn(internal_auth_middleware))
+        .with_state(api_key_service.clone());
+
+    // Create the main router with public endpoints
+    let main_router = Router::new()
+        .route("/health", get(health_check))
+        // Legacy document endpoints (deprecated, but no auth for backward compatibility)
+        .route("/documents", post(create_document_deprecated))
+        .route("/documents", get(search_documents_deprecated))
+        .route("/documents/search", get(search_documents_deprecated))
+        .route("/documents/:id", get(get_document_deprecated))
+        .route("/documents/:id", put(update_document_deprecated))
+        .route("/documents/:id", delete(delete_document_deprecated))
+        // Monitoring endpoints (no auth)
+        .route("/stats", get(get_aggregated_stats))
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints (no auth)
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
+        .with_state(state);
+
+    // Merge all routers
+    Ok(main_router
+        .merge(intelligence_router)
+        .merge(internal_router)
+        .layer(
+            ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        ))
+}
+
+/// Start the SaaS HTTP server with API keys and codebase intelligence
+pub async fn start_saas_server(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    let app = create_saas_server(storage, db_path, api_key_config).await?;
+    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    info!("KotaDB SaaS HTTP server starting on port {}", port);
+    info!("🔐 API key authentication enabled");
+    info!("API endpoints available (requires API key):");
+    info!("  - POST /api/index - Index a GitHub repository");
+    info!("  - GET /api/symbols/search - Search for code symbols");
+    info!("  - GET /api/relationships/callers/:target - Find callers of a function");
+    info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
+    info!("  - GET /api/code/search - Full-text code search");
+    info!("Internal endpoints (requires internal key):");
+    info!("  - POST /internal/create-api-key - Create new API key");
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Internal endpoint to create API keys (called by web app)
+async fn create_api_key_internal(
+    State(api_key_service): State<Arc<ApiKeyService>>,
+    Json(request): Json<CreateApiKeyRequest>,
+) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let result = with_trace_id("create_api_key_internal", async move {
+        api_key_service.create_api_key(request).await
+    })
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(e) => {
+            warn!("Failed to create API key: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "api_key_creation_failed".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
 }
 
 /// Health check endpoint
