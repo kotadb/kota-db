@@ -17,7 +17,10 @@ WORKDIR /app
 # Copy dependency files first for better caching
 COPY Cargo.toml Cargo.lock ./
 
-# Create dummy main.rs to build dependencies
+# Copy benches for dependency resolution
+COPY benches ./benches
+
+# Create dummy source files to build dependencies
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
     echo "fn main() {}" > src/lib.rs
