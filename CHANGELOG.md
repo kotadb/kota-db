@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Fly.io deployment support for SaaS API (#510)
+  - New `fly.toml` and `fly.staging.toml` configuration files
+  - GitHub Actions workflow for automated Fly.io deployments
+  - Deployment scripts for easy staging/production deployments
+  - Secrets management script for secure configuration
+  - Comprehensive Fly.io deployment documentation
+  - Support for persistent volumes and health checks
+  - SSH debugging access for production troubleshooting
 - New HTTP API endpoints for codebase intelligence features (#491)
   - `GET /api/symbols/search` - Search for code symbols with pattern matching
   - `GET /api/relationships/callers/:target` - Find all callers of a function or symbol
@@ -39,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clear instructions in warning message for adjusting limits
 
 ### Removed
+- Railway deployment support - migrated to Fly.io (#510)
+  - Removed `railway.toml` configuration file
+  - Removed `scripts/check-railway-status.sh`
+  - **Migration**: Use Fly.io deployment instead (see docs/FLY_DEPLOYMENT.md)
+  - **Rationale**: Railway had persistent container restart issues, GLIBC incompatibilities, and limited debugging capabilities
 - **BREAKING CHANGE**: Removed natural language query parser (#445)
   - Removed `RelationshipQuery` CLI command that supported natural language queries
   - Removed `natural_language_query` module and all NL parsing functions
