@@ -1,6 +1,8 @@
 // KotaDB - A Custom Database for Distributed Cognition
 // Root library module
 
+pub mod api_keys;
+pub mod auth_middleware;
 pub mod binary_trigram_index;
 pub mod builders;
 pub mod codebase_intelligence_api;

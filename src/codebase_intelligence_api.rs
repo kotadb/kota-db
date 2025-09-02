@@ -21,8 +21,11 @@ use tokio::sync::RwLock;
 use tracing::{info, instrument, warn};
 
 use crate::{
-    binary_relationship_engine_async::AsyncBinaryRelationshipEngine, contracts::Index,
-    observability::with_trace_id, relationship_query::RelationshipQueryType,
+    binary_relationship_engine_async::AsyncBinaryRelationshipEngine,
+    contracts::Index,
+    git::{IngestionConfig, RepositoryIngester},
+    observability::with_trace_id,
+    relationship_query::RelationshipQueryType,
     trigram_index::TrigramIndex,
 };
 
@@ -156,12 +159,37 @@ pub struct CodeSearchParams {
     pub context_lines: Option<u32>, // Number of context lines
 }
 
+/// Request body for repository indexing
+#[derive(Debug, Deserialize)]
+pub struct IndexRepositoryRequest {
+    pub repository_url: String, // GitHub repository URL or local path
+    pub branch: Option<String>, // Branch to index (default: main/master)
+    pub include_patterns: Option<Vec<String>>, // File patterns to include
+    pub exclude_patterns: Option<Vec<String>>, // File patterns to exclude
+    pub extract_symbols: Option<bool>, // Extract code symbols (default: true)
+    pub shallow_clone: Option<bool>, // Use shallow clone for faster indexing
+}
+
+/// Response for repository indexing operation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IndexRepositoryResponse {
+    pub repository_id: String,
+    pub repository_url: String,
+    pub branch: String,
+    pub files_indexed: usize,
+    pub symbols_extracted: usize,
+    pub relationships_found: usize,
+    pub index_time_ms: u64,
+    pub status: String,
+}
+
 /// Shared state for codebase intelligence endpoints
 #[derive(Clone)]
 pub struct CodebaseIntelligenceState {
     pub relationship_engine: Arc<AsyncBinaryRelationshipEngine>,
     pub trigram_index: Arc<RwLock<Option<TrigramIndex>>>,
     pub db_path: std::path::PathBuf,
+    pub storage: Option<Arc<tokio::sync::Mutex<dyn crate::contracts::Storage>>>,
 }
 
 /// Search for symbols in the codebase
@@ -488,4 +516,153 @@ pub fn add_deprecation_headers(headers: &mut HeaderMap) {
             .parse()
             .unwrap(),
     );
+}
+
+/// Index a GitHub repository or local codebase
+#[instrument(skip(state))]
+pub async fn index_repository(
+    State(state): State<CodebaseIntelligenceState>,
+    axum::extract::Json(request): axum::extract::Json<IndexRepositoryRequest>,
+) -> Result<Json<IndexRepositoryResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+    let start = Instant::now();
+
+    let result = with_trace_id("index_repository", async move {
+        info!("Indexing repository: {}", request.repository_url);
+
+        // Validate that we have storage available
+        let storage = state
+            .storage
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not configured for indexing operations"))?;
+
+        // Parse repository URL to determine if it's GitHub or local
+        let is_github = request.repository_url.starts_with("https://github.com/")
+            || request.repository_url.starts_with("git@github.com:");
+
+        let repo_path = if is_github {
+            // Clone the repository to a temporary directory
+            let temp_dir = tempfile::tempdir()?;
+            let repo_path = temp_dir.path().to_path_buf();
+
+            // Build git clone command
+            let mut clone_cmd = std::process::Command::new("git");
+            clone_cmd.arg("clone");
+
+            if request.shallow_clone.unwrap_or(true) {
+                clone_cmd.arg("--depth").arg("1");
+            }
+
+            if let Some(ref branch) = request.branch {
+                clone_cmd.arg("--branch").arg(branch);
+            }
+
+            clone_cmd.arg(&request.repository_url).arg(&repo_path);
+
+            let output = clone_cmd.output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow::anyhow!("Failed to clone repository: {}", stderr));
+            }
+
+            repo_path
+        } else {
+            // Local repository path
+            std::path::PathBuf::from(&request.repository_url)
+        };
+
+        // Configure ingestion
+        let mut ingestion_config = IngestionConfig::default();
+
+        // Map include_patterns to include_extensions (if they are file extensions)
+        if let Some(include) = request.include_patterns {
+            // Filter patterns that look like extensions (e.g., "*.rs" -> "rs")
+            let extensions: Vec<String> = include
+                .iter()
+                .filter_map(|p| {
+                    if p.starts_with("*.") {
+                        Some(p.trim_start_matches("*.").to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !extensions.is_empty() {
+                ingestion_config.options.include_extensions = extensions;
+            }
+        }
+
+        if let Some(exclude) = request.exclude_patterns {
+            ingestion_config.options.exclude_patterns = exclude;
+        }
+
+        ingestion_config.options.extract_symbols = request.extract_symbols.unwrap_or(true);
+
+        // Create the ingester and ingest the repository
+        let ingester = RepositoryIngester::new(ingestion_config);
+
+        // Lock storage for ingestion
+        let mut storage_guard = storage.lock().await;
+        let ingest_result = ingester.ingest(&repo_path, &mut *storage_guard).await?;
+        drop(storage_guard);
+
+        // Extract repository name for ID
+        let repo_name = request
+            .repository_url
+            .split('/')
+            .next_back()
+            .unwrap_or("unknown")
+            .trim_end_matches(".git");
+
+        let repository_id = format!("repo_{}", repo_name);
+        let branch = request.branch.unwrap_or_else(|| "main".to_string());
+
+        // Rebuild trigram index after ingestion
+        info!("Rebuilding trigram index after repository ingestion");
+        let mut trigram_guard = state.trigram_index.write().await;
+        if trigram_guard.is_some() {
+            // Re-index with new documents
+            let storage_guard = storage.lock().await;
+            let all_docs = storage_guard.list_all().await?;
+            drop(storage_guard);
+
+            if let Some(ref mut index) = *trigram_guard {
+                for doc in all_docs {
+                    // Use insert_with_content which is designed for trigram indexing
+                    index
+                        .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                        .await?;
+                }
+            }
+        }
+        drop(trigram_guard);
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+
+        Ok(IndexRepositoryResponse {
+            repository_id,
+            repository_url: request.repository_url,
+            branch,
+            files_indexed: ingest_result.files_ingested,
+            symbols_extracted: ingest_result.symbols_extracted,
+            relationships_found: ingest_result.relationships_extracted,
+            index_time_ms: query_time_ms,
+            status: "completed".to_string(),
+        })
+    })
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(e) => {
+            warn!("Repository indexing failed: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::http_server::ErrorResponse {
+                    error: "indexing_failed".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
 }

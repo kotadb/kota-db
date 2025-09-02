@@ -1,0 +1,28 @@
+# Railway deployment configuration for KotaDB SaaS API
+
+[build]
+builder = "nixpacks"
+buildCommand = "cargo build --release --features tree-sitter-parsing,git-integration"
+
+[deploy]
+startCommand = "cargo run --release --bin kotadb-api-server"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+[environments.production]
+PORT = 8080
+RUST_LOG = "info,kotadb=debug"
+DATABASE_MAX_CONNECTIONS = 25
+DATABASE_CONNECT_TIMEOUT = 30
+DEFAULT_RATE_LIMIT = 60
+DEFAULT_MONTHLY_QUOTA = 1000000
+
+[environments.staging]
+PORT = 8080
+RUST_LOG = "debug"
+DATABASE_MAX_CONNECTIONS = 10
+DATABASE_CONNECT_TIMEOUT = 30
+DEFAULT_RATE_LIMIT = 100
+DEFAULT_MONTHLY_QUOTA = 10000000
