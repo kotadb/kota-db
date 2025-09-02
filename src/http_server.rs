@@ -346,6 +346,7 @@ pub async fn create_server_with_intelligence(
         relationship_engine: Arc::new(relationship_engine),
         trigram_index,
         db_path,
+        storage: Some(storage.clone()),
     };
 
     let state = AppState {
@@ -356,6 +357,10 @@ pub async fn create_server_with_intelligence(
 
     // Create the codebase intelligence router with its own state
     let intelligence_router = Router::new()
+        .route(
+            "/api/index",
+            post(codebase_intelligence_api::index_repository),
+        )
         .route(
             "/api/symbols/search",
             get(codebase_intelligence_api::search_symbols),
