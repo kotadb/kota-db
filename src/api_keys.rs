@@ -6,7 +6,8 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -114,6 +115,7 @@ pub struct ApiKeyValidation {
 }
 
 /// Service for managing API keys
+#[derive(Debug)]
 pub struct ApiKeyService {
     pool: PgPool,
     config: ApiKeyConfig,
@@ -150,15 +152,15 @@ impl ApiKeyService {
                 total_usage BIGINT NOT NULL DEFAULT 0,
                 expires_at TIMESTAMPTZ,
                 description TEXT,
-                allowed_ips JSONB,
-                
-                -- Indexes for performance
-                INDEX idx_api_keys_key_hash (key_hash),
-                INDEX idx_api_keys_user_email (user_email),
-                INDEX idx_api_keys_user_id (user_id),
-                INDEX idx_api_keys_is_active (is_active),
-                INDEX idx_api_keys_expires_at (expires_at)
+                allowed_ips JSONB
             );
+            
+            -- Create indexes for performance
+            CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user_email ON api_keys(user_email);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_is_active ON api_keys(is_active);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys(expires_at);
             
             -- Table for tracking API key usage
             CREATE TABLE IF NOT EXISTS api_key_usage (
@@ -170,23 +172,24 @@ impl ApiKeyService {
                 status_code INTEGER,
                 response_time_ms INTEGER,
                 ip_address INET,
-                user_agent TEXT,
-                
-                -- Indexes for analytics
-                INDEX idx_api_key_usage_key_id (key_id),
-                INDEX idx_api_key_usage_timestamp (timestamp),
-                INDEX idx_api_key_usage_endpoint (endpoint)
+                user_agent TEXT
             );
+            
+            -- Create indexes for analytics
+            CREATE INDEX IF NOT EXISTS idx_api_key_usage_key_id ON api_key_usage(key_id);
+            CREATE INDEX IF NOT EXISTS idx_api_key_usage_timestamp ON api_key_usage(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_api_key_usage_endpoint ON api_key_usage(endpoint);
             
             -- Table for rate limiting (using sliding window)
             CREATE TABLE IF NOT EXISTS api_key_rate_limits (
                 key_id BIGINT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
                 window_start TIMESTAMPTZ NOT NULL,
                 request_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (key_id, window_start),
-                
-                INDEX idx_rate_limits_key_window (key_id, window_start)
+                PRIMARY KEY (key_id, window_start)
             );
+            
+            -- Create index for rate limit lookups
+            CREATE INDEX IF NOT EXISTS idx_rate_limits_key_window ON api_key_rate_limits(key_id, window_start);
             "#,
         )
         .execute(&self.pool)
@@ -197,12 +200,13 @@ impl ApiKeyService {
         Ok(())
     }
 
-    /// Generate a new API key
-    fn generate_api_key() -> String {
+    /// Generate a new API key using cryptographically secure randomness
+    pub fn generate_api_key() -> String {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-        let mut rng = rand::thread_rng();
-        let random_bytes: Vec<u8> = (0..API_KEY_LENGTH).map(|_| rng.gen::<u8>()).collect();
+        // Use cryptographically secure random number generator
+        let mut random_bytes = vec![0u8; API_KEY_LENGTH];
+        OsRng.fill_bytes(&mut random_bytes);
 
         let random_string = URL_SAFE_NO_PAD.encode(random_bytes);
 
@@ -415,7 +419,8 @@ impl ApiKeyService {
 
         // Increment counter for current minute
         let current_minute = Utc::now().timestamp() / 60 * 60; // Round down to minute
-        let window_timestamp = DateTime::from_timestamp(current_minute, 0).unwrap_or_else(Utc::now);
+        let window_timestamp = DateTime::from_timestamp(current_minute, 0)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create timestamp for rate limit window"))?;
 
         sqlx::query(
             r#"

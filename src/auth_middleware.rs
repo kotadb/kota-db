@@ -15,6 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, instrument, warn};
+use uuid::Uuid;
 
 /// Header name for API key
 const API_KEY_HEADER: &str = "X-API-Key";
@@ -53,7 +54,7 @@ pub struct AuthContext {
 }
 
 /// Extract API key from request headers
-fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     // Try X-API-Key header first
     if let Some(value) = headers.get(API_KEY_HEADER) {
         if let Ok(key) = value.to_str() {
@@ -137,10 +138,11 @@ pub async fn auth_middleware(
         .validate_api_key(&api_key, ip_address.as_deref())
         .await
         .map_err(|e| {
-            warn!("API key validation error: {}", e);
+            let error_id = Uuid::new_v4();
+            warn!("API key validation error [{}]: {}", error_id, e);
             AuthError {
                 error: "validation_error".to_string(),
-                message: "Failed to validate API key".to_string(),
+                message: format!("Failed to validate API key. Error ID: {}", error_id),
                 status_code: 500,
             }
         })?;
@@ -169,10 +171,11 @@ pub async fn auth_middleware(
         .check_rate_limit(validation.key_id, validation.rate_limit)
         .await
         .map_err(|e| {
-            warn!("Rate limit check error: {}", e);
+            let error_id = Uuid::new_v4();
+            warn!("Rate limit check error [{}]: {}", error_id, e);
             AuthError {
                 error: "rate_limit_error".to_string(),
-                message: "Failed to check rate limit".to_string(),
+                message: format!("Failed to check rate limit. Error ID: {}", error_id),
                 status_code: 500,
             }
         })?;
