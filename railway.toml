@@ -1,13 +1,12 @@
 # Railway deployment configuration for KotaDB SaaS API
 
 [build]
-builder = "nixpacks"
-buildCommand = "cargo build --release --features tree-sitter-parsing,git-integration"
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.production"
 
 [deploy]
-startCommand = "cargo run --release --bin kotadb-api-server"
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 3
+restartPolicyType = "always"
+restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 
