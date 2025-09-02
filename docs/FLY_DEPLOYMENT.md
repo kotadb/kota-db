@@ -170,6 +170,16 @@ Configuration for staging environment:
 
 ## Secrets Management
 
+### Architecture Note: Supabase Integration
+
+KotaDB uses **Supabase for all persistent data storage**:
+- **API Keys**: Stored and managed in Supabase
+- **Documents**: All content stored in Supabase
+- **User Data**: Managed by Supabase Auth
+- **Usage Metrics**: Tracked in Supabase
+
+The Fly.io deployment is **stateless** and only processes requests. See `docs/SUPABASE_ARCHITECTURE.md` for detailed architecture.
+
 ### Using the Secrets Script
 
 ```bash
@@ -186,11 +196,16 @@ Configuration for staging environment:
 ### Manual Secret Management
 
 ```bash
-# Set secrets
+# Set Supabase connection (most important)
 flyctl secrets set \
-  DATABASE_URL="postgresql://..." \
-  API_KEY="..." \
-  JWT_SECRET="..." \
+  DATABASE_URL="postgresql://postgres.[PROJECT_REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres" \
+  --app kotadb-api
+
+# Set additional Supabase credentials
+flyctl secrets set \
+  SUPABASE_URL="https://[PROJECT_REF].supabase.co" \
+  SUPABASE_ANON_KEY="[YOUR_ANON_KEY]" \
+  SUPABASE_SERVICE_KEY="[YOUR_SERVICE_KEY]" \
   --app kotadb-api
 
 # List secrets (shows only names, not values)
@@ -204,9 +219,11 @@ flyctl secrets unset API_KEY --app kotadb-api
 
 | Secret | Description | Required | Example |
 |--------|-------------|----------|---------|
-| DATABASE_URL | PostgreSQL connection string | Yes | `postgresql://user:pass@host/db` |
-| API_KEY | Master API key for admin endpoints | Yes | Random 32+ char string |
-| JWT_SECRET | Secret for JWT token signing | Yes | Random 32+ char string |
+| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres` |
+| SUPABASE_URL | Supabase project URL | Yes | `https://[ref].supabase.co` |
+| SUPABASE_ANON_KEY | Public anonymous key | Yes | Your project's anon key |
+| SUPABASE_SERVICE_KEY | Service role key (admin) | Yes | Your project's service key |
+| JWT_SECRET | Secret for JWT token validation | No | Auto-handled by Supabase |
 | REDIS_URL | Redis connection for caching | No | `redis://host:6379` |
 | SENTRY_DSN | Error tracking with Sentry | No | Sentry project DSN |
 

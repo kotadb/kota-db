@@ -68,10 +68,8 @@ kill_timeout = "30s"
   cpus = 1
   memory_mb = 256
 
-# Persistent storage for data directory (smaller for staging)
-[mounts]
-  source = "kotadb_staging_data"
-  destination = "/data"
+# No persistent volumes needed - all data stored in Supabase
+# The /data directory is only for temporary file processing
 
 # Deploy configuration for staging
 [deploy]
