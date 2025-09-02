@@ -138,7 +138,7 @@ impl ApiKeyService {
     pub async fn init_schema(&self) -> Result<()> {
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS api_keys (
+            CREATE TABLE IF NOT EXISTS kotadb_kotadb_api_keys (
                 id BIGSERIAL PRIMARY KEY,
                 key_hash VARCHAR(64) NOT NULL UNIQUE,
                 user_email VARCHAR(255) NOT NULL,
@@ -156,16 +156,16 @@ impl ApiKeyService {
             );
             
             -- Create indexes for performance
-            CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
-            CREATE INDEX IF NOT EXISTS idx_api_keys_user_email ON api_keys(user_email);
-            CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
-            CREATE INDEX IF NOT EXISTS idx_api_keys_is_active ON api_keys(is_active);
-            CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_keys_key_hash ON kotadb_api_keys(key_hash);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_keys_user_email ON kotadb_api_keys(user_email);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_keys_user_id ON kotadb_api_keys(user_id);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_keys_is_active ON kotadb_api_keys(is_active);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_keys_expires_at ON kotadb_api_keys(expires_at);
             
             -- Table for tracking API key usage
-            CREATE TABLE IF NOT EXISTS api_key_usage (
+            CREATE TABLE IF NOT EXISTS kotadb_api_key_usage (
                 id BIGSERIAL PRIMARY KEY,
-                key_id BIGINT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+                key_id BIGINT NOT NULL REFERENCES kotadb_api_keys(id) ON DELETE CASCADE,
                 timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 endpoint VARCHAR(255) NOT NULL,
                 method VARCHAR(10) NOT NULL,
@@ -176,13 +176,13 @@ impl ApiKeyService {
             );
             
             -- Create indexes for analytics
-            CREATE INDEX IF NOT EXISTS idx_api_key_usage_key_id ON api_key_usage(key_id);
-            CREATE INDEX IF NOT EXISTS idx_api_key_usage_timestamp ON api_key_usage(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_api_key_usage_endpoint ON api_key_usage(endpoint);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_key_usage_key_id ON kotadb_api_key_usage(key_id);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_key_usage_timestamp ON kotadb_api_key_usage(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_kotadb_api_key_usage_endpoint ON kotadb_api_key_usage(endpoint);
             
             -- Table for rate limiting (using sliding window)
             CREATE TABLE IF NOT EXISTS api_key_rate_limits (
-                key_id BIGINT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+                key_id BIGINT NOT NULL REFERENCES kotadb_api_keys(id) ON DELETE CASCADE,
                 window_start TIMESTAMPTZ NOT NULL,
                 request_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (key_id, window_start)
@@ -246,7 +246,7 @@ impl ApiKeyService {
         // Insert into database
         let result = sqlx::query_as::<_, (i64, DateTime<Utc>)>(
             r#"
-            INSERT INTO api_keys (
+            INSERT INTO kotadb_api_keys (
                 key_hash, user_email, user_id, description,
                 rate_limit, monthly_quota, expires_at, allowed_ips
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -292,7 +292,7 @@ impl ApiKeyService {
         // Look up the key in database
         let key_data = sqlx::query_as::<_, ApiKey>(
             r#"
-            SELECT * FROM api_keys
+            SELECT * FROM kotadb_api_keys
             WHERE key_hash = $1 AND is_active = TRUE
             "#,
         )
@@ -371,7 +371,7 @@ impl ApiKeyService {
         }
 
         // Update last used timestamp
-        sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
+        sqlx::query("UPDATE kotadb_api_keys SET last_used_at = NOW() WHERE id = $1")
             .bind(key_data.id)
             .execute(&self.pool)
             .await
@@ -470,7 +470,7 @@ impl ApiKeyService {
         // Record in usage table
         sqlx::query(
             r#"
-            INSERT INTO api_key_usage (
+            INSERT INTO kotadb_api_key_usage (
                 key_id, endpoint, method, status_code,
                 response_time_ms, ip_address, user_agent
             ) VALUES ($1, $2, $3, $4, $5, $6::inet, $7)
@@ -490,7 +490,7 @@ impl ApiKeyService {
         // Update usage counters
         sqlx::query(
             r#"
-            UPDATE api_keys
+            UPDATE kotadb_api_keys
             SET monthly_usage = monthly_usage + 1,
                 total_usage = total_usage + 1
             WHERE id = $1
@@ -507,10 +507,11 @@ impl ApiKeyService {
     /// Reset monthly usage counters (should be called by a cron job)
     #[instrument(skip(self))]
     pub async fn reset_monthly_usage(&self) -> Result<u64> {
-        let result = sqlx::query("UPDATE api_keys SET monthly_usage = 0 WHERE monthly_usage > 0")
-            .execute(&self.pool)
-            .await
-            .context("Failed to reset monthly usage")?;
+        let result =
+            sqlx::query("UPDATE kotadb_api_keys SET monthly_usage = 0 WHERE monthly_usage > 0")
+                .execute(&self.pool)
+                .await
+                .context("Failed to reset monthly usage")?;
 
         let rows_affected = result.rows_affected();
         info!("Reset monthly usage for {} API keys", rows_affected);
@@ -538,7 +539,7 @@ impl ApiKeyService {
     /// Revoke an API key
     #[instrument(skip(self))]
     pub async fn revoke_api_key(&self, key_id: i64) -> Result<()> {
-        sqlx::query("UPDATE api_keys SET is_active = FALSE WHERE id = $1")
+        sqlx::query("UPDATE kotadb_api_keys SET is_active = FALSE WHERE id = $1")
             .bind(key_id)
             .execute(&self.pool)
             .await

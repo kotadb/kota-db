@@ -474,7 +474,8 @@ pub async fn create_saas_server(
 ) -> Result<Router> {
     // Initialize API key service
     let api_key_service = Arc::new(ApiKeyService::new(api_key_config).await?);
-    api_key_service.init_schema().await?;
+    // Skip schema init - tables already created in Supabase
+    // api_key_service.init_schema().await?;
 
     // Initialize the BinaryRelationshipEngine for codebase intelligence
     let config = RelationshipQueryConfig::default();
