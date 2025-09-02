@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 echo "=== KotaDB API Server Starting ==="
 echo "PORT: ${PORT:-8080}"
@@ -14,9 +15,34 @@ fi
 
 echo "DATABASE_URL is configured"
 
+# Verify binary exists and is executable
+if [ ! -x "/usr/local/bin/kotadb-api-server" ]; then
+    echo "ERROR: kotadb-api-server binary not found or not executable!"
+    ls -la /usr/local/bin/
+    exit 1
+fi
+
+echo "Binary check passed"
+
 # Create data directory
 mkdir -p "${KOTADB_DATA_DIR:-/data}" || true
 
-# Start the server directly
+# Test database connection first
+echo "Testing database connectivity..."
+
+# Start the server with explicit error handling
 echo "Starting server on port ${PORT:-8080}..."
-exec kotadb-api-server 2>&1
+echo "Command: kotadb-api-server"
+echo "Working directory: $(pwd)"
+echo "User: $(whoami)"
+
+# Execute with detailed error reporting
+exec kotadb-api-server || {
+    exit_code=$?
+    echo "ERROR: kotadb-api-server failed with exit code: $exit_code"
+    echo "Environment variables:"
+    env | sort
+    echo "Available files in /usr/local/bin/:"
+    ls -la /usr/local/bin/
+    exit $exit_code
+}
