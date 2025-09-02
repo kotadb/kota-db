@@ -52,41 +52,45 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    // Initialize logging first, always, to capture any startup errors
+    init_logging().expect("Failed to initialize logging");
 
-    // Initialize logging
-    if !args.quiet {
-        init_logging()?;
-    }
+    info!("🔧 Parsing command line arguments...");
+    let args = Args::parse();
 
     info!("🚀 Starting KotaDB SaaS API Server");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", args.data_dir.display());
     info!("Port: {}", args.port);
+    info!("Database URL configured: {}", !args.database_url.is_empty());
 
-    // Ensure data directory exists
-    std::fs::create_dir_all(&args.data_dir)?;
+    info!("📁 Creating data directory...");
+    std::fs::create_dir_all(&args.data_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to create data directory: {}", e))?;
 
-    // Create storage backend
+    info!("💾 Initializing storage backend...");
     let storage_path = args.data_dir.join("storage");
     let storage = create_file_storage(
         storage_path.to_str().unwrap(),
         Some(1000), // Cache capacity
     )
-    .await?;
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to create storage: {}", e))?;
     let storage = Arc::new(Mutex::new(storage));
 
-    // Configure API key service
+    info!("🔑 Configuring API key service...");
     let api_key_config = ApiKeyConfig {
-        database_url: args.database_url,
+        database_url: args.database_url.clone(),
         max_connections: args.max_connections,
         connect_timeout_seconds: args.connect_timeout,
         default_rate_limit: args.default_rate_limit,
         default_monthly_quota: args.default_monthly_quota,
     };
 
-    // Start the server
-    start_saas_server(storage, args.data_dir, api_key_config, args.port).await?;
+    info!("🚀 Starting server on port {}...", args.port);
+    start_saas_server(storage, args.data_dir, api_key_config, args.port)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to start server: {}", e))?;
 
     Ok(())
 }
