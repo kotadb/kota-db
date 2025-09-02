@@ -28,7 +28,7 @@ RUN cargo build --release && \
 
 # Copy actual source code
 COPY src ./src
-COPY build.rs ./
+# Note: build.rs not needed for this project
 
 # Build the actual application
 RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server
