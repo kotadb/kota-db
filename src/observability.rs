@@ -44,16 +44,18 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
         EnvFilter::new("warn")
     };
 
-    // Environment variable takes precedence for debugging flexibility
-    // This allows users to override verbosity for troubleshooting
-    let env_filter = if std::env::var("RUST_LOG").is_ok() {
-        // RUST_LOG overrides everything for maximum flexibility
-        EnvFilter::try_from_default_env().unwrap_or(filter_level)
-    } else if quiet {
-        // In quiet mode with no RUST_LOG, suppress all logs
+    // Quiet mode takes absolute precedence - it means "be quiet"
+    // RUST_LOG can still be used for debugging when NOT in quiet mode
+    let env_filter = if quiet {
+        // Quiet mode ALWAYS suppresses all logs, regardless of RUST_LOG
+        // This ensures LLM integration works correctly
         EnvFilter::new("off")
+    } else if std::env::var("RUST_LOG").is_ok() {
+        // RUST_LOG only applies when NOT in quiet mode
+        // This allows debugging while respecting the user's quiet request
+        EnvFilter::try_from_default_env().unwrap_or(filter_level)
     } else {
-        // Use flag-based filter if RUST_LOG is not set
+        // Use flag-based filter if RUST_LOG is not set and not quiet
         filter_level
     };
 
