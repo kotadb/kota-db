@@ -290,6 +290,29 @@ impl<'a> IndexingService<'a> {
                 // TODO: Get relationships from a future field or calculate separately
                 let relationships_found = 0;
 
+                // Populate trigram index for content search
+                // This ensures content search works after ingestion completes
+                if files_proc > 0 {
+                    formatted_output.push_str("🔍 Populating content search index...\n");
+                    match self.populate_trigram_index().await {
+                        Ok(indexed_count) => {
+                            if !options.quiet {
+                                formatted_output.push_str(&format!(
+                                    "✅ Content search ready: {} documents indexed\n",
+                                    indexed_count
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            let error = format!("Failed to populate content search index: {}", e);
+                            errors.push(error.clone());
+                            if !options.quiet {
+                                formatted_output.push_str(&format!("⚠️  {}\n", error));
+                            }
+                        }
+                    }
+                }
+
                 (files_proc, symbols_ext, relationships_found)
             }
             Err(e) => {
@@ -470,5 +493,51 @@ impl<'a> IndexingService<'a> {
             formatted_output,
             errors: vec!["Scope reindexing not implemented".to_string()],
         })
+    }
+
+    /// Populate the trigram index with content from all stored documents
+    ///
+    /// This method reads all documents from storage and indexes their content
+    /// in the trigram index to enable full-text search functionality.
+    /// Called automatically after repository ingestion to ensure content search works.
+    async fn populate_trigram_index(&self) -> Result<usize> {
+        // Get all documents from storage
+        let storage_arc = self.database.storage();
+        let storage = storage_arc.lock().await;
+        let all_docs = storage.list_all().await?;
+        drop(storage); // Release storage lock early
+
+        if all_docs.is_empty() {
+            return Ok(0);
+        }
+
+        // Get trigram index
+        let trigram_index_arc = self.database.trigram_index();
+        let mut trigram_index = trigram_index_arc.lock().await;
+
+        let mut indexed_count = 0;
+
+        // Process each document and index its content
+        for doc in all_docs {
+            // Index the document content in the trigram index
+            match trigram_index
+                .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                .await
+            {
+                Ok(()) => {
+                    indexed_count += 1;
+                }
+                Err(e) => {
+                    // Log the error but continue processing other documents
+                    tracing::warn!(
+                        "Failed to index content for document {}: {}",
+                        doc.path.as_str(),
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(indexed_count)
     }
 }
