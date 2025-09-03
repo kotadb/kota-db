@@ -7,6 +7,8 @@ use anyhow::Result;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
@@ -17,8 +19,10 @@ use crate::{
     relationship_query::{RelationshipQueryConfig, RelationshipQueryType},
 };
 
-// Re-use the DatabaseAccess trait from SearchService for consistency
-use super::DatabaseAccess;
+// Simple database access trait for AnalysisService - only needs storage
+pub trait AnalysisServiceDatabase: Send + Sync {
+    fn storage(&self) -> Arc<Mutex<dyn crate::contracts::Storage>>;
+}
 
 /// Configuration options for find-callers analysis
 #[derive(Debug, Clone, Default)]
@@ -80,7 +84,7 @@ pub struct OverviewResult {
 }
 
 /// Individual call site information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CallSite {
     pub caller: String,
     pub file_path: String,
@@ -89,7 +93,7 @@ pub struct CallSite {
 }
 
 /// Individual impact site information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ImpactSite {
     pub affected_symbol: String,
     pub file_path: String,
@@ -99,14 +103,14 @@ pub struct ImpactSite {
 
 /// Unified analysis service that handles relationship queries and codebase intelligence
 pub struct AnalysisService<'a> {
-    database: &'a dyn DatabaseAccess,
+    database: &'a dyn AnalysisServiceDatabase,
     db_path: PathBuf,
     relationship_engine: Option<BinaryRelationshipEngine>,
 }
 
 impl<'a> AnalysisService<'a> {
     /// Create a new AnalysisService instance
-    pub fn new(database: &'a dyn DatabaseAccess, db_path: PathBuf) -> Self {
+    pub fn new(database: &'a dyn AnalysisServiceDatabase, db_path: PathBuf) -> Self {
         Self {
             database,
             db_path,
@@ -205,7 +209,8 @@ impl<'a> AnalysisService<'a> {
         let mut overview_data = HashMap::new();
 
         // 1. Basic scale metrics from database
-        let storage = self.database.storage().lock().await;
+        let storage_arc = self.database.storage();
+        let storage = storage_arc.lock().await;
         let all_docs = storage.list_all().await?;
         let doc_count = all_docs.len();
         let total_size: usize = all_docs.iter().map(|d| d.size).sum();

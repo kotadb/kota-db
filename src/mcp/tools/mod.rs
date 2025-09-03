@@ -115,7 +115,8 @@ impl MCPToolRegistry {
                 || m.starts_with("kotadb://circular_dependencies")
                 || m.starts_with("kotadb://unused_symbols")
                 || m.starts_with("kotadb://hot_paths")
-                || m.starts_with("kotadb://relationship_query") =>
+                || m.starts_with("kotadb://relationship_query")
+                || m.starts_with("kotadb://codebase_overview") =>
             {
                 if let Some(tools) = &self.relationship_tools {
                     tools.handle_call(method, params).await

@@ -14,9 +14,9 @@ use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level,
     services::{
-        AnalysisService, CallersOptions, DatabaseAccess, ImpactOptions, ManagementService,
-        OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType, StatsOptions,
-        SymbolResult, SymbolSearchOptions,
+        AnalysisService, AnalysisServiceDatabase, CallersOptions, DatabaseAccess, ImpactOptions,
+        ManagementService, OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType,
+        StatsOptions, SymbolResult, SymbolSearchOptions,
     },
     start_server, validate_post_ingestion_search, with_trace_id, Document, DocumentBuilder, Index,
     QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath, ValidationStatus,
@@ -490,20 +490,27 @@ impl Database {
 
 // Implement DatabaseAccess trait for the Database struct
 impl DatabaseAccess for Database {
-    fn storage(&self) -> &Arc<Mutex<dyn Storage>> {
-        &self.storage
+    fn storage(&self) -> Arc<Mutex<dyn Storage>> {
+        self.storage.clone()
     }
 
-    fn primary_index(&self) -> &Arc<Mutex<dyn Index>> {
-        &self.primary_index
+    fn primary_index(&self) -> Arc<Mutex<dyn Index>> {
+        self.primary_index.clone()
     }
 
-    fn trigram_index(&self) -> &Arc<Mutex<dyn Index>> {
-        &self.trigram_index
+    fn trigram_index(&self) -> Arc<Mutex<dyn Index>> {
+        self.trigram_index.clone()
     }
 
-    fn path_cache(&self) -> &Arc<RwLock<HashMap<String, ValidatedDocumentId>>> {
-        &self.path_cache
+    fn path_cache(&self) -> Arc<RwLock<HashMap<String, ValidatedDocumentId>>> {
+        self.path_cache.clone()
+    }
+}
+
+// Implement the simpler AnalysisServiceDatabase trait for Database
+impl AnalysisServiceDatabase for Database {
+    fn storage(&self) -> Arc<Mutex<dyn Storage>> {
+        self.storage.clone()
     }
 }
 

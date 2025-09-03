@@ -9,8 +9,8 @@ pub mod management_service;
 pub mod search_service;
 
 pub use analysis_service::{
-    AnalysisService, CallSite, CallersOptions, CallersResult, ImpactOptions, ImpactResult,
-    ImpactSite, OverviewOptions, OverviewResult,
+    AnalysisService, AnalysisServiceDatabase, CallSite, CallersOptions, CallersResult,
+    ImpactOptions, ImpactResult, ImpactSite, OverviewOptions, OverviewResult,
 };
 pub use management_service::{
     BasicStats, BenchmarkOptions, BenchmarkResult, BenchmarkTypeResult, DependencyGraphStats,
