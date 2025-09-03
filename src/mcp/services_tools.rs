@@ -14,8 +14,7 @@ use crate::{
     database::Database,
     mcp::types::ToolDefinition,
     services::{
-        AnalysisService, BenchmarkOptions, BenchmarkService, CallersOptions, ImpactOptions,
-        IndexCodebaseOptions, IndexingService, OverviewOptions, SearchOptions, SearchService,
+        BenchmarkOptions, BenchmarkService, IndexCodebaseOptions, IndexingService, SearchService,
         StatsOptions, StatsService, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
 };
@@ -471,32 +470,23 @@ impl ServicesMCPTools {
             };
             indexing_service.index_codebase(options).await?
         } else {
-            // Try incremental update if available, otherwise fall back to full index
-            match indexing_service
-                .incremental_update(&PathBuf::from(repo_path))
-                .await
-            {
-                Ok(update_result) => serde_json::to_value(update_result)?,
-                Err(_) => {
-                    // Fall back to full indexing if incremental update not available
-                    let options = IndexCodebaseOptions {
-                        repo_path: PathBuf::from(repo_path),
-                        prefix: "repos".to_string(),
-                        include_files: true,
-                        include_commits: true,
-                        max_file_size_mb: 10,
-                        max_memory_mb: None,
-                        max_parallel_files: None,
-                        enable_chunking: true,
-                        extract_symbols,
-                        no_symbols: false,
-                        quiet: true,
-                    };
-                    serde_json::to_value(indexing_service.index_codebase(options).await?)?
-                }
-            }
+            // For now, always do full re-indexing since incremental update is not fully implemented
+            let options = IndexCodebaseOptions {
+                repo_path: PathBuf::from(repo_path),
+                prefix: "repos".to_string(),
+                include_files: true,
+                include_commits: true,
+                max_file_size_mb: 10,
+                max_memory_mb: None,
+                max_parallel_files: None,
+                enable_chunking: true,
+                extract_symbols,
+                no_symbols: false,
+                quiet: true,
+            };
+            indexing_service.index_codebase(options).await?
         };
 
-        Ok(result)
+        Ok(serde_json::to_value(result)?)
     }
 }

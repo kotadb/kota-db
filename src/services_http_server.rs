@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query as AxumQuery, State},
+    extract::{Query as AxumQuery, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -24,10 +24,9 @@ use tracing::info;
 use crate::{
     database::Database,
     services::{
-        AnalysisService, AnalysisServiceDatabase, BenchmarkOptions, BenchmarkService,
-        CallersOptions, HealthCheckOptions, ImpactOptions, IndexCodebaseOptions, IndexingService,
-        OverviewOptions, SearchOptions, SearchService, StatsOptions, StatsService,
-        SymbolSearchOptions, ValidationOptions, ValidationService,
+        AnalysisService, BenchmarkOptions, BenchmarkService, CallersOptions, ImpactOptions,
+        IndexCodebaseOptions, IndexingService, OverviewOptions, SearchOptions, SearchService,
+        StatsOptions, StatsService, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
 };
 use crate::{observability::with_trace_id, Index, Storage};
