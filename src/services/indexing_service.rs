@@ -252,6 +252,26 @@ impl<'a> IndexingService<'a> {
         let storage_arc = self.database.storage();
         let mut storage = storage_arc.lock().await;
 
+        // Choose the appropriate ingestion method based on symbol extraction setting
+        #[cfg(feature = "tree-sitter-parsing")]
+        let result = if should_extract_symbols {
+            // Use binary symbol storage for high performance
+            let symbol_db_path = self.db_path.join("symbols.kota");
+            ingester
+                .ingest_with_binary_symbols(
+                    &options.repo_path,
+                    &mut *storage,
+                    &symbol_db_path,
+                    Some(progress_callback),
+                )
+                .await
+        } else {
+            ingester
+                .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
+                .await
+        };
+
+        #[cfg(not(feature = "tree-sitter-parsing"))]
         let result = ingester
             .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
             .await;
