@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -14,7 +14,7 @@ use crate::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage,
     services::{AnalysisServiceDatabase, DatabaseAccess},
-    Document, Index, Storage, ValidatedDocumentId,
+    Index, Storage, ValidatedDocumentId,
 };
 
 /// Main database abstraction that coordinates storage and indices
@@ -35,7 +35,7 @@ impl Database {
     /// # Arguments
     /// * `db_path` - Root path for database storage
     /// * `use_binary_index` - Whether to use binary or text-based trigram index
-    pub async fn new(db_path: &PathBuf, use_binary_index: bool) -> Result<Self> {
+    pub async fn new(db_path: &Path, use_binary_index: bool) -> Result<Self> {
         let storage_path = db_path.join("storage");
         let primary_index_path = db_path.join("primary_index");
         let trigram_index_path = db_path.join("trigram_index");

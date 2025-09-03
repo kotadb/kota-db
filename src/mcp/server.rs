@@ -120,10 +120,8 @@ impl MCPServer {
             tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
-        if config.mcp.enable_search_tools {
-            tracing::warn!("Search tools disabled - semantic search requires embeddings which have been removed from KotaDB MCP server");
-            tracing::info!("Use text search through other KotaDB interfaces (CLI: 'search-code', HTTP API: '/api/search-code')");
-        }
+        // Search tools removed - semantic search eliminated from MCP server
+        // Use trigram search via other KotaDB interfaces (CLI, HTTP API)
 
         #[cfg(feature = "tree-sitter-parsing")]
         if config.mcp.enable_relationship_tools {

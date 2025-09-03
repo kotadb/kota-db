@@ -718,7 +718,7 @@ async fn codebase_overview(
             path_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
+        let analysis_service = AnalysisService::new(&database, state.db_path.clone());
 
         let options = OverviewOptions {
             format: request.format.unwrap_or_else(|| "json".to_string()),
