@@ -164,7 +164,7 @@ impl Default for SearchThresholds {
 /// Symbol storage and extraction pipeline
 ///
 /// NOTE: For new implementations, prefer using BinarySymbolWriter/Reader
-/// which provides 10x better performance than this JSON-based storage.
+/// which provides superior performance compared to this JSON-based storage.
 /// This class is maintained for backwards compatibility with existing tests.
 ///
 /// See: binary_symbols.rs for the recommended binary format implementation.
@@ -1014,9 +1014,9 @@ impl SymbolStorage {
 
     /// Serialize a symbol entry to a document
     ///
-    /// DEPRECATED: Use binary symbol format instead (10x faster).
+    /// DEPRECATED: Use binary symbol format instead.
     /// See BinarySymbolWriter for the recommended approach.
-    #[deprecated(note = "Use BinarySymbolWriter for 10x better performance")]
+    #[deprecated(note = "Use BinarySymbolWriter for better performance")]
     fn serialize_symbol(&self, entry: &SymbolEntry) -> Result<Document> {
         let json = serde_json::to_string_pretty(&entry)?;
 
@@ -1066,9 +1066,9 @@ impl SymbolStorage {
 
     /// Deserialize a document to a symbol entry
     ///
-    /// DEPRECATED: Use binary symbol format instead (10x faster).
+    /// DEPRECATED: Use binary symbol format instead.
     /// See BinarySymbolReader for the recommended approach.
-    #[deprecated(note = "Use BinarySymbolReader for 10x better performance")]
+    #[deprecated(note = "Use BinarySymbolReader for better performance")]
     fn deserialize_symbol(&self, doc: &Document) -> Result<SymbolEntry> {
         let content = String::from_utf8(doc.content.clone())?;
 

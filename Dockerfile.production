@@ -1,54 +1,36 @@
 # Production Dockerfile for KotaDB SaaS API
-# Multi-stage build for optimized image size and security
+# Single-stage build for guaranteed compatibility and simplified maintenance
+# Optimized for reliability over build speed
 
-# Build stage - using latest Rust for edition2024 support with Debian bookworm for GLIBC compatibility
-FROM rust:latest AS builder
+# Build and runtime stage - using latest Rust with GLIBC compatibility
+FROM rust:latest
 
-# Install build dependencies including C++ compiler for esaxx-rs
+# Install build dependencies including C++ compiler for native dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     git \
     build-essential \
+    clang \
+    lld \
+    ca-certificates \
+    curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY Cargo.toml Cargo.lock ./
+# Copy all source files (single-stage eliminates caching complexity)
+COPY . .
 
-# Copy benches for dependency resolution
-COPY benches ./benches
-
-# Create dummy source files to build dependencies
-RUN mkdir -p src/bin && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "fn main() {}" > src/lib.rs && \
-    echo "fn main() {}" > src/bin/kotadb-api-server.rs
-
-# Build dependencies only (this will fail but cache deps)
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server || true && \
-    rm -rf src
-
-# Copy actual source code
-COPY src ./src
-# Note: build.rs not needed for this project
-
-# Build the actual application
-RUN cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server
-
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    git \
-    curl \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+# Build the application with all features
+RUN echo "Building kotadb-api-server..." && \
+    cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server && \
+    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')" && \
+    test -f target/release/kotadb-api-server || (echo "ERROR: Binary not built!" && exit 1) && \
+    echo "Binary dependencies:" && \
+    ldd target/release/kotadb-api-server | head -10
 
 # Create non-root user for security
 RUN useradd -m -u 1001 -s /bin/bash kotadb
@@ -56,29 +38,35 @@ RUN useradd -m -u 1001 -s /bin/bash kotadb
 # Create data directory
 RUN mkdir -p /data && chown kotadb:kotadb /data
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/kotadb-api-server /usr/local/bin/kotadb-api-server
+# Copy binary to final location
+RUN cp target/release/kotadb-api-server /usr/local/bin/kotadb-api-server && \
+    chmod +x /usr/local/bin/kotadb-api-server
 
-# Copy entrypoint script (must be done as root before USER change)
-COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Clean up build artifacts to reduce image size
+RUN cargo clean && \
+    rm -rf /usr/local/cargo/registry && \
+    rm -rf target/release/build && \
+    rm -rf target/release/deps && \
+    apt-get autoremove -y build-essential pkg-config && \
+    apt-get clean
 
 # Switch to non-root user
 USER kotadb
 
-# Set working directory
+# Set working directory for runtime
 WORKDIR /data
-
-# Environment variables
-ENV RUST_LOG=info,kotadb=debug \
-    KOTADB_DATA_DIR=/data \
-    PORT=8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
+
+# Default environment variables
+ENV PORT=8080
+ENV KOTADB_DATA_DIR=/data
+ENV RUST_LOG=info
 
 # Expose port
 EXPOSE 8080
 
-# Use entrypoint script for better error handling
-CMD ["docker-entrypoint.sh"]
+# Run the application with required parameters using exec form with explicit env expansion
+ENTRYPOINT ["/bin/sh", "-c", "/usr/local/bin/kotadb-api-server --database-url \"${DATABASE_URL}\" --port \"${PORT}\" --data-dir \"${KOTADB_DATA_DIR}\""]

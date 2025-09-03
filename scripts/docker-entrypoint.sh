@@ -36,13 +36,6 @@ echo "Command: kotadb-api-server"
 echo "Working directory: $(pwd)"
 echo "User: $(whoami)"
 
-# Execute with detailed error reporting
-exec kotadb-api-server || {
-    exit_code=$?
-    echo "ERROR: kotadb-api-server failed with exit code: $exit_code"
-    echo "Environment variables:"
-    env | sort
-    echo "Available files in /usr/local/bin/:"
-    ls -la /usr/local/bin/
-    exit $exit_code
-}
+# Execute the actual server
+echo "Starting kotadb-api-server..."
+exec /usr/local/bin/kotadb-api-server 2>&1

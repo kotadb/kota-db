@@ -5,10 +5,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use kotadb::{
-    api_keys::ApiKeyConfig, create_file_storage, http_server::start_saas_server,
-    observability::init_logging,
-};
+use kotadb::{create_file_storage, start_saas_server, ApiKeyConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -52,11 +49,40 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging first, always, to capture any startup errors
-    init_logging().expect("Failed to initialize logging");
+    // Initialize logging first with proper RUST_LOG environment variable support
+    // For the API server, we always want to respect RUST_LOG environment variable
+    if let Err(e) = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init()
+    {
+        // Logging might already be initialized, that's ok
+        eprintln!("Note: Logging initialization returned: {:?}", e);
+    }
 
     info!("🔧 Parsing command line arguments...");
-    let args = Args::parse();
+
+    // Check environment variables before parsing
+    info!(
+        "DATABASE_URL env var present: {}",
+        std::env::var("DATABASE_URL").is_ok()
+    );
+    info!("PORT env var: {:?}", std::env::var("PORT"));
+    info!(
+        "KOTADB_DATA_DIR env var: {:?}",
+        std::env::var("KOTADB_DATA_DIR")
+    );
+
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("Failed to parse arguments: {}", e);
+            info!("Argument parsing error: {}", e);
+            return Err(anyhow::anyhow!("Failed to parse arguments: {}", e));
+        }
+    };
 
     info!("🚀 Starting KotaDB SaaS API Server");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
@@ -87,10 +113,33 @@ async fn main() -> Result<()> {
         default_monthly_quota: args.default_monthly_quota,
     };
 
-    info!("🚀 Starting server on port {}...", args.port);
-    start_saas_server(storage, args.data_dir, api_key_config, args.port)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to start server: {}", e))?;
+    info!("🔍 Testing database connectivity...");
+    info!("Database URL configured: {}", !args.database_url.is_empty());
+    info!("Max connections: {}", args.max_connections);
+    info!("Connect timeout: {}s", args.connect_timeout);
 
-    Ok(())
+    // Test database connection before starting server
+    match kotadb::test_database_connection(&api_key_config).await {
+        Ok(_) => {
+            info!("✅ Database connection successful");
+        }
+        Err(e) => {
+            eprintln!("❌ Database connection failed: {}", e);
+            info!("❌ Database connection failed: {}", e);
+            return Err(anyhow::anyhow!("Database connection failed: {}", e));
+        }
+    }
+
+    info!("🚀 Starting server on port {}...", args.port);
+    match start_saas_server(storage, args.data_dir, api_key_config, args.port).await {
+        Ok(_) => {
+            info!("✅ Server started successfully");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to start server: {}", e);
+            info!("❌ Failed to start server: {}", e);
+            Err(anyhow::anyhow!("Failed to start server: {}", e))
+        }
+    }
 }

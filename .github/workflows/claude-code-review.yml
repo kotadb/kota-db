@@ -42,14 +42,21 @@ jobs:
           
           # Direct prompt for automated review (no @claude mention needed)
           direct_prompt: |
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            Please read AGENT.md and CLAUDE.md first to understand KotaDB's development standards, then review this pull request.
             
-            Be constructive and helpful in your feedback.
+            Focus your review on:
+            - Adherence to KotaDB's 6-stage risk reduction methodology
+            - Compliance with anti-mock testing philosophy
+            - Proper use of component library patterns (factory functions, wrappers, validated types)
+            - Code quality and Rust best practices
+            - Potential bugs or issues
+            - Performance considerations (target: <10ms query latency)
+            - Security concerns
+            - Test coverage and proper testing patterns
+            - Dogfooding validation requirements (did they test on KotaDB itself?)
+            - GitHub communication standards (proper issue/PR documentation)
+            
+            Be constructive and educational in your feedback, referencing specific AGENT.md/CLAUDE.md guidelines when relevant.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           # use_sticky_comment: true

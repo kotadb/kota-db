@@ -1,5 +1,5 @@
 // Binary Trigram Index - High-Performance Full-Text Search Engine
-// Uses bincode for 10x faster serialization and memory-mapped files for zero-copy access
+// Uses bincode for efficient serialization and memory-mapped files for zero-copy access
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;

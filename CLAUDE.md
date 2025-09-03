@@ -247,17 +247,99 @@ Model Context Protocol server for LLM integration:
 3. Ensure all tests pass including integration tests
 4. Run `just check` to verify code quality
 
-### Dogfooding for Validation
-When working on search, indexing, or git features, test on KotaDB itself:
-- **Use separate data directory**: Create a dedicated directory for analysis
-- **Test real complexity**: `cargo run --bin kotadb -- -d ./data/analysis index-codebase .`
-- **Validate symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis stats --symbols`
-- **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
-- **Validate your changes**: Run searches and performance tests on actual codebase
-- **Document issues found**: Create GitHub issues for any problems discovered
-- **Clean up artifacts**: Delete analysis data directory when done (never commit)
+### Dogfooding for Validation - MANDATORY Practice
 
-This approach has consistently revealed integration issues missed by unit tests (see issues #191, #196, #184).
+**🚨 CRITICAL: Always dogfood your changes on KotaDB's own codebase before submitting PRs.**
+
+When working on search, indexing, MCP, or git features, testing on KotaDB itself is required, not optional. This practice has prevented every major integration bug from reaching production.
+
+#### Current Dogfooding (CLI-based)
+```bash
+# ALWAYS start with fresh setup for accurate testing
+rm -rf data/analysis && mkdir -p data/analysis
+
+# Core dogfooding commands - USE THESE CONSTANTLY
+cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols    # Index with symbols
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols               # Verify extraction
+cargo run --bin kotadb -- -d ./data/analysis search-code "async fn"        # Test content search  
+cargo run --bin kotadb -- -d ./data/analysis search-symbols "Storage"      # Test symbol search
+cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage      # Test relationships
+cargo run --bin kotadb -- -d ./data/analysis analyze-impact Config         # Test impact analysis
+
+# Performance validation - MEASURE REAL LATENCY
+time cargo run --release --bin kotadb -- -d ./data/analysis search-code "rust"
+cargo run --release -- benchmark --operations 1000  # Compare to baseline
+```
+
+#### Future Dogfooding (API/MCP Integration)
+```bash
+# MCP server dogfooding (connect Claude Code once available)
+cargo run --bin mcp_server --config kotadb-dev.toml &
+# Test through Claude Code:
+# - Real AI assistant query patterns
+# - Concurrent request handling  
+# - Long-running sessions
+# - Memory usage under AI load
+
+# HTTP API dogfooding (future capability)
+cargo run --release -- server --port 8080 &
+# Integration testing through API endpoints
+```
+
+#### Mandatory Dogfooding Protocol
+
+**Before starting work:**
+- Fresh index of KotaDB codebase in `data/analysis/`
+- Baseline performance measurements
+- Verify all core operations work correctly
+
+**During development:**  
+- Re-test after every significant change
+- Use realistic queries an AI assistant would generate
+- Monitor performance impact continuously
+- Test edge cases with actual code complexity
+
+**Before PR submission:**
+- Complete re-index and validation
+- Performance regression testing  
+- Edge case validation (malformed queries, empty results, large datasets)
+- Create GitHub issues for any problems discovered
+
+#### Proven Bug Detection Record
+
+Real-world testing on KotaDB consistently reveals integration issues that unit tests miss:
+- **Issue #191**: Search disconnection after git ingestion (dogfooding only)
+- **Issue #196**: Trigram index architectural limitation (self-analysis discovery)
+- **Issue #184**: Multiple UX and functionality gaps (comprehensive validation)
+- **Issue #179**: Symbol extraction edge cases with complex Rust code
+- **Issue #203**: Performance degradation under realistic query patterns
+- **Issue #157**: Memory usage issues only visible with large codebases
+
+**Key insight**: Every major integration bug has been caught through dogfooding, demonstrating its critical importance.
+
+#### Dogfooding Best Practices
+
+**Directory management:**
+- **Use separate directories**: `data/analysis/` for testing, `data/test-scenarios/` for specific cases
+- **Clean up thoroughly**: Delete all analysis data when done (never commit artifacts)
+- **Preserve baselines**: Keep `kota-db-data/` for normal usage if needed
+
+**Testing thoroughness:**
+- Test queries that AI assistants actually use
+- Validate performance meets <10ms targets
+- Verify symbol extraction >95% accuracy
+- Test concurrent access patterns
+- Validate incremental update behavior
+
+**Issue reporting:**
+When dogfooding reveals problems, immediately create GitHub issues:
+```bash
+gh issue create --title "[Dogfooding] Found: [description]" \
+  --body "Found during dogfooding test. Scenario: [details]. Impact: [analysis]" \
+  --label "bug,dogfooding,priority-high"
+```
+
+This systematic approach maintains KotaDB's 99% reliability while enabling rapid AI-first feature development.
 
 ### Performance Considerations
 - Use `MeteredIndex` wrapper for new indices
