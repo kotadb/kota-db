@@ -120,44 +120,8 @@ impl MCPServer {
             tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
-        if config.mcp.enable_search_tools {
-            use crate::mcp::tools::search_tools::SearchTools;
-            use crate::{embeddings::EmbeddingConfig, semantic_search::SemanticSearchEngine};
-            use std::path::Path;
-
-            // Create semantic search engine with trigram support for hybrid search
-            let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
-            std::fs::create_dir_all(&vector_index_path)?;
-            let embedding_config = EmbeddingConfig::default();
-
-            // SemanticSearchEngine requires Box<dyn Trait> ownership model
-            // This necessitates creating separate storage and trigram instances
-            // TODO: Future optimization could refactor SemanticSearchEngine to use Arc<Mutex<dyn Trait>>
-            let semantic_storage = create_mcp_storage(
-                &config.database.data_dir,
-                Some(config.database.max_cache_size),
-            )
-            .await?;
-
-            let trigram_index_for_semantic =
-                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-
-            let semantic_engine = SemanticSearchEngine::new_with_trigram(
-                Box::new(semantic_storage),
-                vector_index_path.to_str().unwrap(),
-                embedding_config,
-                Box::new(trigram_index_for_semantic),
-            )
-            .await?;
-            let semantic_engine = Arc::new(Mutex::new(semantic_engine));
-
-            let search_tools = Arc::new(SearchTools::new(
-                trigram_index.clone(),
-                semantic_engine,
-                storage.clone(),
-            ));
-            tool_registry = tool_registry.with_search_tools(search_tools);
-        }
+        // Search tools removed - semantic search eliminated from MCP server
+        // Use trigram search via other KotaDB interfaces (CLI, HTTP API)
 
         #[cfg(feature = "tree-sitter-parsing")]
         if config.mcp.enable_relationship_tools {

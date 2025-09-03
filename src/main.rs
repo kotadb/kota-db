@@ -12,15 +12,15 @@ macro_rules! qprintln {
 }
 use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
-    create_wrapped_storage, init_logging_with_level,
+    init_logging_with_level,
     services::{
         AnalysisService, AnalysisServiceDatabase, BenchmarkOptions, BenchmarkService,
         CallersOptions, DatabaseAccess, ImpactOptions, IndexCodebaseOptions, IndexingService,
         OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType, StatsOptions,
         StatsService, SymbolResult, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
-    start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage,
-    ValidatedDocumentId, ValidatedPath,
+    with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage, ValidatedDocumentId,
+    ValidatedPath,
 };
 
 use std::collections::HashMap;
@@ -1568,7 +1568,6 @@ async fn main() -> Result<()> {
             Commands::Serve { port } => {
                 // Use the new clean services HTTP server for complete interface parity
                 use kotadb::services_http_server::start_services_server;
-                
                 println!("🚀 Starting KotaDB Services HTTP Server on port {port}");
                 println!("🎯 Clean services-only architecture - complete interface parity");
                 println!("📄 Services API endpoints:");

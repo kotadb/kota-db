@@ -9,7 +9,6 @@ pub struct MCPConfig {
     pub logging: LoggingConfig,
     pub performance: PerformanceConfig,
     pub security: SecurityConfig,
-    pub embeddings: EmbeddingsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,14 +61,6 @@ pub struct SecurityConfig {
     pub enable_request_validation: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct EmbeddingsConfig {
-    pub provider: String,
-    pub model: String,
-    pub dimension: usize,
-    pub batch_size: usize,
-}
-
 impl Default for MCPConfig {
     fn default() -> Self {
         Self {
@@ -109,12 +100,6 @@ impl Default for MCPConfig {
                 max_request_size: "10MB".to_string(),
                 rate_limit_requests_per_minute: 1000,
                 enable_request_validation: true,
-            },
-            embeddings: EmbeddingsConfig {
-                provider: "local".to_string(),
-                model: "all-MiniLM-L6-v2".to_string(),
-                dimension: 384,
-                batch_size: 32,
             },
         }
     }

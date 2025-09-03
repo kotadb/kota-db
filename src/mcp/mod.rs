@@ -5,8 +5,8 @@
 pub mod config;
 pub mod resources;
 pub mod server;
-pub mod tools;
 pub mod services_tools;
+pub mod tools;
 pub mod types;
 
 pub use config::MCPConfig;

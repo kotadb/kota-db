@@ -619,6 +619,7 @@ async fn health_check() -> Json<HealthResponse> {
 }
 
 /// Create a new document (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
 async fn create_document_deprecated(
     state: State<AppState>,
     request: Json<CreateDocumentRequest>,
@@ -682,6 +683,7 @@ async fn create_document(
 }
 
 /// Get document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
 async fn get_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
     let mut headers = HeaderMap::new();
     codebase_intelligence_api::add_deprecation_headers(&mut headers);
@@ -753,6 +755,7 @@ async fn get_document(
 }
 
 /// Update document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
 async fn update_document_deprecated(
     state: State<AppState>,
     id: Path<String>,
@@ -885,6 +888,7 @@ async fn update_document(
 }
 
 /// Delete document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
 async fn delete_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
     let mut headers = HeaderMap::new();
     codebase_intelligence_api::add_deprecation_headers(&mut headers);
@@ -962,6 +966,7 @@ async fn delete_document(
 }
 
 /// Search documents (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
 async fn search_documents_deprecated(
     state: State<AppState>,
     params: AxumQuery<SearchParams>,
