@@ -9,7 +9,6 @@ pub struct MCPConfig {
     pub logging: LoggingConfig,
     pub performance: PerformanceConfig,
     pub security: SecurityConfig,
-    pub embeddings: EmbeddingsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,14 +61,6 @@ pub struct SecurityConfig {
     pub enable_request_validation: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct EmbeddingsConfig {
-    pub provider: String,
-    pub model: String,
-    pub dimension: usize,
-    pub batch_size: usize,
-}
-
 impl Default for MCPConfig {
     fn default() -> Self {
         Self {
@@ -110,12 +101,6 @@ impl Default for MCPConfig {
                 rate_limit_requests_per_minute: 1000,
                 enable_request_validation: true,
             },
-            embeddings: EmbeddingsConfig {
-                provider: "local".to_string(),
-                model: "all-MiniLM-L6-v2".to_string(),
-                dimension: 384,
-                batch_size: 32,
-            },
         }
     }
 }
@@ -144,6 +129,118 @@ impl MCPConfig {
         }
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openai_embedding_config_conversion() {
+        // Set up environment for test
+        std::env::set_var("OPENAI_API_KEY", "test-key-123");
+
+        let mcp_config = EmbeddingsConfig {
+            provider: "openai".to_string(),
+            model: "text-embedding-3-small".to_string(),
+            dimension: 1536,
+            batch_size: 100,
+        };
+
+        let embedding_config = mcp_config.to_embedding_config().unwrap();
+
+        assert_eq!(embedding_config.provider, EmbeddingProviderType::OpenAI);
+        assert_eq!(embedding_config.model_name, "text-embedding-3-small");
+        assert_eq!(embedding_config.dimension, 1536);
+        assert_eq!(embedding_config.max_batch_size, 100);
+
+        match embedding_config.provider_config {
+            ProviderConfig::OpenAI {
+                api_key,
+                api_base,
+                organization,
+            } => {
+                assert_eq!(api_key, "test-key-123");
+                assert_eq!(api_base, None);
+                assert_eq!(organization, None);
+            }
+            _ => panic!("Expected OpenAI provider config"),
+        }
+
+        // Clean up
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_local_embedding_config_conversion() {
+        let mcp_config = EmbeddingsConfig {
+            provider: "local".to_string(),
+            model: "all-MiniLM-L6-v2".to_string(),
+            dimension: 384,
+            batch_size: 32,
+        };
+
+        let embedding_config = mcp_config.to_embedding_config().unwrap();
+
+        assert_eq!(embedding_config.provider, EmbeddingProviderType::Local);
+        assert_eq!(embedding_config.model_name, "all-MiniLM-L6-v2");
+        assert_eq!(embedding_config.dimension, 384);
+        assert_eq!(embedding_config.max_batch_size, 32);
+
+        match embedding_config.provider_config {
+            ProviderConfig::Local {
+                model_path,
+                tokenizer_path,
+            } => {
+                assert_eq!(
+                    model_path.to_string_lossy(),
+                    "./models/all-MiniLM-L6-v2.onnx"
+                );
+                assert_eq!(
+                    tokenizer_path,
+                    Some(std::path::PathBuf::from("./models/tokenizer.json"))
+                );
+            }
+            _ => panic!("Expected Local provider config"),
+        }
+    }
+
+    #[test]
+    fn test_openai_missing_api_key() {
+        // Ensure no API key is set
+        std::env::remove_var("OPENAI_API_KEY");
+
+        let mcp_config = EmbeddingsConfig {
+            provider: "openai".to_string(),
+            model: "text-embedding-3-small".to_string(),
+            dimension: 1536,
+            batch_size: 100,
+        };
+
+        let result = mcp_config.to_embedding_config();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("OPENAI_API_KEY environment variable not found"));
+    }
+
+    #[test]
+    fn test_unsupported_provider() {
+        let mcp_config = EmbeddingsConfig {
+            provider: "unsupported".to_string(),
+            model: "some-model".to_string(),
+            dimension: 1536,
+            batch_size: 100,
+        };
+
+        let result = mcp_config.to_embedding_config();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported embedding provider: 'unsupported'"));
     }
 }
 

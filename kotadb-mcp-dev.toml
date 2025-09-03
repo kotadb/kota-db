@@ -41,9 +41,3 @@ max_request_size = "10MB"
 rate_limit_requests_per_minute = 1000
 enable_request_validation = true
 
-[embeddings]
-# Embedding Configuration for Semantic Search
-provider = "local"
-model = "all-MiniLM-L6-v2"
-dimension = 384
-batch_size = 32

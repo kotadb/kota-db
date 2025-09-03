@@ -1,5 +1,5 @@
 // Services-Only HTTP Server - Clean Implementation for Interface Parity
-// 
+//
 // This module provides a clean HTTP API that exposes KotaDB functionality exclusively
 // through the services layer, ensuring complete interface parity with the CLI.
 //
@@ -14,8 +14,8 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
 use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -24,10 +24,10 @@ use tracing::info;
 use crate::{
     database::Database,
     services::{
-    AnalysisService, AnalysisServiceDatabase, BenchmarkOptions, BenchmarkService, CallersOptions,
-    HealthCheckOptions, ImpactOptions, IndexCodebaseOptions, IndexingService, OverviewOptions,
-    SearchOptions, SearchService, StatsOptions, StatsService, SymbolSearchOptions,
-    ValidationOptions, ValidationService,
+        AnalysisService, AnalysisServiceDatabase, BenchmarkOptions, BenchmarkService,
+        CallersOptions, HealthCheckOptions, ImpactOptions, IndexCodebaseOptions, IndexingService,
+        OverviewOptions, SearchOptions, SearchService, StatsOptions, StatsService,
+        SymbolSearchOptions, ValidationOptions, ValidationService,
     },
 };
 use crate::{observability::with_trace_id, Index, Storage};
@@ -145,29 +145,22 @@ pub fn create_services_server(
     Router::new()
         // Health endpoint
         .route("/health", get(health_check))
-        
         // Statistics Service endpoints
         .route("/api/stats", get(get_stats))
-        
         // Benchmark Service endpoints
         .route("/api/benchmark", post(run_benchmark))
-        
         // Validation Service endpoints
         .route("/api/validate", post(validate_database))
         .route("/api/health-check", get(health_check_detailed))
-        
         // Indexing Service endpoints
         .route("/api/index-codebase", post(index_codebase))
-        
         // Search Service endpoints
         .route("/api/search-code", get(search_code))
         .route("/api/search-symbols", get(search_symbols))
-        
         // Analysis Service endpoints
         .route("/api/find-callers", post(find_callers))
         .route("/api/analyze-impact", post(analyze_impact))
         .route("/api/codebase-overview", get(codebase_overview))
-        
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -237,7 +230,7 @@ async fn get_stats(
         };
 
         let stats_service = StatsService::new(&database, state.db_path.clone());
-        
+
         let options = StatsOptions {
             basic: params.basic.unwrap_or(false),
             symbols: params.symbols.unwrap_or(true),
@@ -291,7 +284,7 @@ async fn run_benchmark(
         };
 
         let benchmark_service = BenchmarkService::new(&database, state.db_path.clone());
-        
+
         let options = BenchmarkOptions {
             operations: request.operations.unwrap_or(1000),
             benchmark_type: request.benchmark_type.unwrap_or_else(|| "all".to_string()),
@@ -347,7 +340,7 @@ async fn validate_database(
         };
 
         let validation_service = ValidationService::new(&database, state.db_path.clone());
-        
+
         let options = ValidationOptions {
             check_integrity: request.check_integrity.unwrap_or(true),
             check_consistency: request.check_consistency.unwrap_or(true),
@@ -401,7 +394,7 @@ async fn health_check_detailed(
         };
 
         let validation_service = ValidationService::new(&database, state.db_path.clone());
-        
+
         let options = ValidationOptions {
             check_integrity: true,
             check_consistency: true,
@@ -456,7 +449,7 @@ async fn index_codebase(
         };
 
         let indexing_service = IndexingService::new(&database, state.db_path.clone());
-        
+
         let options = IndexCodebaseOptions {
             repo_path: PathBuf::from(request.repo_path),
             prefix: request.prefix.unwrap_or_else(|| "repos".to_string()),
@@ -516,7 +509,7 @@ async fn search_code(
         };
 
         let search_service = SearchService::new(&database, state.db_path.clone());
-        
+
         let options = SearchOptions {
             query: request.query,
             limit: request.limit.unwrap_or(10),
@@ -570,7 +563,7 @@ async fn search_symbols(
         };
 
         let search_service = SearchService::new(&database, state.db_path.clone());
-        
+
         let options = SymbolSearchOptions {
             pattern: request.pattern,
             limit: request.limit.unwrap_or(25),
@@ -623,7 +616,7 @@ async fn find_callers(
         };
 
         let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
-        
+
         let options = CallersOptions {
             target: request.target,
             limit: request.limit,
@@ -675,7 +668,7 @@ async fn analyze_impact(
         };
 
         let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
-        
+
         let options = ImpactOptions {
             target: request.target,
             limit: request.limit,
@@ -727,7 +720,7 @@ async fn codebase_overview(
         };
 
         let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
-        
+
         let options = OverviewOptions {
             format: request.format.unwrap_or_else(|| "json".to_string()),
             top_symbols_limit: request.top_symbols_limit.unwrap_or(10),

@@ -11,12 +11,14 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    create_file_storage, create_primary_index, create_trigram_index, create_binary_trigram_index,
-    create_wrapped_storage, services::{DatabaseAccess, AnalysisServiceDatabase}, Document, Index, Storage, ValidatedDocumentId,
+    create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
+    create_wrapped_storage,
+    services::{AnalysisServiceDatabase, DatabaseAccess},
+    Document, Index, Storage, ValidatedDocumentId,
 };
 
 /// Main database abstraction that coordinates storage and indices
-/// 
+///
 /// This struct serves as the primary interface to KotaDB's storage and indexing systems,
 /// implementing the DatabaseAccess trait required by all services.
 pub struct Database {
@@ -29,7 +31,7 @@ pub struct Database {
 
 impl Database {
     /// Create a new Database instance with storage and indices
-    /// 
+    ///
     /// # Arguments
     /// * `db_path` - Root path for database storage
     /// * `use_binary_index` - Whether to use binary or text-based trigram index
@@ -52,9 +54,9 @@ impl Database {
         .await?;
 
         let primary_index = create_primary_index(
-            primary_index_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid primary index path: {:?}", primary_index_path))?,
+            primary_index_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Invalid primary index path: {:?}", primary_index_path)
+            })?,
             Some(1000), // Cache size
         )
         .await?;
@@ -63,9 +65,9 @@ impl Database {
         let trigram_index_arc: Arc<Mutex<dyn Index>> = if use_binary_index {
             Arc::new(Mutex::new(
                 create_binary_trigram_index(
-                    trigram_index_path
-                        .to_str()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path))?,
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
                     Some(1000), // Cache size
                 )
                 .await?,
@@ -73,9 +75,9 @@ impl Database {
         } else {
             Arc::new(Mutex::new(
                 create_trigram_index(
-                    trigram_index_path
-                        .to_str()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path))?,
+                    trigram_index_path.to_str().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid trigram index path: {:?}", trigram_index_path)
+                    })?,
                     Some(1000), // Cache size
                 )
                 .await?,

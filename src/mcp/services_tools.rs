@@ -1,5 +1,5 @@
 // Services-Only MCP Tools - Clean Implementation for Interface Parity
-// 
+//
 // This module provides clean MCP tools that expose KotaDB functionality exclusively
 // through the services layer, ensuring complete interface parity with CLI and HTTP API.
 //
@@ -36,7 +36,7 @@ impl ServicesMCPTools {
     pub fn get_tool_definitions(&self) -> Vec<ToolDefinition> {
         vec![
             self.define_database_stats_tool(),
-            self.define_benchmark_performance_tool(), 
+            self.define_benchmark_performance_tool(),
             self.define_validate_database_tool(),
             self.define_health_check_tool(),
             self.define_index_codebase_tool(),
@@ -46,11 +46,7 @@ impl ServicesMCPTools {
     }
 
     /// Handle MCP tool calls by routing to appropriate service
-    pub async fn handle_tool_call(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value> {
+    pub async fn handle_tool_call(&self, method: &str, params: Value) -> Result<Value> {
         tracing::debug!("Handling services MCP tool call: {}", method);
 
         match method {
@@ -96,9 +92,18 @@ impl ServicesMCPTools {
 
     /// Handle database stats tool call
     async fn handle_database_stats(&self, params: Value) -> Result<Value> {
-        let basic = params.get("basic").and_then(|v| v.as_bool()).unwrap_or(false);
-        let symbols = params.get("symbols").and_then(|v| v.as_bool()).unwrap_or(true);
-        let relationships = params.get("relationships").and_then(|v| v.as_bool()).unwrap_or(true);
+        let basic = params
+            .get("basic")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let symbols = params
+            .get("symbols")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let relationships = params
+            .get("relationships")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let stats_service = StatsService::new(&*self.database, self.db_path.clone());
         let options = StatsOptions {
@@ -142,8 +147,12 @@ impl ServicesMCPTools {
 
     /// Handle benchmark performance tool call
     async fn handle_benchmark_performance(&self, params: Value) -> Result<Value> {
-        let operations = params.get("operations").and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
-        let benchmark_type = params.get("benchmark_type")
+        let operations = params
+            .get("operations")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000) as usize;
+        let benchmark_type = params
+            .get("benchmark_type")
             .and_then(|v| v.as_str())
             .unwrap_or("all")
             .to_string();
@@ -194,9 +203,18 @@ impl ServicesMCPTools {
 
     /// Handle validate database tool call
     async fn handle_validate_database(&self, params: Value) -> Result<Value> {
-        let check_integrity = params.get("check_integrity").and_then(|v| v.as_bool()).unwrap_or(true);
-        let check_consistency = params.get("check_consistency").and_then(|v| v.as_bool()).unwrap_or(true);
-        let repair_issues = params.get("repair_issues").and_then(|v| v.as_bool()).unwrap_or(false);
+        let check_integrity = params
+            .get("check_integrity")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let check_consistency = params
+            .get("check_consistency")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let repair_issues = params
+            .get("repair_issues")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let validation_service = ValidationService::new(&*self.database, self.db_path.clone());
         let options = ValidationOptions {
@@ -233,7 +251,10 @@ impl ServicesMCPTools {
 
     /// Handle health check tool call
     async fn handle_health_check(&self, params: Value) -> Result<Value> {
-        let deep_scan = params.get("deep_scan").and_then(|v| v.as_bool()).unwrap_or(false);
+        let deep_scan = params
+            .get("deep_scan")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let validation_service = ValidationService::new(&*self.database, self.db_path.clone());
         let options = ValidationOptions {
@@ -272,7 +293,7 @@ impl ServicesMCPTools {
                         "default": true
                     },
                     "include_commits": {
-                        "type": "boolean", 
+                        "type": "boolean",
                         "description": "Include commit history",
                         "default": true
                     },
@@ -290,17 +311,25 @@ impl ServicesMCPTools {
 
     /// Handle index codebase tool call
     async fn handle_index_codebase(&self, params: Value) -> Result<Value> {
-        let repo_path = params.get("repo_path")
+        let repo_path = params
+            .get("repo_path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("repo_path is required"))?;
-        
-        let prefix = params.get("prefix")
+
+        let prefix = params
+            .get("prefix")
             .and_then(|v| v.as_str())
             .unwrap_or("repos")
             .to_string();
-            
-        let include_files = params.get("include_files").and_then(|v| v.as_bool()).unwrap_or(true);
-        let include_commits = params.get("include_commits").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let include_files = params
+            .get("include_files")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let include_commits = params
+            .get("include_commits")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let extract_symbols = params.get("extract_symbols").and_then(|v| v.as_bool());
 
         let indexing_service = IndexingService::new(&*self.database, self.db_path.clone());
@@ -326,7 +355,9 @@ impl ServicesMCPTools {
     fn define_search_symbols_tool(&self) -> ToolDefinition {
         ToolDefinition {
             name: "kotadb://search_symbols".to_string(),
-            description: "Search for code symbols (functions, classes, variables) by name or pattern".to_string(),
+            description:
+                "Search for code symbols (functions, classes, variables) by name or pattern"
+                    .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -355,13 +386,17 @@ impl ServicesMCPTools {
 
     /// Handle search symbols tool call
     async fn handle_search_symbols(&self, params: Value) -> Result<Value> {
-        let pattern = params.get("pattern")
+        let pattern = params
+            .get("pattern")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("pattern is required"))?
             .to_string();
-            
+
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(25) as usize;
-        let symbol_type = params.get("symbol_type").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let symbol_type = params
+            .get("symbol_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let search_service = SearchService::new(&*self.database, self.db_path.clone());
         let options = SymbolSearchOptions {
@@ -406,15 +441,19 @@ impl ServicesMCPTools {
 
     /// Handle incremental update tool call
     async fn handle_incremental_update(&self, params: Value) -> Result<Value> {
-        let repo_path = params.get("repo_path")
+        let repo_path = params
+            .get("repo_path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("repo_path is required"))?;
-            
-        let force_full_reindex = params.get("force_full_reindex").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let force_full_reindex = params
+            .get("force_full_reindex")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let extract_symbols = params.get("extract_symbols").and_then(|v| v.as_bool());
 
         let indexing_service = IndexingService::new(&*self.database, self.db_path.clone());
-        
+
         // Use either incremental update or full reindex based on parameters
         let result = if force_full_reindex {
             let options = IndexCodebaseOptions {
@@ -433,7 +472,10 @@ impl ServicesMCPTools {
             indexing_service.index_codebase(options).await?
         } else {
             // Try incremental update if available, otherwise fall back to full index
-            match indexing_service.incremental_update(&PathBuf::from(repo_path)).await {
+            match indexing_service
+                .incremental_update(&PathBuf::from(repo_path))
+                .await
+            {
                 Ok(update_result) => serde_json::to_value(update_result)?,
                 Err(_) => {
                     // Fall back to full indexing if incremental update not available

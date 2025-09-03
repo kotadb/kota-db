@@ -1568,7 +1568,6 @@ async fn main() -> Result<()> {
             Commands::Serve { port } => {
                 // Use the new clean services HTTP server for complete interface parity
                 use kotadb::services_http_server::start_services_server;
-                
                 println!("🚀 Starting KotaDB Services HTTP Server on port {port}");
                 println!("🎯 Clean services-only architecture - complete interface parity");
                 println!("📄 Services API endpoints:");
