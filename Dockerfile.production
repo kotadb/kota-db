@@ -24,8 +24,11 @@ COPY benches ./benches
 # Create dummy source files to build dependencies
 RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/main.rs && \
-    echo "" > src/lib.rs && \
-    echo "fn main() {}" > src/bin/kotadb-api-server.rs
+    echo "pub mod api_keys; pub mod http_server; pub mod file_storage; pub use api_keys::{ApiKeyConfig, ApiKeyService}; pub use http_server::start_saas_server; pub use file_storage::{create_file_storage, FileStorage};" > src/lib.rs && \
+    echo "fn main() {}" > src/bin/kotadb-api-server.rs && \
+    mkdir -p src && echo "pub struct ApiKeyConfig; pub struct ApiKeyService;" > src/api_keys.rs && \
+    echo "pub fn start_saas_server() {}" > src/http_server.rs && \
+    echo "pub fn create_file_storage() {} pub struct FileStorage;" > src/file_storage.rs
 
 # Build dependencies only (skip binary creation)
 RUN cargo build --release --lib --features tree-sitter-parsing,git-integration

@@ -185,6 +185,7 @@ jobs:
           fi
           
           # Get previous release and rollback
-          flyctl releases list --app $APP --json | jq -r '.[1].id' | xargs flyctl deploy --image
+          RELEASE_ID=$(flyctl releases list --app $APP --json | jq -r '.[1].id')
+          flyctl apps rollback $RELEASE_ID --app $APP
           
           echo "Rollback completed for ${{ github.event.inputs.environment }}"

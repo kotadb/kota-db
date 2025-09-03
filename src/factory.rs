@@ -18,7 +18,7 @@ use std::path::Path;
 /// Create a production-ready symbol storage with all wrappers
 ///
 /// DEPRECATED: Use binary symbol format (BinarySymbolWriter/Reader) instead.
-/// Binary format is 10x faster than JSON-based SymbolStorage.
+/// Binary format provides superior performance compared to JSON-based SymbolStorage.
 ///
 /// Returns a symbol storage instance wrapped with:
 /// - Tracing for observability
@@ -30,7 +30,7 @@ use std::path::Path;
 /// * `data_dir` - Directory for storing data
 /// * `cache_size` - Optional cache size (defaults to 1000)
 #[deprecated(
-    note = "Use BinarySymbolWriter/Reader for 10x better performance. See ingest_with_binary_symbols_and_relationships."
+    note = "Use BinarySymbolWriter/Reader for better performance. See ingest_with_binary_symbols_and_relationships."
 )]
 pub async fn create_symbol_storage(
     data_dir: &str,

@@ -112,6 +112,9 @@ pub use wrappers::optimization::{
 // Re-export storage implementations
 pub use file_storage::{create_file_storage, FileStorage};
 
+// Re-export API key management
+pub use api_keys::{ApiKeyConfig, ApiKeyService};
+
 // Re-export coordinated deletion service
 pub use coordinated_deletion::CoordinatedDeletionService;
 

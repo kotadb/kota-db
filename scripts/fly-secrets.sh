@@ -93,10 +93,15 @@ case $ACTION in
             SECRETS_CMD="$SECRETS_CMD SENTRY_DSN='$SENTRY_DSN'"
         fi
         
-        # Execute the command
+        # Execute the command safely
         if [ "$SECRETS_CMD" != "flyctl secrets set --app $APP_NAME" ]; then
             echo -e "${GREEN}Setting secrets...${NC}"
-            eval $SECRETS_CMD
+            # Write to temporary file and execute to avoid eval security issues
+            TEMP_SCRIPT=$(mktemp)
+            echo "$SECRETS_CMD" > "$TEMP_SCRIPT"
+            chmod +x "$TEMP_SCRIPT"
+            "$TEMP_SCRIPT"
+            rm "$TEMP_SCRIPT"
             echo -e "${GREEN}✓ Secrets updated${NC}"
             echo -e "${YELLOW}Note: This will trigger a new deployment${NC}"
         else

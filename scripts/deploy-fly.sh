@@ -78,18 +78,14 @@ echo -e "${GREEN}✓ All checks passed${NC}"
 # Check if app exists, create if it doesn't
 if ! flyctl apps list | grep -q "$APP_NAME"; then
     echo -e "${YELLOW}App $APP_NAME doesn't exist. Creating...${NC}"
-    flyctl apps create "$APP_NAME" --org personal || {
+    # Use default organization or let flyctl determine automatically
+    flyctl apps create "$APP_NAME" || {
         echo -e "${RED}Failed to create app${NC}"
         exit 1
     }
     
-    # Create volume for persistent data
-    echo "Creating persistent volume..."
-    if [ "$ENVIRONMENT" = "production" ]; then
-        flyctl volumes create kotadb_data --size 10 --app "$APP_NAME" --region iad -y
-    else
-        flyctl volumes create kotadb_staging_data --size 5 --app "$APP_NAME" --region iad -y
-    fi
+    # Note: No persistent volumes needed - using Supabase for all data storage
+    echo "Skipping volume creation - using Supabase for stateless architecture"
     
     # Set initial secrets (you'll need to set these manually)
     echo -e "${YELLOW}Remember to set secrets:${NC}"

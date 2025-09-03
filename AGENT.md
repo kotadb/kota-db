@@ -210,30 +210,140 @@ just docker-shell      # Connect to development container
 ./run_standalone.sh build    # Build project
 ```
 
-## 🔬 Dogfooding Recommendation
+## 🔬 Dogfooding - MANDATORY for Development
 
-When working on search, indexing, or git features, consider testing on KotaDB itself:
+**🚨 CRITICAL: Always dogfood KotaDB on its own codebase when working on core features.**
 
-### Quick Setup
-1. **Use separate data directory**: Create `data/analysis/` for dogfooding tests
-2. **Index codebase**: `cargo run --bin kotadb -- -d ./data/analysis index-codebase .`
-3. **Verify symbol extraction**: `cargo run --bin kotadb -- -d ./data/analysis symbol-stats`
-4. **Test relationship queries**: `cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage`
-5. **Validate code search**: `cargo run --bin kotadb -- -d ./data/analysis search-code "function"`
-6. **Document findings**: Create GitHub issues for any problems discovered
-7. **Clean up**: Delete analysis data directory when done
+When working on search, indexing, MCP, or git features, you MUST test on KotaDB itself. This is not optional - it's how we prevent deployment issues.
 
-### Why Dogfood?
+### Current Testing Methods (CLI)
+```bash
+# Primary dogfooding setup - USE THIS CONSTANTLY
+mkdir -p data/analysis  # Separate directory for testing
+cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols
+
+# Essential validation commands - RUN THESE FREQUENTLY
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Verify symbol extraction
+cargo run --bin kotadb -- -d ./data/analysis search-code "storage"  # Test content search
+cargo run --bin kotadb -- -d ./data/analysis search-symbols "*"     # Test symbol search
+cargo run --bin kotadb -- -d ./data/analysis find-callers Storage   # Test relationship queries
+cargo run --bin kotadb -- -d ./data/analysis analyze-impact Config  # Test impact analysis
+
+# Performance validation - MEASURE EVERYTHING
+time cargo run --release --bin kotadb -- -d ./data/analysis search-code "async fn"
+cargo run --release -- benchmark --operations 1000  # Compare against benchmarks
+```
+
+### Future Testing Methods (Once Available)
+```bash
+# MCP server dogfooding (coming soon)
+cargo run --bin mcp_server --config kotadb-dev.toml &
+# Then connect Claude Code to test:
+# - Document search via MCP
+# - Symbol navigation
+# - Code intelligence queries
+# - Performance under AI assistant load
+
+# API dogfooding (future)
+cargo run --release -- server --port 8080 &
+# Test via HTTP API for integration scenarios
+```
+
+### Dogfooding Protocol - FOLLOW THIS RELIGIOUSLY
+
+#### 1. Before Starting Any Work
+```bash
+# Always start with fresh dogfooding setup
+rm -rf data/analysis
+mkdir -p data/analysis
+cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols
+```
+
+#### 2. During Development
+**Test your changes continuously against the live codebase:**
+- After every significant change, re-index and test critical queries
+- Use the exact same queries AI assistants would use
+- Test performance with realistic data loads
+- Verify symbol extraction accuracy on actual complex code
+
+#### 3. Before Submitting PRs
+**Mandatory dogfooding validation:**
+- Full re-index of KotaDB codebase
+- Test all major query types (content, symbols, relationships, impact)
+- Performance regression testing
+- Edge case validation (empty results, malformed queries, large datasets)
+- Create GitHub issues for any problems found
+
+### Why Dogfood? (Proven Track Record)
 Real-world testing on KotaDB's own codebase consistently reveals integration issues that unit tests miss:
 - **Issue #191**: Search disconnection after git ingestion (found only through dogfooding)
-- **Issue #196**: Trigram index architectural limitation (discovered during self-analysis)
+- **Issue #196**: Trigram index architectural limitation (discovered during self-analysis) 
 - **Issue #184**: Comprehensive validation revealed multiple UX and functionality gaps
+- **Issue #179**: Symbol extraction edge cases only surfaced with real Rust code complexity
+- **Issue #203**: Performance degradation under realistic query patterns
+- **Issue #157**: Memory usage issues only visible with large codebases
 
-### Best Practices
-- Use separate data directory (`data/analysis/`) to avoid conflicts
-- Test queries that matter: content search, path search, performance validation
-- Create GitHub issues for any problems found - other agents benefit from your discoveries
-- Never commit dogfooding artifacts (config files, analysis data)
+**Pattern**: Every major integration bug has been caught by dogfooding, not unit tests.
+
+### Dogfooding Best Practices - STRICTLY ENFORCE
+
+#### Directory Structure
+```bash
+# ALWAYS use separate analysis directory
+data/analysis/           # Dogfooding tests - DELETE after use
+data/test-scenarios/     # Specific test cases - DELETE after use  
+kota-db-data/           # Normal usage data - OK to keep
+```
+
+#### Testing Scenarios
+1. **Fresh Repository Analysis**
+   - Clone KotaDB to temp directory
+   - Index from scratch
+   - Validate symbol extraction completeness
+
+2. **Incremental Updates**
+   - Make code changes
+   - Test incremental indexing
+   - Verify consistency
+
+3. **Performance Under Load**
+   - Multiple concurrent queries
+   - Large result sets
+   - Complex relationship traversals
+
+4. **Integration Points**
+   - MCP server responsiveness
+   - API endpoint behavior
+   - CLI tool usability
+
+#### Issue Creation Protocol
+**When you find problems through dogfooding:**
+```bash
+# IMMEDIATELY create GitHub issue
+gh issue create \
+  --title "[Dogfooding] Found issue: [brief description]" \
+  --body "
+## Problem Found During Dogfooding
+**Test scenario:** [what you were testing]
+**Expected behavior:** [what should happen]
+**Actual behavior:** [what actually happened]
+**Reproduction steps:** [exact commands to reproduce]
+**Impact:** [how this affects real usage]
+**Data:** [relevant stats, performance numbers, error messages]
+" \
+  --label "bug,dogfooding,priority-high"
+```
+
+### Quality Gate
+**NO CODE SHIPS WITHOUT DOGFOODING VALIDATION**
+- All PRs must include dogfooding test results in description
+- Performance regression tests must pass
+- Symbol extraction must be >95% accurate on KotaDB codebase
+- Query latency must remain <10ms for typical operations
+- All integration points must work smoothly
+
+This is how we maintain KotaDB's 99% reliability while shipping AI-first features.
 
 ## 🏛️ Architecture Principles
 

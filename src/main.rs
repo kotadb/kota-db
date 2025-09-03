@@ -183,7 +183,7 @@ struct Cli {
     #[arg(short, long, default_value = "./kota-db-data")]
     db_path: PathBuf,
 
-    /// Use binary format for indices (10x faster performance)
+    /// Use binary format for indices (optimized performance)
     #[arg(long, global = true, default_value = "true")]
     binary_index: bool,
 
@@ -408,7 +408,7 @@ impl Database {
         )
         .await?;
         let trigram_index_arc: Arc<Mutex<dyn Index>> = if use_binary_index {
-            tracing::info!("Using binary trigram index for 10x performance");
+            tracing::info!("Using binary trigram index for optimized performance");
             Arc::new(Mutex::new(
                 create_binary_trigram_index(
                     trigram_index_path.to_str().ok_or_else(|| {
@@ -1362,7 +1362,7 @@ async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Resu
     if binary_symbol_count > 0 {
         println!("\nStorage Format:");
         println!("   Format: KotaDB Binary (.kota)");
-        println!("   Performance: 10x faster than JSON");
+        println!("   Performance: Binary format with memory mapping");
         println!("   Features: Memory-mapped, zero-copy access");
     }
 
