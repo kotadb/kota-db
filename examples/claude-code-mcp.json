@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "kotadb": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--release",
+        "--bin",
+        "mcp_server_stdio",
+        "--features",
+        "mcp-server",
+        "--",
+        "--config",
+        "kotadb-mcp-dev.toml"
+      ],
+      "cwd": "/path/to/your/kota-db",
+      "env": {
+        "RUST_LOG": "warn"
+      }
+    }
+  }
+}

@@ -26,6 +26,7 @@ pub mod pure;
 pub mod query_sanitization;
 pub mod search_validation;
 pub mod semantic_search;
+pub mod services;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;
