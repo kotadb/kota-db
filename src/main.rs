@@ -14,14 +14,13 @@ use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level,
     services::{
-        DatabaseAccess, SearchOptions, SearchResult, SearchService, SearchType, SymbolResult,
-        SymbolSearchOptions,
+        AnalysisService, CallersOptions, DatabaseAccess, ImpactOptions, OverviewOptions,
+        SearchOptions, SearchResult, SearchService, SearchType, SymbolResult, SymbolSearchOptions,
     },
     start_server, validate_post_ingestion_search, with_trace_id, Document, DocumentBuilder, Index,
     QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath, ValidationStatus,
 };
 
-use kotadb::relationship_query::RelationshipQueryType;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1084,6 +1083,7 @@ mod tests {
 
 /// Create a hybrid relationship query engine for the given database path
 #[cfg(feature = "tree-sitter-parsing")]
+#[allow(dead_code)]
 async fn create_relationship_engine(
     db_path: &Path,
 ) -> Result<kotadb::binary_relationship_engine::BinaryRelationshipEngine> {
@@ -1109,6 +1109,7 @@ async fn create_relationship_engine(
 
 /// Generate comprehensive codebase overview for AI assistants
 #[cfg(feature = "tree-sitter-parsing")]
+#[allow(dead_code)]
 async fn generate_codebase_overview(
     db_path: &std::path::Path,
     format: &str,
@@ -2092,59 +2093,49 @@ async fn main() -> Result<()> {
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::FindCallers { target, limit } => {
-                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
-                let query_type = RelationshipQueryType::FindCallers {
+                let db = Database::new(&cli.db_path, true).await?;
+                let mut analysis_service = AnalysisService::new(&db, cli.db_path.clone());
+                let options = CallersOptions {
                     target: target.clone(),
+                    limit,
+                    quiet,
                 };
 
-                let mut result = relationship_engine.execute_query(query_type).await?;
+                let result = analysis_service.find_callers(options).await?;
 
-                // Apply limit if specified (0 means unlimited)
-                if let Some(limit_value) = limit {
-                    if limit_value > 0 {
-                        result.limit_results(limit_value);
-                    }
-                    // limit_value == 0 means unlimited, so don't apply any limit
-                }
                 if quiet {
                     // In quiet mode, output minimal information
-                    let markdown = result.to_markdown();
-                    for line in markdown.lines() {
+                    for line in result.markdown.lines() {
                         if line.starts_with("- ") {
                             println!("{}", line.trim_start_matches("- "));
                         }
                     }
                 } else {
-                    println!("{}", result.to_markdown());
+                    println!("{}", result.markdown);
                 }
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
             Commands::AnalyzeImpact { target, limit } => {
-                let relationship_engine = create_relationship_engine(&cli.db_path).await?;
-                let query_type = RelationshipQueryType::ImpactAnalysis {
+                let db = Database::new(&cli.db_path, true).await?;
+                let mut analysis_service = AnalysisService::new(&db, cli.db_path.clone());
+                let options = ImpactOptions {
                     target: target.clone(),
+                    limit,
+                    quiet,
                 };
 
-                let mut result = relationship_engine.execute_query(query_type).await?;
+                let result = analysis_service.analyze_impact(options).await?;
 
-                // Apply limit if specified (0 means unlimited)
-                if let Some(limit_value) = limit {
-                    if limit_value > 0 {
-                        result.limit_results(limit_value);
-                    }
-                    // limit_value == 0 means unlimited, so don't apply any limit
-                }
                 if quiet {
                     // In quiet mode, output minimal information
-                    let markdown = result.to_markdown();
-                    for line in markdown.lines() {
+                    for line in result.markdown.lines() {
                         if line.starts_with("- ") {
                             println!("{}", line.trim_start_matches("- "));
                         }
                     }
                 } else {
-                    println!("{}", result.to_markdown());
+                    println!("{}", result.markdown);
                 }
             }
 
@@ -2177,13 +2168,17 @@ async fn main() -> Result<()> {
                 top_symbols_limit,
                 entry_points_limit,
             } => {
-                generate_codebase_overview(
-                    &cli.db_path,
-                    &format,
+                let db = Database::new(&cli.db_path, true).await?;
+                let analysis_service = AnalysisService::new(&db, cli.db_path.clone());
+                let options = OverviewOptions {
+                    format: format.clone(),
                     top_symbols_limit,
                     entry_points_limit,
                     quiet,
-                ).await?;
+                };
+
+                let result = analysis_service.generate_overview(options).await?;
+                println!("{}", result.formatted_output);
             }
         }
 
