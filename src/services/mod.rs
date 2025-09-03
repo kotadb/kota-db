@@ -3,20 +3,61 @@
 // This module provides a unified services layer that extracts business logic
 // from CLI commands, making it reusable across CLI, MCP, and future interfaces.
 // This ensures feature parity and eliminates code duplication.
+//
+// Phase 3: Management Services Extraction
+// This phase breaks down the monolithic ManagementService into specialized services:
+// - IndexingService: Repository and codebase indexing operations
+// - StatsService: Database statistics and health monitoring
+// - BenchmarkService: Performance testing and benchmarking
+// - ValidationService: Database integrity and consistency validation
 
 pub mod analysis_service;
+pub mod benchmark_service;
+pub mod indexing_service;
 pub mod management_service;
 pub mod search_service;
+pub mod stats_service;
+pub mod validation_service;
 
+// Analysis Service exports
 pub use analysis_service::{
     AnalysisService, AnalysisServiceDatabase, CallSite, CallersOptions, CallersResult,
     ImpactOptions, ImpactResult, ImpactSite, OverviewOptions, OverviewResult,
 };
-pub use management_service::{
-    BasicStats, BenchmarkOptions, BenchmarkResult, BenchmarkTypeResult, DependencyGraphStats,
-    IndexCodebaseOptions, IndexResult, ManagementService, RelationshipStats, ServerOptions,
-    StatsOptions, StatsResult, SymbolStats, ValidateOptions, ValidateResult, ValidationCheck,
+
+// Indexing Service exports
+pub use indexing_service::{
+    GitIndexResult, IncrementalUpdateOptions, IndexCodebaseOptions, IndexGitOptions, IndexResult,
+    IndexingService, UpdateResult,
 };
+
+// Statistics Service exports
+pub use stats_service::{
+    BasicStats, HealthCheckOptions, HealthCheckResult, HealthReport, HealthStatus,
+    PerformanceMetrics, PerformanceMetricsOptions, PerformanceMetricsResult, RelationshipStats,
+    StatsOptions, StatsResult, StatsService, SymbolStats,
+};
+
+// Benchmark Service exports
+pub use benchmark_service::{
+    BenchmarkOptions, BenchmarkResult, BenchmarkService, BenchmarkTypeResult,
+    CapacityPlanningOptions, CapacityPlanningResult, RegressionTestResult, StressTestOptions,
+    StressTestResult,
+};
+
+// Validation Service exports
+pub use validation_service::{
+    ConsistencyCheckOptions, ConsistencyCheckResult, HealthStatusResult, IntegrityCheckOptions,
+    IntegrityCheckResult, RepairOptions, RepairResult, ValidationOptions, ValidationResult,
+    ValidationService,
+};
+
+// Legacy Management Service exports (for backwards compatibility during transition)
+pub use management_service::{
+    DependencyGraphStats, ManagementService, ServerOptions, ValidationCheck,
+};
+
+// Shared exports
 pub use search_service::{
     DatabaseAccess, SearchOptions, SearchResult, SearchService, SearchType, SymbolMatch,
     SymbolResult, SymbolSearchOptions,

@@ -14,12 +14,13 @@ use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level,
     services::{
-        AnalysisService, AnalysisServiceDatabase, CallersOptions, DatabaseAccess, ImpactOptions,
-        ManagementService, OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType,
-        StatsOptions, SymbolResult, SymbolSearchOptions,
+        AnalysisService, AnalysisServiceDatabase, BenchmarkOptions, BenchmarkService,
+        CallersOptions, DatabaseAccess, ImpactOptions, IndexCodebaseOptions, IndexingService,
+        OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType, StatsOptions,
+        StatsService, SymbolResult, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
-    start_server, validate_post_ingestion_search, with_trace_id, Document, DocumentBuilder, Index,
-    QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath, ValidationStatus,
+    start_server, with_trace_id, Document, DocumentBuilder, Index, QueryBuilder, Storage,
+    ValidatedDocumentId, ValidatedPath,
 };
 
 use std::collections::HashMap;
@@ -344,6 +345,7 @@ impl Database {
     }
 
     /// Rebuild the path cache from current storage
+    #[allow(dead_code)]
     async fn rebuild_path_cache(&self) -> Result<()> {
         let mut cache = self.path_cache.write().await;
         cache.clear();
@@ -359,6 +361,7 @@ impl Database {
 
     /// Rebuild all indices from current storage
     /// This is needed after bulk operations like git ingestion
+    #[allow(dead_code)]
     async fn rebuild_indices(&self) -> Result<()> {
         // Get all documents from storage
         let all_docs = self.storage.lock().await.list_all().await?;
@@ -704,6 +707,7 @@ fn format_symbol_result(
 }
 
 /// Run performance benchmarks for various database operations
+#[allow(dead_code)]
 async fn run_benchmarks(
     database: Database,
     operations: usize,
@@ -1411,6 +1415,7 @@ async fn generate_codebase_overview(
 
 /// Display symbol statistics from the binary symbol database
 #[cfg(feature = "tree-sitter-parsing")]
+#[allow(dead_code)]
 async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
     use kotadb::path_utils::detect_language_from_extension;
     use std::collections::HashMap;
@@ -1483,6 +1488,7 @@ async fn show_symbol_statistics(db_path: &std::path::Path, _quiet: bool) -> Resu
 
 /// Display relationship and dependency graph statistics
 #[cfg(feature = "tree-sitter-parsing")]
+#[allow(dead_code)]
 async fn show_relationship_statistics(db_path: &std::path::Path, _quiet: bool) -> Result<()> {
     println!("\nRelationship Analysis:");
 
@@ -1623,123 +1629,43 @@ async fn main() -> Result<()> {
 
 
             Commands::Stats { basic, symbols, relationships } => {
-                // Use ManagementService for stats operations
-                let management_service = ManagementService::new(&db, cli.db_path.clone());
+                // Use StatsService for comprehensive database statistics
+                let stats_service = StatsService::new(&db, cli.db_path.clone());
 
                 let stats_options = StatsOptions {
                     basic,
                     symbols,
                     relationships,
+                    detailed: false, // Could be added as CLI flag if needed
                     quiet,
                 };
 
-                let stats_result = management_service.get_stats(stats_options).await?;
+                let stats_result = stats_service.get_statistics(stats_options).await?;
 
                 // Print the formatted output from the service
                 if !stats_result.formatted_output.is_empty() {
                     print!("{}", stats_result.formatted_output);
                 }
-
-                // Fall back to existing logic for symbol and relationship stats until fully extracted
-                let no_flags_specified = !basic && !symbols && !relationships;
-                let show_symbols = symbols || no_flags_specified;
-                let show_relationships = relationships || no_flags_specified;
-
-                // Show symbol statistics (if tree-sitter feature is enabled)
-                #[cfg(feature = "tree-sitter-parsing")]
-                if show_symbols {
-                    show_symbol_statistics(&cli.db_path, quiet).await?;
-                }
-
-                // Show relationship statistics
-                #[cfg(feature = "tree-sitter-parsing")]
-                if show_relationships {
-                    show_relationship_statistics(&cli.db_path, quiet).await?;
-                }
-
-                // Add helpful tips and next steps
-                #[cfg(feature = "tree-sitter-parsing")]
-                if show_symbols || show_relationships {
-                    let symbol_db_path = cli.db_path.join("symbols.kota");
-                    if !symbol_db_path.exists() {
-                        println!("\nNo symbols found in database.");
-                        println!("   Required steps:");
-                        println!("   1. Index a codebase: kotadb index-codebase /path/to/repo");
-                        println!("   2. Verify indexing: kotadb stats --symbols");
-                    } else {
-                        // Show success tips if symbols exist
-                        let reader = kotadb::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
-                        let binary_symbol_count = reader.symbol_count();
-
-                        if binary_symbol_count > 0 {
-                            println!("\nCodebase intelligence ready! Try these commands:");
-                            println!("   find-callers <symbol>     - Find what calls a function");
-                            println!("   analyze-impact <symbol>   - Analyze change impact");
-                            println!("   search-symbols <pattern>  - Search code symbols");
-                            println!("   search-code <query>       - Full-text code search");
-                        }
-                    }
-                }
             }
 
             Commands::Validate => {
-                qprintln!(quiet, "🔍 Running search functionality validation...");
+                // Use ValidationService for comprehensive database validation
+                let validation_service = ValidationService::new(&db, cli.db_path.clone());
 
-                let validation_result = {
-                    let storage = db.storage.lock().await;
-                    let primary_index = db.primary_index.lock().await;
-                    let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
+                let validation_options = ValidationOptions {
+                    check_integrity: true,
+                    check_consistency: true,
+                    check_performance: false, // Could be added as CLI flag if needed
+                    deep_scan: false,
+                    repair_issues: false,
+                    quiet,
                 };
 
-                // Display detailed results
-                qprintln!(quiet, "\n📋 Validation Results:");
-                qprintln!(quiet, "   Status: {}", match validation_result.overall_status {
-                    ValidationStatus::Passed => "✅ PASSED",
-                    ValidationStatus::Warning => "⚠️ WARNING",
-                    ValidationStatus::Failed => "❌ FAILED",
-                });
-                qprintln!(quiet, "   Checks: {}/{} passed", validation_result.passed_checks, validation_result.total_checks);
+                let validation_result = validation_service.validate_database(validation_options).await?;
 
-                // Show individual check results
-                for check in &validation_result.check_results {
-                    let status_icon = if check.passed { "✅" } else { "❌" };
-                    let critical_mark = if check.critical { " [CRITICAL]" } else { "" };
-                    println!("   {} {}{}", status_icon, check.name, critical_mark);
-                    if let Some(ref details) = check.details {
-                        println!("      {}", details);
-                    }
-                    if let Some(ref error) = check.error {
-                        println!("      Error: {}", error);
-                    }
-                }
-
-                // Show issues and recommendations
-                if !validation_result.issues.is_empty() {
-                    println!("\n🚨 Issues Found:");
-                    for issue in &validation_result.issues {
-                        println!("   - {}", issue);
-                    }
-                }
-
-                if !validation_result.recommendations.is_empty() {
-                    println!("\n💡 Recommendations:");
-                    for rec in &validation_result.recommendations {
-                        println!("   • {}", rec);
-                    }
-                }
-
-                // Show warnings if any
-                if !validation_result.warnings.is_empty() {
-                    println!("\n⚠️ Warnings:");
-                    for warning in &validation_result.warnings {
-                        println!("   - {}", warning);
-                    }
-                }
-
-                // Exit with error code if validation failed
-                if validation_result.overall_status == ValidationStatus::Failed {
-                    return Err(anyhow::anyhow!("Search validation failed"));
+                // Print the formatted output from the service
+                if !validation_result.formatted_output.is_empty() {
+                    print!("{}", validation_result.formatted_output);
                 }
             }
 
@@ -1835,230 +1761,37 @@ async fn main() -> Result<()> {
                 #[cfg(feature = "tree-sitter-parsing")]
                 no_symbols,
             } => {
-                use indicatif::{ProgressBar, ProgressStyle};
-                use kotadb::git::types::IngestionOptions;
-                use kotadb::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
+                // Use IndexingService for codebase indexing operations
+                let indexing_service = IndexingService::new(&db, cli.db_path.clone());
 
-                qprintln!(quiet, "🔄 Ingesting git repository: {:?}", repo_path);
-
-                // Determine if symbols should be extracted
-                #[cfg(feature = "tree-sitter-parsing")]
-                let should_extract_symbols = if no_symbols {
-                    qprintln!(quiet, "⚠️  Symbol extraction disabled via --no-symbols flag");
-                    false
-                } else if let Some(extract) = extract_symbols {
-                    if extract {
-                        qprintln!(quiet, "✅ Symbol extraction enabled via --extract-symbols flag");
-                    } else {
-                        qprintln!(quiet, "⚠️  Symbol extraction disabled via --extract-symbols=false");
-                    }
-                    extract
-                } else {
-                    qprintln!(quiet, "✅ Symbol extraction enabled (default with tree-sitter feature)");
-                    true // Default to true when tree-sitter is available
+                let indexing_options = IndexCodebaseOptions {
+                    repo_path,
+                    prefix,
+                    include_files,
+                    include_commits,
+                    max_file_size_mb,
+                    max_memory_mb,
+                    max_parallel_files,
+                    enable_chunking,
+                    #[cfg(feature = "tree-sitter-parsing")]
+                    extract_symbols,
+                    #[cfg(not(feature = "tree-sitter-parsing"))]
+                    extract_symbols: None,
+                    no_symbols,
+                    quiet,
                 };
 
-                // Configure memory limits if specified
-                let memory_limits = if max_memory_mb.is_some() || max_parallel_files.is_some() || !enable_chunking {
-                    Some(kotadb::memory::MemoryLimitsConfig {
-                        max_total_memory_mb: max_memory_mb,
-                        max_parallel_files,
-                        enable_adaptive_chunking: enable_chunking,
-                        chunk_size: if enable_chunking { 50 } else { usize::MAX },
-                    })
-                } else {
-                    None
-                };
+                let indexing_result = indexing_service.index_codebase(indexing_options).await?;
 
-                // Configure ingestion options
-                #[allow(unused_mut)]
-                let mut options = IngestionOptions {
-                    include_file_contents: include_files,
-                    include_commit_history: include_commits,
-                    max_file_size: max_file_size_mb * 1024 * 1024,
-                    memory_limits,
-                    ..Default::default()
-                };
-
-                #[cfg(feature = "tree-sitter-parsing")]
-                {
-                    options.extract_symbols = should_extract_symbols;
+                // Print the formatted output from the service
+                if !indexing_result.formatted_output.is_empty() {
+                    print!("{}", indexing_result.formatted_output);
                 }
 
-                let config = IngestionConfig {
-                    path_prefix: prefix,
-                    options,
-                    create_index: true,
-                    organization_config: Some(kotadb::git::RepositoryOrganizationConfig::default()),
-                };
-
-                // Create progress bar (disabled in quiet mode)
-                let progress_bar = if quiet {
-                    ProgressBar::hidden()
-                } else {
-                    let pb = ProgressBar::new_spinner();
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{spinner:.green} {msg}")
-                            .expect("Valid template")
-                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                    );
-                    pb.set_message("Initializing...");
-                    pb
-                };
-
-                // Create progress callback
-                let pb = progress_bar.clone();
-                let progress_callback: ProgressCallback = Box::new(move |message: &str| {
-                    pb.set_message(message.to_string());
-                    pb.tick();
-                });
-
-                // Create ingester and run ingestion with progress
-                let ingester = RepositoryIngester::new(config.clone());
-                let mut storage = db.storage.lock().await;
-
-                #[cfg(feature = "tree-sitter-parsing")]
-                let result = if config.options.extract_symbols {
-                    // Use binary format for efficient symbol storage with automatic dependency graph and relationship building
-                    let symbol_db_path = cli.db_path.join("symbols.kota");
-                    let graph_db_path = cli.db_path.join("dependency_graph.bin");
-                    ingester.ingest_with_binary_symbols_and_relationships(
-                        &repo_path,
-                        &mut *storage,
-                        &symbol_db_path,
-                        &graph_db_path,
-                        Some(progress_callback),
-                    ).await?
-                } else {
-                    ingester.ingest_with_progress(&repo_path, &mut *storage, Some(progress_callback)).await?
-                };
-
-                #[cfg(not(feature = "tree-sitter-parsing"))]
-                let result = ingester.ingest_with_progress(&repo_path, &mut **storage, Some(progress_callback)).await?;
-
-                progress_bar.finish_with_message("✅ Ingestion complete");
-
-                // Release the storage lock before rebuilding indices
-                drop(storage);
-
-                // Rebuild indices and cache after ingestion with progress indication
-                let rebuild_progress = if quiet {
-                    ProgressBar::hidden()
-                } else {
-                    let pb = ProgressBar::new_spinner();
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{spinner:.blue} {msg}")
-                            .expect("Valid template")
-                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                    );
-                    pb
-                };
-
-                rebuild_progress.set_message("Rebuilding primary and trigram indices...");
-                db.rebuild_indices().await?;
-
-                rebuild_progress.set_message("Rebuilding path cache...");
-                db.rebuild_path_cache().await?;
-
-                rebuild_progress.finish_with_message("✅ Indices rebuilt");
-
-                // Ensure all async operations are complete before validation
-                qprintln!(quiet, "⏳ Ensuring index synchronization...");
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                // Explicit flush verification
-                {
-                    let mut storage = db.storage.lock().await;
-                    let mut primary_index = db.primary_index.lock().await;
-                    let mut trigram_index = db.trigram_index.lock().await;
-                    storage.flush().await?;
-                    primary_index.flush().await?;
-                    trigram_index.flush().await?;
+                // Exit with error if indexing failed
+                if !indexing_result.success {
+                    return Err(anyhow::anyhow!("Codebase indexing failed"));
                 }
-
-                // Validate search functionality after ingestion
-                let validation_progress = if quiet {
-                    ProgressBar::hidden()
-                } else {
-                    let pb = ProgressBar::new_spinner();
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{spinner:.yellow} {msg}")
-                            .expect("Valid template")
-                            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                    );
-                    pb
-                };
-
-                validation_progress.set_message("Running search validation tests...");
-                let validation_result = {
-                    let storage = db.storage.lock().await;
-                    let primary_index = db.primary_index.lock().await;
-                    let trigram_index = db.trigram_index.lock().await;
-                    validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
-                };
-
-                validation_progress.finish_with_message("✅ Validation complete");
-
-                // Report validation results
-                match validation_result.overall_status {
-                    ValidationStatus::Passed => {
-                        qprintln!(quiet, "✅ Search validation passed: All systems operational");
-                    }
-                    ValidationStatus::Warning => {
-                        qprintln!(quiet, "⚠️ Search validation completed with warnings:");
-                        for issue in &validation_result.issues {
-                            qprintln!(quiet, "   - {}", issue);
-                        }
-                        qprintln!(quiet, "   Recommendations:");
-                        for rec in &validation_result.recommendations {
-                            qprintln!(quiet, "   • {}", rec);
-                        }
-                    }
-                    ValidationStatus::Failed => {
-                        qprintln!(quiet, "❌ Search validation failed - ingestion may not be fully operational:");
-                        for issue in &validation_result.issues {
-                            qprintln!(quiet, "   - {}", issue);
-                        }
-                        qprintln!(quiet, "   Recommendations:");
-                        for rec in &validation_result.recommendations {
-                            qprintln!(quiet, "   • {}", rec);
-                        }
-
-                        // Return error for critical failures
-                        return Err(anyhow::anyhow!(
-                            "Post-ingestion search validation failed. Search functionality is broken."
-                        ));
-                    }
-                }
-
-                // Show warnings for git ingestion
-                if !validation_result.warnings.is_empty() {
-                    qprintln!(quiet, "   Validation warnings:");
-                    for warning in &validation_result.warnings {
-                        qprintln!(quiet, "   ⚠️ {}", warning);
-                    }
-                }
-
-                qprintln!(quiet, "✅ Repository ingestion complete!");
-                qprintln!(quiet, "   Documents created: {}", result.documents_created);
-                qprintln!(quiet, "   Files ingested: {}", result.files_ingested);
-                qprintln!(quiet, "   Commits ingested: {}", result.commits_ingested);
-                if result.symbols_extracted > 0 {
-                    qprintln!(quiet, "   Symbols extracted: {} from {} files", result.symbols_extracted, result.files_with_symbols);
-                }
-                if result.errors > 0 {
-                    qprintln!(quiet, "   ⚠️ Errors encountered: {}", result.errors);
-                }
-
-                // Show validation summary
-                qprintln!(quiet, "   Validation: {} ({}/{})",
-                    validation_result.summary(),
-                    validation_result.passed_checks,
-                    validation_result.total_checks
-                );
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
@@ -2156,20 +1889,25 @@ async fn main() -> Result<()> {
                 format,
                 max_search_queries,
             } => {
-                qprintln!(quiet, "\n🚀 Running KotaDB Benchmarks");
-                qprintln!(quiet, "   Operations: {}", operations);
-                qprintln!(quiet, "   Type: {}", benchmark_type);
-                qprintln!(quiet, "   Format: {}", format);
+                // Use BenchmarkService for comprehensive performance testing
+                let benchmark_service = BenchmarkService::new(&db, cli.db_path.clone());
 
-                let database = Database::new(&cli.db_path, cli.binary_index).await?;
-                run_benchmarks(
-                    database,
+                let benchmark_options = BenchmarkOptions {
                     operations,
-                    &benchmark_type,
-                    &format,
+                    benchmark_type,
+                    format,
                     max_search_queries,
                     quiet,
-                ).await?;
+                    warm_up_operations: Some(100),
+                    concurrent_operations: Some(1),
+                };
+
+                let benchmark_result = benchmark_service.run_benchmark(benchmark_options).await?;
+
+                // Print the formatted output from the service
+                if !benchmark_result.formatted_output.is_empty() {
+                    print!("{}", benchmark_result.formatted_output);
+                }
             }
 
             #[cfg(feature = "tree-sitter-parsing")]
