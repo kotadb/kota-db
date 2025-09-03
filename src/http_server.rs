@@ -390,16 +390,7 @@ pub async fn create_server_with_intelligence(
     // Create the main router with document endpoints
     let main_router = Router::new()
         .route("/health", get(health_check))
-        // Legacy document endpoints (deprecated)
-        .route("/documents", post(create_document_deprecated))
-        .route("/documents", get(search_documents_deprecated))
-        .route("/documents/search", get(search_documents_deprecated))
-        .route("/documents/:id", get(get_document_deprecated))
-        .route("/documents/:id", put(update_document_deprecated))
-        .route("/documents/:id", delete(delete_document_deprecated))
-        // New search endpoints for client compatibility
-        .route("/search/semantic", post(semantic_search))
-        .route("/search/hybrid", post(hybrid_search))
+        // Legacy endpoints removed per issue #532 - Services layer integration complete
         // Monitoring endpoints
         .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))
@@ -535,13 +526,7 @@ pub async fn create_saas_server(
     // Create the main router with public endpoints
     let main_router = Router::new()
         .route("/health", get(health_check))
-        // Legacy document endpoints (deprecated, but no auth for backward compatibility)
-        .route("/documents", post(create_document_deprecated))
-        .route("/documents", get(search_documents_deprecated))
-        .route("/documents/search", get(search_documents_deprecated))
-        .route("/documents/:id", get(get_document_deprecated))
-        .route("/documents/:id", put(update_document_deprecated))
-        .route("/documents/:id", delete(delete_document_deprecated))
+        // Legacy document endpoints removed per issue #532
         // Monitoring endpoints (no auth)
         .route("/stats", get(get_aggregated_stats))
         .route("/stats/connections", get(get_connection_stats))

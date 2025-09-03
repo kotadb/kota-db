@@ -56,7 +56,7 @@ pub struct RepairOptions {
 }
 
 /// Overall validation result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ValidationResult {
     pub overall_status: ValidationStatus,
     pub passed_checks: usize,
@@ -308,7 +308,7 @@ pub enum RepairOutcome {
 }
 
 /// Health status result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HealthStatusResult {
     pub overall_health: ValidationStatus,
     pub component_health: HashMap<String, ValidationStatus>,

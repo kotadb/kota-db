@@ -200,7 +200,7 @@ pub struct ThroughputMetrics {
 }
 
 /// Result structure for database statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StatsResult {
     pub basic_stats: Option<BasicStats>,
     pub symbol_stats: Option<SymbolStats>,
