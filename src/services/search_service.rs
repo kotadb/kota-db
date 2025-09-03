@@ -25,7 +25,7 @@ pub trait DatabaseAccess: Send + Sync {
 }
 
 /// Configuration options for content search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SearchOptions {
     pub query: String,
     pub limit: usize,
@@ -47,7 +47,7 @@ impl Default for SearchOptions {
 }
 
 /// Configuration options for symbol search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SymbolSearchOptions {
     pub pattern: String,
     pub limit: usize,
@@ -67,7 +67,7 @@ impl Default for SymbolSearchOptions {
 }
 
 /// Search result for content search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SearchResult {
     pub documents: Vec<Document>,
     pub total_count: usize,
@@ -76,14 +76,14 @@ pub struct SearchResult {
 }
 
 /// Search result for symbol search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SymbolResult {
     pub matches: Vec<SymbolMatch>,
     pub total_symbols: usize,
 }
 
 /// Individual symbol match
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SymbolMatch {
     pub name: String,
     pub file_path: String,
@@ -92,7 +92,7 @@ pub struct SymbolMatch {
 }
 
 /// Type of search performed
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum SearchType {
     LLMOptimized,
     RegularSearch,

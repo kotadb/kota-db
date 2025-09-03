@@ -118,7 +118,7 @@ pub struct BenchmarkTypeResult {
 }
 
 /// Overall benchmark results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchmarkResult {
     pub operations_completed: usize,
     pub total_time_ms: u64,

@@ -41,7 +41,7 @@ pub struct ImpactOptions {
 }
 
 /// Configuration options for codebase overview
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OverviewOptions {
     pub format: String,
     pub top_symbols_limit: usize,
@@ -61,7 +61,7 @@ impl Default for OverviewOptions {
 }
 
 /// Result structure for callers analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CallersResult {
     pub callers: Vec<CallSite>,
     pub markdown: String,
@@ -69,7 +69,7 @@ pub struct CallersResult {
 }
 
 /// Result structure for impact analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ImpactResult {
     pub impacts: Vec<ImpactSite>,
     pub markdown: String,
@@ -77,7 +77,7 @@ pub struct ImpactResult {
 }
 
 /// Result structure for codebase overview
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OverviewResult {
     pub overview_data: HashMap<String, serde_json::Value>,
     pub formatted_output: String,

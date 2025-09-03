@@ -11,7 +11,7 @@ use crate::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 use super::DatabaseAccess;
 
 /// Configuration options for codebase indexing operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexCodebaseOptions {
     pub repo_path: PathBuf,
     pub prefix: String,
@@ -45,7 +45,7 @@ impl Default for IndexCodebaseOptions {
 }
 
 /// Configuration options for git repository indexing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexGitOptions {
     pub repo_path: PathBuf,
     pub prefix: String,
@@ -69,7 +69,7 @@ impl Default for IndexGitOptions {
 }
 
 /// Configuration options for incremental updates
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IncrementalUpdateOptions {
     pub changes: Vec<PathBuf>,
     pub delete_removed: bool,
@@ -89,7 +89,7 @@ impl Default for IncrementalUpdateOptions {
 }
 
 /// Result structure for indexing operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexResult {
     pub files_processed: usize,
     pub symbols_extracted: usize,
@@ -101,7 +101,7 @@ pub struct IndexResult {
 }
 
 /// Result structure for git indexing operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct GitIndexResult {
     pub commits_processed: usize,
     pub branches_processed: usize,
@@ -113,7 +113,7 @@ pub struct GitIndexResult {
 }
 
 /// Result structure for incremental update operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct UpdateResult {
     pub files_updated: usize,
     pub files_added: usize,

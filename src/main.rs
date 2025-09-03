@@ -1566,33 +1566,32 @@ async fn main() -> Result<()> {
 
         match cli.command {
             Commands::Serve { port } => {
-                // Create storage for the HTTP server
-                let storage_path = cli.db_path.join("storage");
-                std::fs::create_dir_all(&storage_path)?;
-
-                let storage = create_file_storage(
-                    storage_path.to_str().ok_or_else(|| {
-                        anyhow::anyhow!("Invalid storage path: {:?}", storage_path)
-                    })?,
-                    Some(1000), // Cache size
-                )
-                .await?;
-
-                // Wrap storage with observability and validation
-                let wrapped_storage = create_wrapped_storage(storage, 1000).await;
-                let shared_storage = Arc::new(tokio::sync::Mutex::new(wrapped_storage));
-
-                println!("🚀 Starting KotaDB HTTP server on port {port}");
-                println!("📄 API endpoints:");
-                println!("   POST   /documents       - Create document");
-                println!("   GET    /documents/:id   - Get document");
-                println!("   PUT    /documents/:id   - Update document");
-                println!("   DELETE /documents/:id   - Delete document");
-                println!("   GET    /documents/search - Search documents");
-                println!("   GET    /health         - Health check");
+                // Use the new clean services HTTP server for complete interface parity
+                use kotadb::services_http_server::start_services_server;
+                
+                println!("🚀 Starting KotaDB Services HTTP Server on port {port}");
+                println!("🎯 Clean services-only architecture - complete interface parity");
+                println!("📄 Services API endpoints:");
+                println!("   GET    /health                    - Server health check");
+                println!("   GET    /api/stats                 - Database statistics");
+                println!("   POST   /api/benchmark             - Performance benchmarks");
+                println!("   POST   /api/validate              - Database validation");
+                println!("   GET    /api/health-check          - Detailed health check");
+                println!("   POST   /api/index-codebase        - Index repository");
+                println!("   GET    /api/search-code           - Search code content");
+                println!("   GET    /api/search-symbols        - Search symbols");
+                println!("   POST   /api/find-callers          - Find callers");
+                println!("   POST   /api/analyze-impact        - Impact analysis");
+                println!("   GET    /api/codebase-overview     - Codebase overview");
                 println!();
 
-                start_server(shared_storage, port).await?;
+                start_services_server(
+                    db.storage.clone(),
+                    db.primary_index.clone(),
+                    db.trigram_index.clone(),
+                    cli.db_path.clone(),
+                    port,
+                ).await?;
             }
 
 
