@@ -288,9 +288,12 @@ impl<'a> ManagementService<'a> {
         }
 
         let validation_result = {
-            let storage = self.database.storage().lock().await;
-            let primary_index = self.database.primary_index().lock().await;
-            let trigram_index = self.database.trigram_index().lock().await;
+            let storage_arc = self.database.storage();
+            let primary_index_arc = self.database.primary_index();
+            let trigram_index_arc = self.database.trigram_index();
+            let storage = storage_arc.lock().await;
+            let primary_index = primary_index_arc.lock().await;
+            let trigram_index = trigram_index_arc.lock().await;
             validate_post_ingestion_search(&*storage, &*primary_index, &*trigram_index).await?
         };
 

@@ -17,11 +17,11 @@ use crate::{
 
 // Trait for database access needed by SearchService
 // This allows the service to work with the Database from main.rs
-pub trait DatabaseAccess {
-    fn storage(&self) -> &Arc<Mutex<dyn Storage>>;
-    fn primary_index(&self) -> &Arc<Mutex<dyn Index>>;
-    fn trigram_index(&self) -> &Arc<Mutex<dyn Index>>;
-    fn path_cache(&self) -> &Arc<RwLock<HashMap<String, ValidatedDocumentId>>>;
+pub trait DatabaseAccess: Send + Sync {
+    fn storage(&self) -> Arc<Mutex<dyn Storage>>;
+    fn primary_index(&self) -> Arc<Mutex<dyn Index>>;
+    fn trigram_index(&self) -> Arc<Mutex<dyn Index>>;
+    fn path_cache(&self) -> Arc<RwLock<HashMap<String, ValidatedDocumentId>>>;
 }
 
 /// Configuration options for content search
@@ -279,8 +279,10 @@ impl<'a> SearchService<'a> {
         let llm_engine = LLMSearchEngine::with_config(RelevanceConfig::default(), context_config);
 
         // Perform LLM-optimized search
-        let storage = self.database.storage().lock().await;
-        let trigram_index = self.database.trigram_index().lock().await;
+        let storage_arc = self.database.storage();
+        let trigram_index_arc = self.database.trigram_index();
+        let storage = storage_arc.lock().await;
+        let trigram_index = trigram_index_arc.lock().await;
 
         llm_engine
             .search_optimized(
@@ -347,7 +349,8 @@ impl<'a> SearchService<'a> {
         // Retrieve documents from storage
         let doc_ids_limited: Vec<_> = doc_ids.into_iter().take(limit).collect();
         let mut documents = Vec::with_capacity(doc_ids_limited.len());
-        let storage = self.database.storage().lock().await;
+        let storage_arc = self.database.storage();
+        let storage = storage_arc.lock().await;
 
         for doc_id in doc_ids_limited {
             if let Some(doc) = storage.get(&doc_id).await? {

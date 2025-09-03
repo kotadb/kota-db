@@ -38,6 +38,7 @@ pub struct MCPProtocolConfig {
     pub server_version: String,
     pub enable_document_tools: bool,
     pub enable_search_tools: bool,
+    pub enable_relationship_tools: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -92,6 +93,7 @@ impl Default for MCPConfig {
                 server_version: "0.5.0".to_string(),
                 enable_document_tools: false, // Disabled per issue #401 - pure codebase intelligence
                 enable_search_tools: true,
+                enable_relationship_tools: true,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

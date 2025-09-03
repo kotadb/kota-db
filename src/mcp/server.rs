@@ -159,6 +159,33 @@ impl MCPServer {
             tool_registry = tool_registry.with_search_tools(search_tools);
         }
 
+        #[cfg(feature = "tree-sitter-parsing")]
+        if config.mcp.enable_relationship_tools {
+            use crate::mcp::tools::relationship_tools::RelationshipTools;
+            use crate::services::AnalysisServiceDatabase;
+            use std::path::PathBuf;
+
+            // Create database access wrapper for AnalysisService
+            struct AnalysisServiceDatabaseImpl {
+                storage: Arc<Mutex<dyn Storage>>,
+            }
+
+            impl AnalysisServiceDatabase for AnalysisServiceDatabaseImpl {
+                fn storage(&self) -> Arc<Mutex<dyn Storage>> {
+                    self.storage.clone()
+                }
+            }
+
+            let database_access: Arc<dyn AnalysisServiceDatabase> =
+                Arc::new(AnalysisServiceDatabaseImpl {
+                    storage: storage.clone(),
+                });
+
+            let db_path = PathBuf::from(&config.database.data_dir);
+            let relationship_tools = Arc::new(RelationshipTools::new(database_access, db_path));
+            tool_registry = tool_registry.with_relationship_tools(relationship_tools);
+        }
+
         Ok(Self {
             config,
             tool_registry: Arc::new(tool_registry),

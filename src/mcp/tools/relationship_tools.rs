@@ -1,42 +1,21 @@
-use crate::contracts::Storage;
-use crate::dependency_extractor::DependencyGraph;
 use crate::mcp::tools::MCPToolHandler;
 use crate::mcp::types::*;
-use crate::parsing::SymbolType;
-use crate::relationship_query::{RelationshipQueryEngine, RelationshipQueryType};
-use crate::symbol_storage::SymbolStorage;
+use crate::services::{AnalysisService, AnalysisServiceDatabase, CallersOptions, ImpactOptions};
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
 
 /// Relationship query tools for MCP - the killer feature that differentiates KotaDB
 /// from text search tools by enabling LLM impact analysis and architectural understanding
 pub struct RelationshipTools {
-    relationship_engine: Option<RelationshipQueryEngine>,
-    #[allow(dead_code)]
-    storage: Arc<Mutex<dyn Storage>>,
+    database: Arc<dyn AnalysisServiceDatabase>,
+    db_path: PathBuf,
 }
 
 impl RelationshipTools {
-    pub fn new(storage: Arc<Mutex<dyn Storage>>) -> Self {
-        Self {
-            relationship_engine: None,
-            storage,
-        }
-    }
-
-    /// Initialize with dependency graph and symbol storage
-    pub fn with_relationship_engine(
-        mut self,
-        dependency_graph: DependencyGraph,
-        symbol_storage: SymbolStorage,
-    ) -> Self {
-        self.relationship_engine = Some(RelationshipQueryEngine::new(
-            dependency_graph,
-            symbol_storage,
-        ));
-        self
+    pub fn new(database: Arc<dyn AnalysisServiceDatabase>, db_path: PathBuf) -> Self {
+        Self { database, db_path }
     }
 }
 
@@ -79,6 +58,10 @@ impl MCPToolHandler for RelationshipTools {
             "kotadb://relationship_query" => {
                 let request: NaturalLanguageRelationshipRequest = serde_json::from_value(params)?;
                 self.natural_language_relationship_query(request).await
+            }
+            "kotadb://codebase_overview" => {
+                let request: CodebaseOverviewRequest = serde_json::from_value(params)?;
+                self.codebase_overview(request).await
             }
             _ => Err(anyhow::anyhow!("Unknown relationship method: {}", method)),
         }
@@ -203,6 +186,35 @@ impl MCPToolHandler for RelationshipTools {
                     "required": ["query"]
                 }),
             },
+            ToolDefinition {
+                name: "kotadb://codebase_overview".to_string(),
+                description: "Generate comprehensive codebase overview with metrics, symbols, relationships, and architectural insights".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "description": "Output format: 'human' for readable text or 'json' for structured data",
+                            "enum": ["human", "json"],
+                            "default": "human"
+                        },
+                        "top_symbols_limit": {
+                            "type": "integer",
+                            "description": "Number of top referenced symbols to include (default: 10, max: 50)",
+                            "minimum": 1,
+                            "maximum": 50,
+                            "default": 10
+                        },
+                        "entry_points_limit": {
+                            "type": "integer",
+                            "description": "Number of entry points to include (default: 20, max: 100)",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "default": 20
+                        }
+                    }
+                }),
+            },
         ]
     }
 }
@@ -211,225 +223,104 @@ impl RelationshipTools {
     async fn find_callers(&self, request: FindCallersRequest) -> Result<serde_json::Value> {
         let start_time = Instant::now();
 
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        let query_type = RelationshipQueryType::FindCallers {
+        let mut analysis_service =
+            AnalysisService::new(self.database.as_ref(), self.db_path.clone());
+        let options = CallersOptions {
             target: request.target.clone(),
+            limit: None,
+            quiet: false,
         };
 
-        let result = engine.execute_query(query_type).await?;
+        let result = analysis_service.find_callers(options).await?;
+        let execution_time = start_time.elapsed().as_millis();
 
         tracing::info!(
             "Find callers completed: '{}' found {} callers in {}ms",
             request.target,
-            result.stats.direct_count,
-            result.stats.execution_time_ms
+            result.total_count,
+            execution_time
         );
 
         Ok(serde_json::json!({
             "success": true,
             "query_type": "find_callers",
             "target": request.target,
-            "result": result,
-            "markdown": result.to_markdown()
+            "callers": result.callers,
+            "total_count": result.total_count,
+            "markdown": result.markdown
         }))
     }
 
     async fn find_callees(&self, request: FindCalleesRequest) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        let query_type = RelationshipQueryType::FindCallees {
-            target: request.target.clone(),
-        };
-
-        let result = engine.execute_query(query_type).await?;
-
-        tracing::info!(
-            "Find callees completed: '{}' found {} callees in {}ms",
-            request.target,
-            result.stats.direct_count,
-            result.stats.execution_time_ms
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "query_type": "find_callees",
-            "target": request.target,
-            "result": result,
-            "markdown": result.to_markdown()
-        }))
+        // TODO: Implement find_callees in AnalysisService for Phase 3
+        Err(anyhow::anyhow!(
+            "Find callees '{}' is not yet implemented in Phase 2. Available in Phase 3.",
+            request.target
+        ))
     }
 
     async fn impact_analysis(&self, request: ImpactAnalysisRequest) -> Result<serde_json::Value> {
         let start_time = Instant::now();
 
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        let query_type = RelationshipQueryType::ImpactAnalysis {
+        let mut analysis_service =
+            AnalysisService::new(self.database.as_ref(), self.db_path.clone());
+        let options = ImpactOptions {
             target: request.target.clone(),
+            limit: None,
+            quiet: false,
         };
 
-        let result = engine.execute_query(query_type).await?;
+        let result = analysis_service.analyze_impact(options).await?;
+        let execution_time = start_time.elapsed().as_millis();
 
         tracing::info!(
-            "Impact analysis completed: '{}' found {} direct and {} indirect impacts in {}ms",
+            "Impact analysis completed: '{}' found {} impacts in {}ms",
             request.target,
-            result.stats.direct_count,
-            result.stats.indirect_count,
-            result.stats.execution_time_ms
+            result.total_count,
+            execution_time
         );
 
         Ok(serde_json::json!({
             "success": true,
             "query_type": "impact_analysis",
             "target": request.target,
-            "result": result,
-            "markdown": result.to_markdown()
+            "impacts": result.impacts,
+            "total_count": result.total_count,
+            "markdown": result.markdown
         }))
     }
 
     async fn call_chain(&self, request: CallChainRequest) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        let query_type = RelationshipQueryType::CallChain {
-            from: request.from.clone(),
-            to: request.to.clone(),
-        };
-
-        let result = engine.execute_query(query_type).await?;
-
-        tracing::info!(
-            "Call chain completed: '{}' to '{}' found {} paths in {}ms",
+        // TODO: Implement call_chain in AnalysisService for Phase 3
+        Err(anyhow::anyhow!(
+            "Call chain from '{}' to '{}' is not yet implemented in Phase 2. Available in Phase 3.",
             request.from,
-            request.to,
-            result.stats.indirect_count,
-            result.stats.execution_time_ms
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "query_type": "call_chain",
-            "from": request.from,
-            "to": request.to,
-            "result": result,
-            "markdown": result.to_markdown()
-        }))
+            request.to
+        ))
     }
 
     async fn circular_dependencies(
         &self,
         request: CircularDependenciesRequest,
     ) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        let query_type = RelationshipQueryType::CircularDependencies {
-            target: request.target.clone(),
-        };
-
-        let result = engine.execute_query(query_type).await?;
-
-        tracing::info!(
-            "Circular dependencies completed: found {} cycles in {}ms",
-            result.stats.indirect_count,
-            result.stats.execution_time_ms
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "query_type": "circular_dependencies",
-            "target": request.target,
-            "result": result,
-            "markdown": result.to_markdown()
-        }))
+        // TODO: Implement circular_dependencies in AnalysisService for Phase 3
+        Err(anyhow::anyhow!(
+            "Circular dependencies analysis is not yet implemented in Phase 2. Available in Phase 3."
+        ))
     }
 
     async fn unused_symbols(&self, request: UnusedSymbolsRequest) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        // Parse symbol type from string if provided
-        let symbol_type = request.symbol_type.as_deref().and_then(|s| match s {
-            "Function" => Some(SymbolType::Function),
-            "Struct" => Some(SymbolType::Struct),
-            "Class" => Some(SymbolType::Class),
-            "Interface" => Some(SymbolType::Interface),
-            "Variable" => Some(SymbolType::Variable),
-            "Constant" => Some(SymbolType::Constant),
-            "Method" => Some(SymbolType::Method),
-            _ => None,
-        });
-
-        let query_type = RelationshipQueryType::UnusedSymbols { symbol_type };
-
-        let result = engine.execute_query(query_type).await?;
-
-        tracing::info!(
-            "Unused symbols completed: found {} unused symbols in {}ms",
-            result.stats.direct_count,
-            result.stats.execution_time_ms
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "query_type": "unused_symbols",
-            "symbol_type": request.symbol_type,
-            "result": result,
-            "markdown": result.to_markdown()
-        }))
+        // TODO: Implement unused_symbols in AnalysisService for Phase 3
+        Err(anyhow::anyhow!(
+            "Unused symbols analysis is not yet implemented in Phase 2. Available in Phase 3."
+        ))
     }
 
     async fn hot_paths(&self, request: HotPathsRequest) -> Result<serde_json::Value> {
-        let start_time = Instant::now();
-
-        let engine = self
-            .relationship_engine
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))?;
-
-        // Use requested limit or reasonable default for MCP (no artificial max)
-        let limit = request.limit.unwrap_or(100); // Default 100 for MCP to prevent overwhelming responses
-        let query_type = RelationshipQueryType::HotPaths { limit: Some(limit) };
-
-        let result = engine.execute_query(query_type).await?;
-
-        tracing::info!(
-            "Hot paths completed: found {} hot paths in {}ms",
-            result.stats.direct_count,
-            result.stats.execution_time_ms
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "query_type": "hot_paths",
-            "limit": limit,
-            "result": result,
-            "markdown": result.to_markdown()
-        }))
+        // TODO: Implement hot_paths in AnalysisService for Phase 3
+        Err(anyhow::anyhow!(
+            "Hot paths analysis is not yet implemented in Phase 2. Available in Phase 3."
+        ))
     }
 
     async fn natural_language_relationship_query(
@@ -443,6 +334,30 @@ impl RelationshipTools {
             - Use direct symbol search commands",
             request.query
         ))
+    }
+
+    async fn codebase_overview(
+        &self,
+        request: CodebaseOverviewRequest,
+    ) -> Result<serde_json::Value> {
+        use crate::services::OverviewOptions;
+
+        let analysis_service = AnalysisService::new(self.database.as_ref(), self.db_path.clone());
+        let options = OverviewOptions {
+            format: request.format.unwrap_or_else(|| "human".to_string()),
+            top_symbols_limit: request.top_symbols_limit.unwrap_or(10),
+            entry_points_limit: request.entry_points_limit.unwrap_or(20),
+            quiet: false,
+        };
+
+        let result = analysis_service.generate_overview(options).await?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "query_type": "codebase_overview",
+            "overview_data": result.overview_data,
+            "formatted_output": result.formatted_output
+        }))
     }
 }
 
@@ -469,16 +384,19 @@ struct CallChainRequest {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)] // Phase 3 feature
 struct CircularDependenciesRequest {
     target: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)] // Phase 3 feature
 struct UnusedSymbolsRequest {
     symbol_type: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)] // Phase 3 feature
 struct HotPathsRequest {
     limit: Option<usize>,
 }
@@ -486,6 +404,13 @@ struct HotPathsRequest {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct NaturalLanguageRelationshipRequest {
     query: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CodebaseOverviewRequest {
+    format: Option<String>,
+    top_symbols_limit: Option<usize>,
+    entry_points_limit: Option<usize>,
 }
 
 #[cfg(test)]
