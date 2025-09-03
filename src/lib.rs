@@ -148,7 +148,6 @@ pub async fn test_database_connection(config: &ApiKeyConfig) -> Result<()> {
     info!("Database connection test successful");
     Ok(())
 }
-
 // Re-export coordinated deletion service
 pub use coordinated_deletion::CoordinatedDeletionService;
 
