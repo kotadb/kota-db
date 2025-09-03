@@ -113,10 +113,33 @@ async fn main() -> Result<()> {
         default_monthly_quota: args.default_monthly_quota,
     };
 
-    info!("🚀 Starting server on port {}...", args.port);
-    start_saas_server(storage, args.data_dir, api_key_config, args.port)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to start server: {}", e))?;
+    info!("🔍 Testing database connectivity...");
+    info!("Database URL configured: {}", !args.database_url.is_empty());
+    info!("Max connections: {}", args.max_connections);
+    info!("Connect timeout: {}s", args.connect_timeout);
 
-    Ok(())
+    // Test database connection before starting server
+    match kotadb::test_database_connection(&api_key_config).await {
+        Ok(_) => {
+            info!("✅ Database connection successful");
+        }
+        Err(e) => {
+            eprintln!("❌ Database connection failed: {}", e);
+            info!("❌ Database connection failed: {}", e);
+            return Err(anyhow::anyhow!("Database connection failed: {}", e));
+        }
+    }
+
+    info!("🚀 Starting server on port {}...", args.port);
+    match start_saas_server(storage, args.data_dir, api_key_config, args.port).await {
+        Ok(_) => {
+            info!("✅ Server started successfully");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to start server: {}", e);
+            info!("❌ Failed to start server: {}", e);
+            Err(anyhow::anyhow!("Failed to start server: {}", e))
+        }
+    }
 }

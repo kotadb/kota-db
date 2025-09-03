@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     git \
     build-essential \
+    clang \
+    lld \
     ca-certificates \
     curl \
     netcat-openbsd \
@@ -66,5 +68,5 @@ ENV RUST_LOG=info
 # Expose port
 EXPOSE 8080
 
-# Run the application
-ENTRYPOINT ["/usr/local/bin/kotadb-api-server"]
+# Run the application with required parameters using exec form with explicit env expansion
+ENTRYPOINT ["/bin/sh", "-c", "/usr/local/bin/kotadb-api-server --database-url \"${DATABASE_URL}\" --port \"${PORT}\" --data-dir \"${KOTADB_DATA_DIR}\""]

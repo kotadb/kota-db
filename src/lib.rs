@@ -115,6 +115,39 @@ pub use file_storage::{create_file_storage, FileStorage};
 // Re-export API key management
 pub use api_keys::{ApiKeyConfig, ApiKeyService};
 
+// Utility functions for deployment and debugging
+use anyhow::Result;
+
+/// Test database connection for deployment troubleshooting
+pub async fn test_database_connection(config: &ApiKeyConfig) -> Result<()> {
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+    use tracing::info;
+
+    info!("Testing PostgreSQL connection...");
+    info!(
+        "Database URL prefix: {}...",
+        &config.database_url.chars().take(20).collect::<String>()
+    );
+
+    let pool = PgPoolOptions::new()
+        .max_connections(1) // Just for testing
+        .acquire_timeout(Duration::from_secs(config.connect_timeout_seconds))
+        .connect(&config.database_url)
+        .await?;
+
+    // Test basic query
+    let row: (i32,) = sqlx::query_as("SELECT 1").fetch_one(&pool).await?;
+
+    if row.0 != 1 {
+        return Err(anyhow::anyhow!("Database test query failed"));
+    }
+
+    pool.close().await;
+    info!("Database connection test successful");
+    Ok(())
+}
+
 // Re-export coordinated deletion service
 pub use coordinated_deletion::CoordinatedDeletionService;
 
