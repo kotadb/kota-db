@@ -14,8 +14,9 @@ use kotadb::{
     create_binary_trigram_index, create_file_storage, create_primary_index, create_trigram_index,
     create_wrapped_storage, init_logging_with_level,
     services::{
-        AnalysisService, CallersOptions, DatabaseAccess, ImpactOptions, OverviewOptions,
-        SearchOptions, SearchResult, SearchService, SearchType, SymbolResult, SymbolSearchOptions,
+        AnalysisService, CallersOptions, DatabaseAccess, ImpactOptions, ManagementService,
+        OverviewOptions, SearchOptions, SearchResult, SearchService, SearchType, StatsOptions,
+        SymbolResult, SymbolSearchOptions,
     },
     start_server, validate_post_ingestion_search, with_trace_id, Document, DocumentBuilder, Index,
     QueryBuilder, Storage, ValidatedDocumentId, ValidatedPath, ValidationStatus,
@@ -1615,25 +1616,27 @@ async fn main() -> Result<()> {
 
 
             Commands::Stats { basic, symbols, relationships } => {
-                // Determine what to show with explicit flag precedence
-                // If no flags specified, show everything
+                // Use ManagementService for stats operations
+                let management_service = ManagementService::new(&db, cli.db_path.clone());
+
+                let stats_options = StatsOptions {
+                    basic,
+                    symbols,
+                    relationships,
+                    quiet,
+                };
+
+                let stats_result = management_service.get_stats(stats_options).await?;
+
+                // Print the formatted output from the service
+                if !stats_result.formatted_output.is_empty() {
+                    print!("{}", stats_result.formatted_output);
+                }
+
+                // Fall back to existing logic for symbol and relationship stats until fully extracted
                 let no_flags_specified = !basic && !symbols && !relationships;
-                let show_basic = basic || no_flags_specified;
                 let show_symbols = symbols || no_flags_specified;
                 let show_relationships = relationships || no_flags_specified;
-
-                // Show basic document statistics
-                if show_basic {
-                    let (count, total_size) = db.stats().await?;
-                    println!("Codebase Intelligence Statistics");
-                    println!("================================");
-                    println!("\nIndexed Content:");
-                    println!("   Total files indexed: {count}");
-                    println!("   Total content size: {total_size} bytes");
-                    if count > 0 {
-                        println!("   Average file size: {} bytes", total_size / count);
-                    }
-                }
 
                 // Show symbol statistics (if tree-sitter feature is enabled)
                 #[cfg(feature = "tree-sitter-parsing")]
