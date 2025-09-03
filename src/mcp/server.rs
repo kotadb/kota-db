@@ -190,6 +190,36 @@ impl MCPServer {
         Ok(MCPServerHandle { server })
     }
 
+    /// Start the MCP server synchronously outside of async context to avoid runtime conflicts
+    pub fn start_sync(self) -> Result<MCPServerHandle> {
+        let mut io = IoHandler::new();
+        let server_impl = MCPServerImpl {
+            config: self.config.clone(),
+            tool_registry: self.tool_registry.clone(),
+            storage: self.storage.clone(),
+            start_time: self.start_time,
+        };
+
+        io.extend_with(server_impl.to_delegate());
+
+        let server = ServerBuilder::new(io)
+            .cors(DomainsValidation::AllowOnly(vec![
+                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
+            ]))
+            .start_http(
+                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
+
+        tracing::info!(
+            "MCP server started on {}:{}",
+            self.config.server.host,
+            self.config.server.port
+        );
+
+        Ok(MCPServerHandle { server })
+    }
+
     /// Get the uptime in seconds
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
