@@ -73,7 +73,9 @@ impl RepositoryIngester {
         let sanitized = name
             .chars()
             .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                // Only allow characters that are valid in tags: alphanumeric, dash, underscore, space
+                // Note: dots are NOT allowed in tag validation, so we replace them with dashes
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
                     c
                 } else {
                     '-'
@@ -1625,14 +1627,14 @@ mod tests {
     fn test_repository_name_sanitization() {
         assert_eq!(RepositoryIngester::sanitize_name("my-repo"), "my-repo");
         assert_eq!(RepositoryIngester::sanitize_name("My_Repo"), "my_repo");
-        assert_eq!(RepositoryIngester::sanitize_name("repo.name"), "repo.name");
+        assert_eq!(RepositoryIngester::sanitize_name("repo.name"), "repo-name");
         assert_eq!(
             RepositoryIngester::sanitize_name("repo/with/slashes"),
             "repo-with-slashes"
         );
         assert_eq!(
             RepositoryIngester::sanitize_name("repo with spaces"),
-            "repo-with-spaces"
+            "repo with spaces"
         );
         assert_eq!(
             RepositoryIngester::sanitize_name("UPPERCASE-REPO"),

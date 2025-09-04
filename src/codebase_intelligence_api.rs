@@ -671,36 +671,37 @@ pub async fn index_repository(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     // Test helper to create a minimal state for testing (async version)
     async fn create_test_state_async() -> (TempDir, CodebaseIntelligenceState) {
         use crate::relationship_query::RelationshipQueryConfig;
-        
+
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path().to_path_buf();
-        
+
         // Create a minimal relationship engine
-        let engine = AsyncBinaryRelationshipEngine::new(&db_path, RelationshipQueryConfig::default())
-            .await
-            .expect("Failed to create relationship engine");
-        
+        let engine =
+            AsyncBinaryRelationshipEngine::new(&db_path, RelationshipQueryConfig::default())
+                .await
+                .expect("Failed to create relationship engine");
+
         let state = CodebaseIntelligenceState {
             relationship_engine: Arc::new(engine),
             trigram_index: Arc::new(RwLock::new(None)),
             db_path: db_path.clone(),
             storage: None,
         };
-        
+
         (temp_dir, state)
     }
-    
+
     // Test helper to create a minimal state for sync tests (without relationship engine)
     fn create_minimal_test_state() -> (TempDir, CodebaseIntelligenceState) {
         use crate::relationship_query::RelationshipQueryConfig;
-        
+
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path().to_path_buf();
-        
+
         // Create a mock relationship engine for tests that don't need full functionality
         let rt = tokio::runtime::Runtime::new().unwrap();
         let engine = rt.block_on(async {
@@ -708,14 +709,14 @@ mod tests {
                 .await
                 .expect("Failed to create relationship engine")
         });
-        
+
         let state = CodebaseIntelligenceState {
             relationship_engine: Arc::new(engine),
             trigram_index: Arc::new(RwLock::new(None)),
             db_path: db_path.clone(),
             storage: None,
         };
-        
+
         (temp_dir, state)
     }
 
@@ -730,11 +731,11 @@ mod tests {
             definition: Some("fn test_function() {}".to_string()),
             language: "rust".to_string(),
         };
-        
+
         let serialized = serde_json::to_string(&symbol_info).expect("Should serialize");
-        let deserialized: SymbolInfo = 
+        let deserialized: SymbolInfo =
             serde_json::from_str(&serialized).expect("Should deserialize");
-        
+
         assert_eq!(symbol_info.name, deserialized.name);
         assert_eq!(symbol_info.file_path, deserialized.file_path);
         assert_eq!(symbol_info.line_number, deserialized.line_number);
@@ -750,11 +751,11 @@ mod tests {
             call_type: "direct".to_string(),
             context: Some("main calls test_function".to_string()),
         };
-        
+
         let serialized = serde_json::to_string(&caller_info).expect("Should serialize");
-        let deserialized: CallerInfo = 
+        let deserialized: CallerInfo =
             serde_json::from_str(&serialized).expect("Should deserialize");
-        
+
         assert_eq!(caller_info.caller_name, deserialized.caller_name);
         assert_eq!(caller_info.call_type, deserialized.call_type);
         assert_eq!(caller_info.context, deserialized.context);
@@ -769,11 +770,11 @@ mod tests {
             distance: 2,
             description: Some("Database depends on Connection".to_string()),
         };
-        
+
         let serialized = serde_json::to_string(&impact_info).expect("Should serialize");
-        let deserialized: ImpactInfo = 
+        let deserialized: ImpactInfo =
             serde_json::from_str(&serialized).expect("Should deserialize");
-        
+
         assert_eq!(impact_info.component_name, deserialized.component_name);
         assert_eq!(impact_info.distance, deserialized.distance);
         assert_eq!(impact_info.description, deserialized.description);
@@ -787,12 +788,12 @@ mod tests {
             RiskLevel::High,
             RiskLevel::Critical,
         ];
-        
+
         for risk_level in risk_levels {
             let serialized = serde_json::to_string(&risk_level).expect("Should serialize");
-            let deserialized: RiskLevel = 
+            let deserialized: RiskLevel =
                 serde_json::from_str(&serialized).expect("Should deserialize");
-            
+
             // Compare serialized string representation
             let original_serialized = serde_json::to_string(&risk_level).unwrap();
             let deserialized_serialized = serde_json::to_string(&deserialized).unwrap();
@@ -810,11 +811,11 @@ mod tests {
             context_after: vec!["    println!(\"Hello\");".to_string()],
             score: 0.95,
         };
-        
+
         let serialized = serde_json::to_string(&search_result).expect("Should serialize");
-        let deserialized: CodeSearchResult = 
+        let deserialized: CodeSearchResult =
             serde_json::from_str(&serialized).expect("Should deserialize");
-        
+
         assert_eq!(search_result.file_path, deserialized.file_path);
         assert_eq!(search_result.line_number, deserialized.line_number);
         assert_eq!(search_result.content, deserialized.content);
@@ -832,10 +833,10 @@ mod tests {
             "limit": 50,
             "offset": 10
         }"#;
-        
-        let params: SymbolSearchParams = 
+
+        let params: SymbolSearchParams =
             serde_json::from_str(params_json).expect("Should deserialize");
-        
+
         assert_eq!(params.q, "test_*");
         assert_eq!(params.symbol_type, Some("function".to_string()));
         assert_eq!(params.language, Some("rust".to_string()));
@@ -846,10 +847,10 @@ mod tests {
     #[test]
     fn test_symbol_search_params_minimal() {
         let params_json = r#"{"q": "main"}"#;
-        
-        let params: SymbolSearchParams = 
+
+        let params: SymbolSearchParams =
             serde_json::from_str(params_json).expect("Should deserialize");
-        
+
         assert_eq!(params.q, "main");
         assert_eq!(params.symbol_type, None);
         assert_eq!(params.language, None);
@@ -864,10 +865,10 @@ mod tests {
             "max_depth": 5,
             "limit": 20
         }"#;
-        
-        let params: FindCallersParams = 
+
+        let params: FindCallersParams =
             serde_json::from_str(params_json).expect("Should deserialize");
-        
+
         assert_eq!(params.include_indirect, Some(true));
         assert_eq!(params.max_depth, Some(5));
         assert_eq!(params.limit, Some(20));
@@ -880,10 +881,10 @@ mod tests {
             "include_tests": false,
             "risk_threshold": "medium"
         }"#;
-        
-        let params: ImpactAnalysisParams = 
+
+        let params: ImpactAnalysisParams =
             serde_json::from_str(params_json).expect("Should deserialize");
-        
+
         assert_eq!(params.max_depth, Some(3));
         assert_eq!(params.include_tests, Some(false));
         assert_eq!(params.risk_threshold, Some("medium".to_string()));
@@ -901,10 +902,10 @@ mod tests {
             "offset": 0,
             "context_lines": 3
         }"#;
-        
-        let params: CodeSearchParams = 
+
+        let params: CodeSearchParams =
             serde_json::from_str(params_json).expect("Should deserialize");
-        
+
         assert_eq!(params.q, "async fn");
         assert_eq!(params.fuzzy, Some(true));
         assert_eq!(params.regex, Some(false));
@@ -925,14 +926,20 @@ mod tests {
             "extract_symbols": true,
             "shallow_clone": false
         }"#;
-        
-        let request: IndexRepositoryRequest = 
+
+        let request: IndexRepositoryRequest =
             serde_json::from_str(request_json).expect("Should deserialize");
-        
+
         assert_eq!(request.repository_url, "https://github.com/rust-lang/rust");
         assert_eq!(request.branch, Some("master".to_string()));
-        assert_eq!(request.include_patterns, Some(vec!["*.rs".to_string(), "*.toml".to_string()]));
-        assert_eq!(request.exclude_patterns, Some(vec!["target/".to_string(), "*.lock".to_string()]));
+        assert_eq!(
+            request.include_patterns,
+            Some(vec!["*.rs".to_string(), "*.toml".to_string()])
+        );
+        assert_eq!(
+            request.exclude_patterns,
+            Some(vec!["target/".to_string(), "*.lock".to_string()])
+        );
         assert_eq!(request.extract_symbols, Some(true));
         assert_eq!(request.shallow_clone, Some(false));
     }
@@ -940,10 +947,10 @@ mod tests {
     #[test]
     fn test_index_repository_request_minimal() {
         let request_json = r#"{"repository_url": "/local/path"}"#;
-        
-        let request: IndexRepositoryRequest = 
+
+        let request: IndexRepositoryRequest =
             serde_json::from_str(request_json).expect("Should deserialize");
-        
+
         assert_eq!(request.repository_url, "/local/path");
         assert_eq!(request.branch, None);
         assert_eq!(request.include_patterns, None);
@@ -974,13 +981,13 @@ mod tests {
                 language: "rust".to_string(),
             },
         ];
-        
+
         let response = SymbolSearchResponse {
             symbols: symbols.clone(),
             total_count: symbols.len(),
             query_time_ms: 5,
         };
-        
+
         assert_eq!(response.symbols.len(), 2);
         assert_eq!(response.total_count, 2);
         assert_eq!(response.query_time_ms, 5);
@@ -990,24 +997,22 @@ mod tests {
 
     #[test]
     fn test_find_callers_response_creation() {
-        let callers = vec![
-            CallerInfo {
-                caller_name: "main".to_string(),
-                file_path: "src/main.rs".to_string(),
-                line_number: 5,
-                column: 4,
-                call_type: "direct".to_string(),
-                context: Some("main() calls init()".to_string()),
-            },
-        ];
-        
+        let callers = vec![CallerInfo {
+            caller_name: "main".to_string(),
+            file_path: "src/main.rs".to_string(),
+            line_number: 5,
+            column: 4,
+            call_type: "direct".to_string(),
+            context: Some("main() calls init()".to_string()),
+        }];
+
         let response = FindCallersResponse {
             target: "init".to_string(),
             callers: callers.clone(),
             total_count: callers.len(),
             query_time_ms: 3,
         };
-        
+
         assert_eq!(response.target, "init");
         assert_eq!(response.callers.len(), 1);
         assert_eq!(response.total_count, 1);
@@ -1017,26 +1022,22 @@ mod tests {
 
     #[test]
     fn test_impact_analysis_response_creation() {
-        let direct_impacts = vec![
-            ImpactInfo {
-                component_name: "Database".to_string(),
-                file_path: "src/database.rs".to_string(),
-                impact_type: "uses".to_string(),
-                distance: 1,
-                description: Some("Database uses Connection".to_string()),
-            },
-        ];
-        
-        let indirect_impacts = vec![
-            ImpactInfo {
-                component_name: "WebServer".to_string(),
-                file_path: "src/web.rs".to_string(),
-                impact_type: "indirect".to_string(),
-                distance: 2,
-                description: Some("WebServer depends on Database".to_string()),
-            },
-        ];
-        
+        let direct_impacts = vec![ImpactInfo {
+            component_name: "Database".to_string(),
+            file_path: "src/database.rs".to_string(),
+            impact_type: "uses".to_string(),
+            distance: 1,
+            description: Some("Database uses Connection".to_string()),
+        }];
+
+        let indirect_impacts = vec![ImpactInfo {
+            component_name: "WebServer".to_string(),
+            file_path: "src/web.rs".to_string(),
+            impact_type: "indirect".to_string(),
+            distance: 2,
+            description: Some("WebServer depends on Database".to_string()),
+        }];
+
         let response = ImpactAnalysisResponse {
             target: "Connection".to_string(),
             direct_impacts: direct_impacts.clone(),
@@ -1045,33 +1046,31 @@ mod tests {
             query_time_ms: 8,
             risk_assessment: RiskLevel::Low,
         };
-        
+
         assert_eq!(response.target, "Connection");
         assert_eq!(response.direct_impacts.len(), 1);
         assert_eq!(response.indirect_impacts.len(), 1);
         assert_eq!(response.total_affected, 2);
         assert_eq!(response.query_time_ms, 8);
-        
+
         // Verify risk assessment is correct
         match response.risk_assessment {
-            RiskLevel::Low => {},
+            RiskLevel::Low => {}
             _ => panic!("Expected Low risk level for 2 impacts"),
         }
     }
 
     #[test]
     fn test_code_search_response_creation() {
-        let results = vec![
-            CodeSearchResult {
-                file_path: "src/main.rs".to_string(),
-                line_number: 10,
-                content: "async fn main() {".to_string(),
-                context_before: vec!["#[tokio::main]".to_string()],
-                context_after: vec!["    println!(\"Starting...\");".to_string()],
-                score: 0.9,
-            },
-        ];
-        
+        let results = vec![CodeSearchResult {
+            file_path: "src/main.rs".to_string(),
+            line_number: 10,
+            content: "async fn main() {".to_string(),
+            context_before: vec!["#[tokio::main]".to_string()],
+            context_after: vec!["    println!(\"Starting...\");".to_string()],
+            score: 0.9,
+        }];
+
         let response = CodeSearchResponse {
             query: "async fn".to_string(),
             results: results.clone(),
@@ -1079,7 +1078,7 @@ mod tests {
             query_time_ms: 4,
             search_type: "exact".to_string(),
         };
-        
+
         assert_eq!(response.query, "async fn");
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.total_count, 1);
@@ -1100,7 +1099,7 @@ mod tests {
             index_time_ms: 30000,
             status: "completed".to_string(),
         };
-        
+
         assert_eq!(response.repository_id, "repo_rust");
         assert_eq!(response.branch, "master");
         assert_eq!(response.files_indexed, 1500);
@@ -1126,7 +1125,7 @@ mod tests {
             (51, RiskLevel::Critical),
             (100, RiskLevel::Critical),
         ];
-        
+
         for (impact_count, expected_risk) in test_cases {
             let actual_risk = match impact_count {
                 0..=5 => RiskLevel::Low,
@@ -1134,18 +1133,22 @@ mod tests {
                 21..=50 => RiskLevel::High,
                 _ => RiskLevel::Critical,
             };
-            
+
             // Compare serialized representation since RiskLevel doesn't implement PartialEq
             let expected_json = serde_json::to_string(&expected_risk).unwrap();
             let actual_json = serde_json::to_string(&actual_risk).unwrap();
-            assert_eq!(expected_json, actual_json, "Failed for impact_count: {}", impact_count);
+            assert_eq!(
+                expected_json, actual_json,
+                "Failed for impact_count: {}",
+                impact_count
+            );
         }
     }
 
     #[test]
     fn test_codebase_intelligence_state_creation() {
         let (_temp_dir, state) = create_minimal_test_state();
-        
+
         // Verify state was created successfully
         assert!(state.db_path.exists() || state.db_path.parent().unwrap().exists());
         assert!(state.storage.is_none()); // Default state has no storage
@@ -1155,11 +1158,21 @@ mod tests {
     fn test_add_deprecation_headers() {
         let mut headers = HeaderMap::new();
         add_deprecation_headers(&mut headers);
-        
+
         assert_eq!(headers.get("Deprecation").unwrap(), "true");
         assert_eq!(headers.get("Sunset").unwrap(), "2025-03-01T00:00:00Z");
-        assert!(headers.get("Link").unwrap().to_str().unwrap().contains("successor-version"));
-        assert!(headers.get("Warning").unwrap().to_str().unwrap().contains("deprecated"));
+        assert!(headers
+            .get("Link")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("successor-version"));
+        assert!(headers
+            .get("Warning")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("deprecated"));
     }
 
     #[test]
@@ -1168,22 +1181,18 @@ mod tests {
             "https://github.com/rust-lang/rust",
             "git@github.com:rust-lang/rust.git",
         ];
-        
-        let local_paths = vec![
-            "/home/user/project",
-            "./local/path",
-            "C:\\Users\\project",
-        ];
-        
+
+        let local_paths = vec!["/home/user/project", "./local/path", "C:\\Users\\project"];
+
         for url in github_urls {
-            let is_github = url.starts_with("https://github.com/") 
-                || url.starts_with("git@github.com:");
+            let is_github =
+                url.starts_with("https://github.com/") || url.starts_with("git@github.com:");
             assert!(is_github, "Should detect {} as GitHub URL", url);
         }
-        
+
         for path in local_paths {
-            let is_github = path.starts_with("https://github.com/") 
-                || path.starts_with("git@github.com:");
+            let is_github =
+                path.starts_with("https://github.com/") || path.starts_with("git@github.com:");
             assert!(!is_github, "Should not detect {} as GitHub URL", path);
         }
     }
@@ -1197,22 +1206,30 @@ mod tests {
             ("/local/path/project", "project"),
             ("simple_name", "simple_name"),
         ];
-        
+
         for (url, expected_name) in test_cases {
             let repo_name = url
                 .split('/')
                 .next_back()
                 .unwrap_or("unknown")
                 .trim_end_matches(".git");
-            
-            assert_eq!(repo_name, expected_name, "Failed to extract name from: {}", url);
+
+            assert_eq!(
+                repo_name, expected_name,
+                "Failed to extract name from: {}",
+                url
+            );
         }
     }
 
     #[test]
     fn test_file_extension_filtering() {
-        let include_patterns = vec!["*.rs".to_string(), "*.toml".to_string(), "README.md".to_string()];
-        
+        let include_patterns = [
+            "*.rs".to_string(),
+            "*.toml".to_string(),
+            "README.md".to_string(),
+        ];
+
         // Simulate the extension filtering logic from index_repository
         let extensions: Vec<String> = include_patterns
             .iter()
@@ -1224,7 +1241,7 @@ mod tests {
                 }
             })
             .collect();
-        
+
         assert_eq!(extensions, vec!["rs", "toml"]);
         assert!(!extensions.contains(&"md".to_string())); // README.md doesn't match pattern
     }
@@ -1232,20 +1249,20 @@ mod tests {
     #[tokio::test]
     async fn test_state_trigram_index_access() {
         let (_temp_dir, state) = create_test_state_async().await;
-        
+
         // Test read access
         {
             let index_guard = state.trigram_index.read().await;
             assert!(index_guard.is_none());
         }
-        
+
         // Test write access
         {
             let mut index_guard = state.trigram_index.write().await;
             *index_guard = None; // Set to None explicitly
             assert!(index_guard.is_none());
         }
-        
+
         // Verify read access after write
         {
             let index_guard = state.trigram_index.read().await;

@@ -1734,17 +1734,17 @@ mod tests {
     async fn test_new_storage_initialization() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let config = GraphStorageConfig::default();
-        
+
         let storage = NativeGraphStorage::new(temp_dir.path(), config).await;
         assert!(storage.is_ok(), "Should successfully create storage");
 
         let storage = storage.unwrap();
-        
+
         // Verify directory structure
         assert!(temp_dir.path().join("nodes").exists());
         assert!(temp_dir.path().join("edges").exists());
         assert!(temp_dir.path().join("wal").exists());
-        
+
         // Verify initial state
         assert_eq!(storage.nodes.read().len(), 0);
         assert_eq!(storage.edges_out.read().len(), 0);
@@ -1758,12 +1758,15 @@ mod tests {
         let node_id = node.id;
 
         // Store node
-        storage.store_node(node_id, node.clone()).await.expect("Failed to store node");
+        storage
+            .store_node(node_id, node.clone())
+            .await
+            .expect("Failed to store node");
 
         // Retrieve node
         let retrieved = storage.get_node(node_id).await.expect("Failed to get node");
         assert!(retrieved.is_some());
-        
+
         let retrieved_node = retrieved.unwrap();
         assert_eq!(retrieved_node.id, node.id);
         assert_eq!(retrieved_node.qualified_name, node.qualified_name);
@@ -1773,28 +1776,43 @@ mod tests {
     #[tokio::test]
     async fn test_store_and_get_edge() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create nodes
         let node1 = create_test_graph_node("function1", "function");
         let node2 = create_test_graph_node("function2", "function");
         let node1_id = node1.id;
         let node2_id = node2.id;
-        
-        storage.store_node(node1_id, node1).await.expect("Failed to store node1");
-        storage.store_node(node2_id, node2).await.expect("Failed to store node2");
-        
+
+        storage
+            .store_node(node1_id, node1)
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2_id, node2)
+            .await
+            .expect("Failed to store node2");
+
         // Create edge
         let edge = create_test_graph_edge();
-        storage.store_edge(node1_id, node2_id, edge.clone()).await.expect("Failed to store edge");
-        
+        storage
+            .store_edge(node1_id, node2_id, edge.clone())
+            .await
+            .expect("Failed to store edge");
+
         // Get outgoing edges
-        let out_edges = storage.get_edges(node1_id, Direction::Outgoing).await.expect("Failed to get outgoing edges");
+        let out_edges = storage
+            .get_edges(node1_id, Direction::Outgoing)
+            .await
+            .expect("Failed to get outgoing edges");
         assert_eq!(out_edges.len(), 1);
         assert_eq!(out_edges[0].0, node2_id);
         assert_eq!(out_edges[0].1.relation_type, edge.relation_type);
-        
+
         // Get incoming edges
-        let in_edges = storage.get_edges(node2_id, Direction::Incoming).await.expect("Failed to get incoming edges");
+        let in_edges = storage
+            .get_edges(node2_id, Direction::Incoming)
+            .await
+            .expect("Failed to get incoming edges");
         assert_eq!(in_edges.len(), 1);
         assert_eq!(in_edges[0].0, node1_id);
         assert_eq!(in_edges[0].1.relation_type, edge.relation_type);
@@ -1803,53 +1821,86 @@ mod tests {
     #[tokio::test]
     async fn test_get_nodes_by_type() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create nodes of different types
         let func1 = create_test_graph_node("function1", "function");
         let func2 = create_test_graph_node("function2", "function");
         let class1 = create_test_graph_node("Class1", "class");
-        
-        storage.store_node(func1.id, func1.clone()).await.expect("Failed to store func1");
-        storage.store_node(func2.id, func2.clone()).await.expect("Failed to store func2");
-        storage.store_node(class1.id, class1.clone()).await.expect("Failed to store class1");
-        
+
+        storage
+            .store_node(func1.id, func1.clone())
+            .await
+            .expect("Failed to store func1");
+        storage
+            .store_node(func2.id, func2.clone())
+            .await
+            .expect("Failed to store func2");
+        storage
+            .store_node(class1.id, class1.clone())
+            .await
+            .expect("Failed to store class1");
+
         // Get functions
-        let functions = storage.get_nodes_by_type("function").await.expect("Failed to get functions");
+        let functions = storage
+            .get_nodes_by_type("function")
+            .await
+            .expect("Failed to get functions");
         assert_eq!(functions.len(), 2);
         assert!(functions.contains(&func1.id));
         assert!(functions.contains(&func2.id));
-        
+
         // Get classes
-        let classes = storage.get_nodes_by_type("class").await.expect("Failed to get classes");
+        let classes = storage
+            .get_nodes_by_type("class")
+            .await
+            .expect("Failed to get classes");
         assert_eq!(classes.len(), 1);
         assert!(classes.contains(&class1.id));
-        
+
         // Get non-existent type
-        let modules = storage.get_nodes_by_type("module").await.expect("Failed to get modules");
+        let modules = storage
+            .get_nodes_by_type("module")
+            .await
+            .expect("Failed to get modules");
         assert_eq!(modules.len(), 0);
     }
 
     #[tokio::test]
     async fn test_graph_stats() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Initially empty
-        let stats = storage.get_graph_stats().await.expect("Failed to get stats");
+        let stats = storage
+            .get_graph_stats()
+            .await
+            .expect("Failed to get stats");
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
-        
+
         // Add nodes and edges
         let node1 = create_test_graph_node("function1", "function");
         let node2 = create_test_graph_node("function2", "function");
         let node1_id = node1.id;
         let node2_id = node2.id;
-        
-        storage.store_node(node1_id, node1).await.expect("Failed to store node1");
-        storage.store_node(node2_id, node2).await.expect("Failed to store node2");
-        storage.store_edge(node1_id, node2_id, create_test_graph_edge()).await.expect("Failed to store edge");
-        
+
+        storage
+            .store_node(node1_id, node1)
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2_id, node2)
+            .await
+            .expect("Failed to store node2");
+        storage
+            .store_edge(node1_id, node2_id, create_test_graph_edge())
+            .await
+            .expect("Failed to store edge");
+
         // Check updated stats
-        let stats = storage.get_graph_stats().await.expect("Failed to get stats");
+        let stats = storage
+            .get_graph_stats()
+            .await
+            .expect("Failed to get stats");
         assert_eq!(stats.node_count, 2);
         assert_eq!(stats.edge_count, 1);
     }
@@ -1857,28 +1908,46 @@ mod tests {
     #[tokio::test]
     async fn test_subgraph_retrieval() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create a small graph: A -> B -> C
         let node_a = create_test_graph_node("A", "function");
         let node_b = create_test_graph_node("B", "function");
         let node_c = create_test_graph_node("C", "function");
-        
-        storage.store_node(node_a.id, node_a.clone()).await.expect("Failed to store A");
-        storage.store_node(node_b.id, node_b.clone()).await.expect("Failed to store B");
-        storage.store_node(node_c.id, node_c.clone()).await.expect("Failed to store C");
-        
-        storage.store_edge(node_a.id, node_b.id, create_test_graph_edge()).await.expect("Failed to store A->B");
-        storage.store_edge(node_b.id, node_c.id, create_test_graph_edge()).await.expect("Failed to store B->C");
-        
+
+        storage
+            .store_node(node_a.id, node_a.clone())
+            .await
+            .expect("Failed to store A");
+        storage
+            .store_node(node_b.id, node_b.clone())
+            .await
+            .expect("Failed to store B");
+        storage
+            .store_node(node_c.id, node_c.clone())
+            .await
+            .expect("Failed to store C");
+
+        storage
+            .store_edge(node_a.id, node_b.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store A->B");
+        storage
+            .store_edge(node_b.id, node_c.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store B->C");
+
         // Get subgraph from A with depth 2
-        let subgraph = storage.get_subgraph(&[node_a.id], 2).await.expect("Failed to get subgraph");
-        
+        let subgraph = storage
+            .get_subgraph(&[node_a.id], 2)
+            .await
+            .expect("Failed to get subgraph");
+
         // Should contain all 3 nodes
         assert_eq!(subgraph.nodes.len(), 3);
         assert!(subgraph.nodes.contains_key(&node_a.id));
         assert!(subgraph.nodes.contains_key(&node_b.id));
         assert!(subgraph.nodes.contains_key(&node_c.id));
-        
+
         // Should contain edges from A and B
         assert!(subgraph.edges.contains_key(&node_a.id));
         assert!(subgraph.edges.contains_key(&node_b.id));
@@ -1887,23 +1956,41 @@ mod tests {
     #[tokio::test]
     async fn test_find_paths() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create a path: A -> B -> C
         let node_a = create_test_graph_node("A", "function");
         let node_b = create_test_graph_node("B", "function");
         let node_c = create_test_graph_node("C", "function");
-        
-        storage.store_node(node_a.id, node_a.clone()).await.expect("Failed to store A");
-        storage.store_node(node_b.id, node_b.clone()).await.expect("Failed to store B");
-        storage.store_node(node_c.id, node_c.clone()).await.expect("Failed to store C");
-        
-        storage.store_edge(node_a.id, node_b.id, create_test_graph_edge()).await.expect("Failed to store A->B");
-        storage.store_edge(node_b.id, node_c.id, create_test_graph_edge()).await.expect("Failed to store B->C");
-        
+
+        storage
+            .store_node(node_a.id, node_a.clone())
+            .await
+            .expect("Failed to store A");
+        storage
+            .store_node(node_b.id, node_b.clone())
+            .await
+            .expect("Failed to store B");
+        storage
+            .store_node(node_c.id, node_c.clone())
+            .await
+            .expect("Failed to store C");
+
+        storage
+            .store_edge(node_a.id, node_b.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store A->B");
+        storage
+            .store_edge(node_b.id, node_c.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store B->C");
+
         // Find path from A to C
-        let paths = storage.find_paths(node_a.id, node_c.id, 10).await.expect("Failed to find paths");
+        let paths = storage
+            .find_paths(node_a.id, node_c.id, 10)
+            .await
+            .expect("Failed to find paths");
         assert_eq!(paths.len(), 1);
-        
+
         let path = &paths[0];
         assert_eq!(path.nodes.len(), 3);
         assert_eq!(path.nodes[0], node_a.id);
@@ -1921,23 +2008,38 @@ mod tests {
     #[tokio::test]
     async fn test_update_edge_metadata() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         let node1 = create_test_graph_node("function1", "function");
         let node2 = create_test_graph_node("function2", "function");
-        
-        storage.store_node(node1.id, node1.clone()).await.expect("Failed to store node1");
-        storage.store_node(node2.id, node2.clone()).await.expect("Failed to store node2");
-        storage.store_edge(node1.id, node2.id, create_test_graph_edge()).await.expect("Failed to store edge");
-        
+
+        storage
+            .store_node(node1.id, node1.clone())
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2.id, node2.clone())
+            .await
+            .expect("Failed to store node2");
+        storage
+            .store_edge(node1.id, node2.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store edge");
+
         // Update metadata
         let mut metadata = HashMap::new();
         metadata.insert("weight".to_string(), "0.8".to_string());
         metadata.insert("confidence".to_string(), "high".to_string());
-        
-        storage.update_edge_metadata(node1.id, node2.id, metadata.clone()).await.expect("Failed to update metadata");
-        
+
+        storage
+            .update_edge_metadata(node1.id, node2.id, metadata.clone())
+            .await
+            .expect("Failed to update metadata");
+
         // Verify metadata was updated
-        let edges = storage.get_edges(node1.id, Direction::Outgoing).await.expect("Failed to get edges");
+        let edges = storage
+            .get_edges(node1.id, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].1.metadata, metadata);
     }
@@ -1945,35 +2047,50 @@ mod tests {
     #[tokio::test]
     async fn test_batch_operations() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create test data
         let nodes = vec![
             (Uuid::new_v4(), create_test_graph_node("A", "function")),
             (Uuid::new_v4(), create_test_graph_node("B", "function")),
             (Uuid::new_v4(), create_test_graph_node("C", "class")),
         ];
-        
+
         let edges = vec![
             (nodes[0].0, nodes[1].0, create_test_graph_edge()),
             (nodes[1].0, nodes[2].0, create_test_graph_edge()),
         ];
-        
+
         // Batch insert nodes
-        storage.batch_insert_nodes(nodes.clone()).await.expect("Failed to batch insert nodes");
-        
+        storage
+            .batch_insert_nodes(nodes.clone())
+            .await
+            .expect("Failed to batch insert nodes");
+
         // Batch insert edges
-        storage.batch_insert_edges(edges.clone()).await.expect("Failed to batch insert edges");
-        
+        storage
+            .batch_insert_edges(edges.clone())
+            .await
+            .expect("Failed to batch insert edges");
+
         // Verify all nodes were inserted
         for (node_id, node) in &nodes {
-            let retrieved = storage.get_node(*node_id).await.expect("Failed to get node");
+            let retrieved = storage
+                .get_node(*node_id)
+                .await
+                .expect("Failed to get node");
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap().qualified_name, node.qualified_name);
         }
-        
+
         // Verify all edges were inserted
-        let out_edges_0 = storage.get_edges(nodes[0].0, Direction::Outgoing).await.expect("Failed to get edges");
-        let out_edges_1 = storage.get_edges(nodes[1].0, Direction::Outgoing).await.expect("Failed to get edges");
+        let out_edges_0 = storage
+            .get_edges(nodes[0].0, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
+        let out_edges_1 = storage
+            .get_edges(nodes[1].0, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
         assert_eq!(out_edges_0.len(), 1);
         assert_eq!(out_edges_1.len(), 1);
     }
@@ -1981,60 +2098,110 @@ mod tests {
     #[tokio::test]
     async fn test_delete_node() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         let node1 = create_test_graph_node("function1", "function");
         let node2 = create_test_graph_node("function2", "function");
-        
-        storage.store_node(node1.id, node1.clone()).await.expect("Failed to store node1");
-        storage.store_node(node2.id, node2.clone()).await.expect("Failed to store node2");
-        storage.store_edge(node1.id, node2.id, create_test_graph_edge()).await.expect("Failed to store edge");
-        
+
+        storage
+            .store_node(node1.id, node1.clone())
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2.id, node2.clone())
+            .await
+            .expect("Failed to store node2");
+        storage
+            .store_edge(node1.id, node2.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store edge");
+
         // Verify node exists
-        assert!(storage.get_node(node1.id).await.expect("Failed to get node").is_some());
-        
+        assert!(storage
+            .get_node(node1.id)
+            .await
+            .expect("Failed to get node")
+            .is_some());
+
         // Delete node
-        let deleted = storage.delete_node(node1.id).await.expect("Failed to delete node");
+        let deleted = storage
+            .delete_node(node1.id)
+            .await
+            .expect("Failed to delete node");
         assert!(deleted);
-        
+
         // Verify node is gone
-        assert!(storage.get_node(node1.id).await.expect("Failed to get node").is_none());
-        
+        assert!(storage
+            .get_node(node1.id)
+            .await
+            .expect("Failed to get node")
+            .is_none());
+
         // Verify edges are cleaned up
-        let out_edges = storage.get_edges(node1.id, Direction::Outgoing).await.expect("Failed to get edges");
-        let in_edges = storage.get_edges(node2.id, Direction::Incoming).await.expect("Failed to get edges");
+        let out_edges = storage
+            .get_edges(node1.id, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
+        let in_edges = storage
+            .get_edges(node2.id, Direction::Incoming)
+            .await
+            .expect("Failed to get edges");
         assert_eq!(out_edges.len(), 0);
         assert_eq!(in_edges.len(), 0);
-        
+
         // Delete non-existent node
-        let deleted_again = storage.delete_node(node1.id).await.expect("Failed to delete node");
+        let deleted_again = storage
+            .delete_node(node1.id)
+            .await
+            .expect("Failed to delete node");
         assert!(!deleted_again);
     }
 
     #[tokio::test]
     async fn test_remove_edge() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         let node1 = create_test_graph_node("function1", "function");
         let node2 = create_test_graph_node("function2", "function");
-        
-        storage.store_node(node1.id, node1.clone()).await.expect("Failed to store node1");
-        storage.store_node(node2.id, node2.clone()).await.expect("Failed to store node2");
-        storage.store_edge(node1.id, node2.id, create_test_graph_edge()).await.expect("Failed to store edge");
-        
+
+        storage
+            .store_node(node1.id, node1.clone())
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2.id, node2.clone())
+            .await
+            .expect("Failed to store node2");
+        storage
+            .store_edge(node1.id, node2.id, create_test_graph_edge())
+            .await
+            .expect("Failed to store edge");
+
         // Verify edge exists
-        let edges = storage.get_edges(node1.id, Direction::Outgoing).await.expect("Failed to get edges");
+        let edges = storage
+            .get_edges(node1.id, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
         assert_eq!(edges.len(), 1);
-        
+
         // Remove edge
-        let removed = storage.remove_edge(node1.id, node2.id).await.expect("Failed to remove edge");
+        let removed = storage
+            .remove_edge(node1.id, node2.id)
+            .await
+            .expect("Failed to remove edge");
         assert!(removed);
-        
+
         // Verify edge is gone
-        let edges = storage.get_edges(node1.id, Direction::Outgoing).await.expect("Failed to get edges");
+        let edges = storage
+            .get_edges(node1.id, Direction::Outgoing)
+            .await
+            .expect("Failed to get edges");
         assert_eq!(edges.len(), 0);
-        
+
         // Remove non-existent edge
-        let removed_again = storage.remove_edge(node1.id, node2.id).await.expect("Failed to remove edge");
+        let removed_again = storage
+            .remove_edge(node1.id, node2.id)
+            .await
+            .expect("Failed to remove edge");
         assert!(!removed_again);
     }
 
@@ -2043,34 +2210,62 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let config = GraphStorageConfig::default();
         let path = temp_dir.path();
-        
+
         let node1 = create_test_graph_node("persistent_function", "function");
         let node2 = create_test_graph_node("another_function", "function");
         let edge = create_test_graph_edge();
-        
+
         {
             // First instance - store data
-            let mut storage = NativeGraphStorage::new(path, config.clone()).await.expect("Failed to create storage");
-            storage.store_node(node1.id, node1.clone()).await.expect("Failed to store node1");
-            storage.store_node(node2.id, node2.clone()).await.expect("Failed to store node2");
-            storage.store_edge(node1.id, node2.id, edge.clone()).await.expect("Failed to store edge");
+            let mut storage = NativeGraphStorage::new(path, config.clone())
+                .await
+                .expect("Failed to create storage");
+            storage
+                .store_node(node1.id, node1.clone())
+                .await
+                .expect("Failed to store node1");
+            storage
+                .store_node(node2.id, node2.clone())
+                .await
+                .expect("Failed to store node2");
+            storage
+                .store_edge(node1.id, node2.id, edge.clone())
+                .await
+                .expect("Failed to store edge");
             storage.sync().await.expect("Failed to sync");
         } // storage is dropped here
-        
+
         {
             // Second instance - should load existing data
-            let storage = NativeGraphStorage::new(path, config).await.expect("Failed to create storage");
-            
+            let storage = NativeGraphStorage::new(path, config)
+                .await
+                .expect("Failed to create storage");
+
             // Verify nodes persisted
-            let retrieved_node1 = storage.get_node(node1.id).await.expect("Failed to get node1");
-            let retrieved_node2 = storage.get_node(node2.id).await.expect("Failed to get node2");
+            let retrieved_node1 = storage
+                .get_node(node1.id)
+                .await
+                .expect("Failed to get node1");
+            let retrieved_node2 = storage
+                .get_node(node2.id)
+                .await
+                .expect("Failed to get node2");
             assert!(retrieved_node1.is_some());
             assert!(retrieved_node2.is_some());
-            assert_eq!(retrieved_node1.unwrap().qualified_name, node1.qualified_name);
-            assert_eq!(retrieved_node2.unwrap().qualified_name, node2.qualified_name);
-            
+            assert_eq!(
+                retrieved_node1.unwrap().qualified_name,
+                node1.qualified_name
+            );
+            assert_eq!(
+                retrieved_node2.unwrap().qualified_name,
+                node2.qualified_name
+            );
+
             // Verify edge persisted
-            let edges = storage.get_edges(node1.id, Direction::Outgoing).await.expect("Failed to get edges");
+            let edges = storage
+                .get_edges(node1.id, Direction::Outgoing)
+                .await
+                .expect("Failed to get edges");
             assert_eq!(edges.len(), 1);
             assert_eq!(edges[0].0, node2.id);
         }
@@ -2079,10 +2274,13 @@ mod tests {
     #[tokio::test]
     async fn test_empty_subgraph() {
         let (storage, _temp_dir) = create_test_storage().await;
-        
+
         let non_existent_id = Uuid::new_v4();
-        let subgraph = storage.get_subgraph(&[non_existent_id], 1).await.expect("Failed to get subgraph");
-        
+        let subgraph = storage
+            .get_subgraph(&[non_existent_id], 1)
+            .await
+            .expect("Failed to get subgraph");
+
         assert_eq!(subgraph.nodes.len(), 0);
         assert_eq!(subgraph.edges.len(), 0);
         // Implementation visits the requested node even if it doesn't exist
@@ -2092,23 +2290,32 @@ mod tests {
     #[tokio::test]
     async fn test_no_paths_found() {
         let (mut storage, _temp_dir) = create_test_storage().await;
-        
+
         // Create two disconnected nodes
         let node1 = create_test_graph_node("isolated1", "function");
         let node2 = create_test_graph_node("isolated2", "function");
-        
-        storage.store_node(node1.id, node1.clone()).await.expect("Failed to store node1");
-        storage.store_node(node2.id, node2.clone()).await.expect("Failed to store node2");
-        
+
+        storage
+            .store_node(node1.id, node1.clone())
+            .await
+            .expect("Failed to store node1");
+        storage
+            .store_node(node2.id, node2.clone())
+            .await
+            .expect("Failed to store node2");
+
         // Try to find path between disconnected nodes
-        let paths = storage.find_paths(node1.id, node2.id, 10).await.expect("Failed to find paths");
+        let paths = storage
+            .find_paths(node1.id, node2.id, 10)
+            .await
+            .expect("Failed to find paths");
         assert_eq!(paths.len(), 0);
     }
 
     #[tokio::test]
     async fn test_error_handling_invalid_path() {
         let config = GraphStorageConfig::default();
-        
+
         // Test with invalid path containing null bytes
         let result = NativeGraphStorage::new("test\0path", config).await;
         assert!(result.is_err());

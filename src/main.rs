@@ -1788,7 +1788,38 @@ async fn main() -> Result<()> {
 
                 // Exit with error if indexing failed
                 if !indexing_result.success {
+                    if !indexing_result.errors.is_empty() {
+                        eprintln!("Indexing errors:");
+                        for error in &indexing_result.errors {
+                            eprintln!("  - {}", error);
+                        }
+                    }
                     return Err(anyhow::anyhow!("Codebase indexing failed"));
+                }
+
+                // CRITICAL: Flush storage buffer to ensure all documents are persisted
+                // This fixes issue #553 where documents were buffered but not flushed for small repositories
+                if !quiet {
+                    println!("💾 Flushing storage buffer...");
+                }
+                // The storage wrapper may be buffering writes for performance, so we need to flush
+                // This is especially important for small repositories that don't reach the buffer threshold
+                {
+                    let mut storage = db.storage.lock().await;
+                    if let Err(e) = storage.flush().await {
+                        eprintln!("Warning: Failed to flush storage: {}", e);
+                    }
+                }
+
+                // CRITICAL: Rebuild indices after successful codebase indexing
+                // This populates the Primary Index with document paths, enabling wildcard searches
+                if !quiet {
+                    println!("🔄 Rebuilding indices to enable search functionality...");
+                }
+                db.rebuild_indices().await?;
+
+                if !quiet {
+                    println!("✅ Index rebuild completed. Search functionality is now available.");
                 }
             }
 

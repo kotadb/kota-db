@@ -120,11 +120,8 @@ pub fn library_function() {
 
         // Add all files and create initial commit
         Self::run_git_command(repo_path, &["add", "."]).context("Failed to add files to git")?;
-        Self::run_git_command(
-            repo_path,
-            &["commit", "-m", "Initial commit"],
-        )
-        .context("Failed to create initial commit")?;
+        Self::run_git_command(repo_path, &["commit", "-m", "Initial commit"])
+            .context("Failed to create initial commit")?;
 
         Ok(())
     }
@@ -132,7 +129,8 @@ pub fn library_function() {
     /// Adds just enough symbols for testing result limits (smaller set for performance)
     async fn add_extensive_symbol_data(repo_path: &Path) -> Result<()> {
         // Create just enough functions to test limits without causing performance issues
-        let mut extensive_code = String::from("// Functions that use FileStorage\nuse crate::test::*;\n\n");
+        let mut extensive_code =
+            String::from("// Functions that use FileStorage\nuse crate::test::*;\n\n");
 
         // Add functions that reference FileStorage - enough to test limits but not too many
         for i in 0..60 {
@@ -153,17 +151,13 @@ pub fn library_function() {
         let lib_path = repo_path.join("lib.rs");
         let mut lib_content = fs::read_to_string(&lib_path).context("Failed to read lib.rs")?;
         lib_content.push_str("\nmod callers;\n");
-        fs::write(&lib_path, lib_content)
-            .context("Failed to update lib.rs with callers module")?;
+        fs::write(&lib_path, lib_content).context("Failed to update lib.rs with callers module")?;
 
         // Commit the additional symbols
         Self::run_git_command(repo_path, &["add", "."])
             .context("Failed to add caller files to git")?;
-        Self::run_git_command(
-            repo_path,
-            &["commit", "-m", "Add caller functions"],
-        )
-        .context("Failed to commit caller functions")?;
+        Self::run_git_command(repo_path, &["commit", "-m", "Add caller functions"])
+            .context("Failed to commit caller functions")?;
 
         Ok(())
     }
@@ -213,8 +207,9 @@ pub async fn create_indexed_test_database(
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in database path"))?
         .to_string();
 
+    // Repository created successfully
+
     // Index the git repository using KotaDB (symbols are enabled by default)
-    // Use a simpler, minimal approach to avoid performance issues in tests
     let output = Command::new("cargo")
         .args([
             "run",
@@ -224,8 +219,8 @@ pub async fn create_indexed_test_database(
             "-d",
             &db_path_str,
             "index-codebase",
+            &git_repo.path,
         ])
-        .arg(&git_repo.path)
         .output()
         .context("Failed to execute kotadb index-codebase command")?;
 

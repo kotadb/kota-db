@@ -134,7 +134,7 @@ impl AnalysisServiceDatabase for Database {
 mod tests {
     use super::*;
     use crate::contracts::{Document, Query};
-    use crate::services::{DatabaseAccess, AnalysisServiceDatabase};
+    use crate::services::{AnalysisServiceDatabase, DatabaseAccess};
     use crate::types::*;
     use chrono::Utc;
     use tempfile::TempDir;
@@ -171,16 +171,31 @@ mod tests {
         let db_path = temp_dir.path();
 
         let database = Database::new(db_path, true).await;
-        assert!(database.is_ok(), "Should successfully create database with binary index");
+        assert!(
+            database.is_ok(),
+            "Should successfully create database with binary index"
+        );
 
         let db = database.unwrap();
         // Verify all components are present
         assert!(db.storage.lock().await.list_all().await.is_ok());
         let wildcard_query = create_test_query("*");
-        assert!(db.primary_index.lock().await.search(&wildcard_query).await.is_ok());
+        assert!(db
+            .primary_index
+            .lock()
+            .await
+            .search(&wildcard_query)
+            .await
+            .is_ok());
         let test_query = create_test_query("test");
-        assert!(db.trigram_index.lock().await.search(&test_query).await.is_ok());
-        
+        assert!(db
+            .trigram_index
+            .lock()
+            .await
+            .search(&test_query)
+            .await
+            .is_ok());
+
         // Verify path cache is initialized
         assert_eq!(db.path_cache.read().await.len(), 0);
     }
@@ -191,16 +206,31 @@ mod tests {
         let db_path = temp_dir.path();
 
         let database = Database::new(db_path, false).await;
-        assert!(database.is_ok(), "Should successfully create database with text index");
+        assert!(
+            database.is_ok(),
+            "Should successfully create database with text index"
+        );
 
         let db = database.unwrap();
         // Verify all components are present
         assert!(db.storage.lock().await.list_all().await.is_ok());
         let wildcard_query = create_test_query("*");
-        assert!(db.primary_index.lock().await.search(&wildcard_query).await.is_ok());
+        assert!(db
+            .primary_index
+            .lock()
+            .await
+            .search(&wildcard_query)
+            .await
+            .is_ok());
         let test_query = create_test_query("test");
-        assert!(db.trigram_index.lock().await.search(&test_query).await.is_ok());
-        
+        assert!(db
+            .trigram_index
+            .lock()
+            .await
+            .search(&test_query)
+            .await
+            .is_ok());
+
         // Verify path cache is initialized
         assert_eq!(db.path_cache.read().await.len(), 0);
     }
@@ -210,9 +240,11 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
         let (doc_count, total_size) = database.stats().await.expect("Failed to get stats");
-        
+
         assert_eq!(doc_count, 0, "Empty database should have 0 documents");
         assert_eq!(total_size, 0, "Empty database should have 0 total size");
     }
@@ -222,19 +254,37 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Insert test documents
         let doc1 = create_test_document("Hello world", "test1.md");
         let doc2 = create_test_document("Another document", "test2.md");
-        
-        database.storage.lock().await.insert(doc1.clone()).await.expect("Failed to insert doc1");
-        database.storage.lock().await.insert(doc2.clone()).await.expect("Failed to insert doc2");
-        
+
+        database
+            .storage
+            .lock()
+            .await
+            .insert(doc1.clone())
+            .await
+            .expect("Failed to insert doc1");
+        database
+            .storage
+            .lock()
+            .await
+            .insert(doc2.clone())
+            .await
+            .expect("Failed to insert doc2");
+
         let (doc_count, total_size) = database.stats().await.expect("Failed to get stats");
-        
+
         assert_eq!(doc_count, 2, "Should have 2 documents");
-        assert_eq!(total_size, doc1.size + doc2.size, "Total size should match document sizes");
+        assert_eq!(
+            total_size,
+            doc1.size + doc2.size,
+            "Total size should match document sizes"
+        );
     }
 
     #[tokio::test]
@@ -242,8 +292,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Test DatabaseAccess trait method
         let storage = DatabaseAccess::storage(&database);
         assert!(storage.lock().await.list_all().await.is_ok());
@@ -254,8 +306,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Test DatabaseAccess trait method
         let primary_index = database.primary_index();
         let query = create_test_query("*");
@@ -267,8 +321,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Test DatabaseAccess trait method
         let trigram_index = database.trigram_index();
         let query = create_test_query("test");
@@ -280,15 +336,20 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Test DatabaseAccess trait method
         let path_cache = database.path_cache();
         assert_eq!(path_cache.read().await.len(), 0);
-        
+
         // Test cache modification
         let doc = create_test_document("test", "test.md");
-        path_cache.write().await.insert("test.md".to_string(), doc.id.clone());
+        path_cache
+            .write()
+            .await
+            .insert("test.md".to_string(), doc.id);
         assert_eq!(path_cache.read().await.len(), 1);
     }
 
@@ -297,9 +358,11 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
-        // Test AnalysisServiceDatabase trait method  
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
+        // Test AnalysisServiceDatabase trait method
         let storage: Arc<Mutex<dyn Storage>> = AnalysisServiceDatabase::storage(&database);
         assert!(storage.lock().await.list_all().await.is_ok());
     }
@@ -310,15 +373,32 @@ mod tests {
         let db_path = temp_dir.path().join("nested_db");
 
         // Directory doesn't exist initially
-        assert!(!db_path.exists(), "Database directory shouldn't exist initially");
+        assert!(
+            !db_path.exists(),
+            "Database directory shouldn't exist initially"
+        );
 
-        let database = Database::new(&db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(&db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Verify directories were created
-        assert!(db_path.exists(), "Database root directory should be created");
-        assert!(db_path.join("storage").exists(), "Storage directory should be created");
-        assert!(db_path.join("primary_index").exists(), "Primary index directory should be created");
-        assert!(db_path.join("trigram_index").exists(), "Trigram index directory should be created");
+        assert!(
+            db_path.exists(),
+            "Database root directory should be created"
+        );
+        assert!(
+            db_path.join("storage").exists(),
+            "Storage directory should be created"
+        );
+        assert!(
+            db_path.join("primary_index").exists(),
+            "Primary index directory should be created"
+        );
+        assert!(
+            db_path.join("trigram_index").exists(),
+            "Trigram index directory should be created"
+        );
     }
 
     #[tokio::test]
@@ -326,32 +406,51 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Arc::new(Database::new(db_path, true).await.expect("Failed to create database"));
-        
+        let database = Arc::new(
+            Database::new(db_path, true)
+                .await
+                .expect("Failed to create database"),
+        );
+
         // Test concurrent access to different components
         let handles: Vec<tokio::task::JoinHandle<Result<usize>>> = vec![
             tokio::spawn({
                 let db = database.clone();
-                async move { 
-                    db.storage.lock().await.list_all().await.map(|docs| docs.len())
+                async move {
+                    db.storage
+                        .lock()
+                        .await
+                        .list_all()
+                        .await
+                        .map(|docs| docs.len())
                 }
             }),
             tokio::spawn({
                 let db = database.clone();
-                async move { 
+                async move {
                     let query = create_test_query("*");
-                    db.primary_index.lock().await.search(&query).await.map(|ids| ids.len())
+                    db.primary_index
+                        .lock()
+                        .await
+                        .search(&query)
+                        .await
+                        .map(|ids| ids.len())
                 }
             }),
             tokio::spawn({
                 let db = database.clone();
-                async move { 
+                async move {
                     let query = create_test_query("test");
-                    db.trigram_index.lock().await.search(&query).await.map(|ids| ids.len())
+                    db.trigram_index
+                        .lock()
+                        .await
+                        .search(&query)
+                        .await
+                        .map(|ids| ids.len())
                 }
             }),
         ];
-        
+
         // Wait for all tasks to complete
         for handle in handles {
             let result = handle.await.expect("Task should complete");
@@ -371,24 +470,42 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Insert a document
         let doc = create_test_document("Hello world test content", "example.md");
-        database.storage.lock().await.insert(doc.clone()).await.expect("Failed to insert document");
-        
+        database
+            .storage
+            .lock()
+            .await
+            .insert(doc.clone())
+            .await
+            .expect("Failed to insert document");
+
         // Verify stats reflect the insertion
         let (doc_count, total_size) = database.stats().await.expect("Failed to get stats");
         assert_eq!(doc_count, 1);
         assert_eq!(total_size, doc.size);
-        
+
         // Verify document can be retrieved
-        let retrieved = database.storage.lock().await.get(&doc.id).await.expect("Failed to get document");
+        let retrieved = database
+            .storage
+            .lock()
+            .await
+            .get(&doc.id)
+            .await
+            .expect("Failed to get document");
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, doc.id);
-        
+
         // Test path cache usage
-        database.path_cache.write().await.insert("example.md".to_string(), doc.id.clone());
+        database
+            .path_cache
+            .write()
+            .await
+            .insert("example.md".to_string(), doc.id);
         let cached_id = database.path_cache.read().await.get("example.md").cloned();
         assert_eq!(cached_id, Some(doc.id));
     }
@@ -396,24 +513,52 @@ mod tests {
     #[tokio::test]
     async fn test_database_binary_vs_text_index_behavior() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        
+
         // Create databases with both index types
         let binary_db_path = temp_dir.path().join("binary");
         let text_db_path = temp_dir.path().join("text");
-        
-        let binary_db = Database::new(&binary_db_path, true).await.expect("Failed to create binary database");
-        let text_db = Database::new(&text_db_path, false).await.expect("Failed to create text database");
-        
+
+        let binary_db = Database::new(&binary_db_path, true)
+            .await
+            .expect("Failed to create binary database");
+        let text_db = Database::new(&text_db_path, false)
+            .await
+            .expect("Failed to create text database");
+
         // Both should support basic operations
         let test_query = create_test_query("test");
-        assert!(binary_db.trigram_index.lock().await.search(&test_query).await.is_ok());
-        assert!(text_db.trigram_index.lock().await.search(&test_query).await.is_ok());
-        
+        assert!(binary_db
+            .trigram_index
+            .lock()
+            .await
+            .search(&test_query)
+            .await
+            .is_ok());
+        assert!(text_db
+            .trigram_index
+            .lock()
+            .await
+            .search(&test_query)
+            .await
+            .is_ok());
+
         // Both should return empty results for non-existent content
         let nonexistent_query = create_test_query("nonexistent");
-        let binary_results = binary_db.trigram_index.lock().await.search(&nonexistent_query).await.expect("Search should work");
-        let text_results = text_db.trigram_index.lock().await.search(&nonexistent_query).await.expect("Search should work");
-        
+        let binary_results = binary_db
+            .trigram_index
+            .lock()
+            .await
+            .search(&nonexistent_query)
+            .await
+            .expect("Search should work");
+        let text_results = text_db
+            .trigram_index
+            .lock()
+            .await
+            .search(&nonexistent_query)
+            .await
+            .expect("Search should work");
+
         assert_eq!(binary_results.len(), 0);
         assert_eq!(text_results.len(), 0);
     }
@@ -423,22 +568,48 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = temp_dir.path();
 
-        let database = Database::new(db_path, true).await.expect("Failed to create database");
-        
+        let database = Database::new(db_path, true)
+            .await
+            .expect("Failed to create database");
+
         // Insert documents of different sizes
         let small_doc = create_test_document("small", "small.md");
-        let medium_doc = create_test_document("This is a medium sized document with more content", "medium.md");
+        let medium_doc = create_test_document(
+            "This is a medium sized document with more content",
+            "medium.md",
+        );
         let large_doc = create_test_document(&"Large document content ".repeat(100), "large.md");
-        
-        database.storage.lock().await.insert(small_doc.clone()).await.expect("Failed to insert small doc");
-        database.storage.lock().await.insert(medium_doc.clone()).await.expect("Failed to insert medium doc");
-        database.storage.lock().await.insert(large_doc.clone()).await.expect("Failed to insert large doc");
-        
+
+        database
+            .storage
+            .lock()
+            .await
+            .insert(small_doc.clone())
+            .await
+            .expect("Failed to insert small doc");
+        database
+            .storage
+            .lock()
+            .await
+            .insert(medium_doc.clone())
+            .await
+            .expect("Failed to insert medium doc");
+        database
+            .storage
+            .lock()
+            .await
+            .insert(large_doc.clone())
+            .await
+            .expect("Failed to insert large doc");
+
         let (doc_count, total_size) = database.stats().await.expect("Failed to get stats");
-        
+
         assert_eq!(doc_count, 3);
         let expected_size = small_doc.size + medium_doc.size + large_doc.size;
         assert_eq!(total_size, expected_size);
-        assert!(total_size > 2000, "Total size should be substantial with large document");
+        assert!(
+            total_size > 2000,
+            "Total size should be substantial with large document"
+        );
     }
 }

@@ -51,11 +51,20 @@ async fn test_search_symbols_unlimited_default() -> Result<()> {
     if result_count == 0 {
         // Check database stats to provide better error context
         let stats_output = Command::new("cargo")
-            .args(["run", "--bin", "kotadb", "--", "-d", &db_path, "stats", "--symbols"])
+            .args([
+                "run",
+                "--bin",
+                "kotadb",
+                "--",
+                "-d",
+                &db_path,
+                "stats",
+                "--symbols",
+            ])
             .output()?;
-        
+
         let stats_stdout = String::from_utf8_lossy(&stats_output.stdout);
-        
+
         return Err(anyhow::anyhow!(
             "No symbols found in database. This likely indicates the indexing operation failed or timed out.\n\
             Database stats output: {}\n\
@@ -113,9 +122,14 @@ async fn test_search_symbols_respects_explicit_limit() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn test_search_code_basic_functionality() -> Result<()> {
     let db_path = create_test_database_with_symbols().await?;
+
+    // Test database was created successfully
+
+    // Give the database a moment to ensure all background operations (like index rebuilding) complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Use search-code instead of analyze-impact (which uses relationship engine)
     let output = Command::new("cargo")
@@ -126,7 +140,6 @@ async fn test_search_code_basic_functionality() -> Result<()> {
             "--",
             "-d",
             &db_path,
-            "--quiet",
             "search-code",
             "FileStorage",
         ])
@@ -135,7 +148,6 @@ async fn test_search_code_basic_functionality() -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let result_count = stdout.lines().count();
 
-    // Should find at least one occurrence of FileStorage in the code
     assert!(
         result_count >= 1,
         "search-code returned {} results for FileStorage, expected at least 1",

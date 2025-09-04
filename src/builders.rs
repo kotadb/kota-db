@@ -591,12 +591,47 @@ mod tests {
     #[test]
     fn test_builder_validation() {
         // DocumentBuilder validation removed - part of deprecated document database functionality
-        
+
         // Test modern codebase intelligence builders
         let query = QueryBuilder::new().build();
         assert!(query.is_ok()); // Query has defaults
 
         let storage = StorageConfigBuilder::new().build();
         assert!(storage.is_err()); // Path is required
+    }
+
+    #[test]
+    fn test_wildcard_query_path_pattern() {
+        // Test that wildcard queries are correctly put into path_pattern
+        let query = QueryBuilder::new()
+            .with_text("*.rs")
+            .expect("Valid wildcard pattern should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        // Wildcard should go to path_pattern, not search_terms
+        assert_eq!(query.search_terms.len(), 0);
+        assert_eq!(query.path_pattern, Some("*.rs".to_string()));
+
+        // Test full wildcard
+        let wildcard_query = QueryBuilder::new()
+            .with_text("*")
+            .expect("Valid wildcard should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        assert_eq!(wildcard_query.search_terms.len(), 0);
+        assert_eq!(wildcard_query.path_pattern, Some("*".to_string()));
+
+        // Test non-wildcard goes to search_terms
+        let text_query = QueryBuilder::new()
+            .with_text("FileStorage")
+            .expect("Valid text should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        assert_eq!(text_query.search_terms.len(), 1);
+        assert_eq!(text_query.path_pattern, None);
+        assert_eq!(text_query.search_terms[0].as_str(), "FileStorage");
     }
 }

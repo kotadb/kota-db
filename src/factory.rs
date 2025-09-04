@@ -122,10 +122,10 @@ mod tests {
         let data_dir = temp_dir.path().to_str().unwrap();
 
         let storage = create_symbol_storage(data_dir, None).await;
-        
+
         assert!(storage.is_ok(), "Should successfully create symbol storage");
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
@@ -139,10 +139,13 @@ mod tests {
         let data_dir = temp_dir.path().to_str().unwrap();
 
         let storage = create_symbol_storage(data_dir, Some(500)).await;
-        
-        assert!(storage.is_ok(), "Should successfully create symbol storage with custom cache");
+
+        assert!(
+            storage.is_ok(),
+            "Should successfully create symbol storage with custom cache"
+        );
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
@@ -154,7 +157,7 @@ mod tests {
     async fn test_create_symbol_storage_invalid_path() {
         // Test with a path that will fail validation
         let result = create_symbol_storage("../invalid/../../path", None).await;
-        
+
         assert!(result.is_err(), "Should fail with invalid path");
     }
 
@@ -162,15 +165,18 @@ mod tests {
     #[allow(deprecated)]
     async fn test_create_test_symbol_storage() {
         let storage = create_test_symbol_storage().await;
-        
-        assert!(storage.is_ok(), "Should successfully create test symbol storage");
+
+        assert!(
+            storage.is_ok(),
+            "Should successfully create test symbol storage"
+        );
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
         drop(locked); // Release lock
-        
+
         // Test storage should be backed by temporary directory
         // (cleanup happens automatically when test ends)
     }
@@ -180,16 +186,20 @@ mod tests {
     async fn test_create_symbol_storage_with_custom_storage() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let data_dir = temp_dir.path().to_str().unwrap();
-        
+
         // Create a custom storage backend
-        let custom_storage = create_file_storage(data_dir, Some(100)).await
+        let custom_storage = create_file_storage(data_dir, Some(100))
+            .await
             .expect("Failed to create file storage");
-        
+
         let storage = create_symbol_storage_with_storage(Box::new(custom_storage)).await;
-        
-        assert!(storage.is_ok(), "Should successfully create symbol storage with custom storage");
+
+        assert!(
+            storage.is_ok(),
+            "Should successfully create symbol storage with custom storage"
+        );
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
@@ -203,15 +213,18 @@ mod tests {
         let data_dir = temp_dir.path().to_str().unwrap();
 
         let storage = create_symbol_storage_with_graph(data_dir, None).await;
-        
-        assert!(storage.is_ok(), "Should successfully create symbol storage with graph");
+
+        assert!(
+            storage.is_ok(),
+            "Should successfully create symbol storage with graph"
+        );
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
         drop(locked); // Release lock
-        
+
         // Verify graph directory was created
         let graph_path = Path::new(data_dir).join("graph");
         assert!(graph_path.exists(), "Graph directory should be created");
@@ -224,15 +237,18 @@ mod tests {
         let data_dir = temp_dir.path().to_str().unwrap();
 
         let storage = create_symbol_storage_with_graph(data_dir, Some(2000)).await;
-        
-        assert!(storage.is_ok(), "Should successfully create symbol storage with graph and custom cache");
+
+        assert!(
+            storage.is_ok(),
+            "Should successfully create symbol storage with graph and custom cache"
+        );
         let storage = storage.unwrap();
-        
+
         // Verify it's wrapped in Arc<Mutex<>>
         let locked = storage.lock().await;
         // Basic operation to ensure it's functional
         drop(locked); // Release lock
-        
+
         // Verify graph directory was created
         let graph_path = Path::new(data_dir).join("graph");
         assert!(graph_path.exists(), "Graph directory should be created");
@@ -243,7 +259,7 @@ mod tests {
     async fn test_create_symbol_storage_with_graph_invalid_path() {
         // Test with a path that will fail validation
         let result = create_symbol_storage_with_graph("../invalid/../../path", None).await;
-        
+
         assert!(result.is_err(), "Should fail with invalid path");
     }
 
@@ -252,18 +268,18 @@ mod tests {
     async fn test_factory_functions_are_deprecated() {
         // This test documents that all factory functions are deprecated
         // and serves as a reminder for migration to binary symbol format
-        
+
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let data_dir = temp_dir.path().to_str().unwrap();
-        
+
         // All these should work but are deprecated
         let _ = create_symbol_storage(data_dir, None).await;
         let _ = create_test_symbol_storage().await;
-        
+
         let custom_storage = create_file_storage(data_dir, Some(100)).await.unwrap();
         let _ = create_symbol_storage_with_storage(Box::new(custom_storage)).await;
         let _ = create_symbol_storage_with_graph(data_dir, None).await;
-        
+
         // This test passes to document that deprecated functions still work
         // Migration path: Use BinarySymbolWriter/Reader with symbols.kota and dependency_graph.bin
     }
@@ -273,7 +289,7 @@ mod tests {
     async fn test_concurrent_factory_usage() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let data_dir = temp_dir.path().to_str().unwrap();
-        
+
         // Test that multiple factory creations work concurrently
         let handles = vec![
             tokio::spawn({
@@ -289,11 +305,14 @@ mod tests {
                 async move { create_symbol_storage_with_graph(&data_dir, Some(300)).await }
             }),
         ];
-        
+
         // Wait for all to complete
         for handle in handles {
             let result = handle.await.expect("Task should complete");
-            assert!(result.is_ok(), "All concurrent factory creations should succeed");
+            assert!(
+                result.is_ok(),
+                "All concurrent factory creations should succeed"
+            );
         }
     }
 
@@ -301,15 +320,17 @@ mod tests {
     #[allow(deprecated)]
     async fn test_test_symbol_storage_isolation() {
         // Test that multiple test storages are isolated from each other
-        let storage1 = create_test_symbol_storage().await
+        let storage1 = create_test_symbol_storage()
+            .await
             .expect("Should create first test storage");
-        let storage2 = create_test_symbol_storage().await
+        let storage2 = create_test_symbol_storage()
+            .await
             .expect("Should create second test storage");
-        
+
         // Both should be valid and isolated
         let _lock1 = storage1.lock().await;
         let _lock2 = storage2.lock().await;
-        
+
         // Test storages should be independent (they use different UUIDs in paths)
     }
 
@@ -317,11 +338,11 @@ mod tests {
     #[allow(deprecated)]
     async fn test_factory_error_handling() {
         // Test various error conditions
-        
+
         // Invalid path should fail
         let result = create_symbol_storage("/proc/invalid", None).await;
         assert!(result.is_err(), "Should fail with invalid system path");
-        
+
         // Path with null bytes should fail
         let result = create_symbol_storage("test\0path", None).await;
         assert!(result.is_err(), "Should fail with null bytes in path");
@@ -333,19 +354,37 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let data_dir = temp_dir.path().join("nested").join("subdirs");
         let data_dir_str = data_dir.to_str().unwrap();
-        
+
         // Directory doesn't exist initially
-        assert!(!data_dir.exists(), "Nested directory shouldn't exist initially");
-        
+        assert!(
+            !data_dir.exists(),
+            "Nested directory shouldn't exist initially"
+        );
+
         // Factory should create necessary directories
         let storage = create_symbol_storage(data_dir_str, None).await;
-        assert!(storage.is_ok(), "Should successfully create storage and directories");
-        
+        assert!(
+            storage.is_ok(),
+            "Should successfully create storage and directories"
+        );
+
         // Verify directories were created
         assert!(data_dir.exists(), "Nested directory should be created");
-        assert!(data_dir.join("documents").exists(), "Documents subdirectory should be created");
-        assert!(data_dir.join("indices").exists(), "Indices subdirectory should be created");
-        assert!(data_dir.join("wal").exists(), "WAL subdirectory should be created");
-        assert!(data_dir.join("meta").exists(), "Meta subdirectory should be created");
+        assert!(
+            data_dir.join("documents").exists(),
+            "Documents subdirectory should be created"
+        );
+        assert!(
+            data_dir.join("indices").exists(),
+            "Indices subdirectory should be created"
+        );
+        assert!(
+            data_dir.join("wal").exists(),
+            "WAL subdirectory should be created"
+        );
+        assert!(
+            data_dir.join("meta").exists(),
+            "Meta subdirectory should be created"
+        );
     }
 }

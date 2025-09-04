@@ -281,8 +281,9 @@ mod tests {
     fn test_node_location_serialization() {
         let location = create_test_node_location();
         let serialized = serde_json::to_string(&location).expect("Failed to serialize");
-        let deserialized: NodeLocation = serde_json::from_str(&serialized).expect("Failed to deserialize");
-        
+        let deserialized: NodeLocation =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
         assert_eq!(location.start_line, deserialized.start_line);
         assert_eq!(location.start_column, deserialized.start_column);
         assert_eq!(location.end_line, deserialized.end_line);
@@ -303,8 +304,9 @@ mod tests {
     fn test_graph_node_serialization() {
         let node = create_test_graph_node();
         let serialized = serde_json::to_string(&node).expect("Failed to serialize");
-        let deserialized: GraphNode = serde_json::from_str(&serialized).expect("Failed to deserialize");
-        
+        let deserialized: GraphNode =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
         assert_eq!(node.qualified_name, deserialized.qualified_name);
         assert_eq!(node.node_type, deserialized.node_type);
         assert_eq!(node.file_path, deserialized.file_path);
@@ -323,8 +325,9 @@ mod tests {
     fn test_graph_edge_serialization() {
         let edge = create_test_graph_edge();
         let serialized = serde_json::to_string(&edge).expect("Failed to serialize");
-        let deserialized: GraphEdge = serde_json::from_str(&serialized).expect("Failed to deserialize");
-        
+        let deserialized: GraphEdge =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
         assert_eq!(edge.relation_type, deserialized.relation_type);
         assert_eq!(edge.context, deserialized.context);
         assert_eq!(edge.metadata, deserialized.metadata);
@@ -335,22 +338,26 @@ mod tests {
         let node_id = Uuid::new_v4();
         let node = create_test_graph_node();
         let edge = create_test_graph_edge();
-        
+
         let mut nodes = HashMap::new();
         nodes.insert(node_id, node);
-        
+
         let mut edges = HashMap::new();
         edges.insert(node_id, vec![(Uuid::new_v4(), edge)]);
-        
+
         let metadata = QueryMetadata {
             nodes_visited: 5,
             edges_traversed: 3,
             execution_time_us: 42000,
             truncated: false,
         };
-        
-        let subset = GraphSubset { nodes, edges, metadata };
-        
+
+        let subset = GraphSubset {
+            nodes,
+            edges,
+            metadata,
+        };
+
         assert_eq!(subset.nodes.len(), 1);
         assert_eq!(subset.edges.len(), 1);
         assert_eq!(subset.metadata.nodes_visited, 5);
@@ -362,13 +369,13 @@ mod tests {
         let node1 = Uuid::new_v4();
         let node2 = Uuid::new_v4();
         let edge = create_test_graph_edge();
-        
+
         let path = GraphPath {
             nodes: vec![node1, node2],
             edges: vec![edge],
             length: 2,
         };
-        
+
         assert_eq!(path.nodes.len(), 2);
         assert_eq!(path.edges.len(), 1);
         assert_eq!(path.length, 2);
@@ -382,29 +389,29 @@ mod tests {
             execution_time_us: 123000,
             truncated: false,
         };
-        
+
         assert_eq!(metadata.nodes_visited, 100);
         assert_eq!(metadata.edges_traversed, 250);
         assert_eq!(metadata.execution_time_us, 123000);
-        assert_eq!(metadata.truncated, false);
+        assert!(!metadata.truncated);
     }
 
     #[test]
     fn test_graph_storage_config_default() {
         let config = GraphStorageConfig::default();
         assert_eq!(config.cache_size, 10_000);
-        assert_eq!(config.enable_wal, true);
+        assert!(config.enable_wal);
         assert_eq!(config.max_traversal_depth, 10);
         assert_eq!(config.max_path_results, 1000);
-        
+
         // Test enum variants
         match config.compression {
-            CompressionType::Snappy => {},
+            CompressionType::Snappy => {}
             _ => panic!("Expected Snappy compression as default"),
         }
-        
+
         match config.sync_mode {
-            SyncMode::Normal => {},
+            SyncMode::Normal => {}
             _ => panic!("Expected Normal sync mode as default"),
         }
     }
@@ -419,19 +426,19 @@ mod tests {
             max_traversal_depth: 5,
             max_path_results: 500,
         };
-        
+
         assert_eq!(config.cache_size, 5000);
-        assert_eq!(config.enable_wal, false);
+        assert!(!config.enable_wal);
         assert_eq!(config.max_traversal_depth, 5);
         assert_eq!(config.max_path_results, 500);
-        
+
         match config.compression {
-            CompressionType::Zstd => {},
+            CompressionType::Zstd => {}
             _ => panic!("Expected Zstd compression"),
         }
-        
+
         match config.sync_mode {
-            SyncMode::Fast => {},
+            SyncMode::Fast => {}
             _ => panic!("Expected Fast sync mode"),
         }
     }
@@ -442,7 +449,7 @@ mod tests {
         let snappy = CompressionType::Snappy;
         let zstd = CompressionType::Zstd;
         let lz4 = CompressionType::Lz4;
-        
+
         // Test serialization of enum variants
         assert!(serde_json::to_string(&none).is_ok());
         assert!(serde_json::to_string(&snappy).is_ok());
@@ -455,7 +462,7 @@ mod tests {
         let full = SyncMode::Full;
         let normal = SyncMode::Normal;
         let fast = SyncMode::Fast;
-        
+
         // Test serialization of enum variants
         assert!(serde_json::to_string(&full).is_ok());
         assert!(serde_json::to_string(&normal).is_ok());
@@ -473,7 +480,7 @@ mod tests {
             metadata: HashMap::new(),
             updated_at: Utc::now().timestamp(),
         };
-        
+
         assert_eq!(node.qualified_name, "simple_function");
         assert!(node.metadata.is_empty());
     }
@@ -483,7 +490,7 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("confidence".to_string(), "high".to_string());
         metadata.insert("weight".to_string(), "0.95".to_string());
-        
+
         let edge = GraphEdge {
             relation_type: RelationType::Calls,
             location: create_test_node_location(),
@@ -491,7 +498,7 @@ mod tests {
             metadata,
             created_at: Utc::now().timestamp(),
         };
-        
+
         assert_eq!(edge.metadata.len(), 2);
         assert_eq!(edge.metadata["confidence"], "high");
         assert_eq!(edge.metadata["weight"], "0.95");
@@ -505,13 +512,13 @@ mod tests {
             execution_time_us: 1000,
             truncated: false,
         };
-        
+
         let subset = GraphSubset {
             nodes: HashMap::new(),
             edges: HashMap::new(),
             metadata,
         };
-        
+
         assert_eq!(subset.nodes.len(), 0);
         assert_eq!(subset.edges.len(), 0);
         assert_eq!(subset.metadata.nodes_visited, 0);
@@ -521,13 +528,13 @@ mod tests {
     #[test]
     fn test_single_node_path() {
         let node = Uuid::new_v4();
-        
+
         let path = GraphPath {
             nodes: vec![node],
             edges: vec![],
             length: 1,
         };
-        
+
         assert_eq!(path.nodes.len(), 1);
         assert_eq!(path.edges.len(), 0);
         assert_eq!(path.length, 1);
@@ -537,26 +544,31 @@ mod tests {
     fn test_complex_graph_subset_serialization() {
         let node_id1 = Uuid::new_v4();
         let node_id2 = Uuid::new_v4();
-        
+
         let mut nodes = HashMap::new();
         nodes.insert(node_id1, create_test_graph_node());
         nodes.insert(node_id2, create_test_graph_node());
-        
+
         let mut edges = HashMap::new();
         edges.insert(node_id1, vec![(node_id2, create_test_graph_edge())]);
-        
+
         let metadata = QueryMetadata {
             nodes_visited: 2,
             edges_traversed: 1,
             execution_time_us: 5000,
             truncated: false,
         };
-        
-        let subset = GraphSubset { nodes, edges, metadata };
-        
+
+        let subset = GraphSubset {
+            nodes,
+            edges,
+            metadata,
+        };
+
         let serialized = serde_json::to_string(&subset).expect("Failed to serialize");
-        let deserialized: GraphSubset = serde_json::from_str(&serialized).expect("Failed to deserialize");
-        
+        let deserialized: GraphSubset =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
         assert_eq!(deserialized.nodes.len(), 2);
         assert_eq!(deserialized.edges.len(), 1);
         assert_eq!(deserialized.metadata.nodes_visited, 2);

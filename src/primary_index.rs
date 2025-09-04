@@ -575,51 +575,106 @@ impl Index for PrimaryIndex {
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
 
+        // DEBUG: Log query details
+        tracing::debug!(
+            "Primary Index search called with query: path_pattern={:?}, search_terms={:?}, limit={}",
+            query.path_pattern,
+            query.search_terms,
+            query.limit.get()
+        );
+
         let btree_root = self.btree_root.read().await;
 
         // Use B+ tree traversal to get all documents (O(n) for full scan, but sorted)
         let all_pairs = extract_all_pairs(&btree_root)?;
 
+        // DEBUG: Log what we found in the index
+        tracing::debug!(
+            "Primary Index contains {} document(s) after loading",
+            all_pairs.len()
+        );
+
+        // DEBUG: Log first few entries for verification
+        for (i, (doc_id, path)) in all_pairs.iter().take(5).enumerate() {
+            tracing::debug!(
+                "Document {}: {} -> {}",
+                i + 1,
+                doc_id.as_uuid(),
+                path.to_string()
+            );
+        }
+
         // Check for wildcard patterns in path_pattern field first, then search_terms
         // The QueryBuilder puts wildcard queries in path_pattern (see issue #337)
         let wildcard_pattern = if let Some(ref pattern) = query.path_pattern {
             // Use the path_pattern field if it's set (this is where wildcards go)
+            tracing::debug!("Using path_pattern: '{}'", pattern);
             Some(pattern.clone())
         } else if query.search_terms.len() == 1 {
             // Fall back to checking search_terms for backward compatibility
             let term = &query.search_terms[0];
             if term.as_str().contains('*') {
+                tracing::debug!("Using wildcard from search_terms: '{}'", term.as_str());
                 Some(term.as_str().to_string())
             } else {
+                tracing::debug!("No wildcard in search_terms: '{}'", term.as_str());
                 None
             }
         } else if query.search_terms.is_empty() {
             // Empty search terms means return all
+            tracing::debug!("Empty search terms, returning all documents");
             None
         } else {
             // Multiple search terms not supported for wildcard patterns
+            tracing::debug!("Multiple search terms not supported for wildcard patterns");
             return Ok(Vec::new());
         };
 
         // Filter results based on wildcard pattern if present
         let mut results: Vec<ValidatedDocumentId> = if let Some(pattern) = wildcard_pattern {
-            all_pairs
+            tracing::debug!(
+                "Filtering {} documents with pattern: '{}'",
+                all_pairs.len(),
+                pattern
+            );
+
+            let filtered: Vec<_> = all_pairs
                 .into_iter()
-                .filter(|(_, path)| Self::matches_wildcard_pattern(&path.to_string(), &pattern))
+                .filter(|(_, path)| {
+                    let path_str = path.to_string();
+                    let matches = Self::matches_wildcard_pattern(&path_str, &pattern);
+                    if matches {
+                        tracing::debug!("Pattern '{}' MATCHES path: '{}'", pattern, path_str);
+                    }
+                    matches
+                })
                 .map(|(doc_id, _)| doc_id)
-                .collect()
+                .collect();
+
+            tracing::debug!("Pattern matching resulted in {} documents", filtered.len());
+            filtered
         } else {
             // No pattern, return all documents
+            tracing::debug!(
+                "No pattern specified, returning all {} documents",
+                all_pairs.len()
+            );
             all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect()
         };
 
         // Apply limit from query
         let limit_value = query.limit.get();
         if results.len() > limit_value {
+            tracing::debug!(
+                "Truncating {} results to limit of {}",
+                results.len(),
+                limit_value
+            );
             results.truncate(limit_value);
         }
 
         // Results are already sorted by key order from B+ tree
+        tracing::debug!("Primary Index search returning {} results", results.len());
 
         Ok(results)
     }
