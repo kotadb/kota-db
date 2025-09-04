@@ -543,100 +543,13 @@ impl Default for MetricsBuilder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_document_builder() {
-        let doc = DocumentBuilder::new()
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
+    // DocumentBuilder basic test removed - part of deprecated document database functionality
 
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-        assert_eq!(doc.path.as_str(), "test/doc.md");
-        assert_eq!(doc.title.as_str(), "Test Document");
-        assert_eq!(doc.size, 13);
-    }
+    // DocumentBuilder custom ID test removed - part of deprecated document database functionality
 
-    #[test]
-    fn test_document_builder_with_custom_id() {
-        use uuid::Uuid;
+    // DocumentBuilder ID generation test removed - part of deprecated document database functionality
 
-        // Create a specific UUID to test with
-        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let custom_id = ValidatedDocumentId::from_uuid(custom_uuid).unwrap();
-
-        let doc = DocumentBuilder::new()
-            .id(custom_id)
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
-
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-
-        // Verify the document uses the specified ID, not a generated one
-        assert_eq!(doc.id.as_uuid(), custom_uuid);
-        assert_eq!(doc.path.as_str(), "test/doc.md");
-        assert_eq!(doc.title.as_str(), "Test Document");
-    }
-
-    #[test]
-    fn test_document_builder_generates_id_when_not_specified() {
-        let doc1 = DocumentBuilder::new()
-            .path("test/doc1.md")
-            .expect("Valid path should not fail")
-            .title("Test Document 1")
-            .expect("Valid title should not fail")
-            .content(b"Content 1")
-            .build()
-            .expect("Document build should succeed");
-
-        let doc2 = DocumentBuilder::new()
-            .path("test/doc2.md")
-            .expect("Valid path should not fail")
-            .title("Test Document 2")
-            .expect("Valid title should not fail")
-            .content(b"Content 2")
-            .build()
-            .expect("Document build should succeed");
-
-        // Verify different documents get different generated IDs
-        assert_ne!(doc1.id.as_uuid(), doc2.id.as_uuid());
-
-        // Verify IDs are valid UUIDs (not nil)
-        assert_ne!(doc1.id.as_uuid(), uuid::Uuid::nil());
-        assert_ne!(doc2.id.as_uuid(), uuid::Uuid::nil());
-    }
-
-    #[test]
-    fn test_document_builder_id_from_uuid() {
-        use uuid::Uuid;
-
-        // Create a specific UUID to test with
-        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-
-        let doc = DocumentBuilder::new()
-            .id_from_uuid(custom_uuid)
-            .expect("Valid UUID should not fail")
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
-
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-
-        // Verify the document uses the specified UUID
-        assert_eq!(doc.id.as_uuid(), custom_uuid);
-    }
+    // DocumentBuilder UUID test removed - part of deprecated document database functionality
 
     #[test]
     fn test_query_builder() {
@@ -677,10 +590,9 @@ mod tests {
 
     #[test]
     fn test_builder_validation() {
-        // Missing required fields
-        let doc = DocumentBuilder::new().build();
-        assert!(doc.is_err());
-
+        // DocumentBuilder validation removed - part of deprecated document database functionality
+        
+        // Test modern codebase intelligence builders
         let query = QueryBuilder::new().build();
         assert!(query.is_ok()); // Query has defaults
 

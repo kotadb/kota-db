@@ -523,3 +523,389 @@ pub async fn create_file_storage(
 
     Ok(wrapped)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::*;
+    use chrono::Utc;
+    use tempfile::TempDir;
+    use tokio::fs;
+    use uuid::Uuid;
+
+    async fn create_test_storage() -> (FileStorage, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let storage = FileStorage::open(temp_dir.path().to_str().unwrap())
+            .await
+            .expect("Failed to open storage");
+        (storage, temp_dir)
+    }
+
+    fn create_test_document(content: &str) -> Document {
+        let now = Utc::now();
+        Document {
+            id: ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
+            path: ValidatedPath::new("test/document.md").unwrap(),
+            title: ValidatedTitle::new("Test Document").unwrap(),
+            content: content.as_bytes().to_vec(),
+            tags: vec![ValidatedTag::new("test").unwrap()],
+            created_at: now,
+            updated_at: now,
+            size: content.len(),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+        }
+    }
+
+    fn create_test_document_no_tags(content: &str) -> Document {
+        let now = Utc::now();
+        Document {
+            id: ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap(),
+            path: ValidatedPath::new("test/document.md").unwrap(),
+            title: ValidatedTitle::new("Test Document").unwrap(),
+            content: content.as_bytes().to_vec(),
+            tags: vec![],
+            created_at: now,
+            updated_at: now,
+            size: content.len(),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_initialization() {
+        let (storage, _temp_dir) = create_test_storage().await;
+        
+        // Check that directories were created
+        let base_path = &storage.db_path;
+        assert!(base_path.join("documents").exists());
+        assert!(base_path.join("indices").exists());
+        assert!(base_path.join("wal").exists());
+        assert!(base_path.join("meta").exists());
+        
+        // Check that WAL file was created
+        assert!(base_path.join("wal").join("current.wal").exists());
+    }
+
+    #[tokio::test]
+    async fn test_document_insertion_and_retrieval() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document_no_tags("Hello, world!"); // Use no tags for this test
+
+        // Insert document
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Retrieve document
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        assert!(retrieved.is_some());
+        
+        let retrieved_doc = retrieved.unwrap();
+        assert_eq!(retrieved_doc.id, doc.id);
+        assert_eq!(retrieved_doc.path, doc.path);
+        assert_eq!(retrieved_doc.title, doc.title);
+        assert_eq!(retrieved_doc.content, doc.content); // Original content should match
+        assert_eq!(retrieved_doc.tags, doc.tags); // Empty tags
+        assert_eq!(retrieved_doc.embedding, doc.embedding);
+    }
+
+    #[tokio::test]
+    async fn test_document_update() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let mut doc = create_test_document("Original content");
+
+        // Insert document
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Update document
+        doc.content = b"Updated content".to_vec();
+        doc.size = doc.content.len();
+        doc.updated_at = Utc::now();
+        storage.update(doc.clone()).await.expect("Failed to update document");
+
+        // Retrieve and verify
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        assert!(retrieved.is_some());
+        
+        let retrieved_doc = retrieved.unwrap();
+        assert_eq!(retrieved_doc.content, b"Updated content");
+        assert_eq!(retrieved_doc.size, 15);
+    }
+
+    #[tokio::test]
+    async fn test_document_deletion() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("To be deleted");
+
+        // Insert document
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Verify it exists
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        assert!(retrieved.is_some());
+
+        // Delete document
+        let deleted = storage.delete(&doc.id).await.expect("Failed to delete document");
+        assert!(deleted);
+
+        // Verify it's gone
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        assert!(retrieved.is_none());
+
+        // Delete non-existent document should return false
+        let deleted_again = storage.delete(&doc.id).await.expect("Failed to delete document");
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn test_list_all_documents() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc1 = create_test_document("First document");
+        let doc2 = create_test_document("Second document");
+
+        // Initially empty
+        let docs = storage.list_all().await.expect("Failed to list documents");
+        assert_eq!(docs.len(), 0);
+
+        // Insert documents
+        storage.insert(doc1.clone()).await.expect("Failed to insert document");
+        storage.insert(doc2.clone()).await.expect("Failed to insert document");
+
+        // List all
+        let docs = storage.list_all().await.expect("Failed to list documents");
+        assert_eq!(docs.len(), 2);
+        
+        let ids: Vec<_> = docs.iter().map(|d| d.id.as_uuid()).collect();
+        assert!(ids.contains(&doc1.id.as_uuid()));
+        assert!(ids.contains(&doc2.id.as_uuid()));
+    }
+
+    #[tokio::test]
+    async fn test_sync_and_flush() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("Sync test");
+
+        storage.insert(doc).await.expect("Failed to insert document");
+        
+        // Sync should not fail
+        storage.sync().await.expect("Failed to sync");
+        
+        // Flush should not fail
+        storage.flush().await.expect("Failed to flush");
+    }
+
+    #[tokio::test]
+    async fn test_close() {
+        let (storage, _temp_dir) = create_test_storage().await;
+        
+        // Close should not fail
+        storage.close().await.expect("Failed to close storage");
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_insertion_fails() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("Duplicate test");
+
+        // Insert document
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Try to insert same document again - should fail
+        let result = storage.insert(doc).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_update_nonexistent_document_fails() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("Nonexistent update test");
+
+        // Try to update document that doesn't exist - should fail
+        let result = storage.update(doc).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_persistence_across_reopens() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let path = temp_dir.path().to_str().unwrap();
+        let doc = create_test_document_no_tags("Persistence test"); // Use no tags
+
+        {
+            // First storage instance - insert document
+            let mut storage1 = FileStorage::open(path).await.expect("Failed to open storage");
+            storage1.insert(doc.clone()).await.expect("Failed to insert document");
+        } // storage1 is dropped here
+
+        {
+            // Second storage instance - should load existing document
+            let storage2 = FileStorage::open(path).await.expect("Failed to open storage");
+            let retrieved = storage2.get(&doc.id).await.expect("Failed to get document");
+            assert!(retrieved.is_some());
+            
+            let retrieved_doc = retrieved.unwrap();
+            assert_eq!(retrieved_doc.id, doc.id);
+            assert_eq!(retrieved_doc.content, doc.content);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_frontmatter_handling() {
+        let (mut storage, temp_dir) = create_test_storage().await;
+        let mut doc = create_test_document("Content with tags");
+        doc.tags = vec![
+            ValidatedTag::new("rust").unwrap(),
+            ValidatedTag::new("storage").unwrap(),
+        ];
+
+        // Insert document with tags
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Check that file was written with frontmatter
+        let file_path = storage.document_file_path(&doc.id.as_uuid());
+        let file_content = fs::read_to_string(&file_path).await.expect("Failed to read file");
+        
+        assert!(file_content.starts_with("---\n"));
+        assert!(file_content.contains("tags:"));
+        assert!(file_content.contains("- rust"));
+        assert!(file_content.contains("- storage"));
+        assert!(file_content.contains("Content with tags"));
+
+        // Retrieve and verify tags are parsed correctly
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        let retrieved_doc = retrieved.unwrap();
+        assert_eq!(retrieved_doc.tags.len(), 2);
+        assert!(retrieved_doc.tags.iter().any(|t| t.as_str() == "rust"));
+        assert!(retrieved_doc.tags.iter().any(|t| t.as_str() == "storage"));
+    }
+
+    #[tokio::test]
+    async fn test_hash_calculation_and_storage() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("Hash test content");
+
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Access metadata to check hash
+        let documents = storage.documents.read().await;
+        let metadata = documents.get(&doc.id.as_uuid()).unwrap();
+        
+        // Hash should be calculated for the content
+        let expected_hash = crate::pure::metadata::calculate_hash(&doc.content);
+        assert_eq!(metadata.hash, expected_hash);
+    }
+
+    #[tokio::test]
+    async fn test_metadata_serialization() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let doc = create_test_document("Metadata test");
+
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+
+        // Check that metadata file exists and is valid JSON
+        let metadata_path = storage.metadata_file_path(&doc.id.as_uuid());
+        assert!(metadata_path.exists());
+        
+        let metadata_content = fs::read_to_string(&metadata_path)
+            .await
+            .expect("Failed to read metadata file");
+        
+        // Should be valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&metadata_content)
+            .expect("Metadata file is not valid JSON");
+        
+        // Check key fields
+        assert!(parsed.get("id").is_some());
+        assert!(parsed.get("original_path").is_some());
+        assert!(parsed.get("title").is_some());
+        assert!(parsed.get("size").is_some());
+        assert!(parsed.get("hash").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_path_rejection() {
+        // Test path validation - these should fail due to directory traversal
+        let result = FileStorage::open("../invalid/path").await;
+        assert!(result.is_err());
+        
+        let result = FileStorage::open("/etc/passwd").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_file_storage_factory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let path = temp_dir.path().to_str().unwrap();
+        
+        // Test factory function with default cache
+        let storage = create_file_storage(path, None).await.expect("Failed to create storage");
+        
+        // Should be able to use Storage trait methods
+        let docs = storage.list_all().await.expect("Failed to list documents");
+        assert_eq!(docs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_file_storage_factory_with_custom_cache() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let path = temp_dir.path().to_str().unwrap();
+        
+        // Test factory function with custom cache size
+        let storage = create_file_storage(path, Some(500)).await.expect("Failed to create storage");
+        
+        // Should be able to use Storage trait methods
+        let docs = storage.list_all().await.expect("Failed to list documents");
+        assert_eq!(docs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_document_paths_and_metadata_paths() {
+        let (storage, _temp_dir) = create_test_storage().await;
+        let doc_id = Uuid::new_v4();
+        
+        let doc_path = storage.document_file_path(&doc_id);
+        let meta_path = storage.metadata_file_path(&doc_id);
+        
+        assert!(doc_path.to_string_lossy().contains(&format!("{}.md", doc_id)));
+        assert!(meta_path.to_string_lossy().contains(&format!("{}.json", doc_id)));
+        assert!(doc_path.parent().unwrap().ends_with("documents"));
+        assert!(meta_path.parent().unwrap().ends_with("documents"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_content_document() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let mut doc = create_test_document_no_tags(""); // Use no tags version
+        doc.content = Vec::new();
+        doc.size = 0;
+
+        storage.insert(doc.clone()).await.expect("Failed to insert empty document");
+        
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        assert!(retrieved.is_some());
+        
+        let retrieved_doc = retrieved.unwrap();
+        assert_eq!(retrieved_doc.content.len(), 0);
+        assert_eq!(retrieved_doc.size, 0);
+    }
+
+    #[tokio::test]
+    async fn test_large_embedding_vector() {
+        let (mut storage, _temp_dir) = create_test_storage().await;
+        let mut doc = create_test_document_no_tags("Document with large embedding"); // Use no tags
+        
+        // Create a large embedding vector
+        doc.embedding = Some((0..1536).map(|i| i as f32 * 0.001).collect());
+
+        storage.insert(doc.clone()).await.expect("Failed to insert document");
+        
+        let retrieved = storage.get(&doc.id).await.expect("Failed to get document");
+        let retrieved_doc = retrieved.unwrap();
+        
+        assert_eq!(retrieved_doc.embedding.as_ref().unwrap().len(), 1536);
+        assert_eq!(retrieved_doc.embedding.as_ref().unwrap()[0], 0.0);
+        // Use approximate comparison for floating point precision
+        let last_val = retrieved_doc.embedding.as_ref().unwrap()[1535];
+        assert!((last_val - 1.535).abs() < 0.001, "Expected ~1.535, got {}", last_val);
+    }
+}

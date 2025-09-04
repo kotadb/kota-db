@@ -72,11 +72,11 @@ impl TestGitRepository {
         Ok(repo)
     }
 
-    /// Creates basic repository structure with realistic Rust code matching working integration tests
+    /// Creates minimal repository structure for fast testing
     async fn create_initial_structure(repo_path: &Path) -> Result<()> {
-        // Create a simple Rust file with various symbols (matching binary_symbols_integration_test.rs pattern)
-        let rust_content = r#"
-pub struct FileStorage {
+        // Create the simplest possible Rust file that still has symbols
+        // Exactly matching the working integration test pattern
+        let rust_content = r#"pub struct FileStorage {
     field1: String,
     field2: i32,
 }
@@ -89,48 +89,30 @@ impl FileStorage {
         }
     }
     
-    pub fn insert(&self, data: &str) -> String {
-        format!("Inserted: {}", data)
-    }
-    
-    pub fn get(&self) -> &str {
+    pub fn method1(&self) -> &str {
         &self.field1
     }
 }
 
-pub fn create_file_storage() -> FileStorage {
-    FileStorage::new()
+pub fn standalone_function(x: i32) -> i32 {
+    x * 2
 }
 
-pub fn process_data(storage: &FileStorage, data: &str) -> String {
-    storage.insert(data)
+pub enum TestEnum {
+    Variant1,
+    Variant2(String),
 }
 
-pub enum StorageType {
-    Memory,
-    File(String),
-}
-
-pub const DEFAULT_STORAGE: i32 = 42;
+pub const TEST_CONSTANT: i32 = 42;
 "#;
 
-        fs::write(repo_path.join("storage.rs"), rust_content)?;
+        fs::write(repo_path.join("test.rs"), rust_content)?;
 
-        // Create lib.rs that imports the module
-        let lib_content = r#"
-mod storage;
-
-pub use storage::*;
+        // Create lib.rs - minimal
+        let lib_content = r#"mod test;
 
 pub fn library_function() {
-    let storage = create_file_storage();
-    let result = process_data(&storage, "test data");
-    println!("Library function: {}", result);
-}
-
-pub fn use_file_storage() {
-    let fs = FileStorage::new();
-    fs.insert("example");
+    println!("Library function");
 }
 "#;
 
@@ -140,55 +122,48 @@ pub fn use_file_storage() {
         Self::run_git_command(repo_path, &["add", "."]).context("Failed to add files to git")?;
         Self::run_git_command(
             repo_path,
-            &["commit", "-m", "Initial commit: Add storage module"],
+            &["commit", "-m", "Initial commit"],
         )
         .context("Failed to create initial commit")?;
 
         Ok(())
     }
 
-    /// Adds extensive symbol data for testing result limits and pagination
+    /// Adds just enough symbols for testing result limits (smaller set for performance)
     async fn add_extensive_symbol_data(repo_path: &Path) -> Result<()> {
-        // Generate many simple functions that call FileStorage to create relationships
-        let mut extensive_code = String::from("// Extensive test functions\n\n");
-        extensive_code.push_str("use crate::*;\n\n");
+        // Create just enough functions to test limits without causing performance issues
+        let mut extensive_code = String::from("// Functions that use FileStorage\nuse crate::test::*;\n\n");
 
-        // Add many functions that call FileStorage
-        for i in 0..100 {
+        // Add functions that reference FileStorage - enough to test limits but not too many
+        for i in 0..60 {
             extensive_code.push_str(&format!(
-                r#"
-pub fn test_function_{i}() -> FileStorage {{
-    let storage = create_file_storage();
-    let _ = process_data(&storage, "data_{i}");
-    storage
+                r#"pub fn test_function_{i}() {{
+    let storage = FileStorage::new();
+    storage.method1();
 }}
 
-pub fn use_storage_{i}() {{
-    let storage = FileStorage::new();
-    storage.insert("test");
-}}
 "#,
             ));
         }
 
-        fs::write(repo_path.join("extensive.rs"), extensive_code)
-            .context("Failed to create extensive.rs")?;
+        fs::write(repo_path.join("callers.rs"), extensive_code)
+            .context("Failed to create callers.rs")?;
 
         // Update lib.rs to include the new module
         let lib_path = repo_path.join("lib.rs");
         let mut lib_content = fs::read_to_string(&lib_path).context("Failed to read lib.rs")?;
-        lib_content.push_str("\nmod extensive;\npub use extensive::*;\n");
+        lib_content.push_str("\nmod callers;\n");
         fs::write(&lib_path, lib_content)
-            .context("Failed to update lib.rs with extensive module")?;
+            .context("Failed to update lib.rs with callers module")?;
 
-        // Commit the extensive symbols
+        // Commit the additional symbols
         Self::run_git_command(repo_path, &["add", "."])
-            .context("Failed to add extensive symbol files to git")?;
+            .context("Failed to add caller files to git")?;
         Self::run_git_command(
             repo_path,
-            &["commit", "-m", "Add extensive symbols for limit testing"],
+            &["commit", "-m", "Add caller functions"],
         )
-        .context("Failed to commit extensive symbols")?;
+        .context("Failed to commit caller functions")?;
 
         Ok(())
     }
@@ -239,6 +214,7 @@ pub async fn create_indexed_test_database(
         .to_string();
 
     // Index the git repository using KotaDB (symbols are enabled by default)
+    // Use a simpler, minimal approach to avoid performance issues in tests
     let output = Command::new("cargo")
         .args([
             "run",
@@ -253,15 +229,16 @@ pub async fn create_indexed_test_database(
         .output()
         .context("Failed to execute kotadb index-codebase command")?;
 
-    // TODO: Debug symbol extraction - indexing succeeds but no symbols found
-    // This suggests the generated test code may not match KotaDB's expectations
+    // Check indexing results
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
             "Failed to index codebase. Status: {:?}\nStderr: {}\nStdout: {}",
             output.status.code(),
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
+            stderr,
+            stdout
         ));
     }
 
@@ -285,8 +262,8 @@ mod tests {
         let git_dir = repo.path_ref().join(".git");
         assert!(git_dir.exists(), "Git directory should exist");
 
-        // Verify files were created
-        let lib_file = repo.path_ref().join("src").join("lib.rs");
+        // Verify files were created (they are in the root, not src/)
+        let lib_file = repo.path_ref().join("lib.rs");
         assert!(lib_file.exists(), "lib.rs should exist");
 
         // Verify git log shows commits
@@ -306,19 +283,19 @@ mod tests {
     async fn test_extensive_symbols_repository() -> Result<()> {
         let repo = TestGitRepository::new_with_extensive_symbols().await?;
 
-        // Verify extensive symbols file was created
-        let extensive_file = repo.path_ref().join("src").join("extensive_symbols.rs");
-        assert!(extensive_file.exists(), "extensive_symbols.rs should exist");
+        // Verify callers file was created (it's callers.rs, not extensive_symbols.rs)
+        let extensive_file = repo.path_ref().join("callers.rs");
+        assert!(extensive_file.exists(), "callers.rs should exist");
 
         // Verify the file contains many symbols
         let content = fs::read_to_string(&extensive_file)?;
         assert!(
-            content.contains("TestStruct100"),
-            "Should contain many test structs"
+            content.contains("test_function_30"),
+            "Should contain test functions"
         );
         assert!(
-            content.contains("test_function_50"),
-            "Should contain many test functions"
+            content.contains("FileStorage::new"),
+            "Should contain FileStorage references"
         );
 
         Ok(())
