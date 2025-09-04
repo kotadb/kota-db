@@ -207,7 +207,7 @@ impl Query {
     pub fn new(
         text: Option<String>,
         _tags: Option<Vec<String>>,
-        _path_pattern: Option<String>,
+        path_pattern: Option<String>,
         limit: usize,
     ) -> anyhow::Result<Self> {
         let mut search_terms = Vec::new();
@@ -225,7 +225,7 @@ impl Query {
         Ok(Self {
             search_terms,
             tags: Vec::new(),
-            path_pattern: None,
+            path_pattern,
             limit: ValidatedLimit::new(limit, 100_000)?, // Increased from 1000 to handle large repositories
             offset: ValidatedPageId::new(1)?,
         })

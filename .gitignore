@@ -163,3 +163,5 @@ test-db-data/
 *.test.kotadb
 code-analysis-bench-results/
 test-db/
+# Exclude dogfood testing data directories - should never be committed
+dogfood-test/

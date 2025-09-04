@@ -409,9 +409,10 @@ impl Index for BinaryTrigramIndex {
             stats.total_trigrams += trigrams.len();
         }
 
-        // Save to disk more frequently during initial indexing (every 10 documents)
-        // This ensures data is persisted even for small datasets
-        if self.stats.read().await.document_count % 10 == 0 {
+        // Save to disk very rarely during bulk indexing for maximum performance
+        // Only save every 500 documents during initial indexing to minimize I/O overhead
+        // Relies on external callers to call flush() to ensure data persistence
+        if self.stats.read().await.document_count % 500 == 0 {
             self.save_binary_index().await?;
         }
 

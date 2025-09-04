@@ -158,6 +158,7 @@ jobs:
           - performance
           - system
           - analysis
+          - cli
     steps:
     - uses: actions/checkout@v4
     
@@ -186,7 +187,8 @@ jobs:
         
         if [ "$SUITE" = "core" ]; then
           cargo test --test file_storage_integration_test --test storage_index_integration_test --test data_integrity_test
-          cargo test --test builder_tests --test document_builder_id_test --test validated_types_tests --test unicode_handling_test
+          cargo test --test graph_storage_test --test test_graph_storage_routing --test test_manual_graph_routing --test test_native_graph_storage_serialization
+          cargo test --test edge_persistence_integration_test --test test_edge_persistence_bug --test test_transaction_consistency
         elif [ "$SUITE" = "index" ]; then
           cargo test --test primary_index_tests --test primary_index_edge_cases_test --test primary_index_persistence_test
           cargo test --test btree_algorithms_test --test btree_performance_test --test test_btree_deletion
@@ -194,18 +196,25 @@ jobs:
           cargo test --test query_routing_stress --test bulk_operations_test --test llm_search_test --test wildcard_search_test
           cargo test --test trigram_content_search_test --test test_trigram_false_positives_221 --test test_trigram_result_differentiation_198
           cargo test --test test_search_consistency_issue_222 --test test_natural_language_query --test test_query_sanitization
+          cargo test --test query_sanitization_fix_test --test test_path_normalization --test test_trigram_issue_368
         elif [ "$SUITE" = "stress" ]; then
           cargo test --test concurrent_access_test --test concurrent_stress_test --test concurrent_stress_simple_test
           cargo test --test index_stress_test --test query_routing_stress
           cargo test --test chaos_tests --test adversarial_tests
         elif [ "$SUITE" = "performance" ]; then
           cargo test --test performance_regression_test --test complexity_comparison_test --test write_performance_test
+          cargo test --test memory_limits_test --test lazy_loading_robustness_tests --test enhanced_dependency_extraction_test
         elif [ "$SUITE" = "system" ]; then
           cargo test --test http_server_integration_test --test observability_integration_test
           cargo test --test production_configuration_test --test system_resilience_test --test security_path_traversal_test
+          cargo test --test api_key_integration_tests --test async_http_handler_test
         elif [ "$SUITE" = "analysis" ]; then
           cargo test --test code_analysis_integration_test --test relationship_query_pipeline_test
-          cargo test --test test_symbol_index --test test_symbol_debug
+          cargo test --test test_symbol_index --test test_symbol_debug --test test_symbol_index_performance --test test_symbol_storage_edge_bug
+          cargo test --test binary_symbols_integration_test --test binary_relationship_bridge_test --test binary_index_integration
+          cargo test --test codebase_intelligence_api_test --test test_bidirectional_relationships
+        elif [ "$SUITE" = "cli" ]; then
+          cargo test --test cli_defaults_validation_test --test benchmark_command_test --test stats_command_integration_test
         else
           echo "Unknown test suite: $SUITE"
           exit 1

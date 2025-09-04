@@ -1,7 +1,9 @@
 //! Test that symbol relationships are properly routed to graph storage backend
 
 use anyhow::Result;
-#[allow(deprecated)] // Test uses deprecated API
+// TODO: Modernize to use binary symbols.kota and dependency_graph.bin files
+// instead of deprecated graph storage factory (see deprecation note)
+#[allow(deprecated)] // Test uses deprecated API - needs full refactoring
 use kotadb::factory::create_symbol_storage_with_graph;
 use kotadb::graph_storage::{GraphStorage, GraphStorageConfig};
 use kotadb::native_graph_storage::NativeGraphStorage;

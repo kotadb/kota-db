@@ -194,6 +194,10 @@ required-features = ["mcp-server"]
 name = "kotadb-api-server"
 path = "src/bin/kotadb-api-server.rs"
 
+[[bin]]
+name = "test_minimal_cli"
+path = "test_minimal_cli.rs"
+
 # Benchmarks
 [[bench]]
 name = "codebase_intelligence_bench"
