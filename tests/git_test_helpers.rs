@@ -194,10 +194,10 @@ pub fn library_function() {
 /// Creates a test database with the given git repository
 ///
 /// This helper function takes a TestGitRepository and runs the KotaDB
-/// index-codebase command on it, returning the database path for use in tests.
+/// index-codebase command on it, returning the database path and TempDir for use in tests.
 pub async fn create_indexed_test_database(
     git_repo: &TestGitRepository,
-) -> Result<(String, String)> {
+) -> Result<(String, TempDir)> {
     let db_temp_dir =
         TempDir::new().context("Failed to create temporary directory for test database")?;
 
@@ -237,12 +237,9 @@ pub async fn create_indexed_test_database(
         ));
     }
 
-    // Return both the database path and a path that keeps the temp directory alive
-    // We return the TempDir path to ensure it doesn't get dropped
-    Ok((
-        db_path_str,
-        db_temp_dir.path().to_str().unwrap().to_string(),
-    ))
+    // Return both the database path and the TempDir to keep it alive
+    // We return the TempDir itself to ensure it doesn't get dropped
+    Ok((db_path_str, db_temp_dir))
 }
 
 #[cfg(test)]
@@ -299,12 +296,13 @@ mod tests {
     #[tokio::test]
     async fn test_indexed_database_creation() -> Result<()> {
         let repo = TestGitRepository::new().await?;
-        let (db_path, _temp_path) = create_indexed_test_database(&repo).await?;
+        let (db_path, _temp_dir) = create_indexed_test_database(&repo).await?;
 
         // Verify database directory was created
         assert!(
             Path::new(&db_path).exists(),
-            "Database directory should exist"
+            "Database directory should exist at path: {}",
+            db_path
         );
 
         Ok(())

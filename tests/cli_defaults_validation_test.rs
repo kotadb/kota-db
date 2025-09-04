@@ -12,19 +12,20 @@ mod git_test_helpers;
 use git_test_helpers::{create_indexed_test_database, TestGitRepository};
 
 /// Helper to create a test database with extensive symbol data for limit validation
-async fn create_test_database_with_symbols() -> Result<String> {
+async fn create_test_database_with_symbols(
+) -> Result<(String, (TestGitRepository, tempfile::TempDir))> {
     // Create a proper git repository with extensive symbols
     let git_repo = TestGitRepository::new_with_extensive_symbols().await?;
 
     // Index the git repository to create a test database
-    let (db_path, _temp_path) = create_indexed_test_database(&git_repo).await?;
+    let (db_path, temp_dir) = create_indexed_test_database(&git_repo).await?;
 
-    Ok(db_path)
+    Ok((db_path, (git_repo, temp_dir)))
 }
 
 #[tokio::test]
 async fn test_search_symbols_unlimited_default() -> Result<()> {
-    let db_path = create_test_database_with_symbols().await?;
+    let (db_path, _keepalive) = create_test_database_with_symbols().await?;
 
     // Use search-symbols instead of find-callers to avoid relationship engine bug
     // search-symbols should work since it doesn't require relationship analysis
@@ -90,7 +91,7 @@ async fn test_search_symbols_unlimited_default() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_symbols_respects_explicit_limit() -> Result<()> {
-    let db_path = create_test_database_with_symbols().await?;
+    let (db_path, _keepalive) = create_test_database_with_symbols().await?;
 
     // Run search-symbols WITH explicit limit of 2 (avoiding relationship engine)
     let output = Command::new("cargo")
@@ -124,7 +125,7 @@ async fn test_search_symbols_respects_explicit_limit() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_code_basic_functionality() -> Result<()> {
-    let db_path = create_test_database_with_symbols().await?;
+    let (db_path, _keepalive) = create_test_database_with_symbols().await?;
 
     // Test database was created successfully
 
@@ -159,7 +160,7 @@ async fn test_search_code_basic_functionality() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_code_respects_explicit_limit() -> Result<()> {
-    let db_path = create_test_database_with_symbols().await?;
+    let (db_path, _keepalive) = create_test_database_with_symbols().await?;
 
     // Run search-code WITH explicit limit of 3
     let output = Command::new("cargo")
@@ -211,7 +212,7 @@ async fn test_help_text_accuracy() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_symbols_default_limit() -> Result<()> {
-    let db_path = create_test_database_with_symbols().await?;
+    let (db_path, _keepalive) = create_test_database_with_symbols().await?;
 
     // search-symbols SHOULD have a reasonable default limit (100)
     let output = Command::new("cargo")
