@@ -2,100 +2,29 @@
 //!
 //! This test suite addresses Issue #494: Critical bugs where CLI commands
 //! silently truncated results despite claiming "unlimited" defaults.
+//!
+//! Fixed for Issue #509: Now uses proper git repositories for realistic testing.
 
 use anyhow::Result;
 use std::process::Command;
-use tempfile::TempDir;
 
-/// Helper to create a test database with sample data
-async fn create_test_database_with_symbols() -> Result<(TempDir, String)> {
-    let temp_dir = TempDir::new()?;
-    let db_path = temp_dir.path().join("test_db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+mod git_test_helpers;
+use git_test_helpers::{create_indexed_test_database, TestGitRepository};
 
-    // Create sample Rust files with many symbols for testing
-    let sample_code = r#"
-// Test file with many symbols to validate result limits
-pub struct FileStorage {
-    path: String,
-}
+/// Helper to create a test database with extensive symbol data for limit validation
+async fn create_test_database_with_symbols() -> Result<String> {
+    // Create a proper git repository with extensive symbols
+    let git_repo = TestGitRepository::new_with_extensive_symbols().await?;
 
-impl FileStorage {
-    pub fn new(path: String) -> Self {
-        FileStorage { path }
-    }
-    
-    pub fn insert(&mut self, data: &str) {
-        // Implementation
-    }
-    
-    pub fn get(&self) -> String {
-        self.path.clone()
-    }
-}
+    // Index the git repository to create a test database
+    let (db_path, _temp_path) = create_indexed_test_database(&git_repo).await?;
 
-pub fn create_file_storage() -> FileStorage {
-    FileStorage::new("/tmp".to_string())
-}
-
-pub fn use_storage() {
-    let storage = FileStorage::new("/data".to_string());
-    storage.get();
-}
-
-// Generate many test functions to ensure we have >50 results
-"#;
-
-    // Add many test functions to ensure we exceed default limit
-    let mut extended_code = sample_code.to_string();
-    for i in 0..100 {
-        extended_code.push_str(&format!(
-            r#"
-#[test]
-fn test_function_{}() {{
-    let storage = FileStorage::new("/test{}".to_string());
-    storage.insert("test");
-    storage.get();
-}}
-"#,
-            i, i
-        ));
-    }
-
-    // Write test files
-    std::fs::write(temp_dir.path().join("lib.rs"), &extended_code)?;
-    std::fs::write(temp_dir.path().join("main.rs"), &extended_code)?;
-    std::fs::write(temp_dir.path().join("test.rs"), &extended_code)?;
-
-    // Index the codebase
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--bin",
-            "kotadb",
-            "--",
-            "-d",
-            &db_path_str,
-            "index-codebase",
-        ])
-        .arg(temp_dir.path())
-        .output()?;
-
-    // More detailed error reporting for CI debugging
-    assert!(
-        output.status.success(),
-        "Failed to index codebase. Status: {:?}\nStderr: {}\nStdout: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    );
-
-    Ok((temp_dir, db_path_str))
+    Ok(db_path)
 }
 
 #[tokio::test]
 async fn test_find_callers_unlimited_default() -> Result<()> {
-    let (_temp_dir, db_path) = create_test_database_with_symbols().await?;
+    let db_path = create_test_database_with_symbols().await?;
 
     // Run find-callers WITHOUT limit flag - should return ALL results
     let output = Command::new("cargo")
@@ -127,7 +56,7 @@ async fn test_find_callers_unlimited_default() -> Result<()> {
 
 #[tokio::test]
 async fn test_find_callers_respects_explicit_limit() -> Result<()> {
-    let (_temp_dir, db_path) = create_test_database_with_symbols().await?;
+    let db_path = create_test_database_with_symbols().await?;
 
     // Run find-callers WITH explicit limit of 10
     let output = Command::new("cargo")
@@ -161,7 +90,7 @@ async fn test_find_callers_respects_explicit_limit() -> Result<()> {
 
 #[tokio::test]
 async fn test_analyze_impact_unlimited_default() -> Result<()> {
-    let (_temp_dir, db_path) = create_test_database_with_symbols().await?;
+    let db_path = create_test_database_with_symbols().await?;
 
     // Run analyze-impact WITHOUT limit flag - should return ALL results
     let output = Command::new("cargo")
@@ -191,7 +120,7 @@ async fn test_analyze_impact_unlimited_default() -> Result<()> {
 
 #[tokio::test]
 async fn test_analyze_impact_respects_explicit_limit() -> Result<()> {
-    let (_temp_dir, db_path) = create_test_database_with_symbols().await?;
+    let db_path = create_test_database_with_symbols().await?;
 
     // Run analyze-impact WITH explicit limit of 5
     let output = Command::new("cargo")
@@ -249,7 +178,7 @@ async fn test_help_text_accuracy() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_symbols_default_limit() -> Result<()> {
-    let (_temp_dir, db_path) = create_test_database_with_symbols().await?;
+    let db_path = create_test_database_with_symbols().await?;
 
     // search-symbols SHOULD have a reasonable default limit (100)
     let output = Command::new("cargo")
