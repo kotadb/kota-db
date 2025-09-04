@@ -45,6 +45,21 @@ async fn test_find_callers_unlimited_default() -> Result<()> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let result_count = stdout.lines().count();
 
+    // Debug: Check what's actually in the database first
+    let stats_output = Command::new("cargo")
+        .args(["run", "--bin", "kotadb", "--", "-d", &db_path, "stats"])
+        .output()?;
+
+    eprintln!("DEBUG: Database stats status: {:?}", stats_output.status);
+    eprintln!(
+        "DEBUG: Database stats stdout:\n{}",
+        String::from_utf8_lossy(&stats_output.stdout)
+    );
+    eprintln!(
+        "DEBUG: Database stats stderr:\n{}",
+        String::from_utf8_lossy(&stats_output.stderr)
+    );
+
     // Debug output for troubleshooting
     eprintln!("DEBUG: find-callers command status: {:?}", output.status);
     eprintln!("DEBUG: find-callers stdout:\n{}", stdout);

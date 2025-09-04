@@ -1,0 +1,224 @@
+---
+tags:
+- file
+- kota-db
+- ext_toml
+---
+[package]
+name = "kotadb"
+version = "0.5.0"
+edition = "2021"
+authors = ["KotaDB Contributors"]
+description = "A custom database for distributed human-AI cognition"
+repository = "https://github.com/jayminwest/kota-db"
+license = "MIT"
+readme = "README.md"
+keywords = ["database", "cognitive", "knowledge-graph", "semantic-search"]
+categories = ["database-implementations", "data-structures"]
+
+[lib]
+name = "kotadb"
+path = "src/lib.rs"
+
+[dependencies]
+# Core dependencies
+anyhow = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.18", features = ["v4", "serde"] }
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+futures = "0.3"
+rayon = "1.7"
+
+# HTTP Server
+axum = "0.7"
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+hyper = "1.0"
+reqwest = { version = "0.11", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+bincode = "1.3"
+rmp-serde = "1.3"  # MessagePack
+
+# Data structures
+bytes = "1.7"
+smallvec = "1.13"
+smallstr = "0.3"
+once_cell = "1.19"
+dashmap = "6.0"
+indexmap = "2.5"
+parking_lot = "0.12"  # High-performance RwLock replacement
+petgraph = "0.6"  # Graph data structures for dependency mapping
+
+# Compression
+zstd = "0.13"
+lz4 = "1.28"
+
+# Memory mapping
+memmap2 = "0.9"
+
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# File watching
+notify = "6.1"
+
+# Checksums
+crc32c = "0.6"
+sha2 = "0.10"
+md5 = "0.7"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
+
+# Encoding
+base64 = "0.21"
+
+# Regular expressions
+regex = "1.10"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# System info
+num_cpus = "1.16"
+
+# Git repository parsing
+git2 = { version = "0.18", optional = true }
+
+# Tree-sitter for multi-language code parsing - using compatible newer versions
+tree-sitter = { version = "0.25", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.23", optional = true }
+tree-sitter-python = { version = "0.23", optional = true }
+
+# Bitmaps
+roaring = "0.10"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# MCP Server dependencies
+jsonrpc-core = { version = "18.0", optional = true }
+jsonrpc-derive = { version = "18.0", optional = true }
+jsonrpc-http-server = { version = "18.0", optional = true }
+jsonrpc-stdio-server = { version = "18.0", optional = true }
+config = { version = "0.14", optional = true }
+mime = "0.3"
+toml = "0.8"
+
+# Testing & Benchmarking
+criterion = { version = "0.5", optional = true }
+proptest = { version = "1.5", optional = true }
+tempfile = "3.12"
+
+# Traits
+async-trait = "0.1"
+
+# Random for testing
+rand = "0.8"
+fastrand = "2.3"
+
+# Progress indication
+indicatif = "0.17"
+
+# Optional dependencies for advanced features
+tantivy = { version = "0.22", optional = true }  # Full-text search
+hnsw = { version = "0.11", optional = true }     # Vector search
+
+# Embedding and AI dependencies
+ort = { version = "2.0.0-rc.10", features = ["ndarray"], optional = true }  # ONNX Runtime
+tokenizers = { version = "0.20", optional = true }                          # Tokenization
+ndarray = { version = "0.15", optional = true }                             # N-dimensional arrays
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.5"
+pretty_assertions = "1.4"
+fake = "2.10"
+rand = "0.8"
+tokio-test = "0.4"
+tempfile = "3.0"
+reqwest = { version = "0.11", features = ["json"] }
+
+[features]
+default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing"]
+# Advanced search features
+advanced-search = ["tantivy", "hnsw"]
+# MCP Server features
+mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
+# Embedding features
+embeddings-onnx = ["ort", "tokenizers", "ndarray"]           # ONNX Runtime embeddings (default)
+# Git repository integration
+git-integration = ["git2"]
+# Tree-sitter code parsing (Rust, TypeScript, JavaScript, and Python support)
+tree-sitter-parsing = [
+    "tree-sitter",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-javascript",
+    "tree-sitter-python"
+]
+# Benchmarking
+bench = ["criterion", "proptest"]
+# Development features
+dev = ["bench", "embeddings-onnx", "git-integration", "tree-sitter-parsing"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+
+[[bin]]
+name = "kotadb"
+path = "src/main.rs"
+
+[[bin]]
+name = "mcp_server"
+path = "src/bin/mcp_server.rs"
+required-features = ["mcp-server"]
+
+[[bin]]
+name = "mcp_server_stdio"
+path = "src/bin/mcp_server_stdio.rs"
+required-features = ["mcp-server"]
+
+[[bin]]
+name = "kotadb-api-server"
+path = "src/bin/kotadb-api-server.rs"
+
+# Benchmarks
+[[bench]]
+name = "codebase_intelligence_bench"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "resource_usage_bench"
+harness = false
+required-features = ["bench"]
+
+# Workspace will be configured when we create the sub-crates
+[workspace]
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"
+
+[workspace.lints.rust]
+unused_variables = "allow"
+
+[lints]
+workspace = true

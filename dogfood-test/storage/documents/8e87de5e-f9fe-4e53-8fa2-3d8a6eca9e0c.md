@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "id": "bc13ce2f-71cc-4235-860b-93bbaa2ce93e",
+  "file_path": "./examples-data/research-manager/documents/bc13ce2f-71cc-4235-860b-93bbaa2ce93e.md",
+  "original_path": "/progress/dissertation-chapter-3.md",
+  "title": "Dissertation Chapter 3: Progress Update",
+  "size": 1523,
+  "created": 1754607755,
+  "updated": 1754607755,
+  "hash": [
+    236,
+    46,
+    164,
+    27,
+    161,
+    200,
+    177,
+    204,
+    32,
+    178,
+    102,
+    36,
+    21,
+    120,
+    43,
+    24,
+    215,
+    110,
+    52,
+    144,
+    126,
+    10,
+    90,
+    66,
+    67,
+    123,
+    37,
+    160,
+    73,
+    233,
+    125,
+    131
+  ],
+  "embedding": null
+}

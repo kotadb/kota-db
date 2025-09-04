@@ -72,165 +72,75 @@ impl TestGitRepository {
         Ok(repo)
     }
 
-    /// Creates basic repository structure with realistic Rust code
+    /// Creates basic repository structure with realistic Rust code matching working integration tests
     async fn create_initial_structure(repo_path: &Path) -> Result<()> {
-        // Create Cargo.toml for a realistic Rust project
-        let cargo_toml = r#"[package]
-name = "test-project"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-"#;
-
-        fs::write(repo_path.join("Cargo.toml"), cargo_toml)
-            .context("Failed to create Cargo.toml")?;
-
-        // Create src directory structure
-        let src_dir = repo_path.join("src");
-        fs::create_dir_all(&src_dir).context("Failed to create src directory")?;
-
-        // Create lib.rs with realistic code structure
-        let lib_code = r#"//! Test library for KotaDB integration testing
-//! 
-//! This module provides realistic Rust code structures for testing
-//! codebase intelligence features.
-
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-/// Core storage interface for the test application
+        // Create a simple Rust file with various symbols (matching binary_symbols_integration_test.rs pattern)
+        let rust_content = r#"
 pub struct FileStorage {
-    path: PathBuf,
-    metadata: HashMap<String, String>,
+    field1: String,
+    field2: i32,
 }
 
 impl FileStorage {
-    /// Creates a new FileStorage instance
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            metadata: HashMap::new(),
-        }
-    }
-
-    /// Inserts data into the storage
-    pub fn insert(&mut self, key: &str, data: &str) -> anyhow::Result<()> {
-        self.metadata.insert(key.to_string(), data.to_string());
-        Ok(())
-    }
-
-    /// Retrieves data from storage
-    pub fn get(&self, key: &str) -> Option<&String> {
-        self.metadata.get(key)
-    }
-
-    /// Returns the storage path
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-}
-
-/// Configuration management for the test application
-pub struct Config {
-    settings: HashMap<String, String>,
-}
-
-impl Config {
     pub fn new() -> Self {
-        Self {
-            settings: HashMap::new(),
+        FileStorage {
+            field1: String::new(),
+            field2: 0,
         }
     }
-
-    pub fn set(&mut self, key: String, value: String) {
-        self.settings.insert(key, value);
-    }
-
-    pub fn get(&self, key: &str) -> Option<&String> {
-        self.settings.get(key)
-    }
-}
-
-/// Factory function for creating FileStorage instances
-pub fn create_file_storage(path: PathBuf) -> FileStorage {
-    FileStorage::new(path)
-}
-
-/// Utility function that uses FileStorage
-pub fn process_data(storage: &mut FileStorage, data: &str) -> anyhow::Result<()> {
-    storage.insert("processed", data)?;
-    Ok(())
-}
-
-/// Integration test for storage operations
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_storage_operations() {
-        let mut storage = create_file_storage(PathBuf::from("/tmp"));
-        process_data(&mut storage, "test data").unwrap();
-        assert_eq!(storage.get("processed"), Some(&"test data".to_string()));
-    }
-}
-"#;
-
-        fs::write(src_dir.join("lib.rs"), lib_code).context("Failed to create lib.rs")?;
-
-        // Create main.rs
-        let main_code = r#"use test_project::{create_file_storage, process_data, Config};
-use std::path::PathBuf;
-
-fn main() -> anyhow::Result<()> {
-    let mut storage = create_file_storage(PathBuf::from("./data"));
-    let config = Config::new();
     
-    process_data(&mut storage, "Hello, KotaDB!")?;
-    println!("Data processed successfully");
+    pub fn insert(&self, data: &str) -> String {
+        format!("Inserted: {}", data)
+    }
     
-    Ok(())
+    pub fn get(&self) -> &str {
+        &self.field1
+    }
+}
+
+pub fn create_file_storage() -> FileStorage {
+    FileStorage::new()
+}
+
+pub fn process_data(storage: &FileStorage, data: &str) -> String {
+    storage.insert(data)
+}
+
+pub enum StorageType {
+    Memory,
+    File(String),
+}
+
+pub const DEFAULT_STORAGE: i32 = 42;
+"#;
+
+        fs::write(repo_path.join("storage.rs"), rust_content)?;
+
+        // Create lib.rs that imports the module
+        let lib_content = r#"
+mod storage;
+
+pub use storage::*;
+
+pub fn library_function() {
+    let storage = create_file_storage();
+    let result = process_data(&storage, "test data");
+    println!("Library function: {}", result);
+}
+
+pub fn use_file_storage() {
+    let fs = FileStorage::new();
+    fs.insert("example");
 }
 "#;
 
-        fs::write(src_dir.join("main.rs"), main_code).context("Failed to create main.rs")?;
-
-        // Create README.md
-        let readme = r#"# Test Project
-
-This is a test project for KotaDB integration testing.
-
-## Features
-
-- File storage system
-- Configuration management
-- Data processing utilities
-
-## Usage
-
-```rust
-use test_project::{create_file_storage, process_data};
-use std::path::PathBuf;
-
-let mut storage = create_file_storage(PathBuf::from("./data"));
-process_data(&mut storage, "example data").unwrap();
-```
-"#;
-
-        fs::write(repo_path.join("README.md"), readme).context("Failed to create README.md")?;
+        fs::write(repo_path.join("lib.rs"), lib_content)?;
 
         // Add all files and create initial commit
         Self::run_git_command(repo_path, &["add", "."]).context("Failed to add files to git")?;
         Self::run_git_command(
             repo_path,
-            &[
-                "commit",
-                "-m",
-                "Initial commit: Add basic project structure",
-            ],
+            &["commit", "-m", "Initial commit: Add storage module"],
         )
         .context("Failed to create initial commit")?;
 
@@ -239,102 +149,37 @@ process_data(&mut storage, "example data").unwrap();
 
     /// Adds extensive symbol data for testing result limits and pagination
     async fn add_extensive_symbol_data(repo_path: &Path) -> Result<()> {
-        let src_dir = repo_path.join("src");
+        // Generate many simple functions that call FileStorage to create relationships
+        let mut extensive_code = String::from("// Extensive test functions\n\n");
+        extensive_code.push_str("use crate::*;\n\n");
 
-        // Generate a large module with many symbols
-        let mut extensive_code =
-            String::from("//! Module with extensive symbols for limit testing\n\n");
-
-        // Add many struct definitions
-        for i in 0..150 {
-            extensive_code.push_str(&format!(
-                r#"
-/// Test struct number {i}
-pub struct TestStruct{i} {{
-    pub field_{i}: String,
-    pub value_{i}: u32,
-}}
-
-impl TestStruct{i} {{
-    pub fn new_{i}() -> Self {{
-        Self {{
-            field_{i}: format!("test_{i}"),
-            value_{i}: {i},
-        }}
-    }}
-
-    pub fn process_{i}(&self) -> String {{
-        format!("Processing {{}}: {{}}", self.field_{i}, self.value_{i})
-    }}
-
-    pub fn get_value_{i}(&self) -> u32 {{
-        self.value_{i}
-    }}
-}}
-"#
-            ));
-        }
-
-        // Add many function definitions
+        // Add many functions that call FileStorage
         for i in 0..100 {
-            let struct_num = i % 50; // Cycle through struct numbers to create relationships
             extensive_code.push_str(&format!(
                 r#"
-/// Test function number {i}
-pub fn test_function_{i}() -> TestStruct{struct_num} {{
-    let instance = TestStruct{struct_num}::new_{struct_num}();
-    instance.process_{struct_num}();
-    instance
+pub fn test_function_{i}() -> FileStorage {{
+    let storage = create_file_storage();
+    let _ = process_data(&storage, "data_{i}");
+    storage
 }}
 
-/// Utility function that calls test_function_{i}
-pub fn call_test_function_{i}() {{
-    let _result = test_function_{i}();
+pub fn use_storage_{i}() {{
+    let storage = FileStorage::new();
+    storage.insert("test");
 }}
 "#,
             ));
         }
 
-        fs::write(src_dir.join("extensive_symbols.rs"), extensive_code)
-            .context("Failed to create extensive_symbols.rs")?;
+        fs::write(repo_path.join("extensive.rs"), extensive_code)
+            .context("Failed to create extensive.rs")?;
 
         // Update lib.rs to include the new module
-        let lib_path = src_dir.join("lib.rs");
+        let lib_path = repo_path.join("lib.rs");
         let mut lib_content = fs::read_to_string(&lib_path).context("Failed to read lib.rs")?;
-
-        lib_content.push_str("\npub mod extensive_symbols;\n");
-
+        lib_content.push_str("\nmod extensive;\npub use extensive::*;\n");
         fs::write(&lib_path, lib_content)
-            .context("Failed to update lib.rs with extensive_symbols module")?;
-
-        // Create another file with test functions that call the extensive symbols
-        let test_callers = r#"//! Test module that calls functions from extensive_symbols
-
-use crate::extensive_symbols::*;
-
-/// Function that calls many test functions to create relationships
-pub fn call_all_test_functions() {
-    for i in 0..50 {
-        match i {
-"#;
-
-        let mut test_callers = test_callers.to_string();
-        for i in 0..50 {
-            test_callers.push_str(&format!(
-                "            {} => call_test_function_{}(),\n",
-                i, i
-            ));
-        }
-        test_callers.push_str("            _ => {}\n        }\n    }\n}\n");
-
-        fs::write(src_dir.join("test_callers.rs"), test_callers)
-            .context("Failed to create test_callers.rs")?;
-
-        // Update lib.rs again
-        let mut lib_content = fs::read_to_string(&lib_path).context("Failed to read lib.rs")?;
-        lib_content.push_str("pub mod test_callers;\n");
-        fs::write(&lib_path, lib_content)
-            .context("Failed to update lib.rs with test_callers module")?;
+            .context("Failed to update lib.rs with extensive module")?;
 
         // Commit the extensive symbols
         Self::run_git_command(repo_path, &["add", "."])
