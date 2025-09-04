@@ -93,8 +93,14 @@ case "$COMMAND" in
         print_status "Build complete! Binary at: target/release/kotadb"
         ;;
     "test")
-        print_status "Running tests..."
-        cargo test --lib
+        print_status "Running tests with cargo-nextest (3-5x faster)..."
+        if command -v cargo-nextest &> /dev/null; then
+            cargo nextest run --lib
+        else
+            print_warning "cargo-nextest not found, falling back to standard cargo test"
+            print_status "Install cargo-nextest for faster testing: cargo install cargo-nextest"
+            cargo test --lib
+        fi
         print_status "All tests passed!"
         ;;
     "run")

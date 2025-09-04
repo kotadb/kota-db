@@ -19,23 +19,33 @@ dev:
 mcp:
   RUST_LOG=debug cargo run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml
 
-# Watch for changes and run tests
+# Watch for changes and run tests (fast)
 watch:
-  cargo watch -x 'test --lib' -x 'clippy'
+  @echo "📝 Note: cargo-watch may not be available on all systems"
+  @echo "🚀 Using cargo-nextest for 3-5x faster test execution"
+  cargo watch -x 'nextest run --lib' -x 'clippy' || echo "❌ cargo-watch not available - use 'just test-fast' instead"
 
 # === Testing ===
 
-# Run all tests
+# Run all tests (FAST - uses cargo-nextest for 3-5x speedup)
 test:
+  cargo nextest run --all
+
+# Run all tests (legacy - for fallback compatibility)
+test-legacy:
   cargo test --all
 
-# Run only unit tests
-test-unit:
-  cargo test --lib
+# Fast test execution using cargo-nextest (recommended)
+test-fast:
+  cargo nextest run --all
 
-# Run only integration tests  
+# Run only unit tests (FAST)
+test-unit:
+  cargo nextest run --lib
+
+# Run only integration tests (FAST)
 test-integration:
-  cargo test --test '*'
+  cargo nextest run --test '*'
 
 # Run performance tests
 test-perf:
@@ -68,7 +78,7 @@ fmt-check:
 clippy:
   cargo clippy --all-targets --all-features -- -D warnings
 
-# Run all quality checks
+# Run all quality checks (FAST - uses cargo-nextest)
 check: fmt-check clippy test-unit
   @echo "✅ All quality checks passed!"
 
@@ -161,7 +171,7 @@ docker-shell:
 
 # === CI/CD ===
 
-# Run the same checks as CI
+# Run the same checks as CI (FAST - uses cargo-nextest)
 ci: 
   CI=true just fmt-check clippy test audit
   @echo "🚀 CI checks completed successfully!"

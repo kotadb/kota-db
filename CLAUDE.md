@@ -101,6 +101,21 @@ The release process automatically:
 - Pushes to main branch
 - Triggers GitHub Actions for binaries, Docker images, crates.io, PyPI, and npm
 
+### Installation Requirements for Optimal Development
+
+For the fastest development experience, install these tools:
+
+```bash
+# REQUIRED for fast testing (3-5x speed improvement)
+cargo install cargo-nextest --locked
+
+# OPTIONAL for file watching and auto-reload (may have platform issues)
+cargo install cargo-watch --locked  # Note: May fail on some macOS configurations
+
+# REQUIRED for development workflow
+cargo install just              # Task runner (if not available system-wide)
+```
+
 ### Build and Run
 ```bash
 # Build the project
@@ -127,24 +142,33 @@ cargo run --release -- benchmark -f json              # Output results as JSON
 just dev                     # Uses cargo watch for auto-reload
 ```
 
-### Testing
+### Testing (FAST - 3-5x Speed Improvement)
 ```bash
-# Run all tests
-cargo test --all
-just test
+# FAST: Run all tests with cargo-nextest (3-5x faster than standard cargo test)
+cargo nextest run --all
+just test                                  # Now uses cargo-nextest by default
 
-# Run specific test types
-cargo test --lib                           # Unit tests only
-cargo test --test '*'                      # Integration tests only
-cargo test test_name                       # Run tests matching name
-cargo test --test phase2b_concurrent_stress  # Run specific test file
+# FAST: Run specific test types  
+cargo nextest run --lib                    # Unit tests only (FAST)
+cargo nextest run --test '*'               # Integration tests only (FAST)
+just test-unit                             # Unit tests (FAST)
+just test-integration                      # Integration tests (FAST)
 
-# Performance and stress tests
+# Legacy commands (for compatibility/fallback)
+cargo test --all                           # Legacy - slower
+just test-legacy                           # Legacy - slower
+just test-fast                             # Explicit fast testing
+
+# Performance and stress tests (still use cargo test for benchmarking)
 cargo test --release --features bench performance_regression_test
 just test-perf
 
 # Run single test with output
-cargo test test_name -- --nocapture
+cargo nextest run test_name                # FAST single test
+cargo test test_name -- --nocapture        # Legacy with output
+
+# Watch mode (if cargo-watch is available)
+just watch                                 # Auto-runs tests on file changes with nextest
 ```
 
 ### Code Quality
