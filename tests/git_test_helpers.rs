@@ -393,7 +393,7 @@ pub async fn create_indexed_test_database(
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in database path"))?
         .to_string();
 
-    // Index the git repository using KotaDB
+    // Index the git repository using KotaDB (symbols are enabled by default)
     let output = Command::new("cargo")
         .args([
             "run",
@@ -407,6 +407,9 @@ pub async fn create_indexed_test_database(
         .arg(&git_repo.path)
         .output()
         .context("Failed to execute kotadb index-codebase command")?;
+
+    // TODO: Debug symbol extraction - indexing succeeds but no symbols found
+    // This suggests the generated test code may not match KotaDB's expectations
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(

@@ -42,13 +42,20 @@ async fn test_find_callers_unlimited_default() -> Result<()> {
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     let result_count = stdout.lines().count();
+
+    // Debug output for troubleshooting
+    eprintln!("DEBUG: find-callers command status: {:?}", output.status);
+    eprintln!("DEBUG: find-callers stdout:\n{}", stdout);
+    eprintln!("DEBUG: find-callers stderr:\n{}", stderr);
+    eprintln!("DEBUG: result count: {}", result_count);
 
     // Should have more than 50 results (we created 100+ references)
     assert!(
         result_count > 50,
-        "find-callers returned only {} results without limit flag, expected >50 (unlimited)",
-        result_count
+        "find-callers returned only {} results without limit flag, expected >50 (unlimited)\nStdout: {}\nStderr: {}",
+        result_count, stdout, stderr
     );
 
     Ok(())
