@@ -156,55 +156,45 @@ const docIds = await db.bulkInsert(docs);
 
 ## HTTP REST API
 
-The HTTP server provides RESTful endpoints for document operations.
+⚠️ **Deprecated**: Document CRUD endpoints have been removed. Please use the **codebase intelligence API** via the MCP server or client libraries instead.
 
-### Endpoints
+The HTTP server now provides the following endpoints:
 
-#### POST /documents
-Create a new document.
+### Available Endpoints
+
+#### GET /health
+Health check endpoint.
 
 ```bash
-curl -X POST http://localhost:8080/documents \
+curl http://localhost:8080/health
+```
+
+#### GET /stats
+System statistics and monitoring data.
+
+```bash
+curl http://localhost:8080/stats
+```
+
+#### POST /validate/*
+Validation endpoints for paths, document IDs, titles, and tags.
+
+```bash
+curl -X POST http://localhost:8080/validate/path \
   -H "Content-Type: application/json" \
-  -d '{
-    "path": "/test.md",
-    "title": "Test Document",
-    "content": "Test content",
-    "tags": ["test"]
-  }'
+  -d '{"path": "/valid/path.md"}'
 ```
 
-#### GET /documents/:id
-Retrieve a document by ID.
+### Migration Notice
 
-```bash
-curl http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000
-```
+Previously available document endpoints:
+- `POST /documents` - Use MCP `insert_document` tool instead
+- `GET /documents/:id` - Use client library `get()` method instead  
+- `PUT /documents/:id` - Use client library `update()` method instead
+- `DELETE /documents/:id` - Use client library `delete()` method instead
+- `GET /search` - Use MCP `semantic_search` tool or client library `query()` method instead
 
-#### PUT /documents/:id
-Update an existing document.
-
-```bash
-curl -X PUT http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Updated content"
-  }'
-```
-
-#### DELETE /documents/:id
-Delete a document.
-
-```bash
-curl -X DELETE http://localhost:8080/documents/550e8400-e29b-41d4-a716-446655440000
-```
-
-#### GET /search
-Search for documents.
-
-```bash
-curl "http://localhost:8080/search?q=rust+programming&limit=10"
-```
+See the **Client Libraries** and **MCP Server API** sections below for migration examples.
 
 ## MCP Server API
 
