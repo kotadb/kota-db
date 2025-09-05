@@ -53,6 +53,17 @@ jobs:
         cache-on-failure: true
         shared-key: "single-build"
     
+    - name: Cache cargo registry and git dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-registry-${{ runner.os }}-
+    
     - name: Install build tools
       run: cargo install cargo-nextest --locked
     
@@ -77,23 +88,42 @@ jobs:
     
     - name: Package build artifacts
       run: |
-        echo "📦 Packaging compilation artifacts..."
+        echo "📦 Packaging compilation artifacts (executable-only)..."
         
-        # Create minimal artifact package (exclude unnecessary files)
-        mkdir -p artifacts-package
+        # Create minimal artifact package with only executables
+        mkdir -p artifacts-package/bin
+        mkdir -p artifacts-package/tests
         
-        # Copy essential binaries and test artifacts
-        cp -r target/debug artifacts-package/ || true
-        cp -r target/release artifacts-package/ || true
+        # Copy main binaries (small - ~10-50MB total)
+        cp target/debug/kotadb artifacts-package/bin/ 2>/dev/null || echo "Debug kotadb not found"
+        cp target/release/kotadb artifacts-package/bin/kotadb-release 2>/dev/null || echo "Release kotadb not found"
         
-        # Exclude large unnecessary files but keep test binaries
-        find artifacts-package -name "*.rlib" -delete || true
-        find artifacts-package -name "build" -type d -exec rm -rf {} + || true
+        # Copy test executables only (not entire debug folder!)
+        echo "🔍 Discovering test executables..."
+        find target/debug/deps -maxdepth 1 -type f -executable -name "*-*" \
+          ! -name "*.d" ! -name "*.rmeta" ! -name "*.so" ! -name "*.dylib" \
+          -exec cp {} artifacts-package/tests/ \; 2>/dev/null || echo "Some test binaries not found"
         
-        echo "📈 Artifact package size:"
+        # Copy integration test binaries 
+        find target/debug -maxdepth 1 -type f -executable -name "*test*" \
+          -exec cp {} artifacts-package/tests/ \; 2>/dev/null || echo "Some integration test binaries not found"
+        
+        echo "📊 Artifact contents:"
+        ls -la artifacts-package/bin/ || echo "No main binaries"
+        echo "Test executables: $(ls artifacts-package/tests/ | wc -l) files"
+        
+        echo "📈 Final artifact package size (should be <500MB):"
         du -sh artifacts-package/
         
-        echo "✅ Artifacts packaged for distribution"
+        # Validate size - fail if larger than 1GB (something went wrong)
+        SIZE_MB=$(du -m artifacts-package/ | cut -f1)
+        if [ "$SIZE_MB" -gt 1024 ]; then
+          echo "❌ ERROR: Artifact package too large: ${SIZE_MB}MB"
+          echo "This indicates the filtering failed. Aborting to prevent performance degradation."
+          exit 1
+        fi
+        
+        echo "✅ Artifacts packaged efficiently (${SIZE_MB}MB)"
     
     - name: Upload compilation artifacts
       uses: actions/upload-artifact@v4
@@ -152,15 +182,26 @@ jobs:
     - name: Restore build artifacts
       run: |
         echo "📥 Restoring compilation artifacts..."
-        mkdir -p target
-        cp -r artifacts-package/debug target/ || true
-        cp -r artifacts-package/release target/ || true
+        mkdir -p target/debug target/release target/debug/deps
+        
+        # Restore main binaries
+        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || echo "Debug binary not found"
+        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || echo "Release binary not found"
+        
+        # Restore test executables to correct locations
+        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || echo "Some test binaries not found"
+        
+        # Make binaries executable
+        chmod +x target/debug/kotadb 2>/dev/null || true
+        chmod +x target/release/kotadb 2>/dev/null || true
+        chmod +x target/debug/deps/* 2>/dev/null || true
         
         echo "🔍 Verifying restored artifacts:"
-        ls -la target/debug/ | head -5 || echo "Debug artifacts not found"
-        ls -la target/release/ | head -5 || echo "Release artifacts not found"
+        ls -la target/debug/kotadb 2>/dev/null || echo "Debug kotadb not found"
+        ls -la target/release/kotadb 2>/dev/null || echo "Release kotadb not found"
+        echo "Test executables: $(ls target/debug/deps/ | wc -l) files"
         
-        echo "✅ Build artifacts restored"
+        echo "✅ Build artifacts restored efficiently"
     
     - name: Run unit tests (no compilation)
       run: |
@@ -207,9 +248,15 @@ jobs:
     - name: Restore build artifacts
       run: |
         echo "📥 Restoring artifacts for ${{ matrix.suite }} tests..."
-        mkdir -p target
-        cp -r artifacts-package/debug target/ || true
-        cp -r artifacts-package/release target/ || true
+        mkdir -p target/debug target/release target/debug/deps
+        
+        # Restore binaries and test executables efficiently
+        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || true
+        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || true
+        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || true
+        
+        # Ensure executable permissions
+        chmod +x target/debug/kotadb target/release/kotadb target/debug/deps/* 2>/dev/null || true
     
     - name: Run ${{ matrix.suite }} integration tests (no compilation)
       run: |
@@ -263,9 +310,15 @@ jobs:
     - name: Restore build artifacts
       run: |
         echo "📥 Restoring artifacts for E2E tests..."
-        mkdir -p target
-        cp -r artifacts-package/debug target/ || true
-        cp -r artifacts-package/release target/ || true
+        mkdir -p target/debug target/release target/debug/deps
+        
+        # Restore binaries and test executables efficiently  
+        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || true
+        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || true
+        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || true
+        
+        # Ensure executable permissions
+        chmod +x target/debug/kotadb target/release/kotadb target/debug/deps/* 2>/dev/null || true
     
     - name: Run E2E tests (no compilation)
       run: |
