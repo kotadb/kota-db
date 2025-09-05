@@ -220,10 +220,10 @@ When working on search, indexing, MCP, or git features, you MUST test on KotaDB 
 ```bash
 # Primary dogfooding setup - USE THIS CONSTANTLY
 mkdir -p data/analysis  # Separate directory for testing
-cargo run --bin kotadb -- -d ./data/analysis index-codebase .
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .       # Now provides detailed feedback by default
 
 # Essential validation commands - RUN THESE FREQUENTLY
-cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Verify symbol extraction
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Shows accurate symbol statistics
 cargo run --bin kotadb -- -d ./data/analysis search-code "storage"  # Test content search
 cargo run --bin kotadb -- -d ./data/analysis search-symbols "*"     # Test symbol search
 cargo run --bin kotadb -- -d ./data/analysis find-callers Storage   # Test relationship queries
@@ -256,8 +256,11 @@ cargo run --release -- server --port 8080 &
 # Always start with fresh dogfooding setup
 rm -rf data/analysis
 mkdir -p data/analysis
-cargo run --bin kotadb -- -d ./data/analysis index-codebase .
-cargo run --bin kotadb -- -d ./data/analysis stats --symbols
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .        # Provides detailed progress feedback
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols         # Shows accurate statistics
+
+# Note: Default verbosity now provides user feedback (no longer silent)
+# Use -v quiet if you need minimal output for automation
 ```
 
 #### 2. During Development
