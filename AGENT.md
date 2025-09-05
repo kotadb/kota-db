@@ -283,6 +283,7 @@ Real-world testing on KotaDB's own codebase consistently reveals integration iss
 - **Issue #179**: Symbol extraction edge cases only surfaced with real Rust code complexity
 - **Issue #203**: Performance degradation under realistic query patterns
 - **Issue #157**: Memory usage issues only visible with large codebases
+- **Issue #576**: SearchService CLI UX failures - regular search returned verbose metadata instead of clean paths, silent failures on no results (found through validation dogfooding, missed by 441 passing unit tests)
 
 **Pattern**: Every major integration bug has been caught by dogfooding, not unit tests.
 
