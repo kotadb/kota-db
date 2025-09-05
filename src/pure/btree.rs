@@ -893,4 +893,135 @@ mod tests {
 
         Ok(())
     }
+
+    // Extracted from integration tests - B+ tree deletion algorithm tests
+    #[test]
+    fn test_btree_deletion_algorithm() -> Result<()> {
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let path = ValidatedPath::new("test/delete_target.md")?;
+
+        // Create tree and insert key
+        let mut tree_root = create_empty_tree();
+        tree_root = insert_into_tree(tree_root, doc_id, path)?;
+
+        // Verify key exists
+        assert!(search_in_tree(&tree_root, &doc_id).is_some());
+        assert_eq!(count_total_keys(&tree_root), 1);
+
+        // Delete the key
+        tree_root = delete_from_tree(tree_root, &doc_id)?;
+
+        // Verify key no longer exists
+        assert!(search_in_tree(&tree_root, &doc_id).is_none());
+        assert!(is_valid_btree(&tree_root));
+        assert_eq!(count_total_keys(&tree_root), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_btree_deletion_from_leaf() -> Result<()> {
+        let mut tree_root = create_empty_tree();
+
+        // Insert multiple keys
+        let keys: Vec<_> = (0..5)
+            .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            let path = ValidatedPath::new(format!("test/doc{i}.md"))?;
+            tree_root = insert_into_tree(tree_root, *key, path)?;
+        }
+
+        // Delete a key from the middle
+        let target_key = &keys[2];
+        tree_root = delete_from_tree(tree_root, target_key)?;
+
+        // Verify deletion
+        assert!(search_in_tree(&tree_root, target_key).is_none());
+        assert_eq!(count_total_keys(&tree_root), 4);
+        assert!(is_valid_btree(&tree_root));
+
+        // Verify other keys still exist
+        for (i, key) in keys.iter().enumerate() {
+            if i != 2 {
+                assert!(search_in_tree(&tree_root, key).is_some());
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_btree_deletion_causing_redistribution() -> Result<()> {
+        let mut tree_root = create_empty_tree();
+
+        // Insert enough keys to create multiple nodes
+        let keys: Vec<_> = (0..20)
+            .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            let path = ValidatedPath::new(format!("test/redistribute{i}.md"))?;
+            tree_root = insert_into_tree(tree_root, *key, path)?;
+        }
+
+        // Delete keys to trigger redistribution
+        for (i, key) in keys.iter().enumerate().take(5) {
+            tree_root = delete_from_tree(tree_root, key)?;
+            assert!(is_valid_btree(&tree_root));
+            assert_eq!(count_total_keys(&tree_root), 20 - i - 1);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_btree_deletion_causing_merge() -> Result<()> {
+        let mut tree_root = create_empty_tree();
+
+        // Build a tree that will require merging after deletions
+        let keys: Vec<_> = (0..30)
+            .map(|_| ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap())
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            let path = ValidatedPath::new(format!("test/merge{i}.md"))?;
+            tree_root = insert_into_tree(tree_root, *key, path)?;
+        }
+
+        // Delete many keys to force merging
+        for key in keys.iter().take(20) {
+            tree_root = delete_from_tree(tree_root, key)?;
+            assert!(is_valid_btree(&tree_root));
+            assert!(all_leaves_at_same_level(&tree_root));
+        }
+
+        assert_eq!(count_total_keys(&tree_root), 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_btree_deletion_edge_cases() -> Result<()> {
+        // Test 1: Delete from empty tree
+        let empty_tree = create_empty_tree();
+        let random_key = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let result = delete_from_tree(empty_tree, &random_key);
+        assert!(result.is_ok()); // Should succeed but do nothing
+
+        // Test 2: Delete non-existent key
+        let mut tree = create_empty_tree();
+        let key1 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let key2 = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let path = ValidatedPath::new("test/edge.md")?;
+
+        tree = insert_into_tree(tree, key1, path)?;
+        let result = delete_from_tree(tree.clone(), &key2)?;
+        assert_eq!(count_total_keys(&result), 1); // No change
+
+        // Test 3: Delete last key from tree
+        let result = delete_from_tree(tree, &key1)?;
+        assert_eq!(count_total_keys(&result), 0);
+        assert!(result.root.is_none());
+
+        Ok(())
+    }
 }
