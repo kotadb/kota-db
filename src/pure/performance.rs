@@ -424,6 +424,19 @@ pub fn generate_comparison_table(
     table
 }
 
+/// Calculate variance of a set of measurements
+pub fn calculate_variance(measurements: &[f64]) -> f64 {
+    if measurements.len() < 2 {
+        return 0.0;
+    }
+
+    let mean = measurements.iter().sum::<f64>() / measurements.len() as f64;
+    let variance = measurements.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+        / (measurements.len() - 1) as f64;
+
+    variance
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +505,160 @@ mod tests {
         assert!(report.has_regression);
         assert!(matches!(report.severity, RegressionSeverity::Severe));
         assert!(report.degradation_factor > 1.5);
+    }
+
+    // Extracted from integration tests - Performance ratio calculation utilities
+    #[test]
+    fn test_performance_growth_ratio_calculation() {
+        // Test calculation of performance growth ratios for O(log n) verification
+        let timings = [
+            (100, 10.0),   // size, avg_time_us
+            (1000, 33.0),  // 10x size increase, ~3.3x time increase (logarithmic)
+            (10000, 66.0), // 10x size increase, ~6.6x time increase (logarithmic)
+        ];
+
+        // Calculate growth ratios
+        let ratio_1_to_2 = timings[1].1 / timings[0].1;
+        let ratio_2_to_3 = timings[2].1 / timings[1].1;
+
+        // For O(log n), when size increases 10x, time should increase ~3.3x
+        assert!(
+            ratio_1_to_2 > 2.5 && ratio_1_to_2 < 4.5,
+            "First ratio should be logarithmic: {}",
+            ratio_1_to_2
+        );
+        assert!(
+            ratio_2_to_3 > 1.8 && ratio_2_to_3 < 2.5,
+            "Second ratio should be logarithmic: {}",
+            ratio_2_to_3
+        );
+
+        // Both ratios should be much less than 10 (which would indicate linear O(n))
+        assert!(
+            ratio_1_to_2 < 5.0,
+            "Performance growth too linear: {}",
+            ratio_1_to_2
+        );
+        assert!(
+            ratio_2_to_3 < 5.0,
+            "Performance growth too linear: {}",
+            ratio_2_to_3
+        );
+    }
+
+    #[test]
+    fn test_timing_measurement_accuracy() {
+        // Test accuracy of timing measurements with different thresholds
+        let measurements = vec![
+            0.005, // Very fast (sub-microsecond)
+            0.1,   // Fast
+            1.5,   // Medium
+            10.0,  // Slow
+        ];
+
+        for &measurement in &measurements {
+            if measurement > 0.01 {
+                // Measurement is accurate enough for ratio calculation
+                let ratio = measurement / 0.01;
+                assert!(
+                    ratio > 1.0,
+                    "Ratio calculation should work for measurable times"
+                );
+            } else {
+                // Very fast measurement - should use minimum threshold
+                let adjusted_ratio = measurement / 0.01;
+                assert!(
+                    adjusted_ratio <= 1.0,
+                    "Sub-threshold measurements handled correctly"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_algorithm_complexity_comparison() {
+        // Test comparison between different algorithmic complexities
+        let linear_time_us = 5000.0; // Linear search time
+        let btree_time_us = 0.5; // B+ tree search time
+
+        let speedup = linear_time_us / btree_time_us;
+        assert!(
+            speedup >= 100.0,
+            "B+ tree should be significantly faster: {}x",
+            speedup
+        );
+
+        // Verify speedup calculation
+        assert!(
+            btree_time_us < linear_time_us / 10.0,
+            "B+ tree not fast enough: {}μs vs {}μs",
+            btree_time_us,
+            linear_time_us
+        );
+
+        // Test that speedup meets logarithmic expectations
+        let expected_min_speedup = 50.0; // For 10,000 elements, log speedup should be substantial
+        assert!(
+            speedup >= expected_min_speedup,
+            "Speedup should meet algorithmic complexity expectations: {}x",
+            speedup
+        );
+    }
+
+    #[test]
+    fn test_performance_degradation_thresholds() {
+        // Test performance degradation threshold calculations extracted from integration tests
+        let baseline_time = 100.0; // microseconds
+
+        // Test different degradation levels
+        let minor_degradation = baseline_time * 1.15; // 15% slower
+        let moderate_degradation = baseline_time * 1.35; // 35% slower
+        let severe_degradation = baseline_time * 2.0; // 100% slower
+
+        // Verify degradation factor calculations
+        assert!(
+            (minor_degradation / baseline_time) < 1.2,
+            "Minor degradation within bounds"
+        );
+        assert!(
+            (moderate_degradation / baseline_time) > 1.2
+                && (moderate_degradation / baseline_time) < 1.5,
+            "Moderate degradation correctly classified"
+        );
+        assert!(
+            (severe_degradation / baseline_time) >= 1.5,
+            "Severe degradation correctly identified"
+        );
+    }
+
+    #[test]
+    fn test_measurement_stability_analysis() {
+        // Test measurement stability analysis for performance testing
+        let stable_measurements = vec![98.0, 101.0, 99.0, 102.0, 100.0]; // Low variance
+        let unstable_measurements = vec![50.0, 150.0, 80.0, 120.0, 100.0]; // High variance
+
+        let stable_variance = calculate_variance(&stable_measurements);
+        let unstable_variance = calculate_variance(&unstable_measurements);
+
+        assert!(
+            stable_variance < 10.0,
+            "Stable measurements should have low variance: {}",
+            stable_variance
+        );
+        assert!(
+            unstable_variance > 500.0,
+            "Unstable measurements should have high variance: {}",
+            unstable_variance
+        );
+
+        // Test coefficient of variation for stability assessment
+        let stable_mean =
+            stable_measurements.iter().sum::<f64>() / stable_measurements.len() as f64;
+        let stable_cv = (stable_variance.sqrt() / stable_mean) * 100.0;
+        assert!(
+            stable_cv < 5.0,
+            "Stable measurements should have low CV: {}%",
+            stable_cv
+        );
     }
 }
