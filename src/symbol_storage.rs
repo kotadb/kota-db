@@ -2434,14 +2434,14 @@ struct Test {
             .await?;
 
         let stats = symbol_storage.get_stats();
-        
-        // Should have some symbol statistics available 
+
+        // Should have some symbol statistics available
         // Note: Exact counts depend on tree-sitter parsing implementation
-        
+
         Ok(())
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_symbol_wildcard_search() -> Result<()> {
         let storage = create_test_storage().await?;
         let mut symbol_storage = SymbolStorage::new(storage).await?;
@@ -2471,7 +2471,7 @@ impl TestStruct {
         let all_symbols = symbol_storage.search("*", 100);
         // Note: tree-sitter parsing may not extract symbols as expected
         // This test validates the search interface works without requiring specific symbol extraction
-        
+
         // Verify search doesn't crash and returns reasonable results
         assert!(all_symbols.len() <= 100, "Search should respect limit");
 
@@ -2482,7 +2482,7 @@ impl TestStruct {
     fn test_symbol_entry_creation() -> Result<()> {
         use crate::parsing::{SymbolKind, SymbolType};
         use crate::types::ValidatedDocumentId;
-        
+
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let symbol = ParsedSymbol {
             name: "test_function".to_string(),
@@ -2522,10 +2522,10 @@ impl TestStruct {
         Ok(())
     }
 
-    #[test] 
+    #[test]
     fn test_symbol_type_validation() -> Result<()> {
         use crate::parsing::{SymbolKind, SymbolType};
-        
+
         let symbol_types = vec![
             SymbolType::Function,
             SymbolType::Struct,
@@ -2550,7 +2550,7 @@ impl TestStruct {
 
             // Verify symbol type is preserved
             assert_eq!(symbol.symbol_type, symbol_type);
-            
+
             // Verify all symbol types have valid string representations
             assert!(!format!("{:?}", symbol_type).is_empty());
         }
@@ -2572,11 +2572,14 @@ impl TestStruct {
             // Simple validation of qualified name format
             assert_eq!(input, expected);
             assert!(!input.is_empty());
-            
+
             // Check for reasonable qualified name structure
             if input.contains("::") {
                 let parts: Vec<&str> = input.split("::").collect();
-                assert!(parts.len() >= 2, "Qualified name should have multiple parts");
+                assert!(
+                    parts.len() >= 2,
+                    "Qualified name should have multiple parts"
+                );
                 for part in parts {
                     assert!(!part.is_empty(), "Each part should be non-empty");
                     assert!(!part.contains(' '), "Parts should not contain spaces");

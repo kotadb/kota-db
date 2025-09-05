@@ -769,7 +769,10 @@ mod tests {
         // Test various SQL injection attempts from integration test suite
         // Focus on testing that dangerous inputs are modified, not specific keyword removal
         let test_cases = vec![
-            ("'; DROP TABLE users; --", "Should modify dangerous SQL with DROP"),
+            (
+                "'; DROP TABLE users; --",
+                "Should modify dangerous SQL with DROP",
+            ),
             ("1' OR '1'='1", "Should modify boolean bypass attempt"),
             ("admin'--", "Should modify comment injection"),
             ("' OR 1=1 --", "Should modify simple SQL injection"),
@@ -779,14 +782,30 @@ mod tests {
 
         for (input, description) in test_cases {
             let result = sanitize_search_query(input)?;
-            assert!(result.was_modified, "{}: Query '{}' should be modified", description, input);
-            
+            assert!(
+                result.was_modified,
+                "{}: Query '{}' should be modified",
+                description, input
+            );
+
             // Check that dangerous patterns are removed or modified
-            assert!(!result.text.contains("--"), "{}: SQL comments not removed", description);
-            assert!(!result.text.contains("1=1"), "{}: Boolean bypass not removed", description);
-            
+            assert!(
+                !result.text.contains("--"),
+                "{}: SQL comments not removed",
+                description
+            );
+            assert!(
+                !result.text.contains("1=1"),
+                "{}: Boolean bypass not removed",
+                description
+            );
+
             // Verify the result is different from input
-            assert_ne!(result.text, input, "{}: Output should differ from input", description);
+            assert_ne!(
+                result.text, input,
+                "{}: Output should differ from input",
+                description
+            );
         }
 
         Ok(())
@@ -810,18 +829,58 @@ mod tests {
         for (input, description) in test_cases {
             let result = sanitize_search_query(input)?;
             assert!(result.was_modified, "{}: '{}'", description, input);
-            
+
             // Check that command injection characters are removed
-            assert!(!result.text.contains(';'), "{}: semicolon not removed", description);
-            assert!(!result.text.contains('|'), "{}: pipe not removed", description);
-            assert!(!result.text.contains('`'), "{}: backtick not removed", description);
-            assert!(!result.text.contains("$("), "{}: command substitution not removed", description);
-            assert!(!result.text.contains("&&"), "{}: logical AND not removed", description);
-            assert!(!result.text.contains("||"), "{}: logical OR not removed", description);
-            assert!(!result.text.contains(" & "), "{}: background execution not removed", description);
-            assert!(!result.text.contains(" > "), "{}: output redirection not removed", description);
-            assert!(!result.text.contains(" < "), "{}: input redirection not removed", description);
-            assert!(!result.text.contains(">>"), "{}: append redirection not removed", description);
+            assert!(
+                !result.text.contains(';'),
+                "{}: semicolon not removed",
+                description
+            );
+            assert!(
+                !result.text.contains('|'),
+                "{}: pipe not removed",
+                description
+            );
+            assert!(
+                !result.text.contains('`'),
+                "{}: backtick not removed",
+                description
+            );
+            assert!(
+                !result.text.contains("$("),
+                "{}: command substitution not removed",
+                description
+            );
+            assert!(
+                !result.text.contains("&&"),
+                "{}: logical AND not removed",
+                description
+            );
+            assert!(
+                !result.text.contains("||"),
+                "{}: logical OR not removed",
+                description
+            );
+            assert!(
+                !result.text.contains(" & "),
+                "{}: background execution not removed",
+                description
+            );
+            assert!(
+                !result.text.contains(" > "),
+                "{}: output redirection not removed",
+                description
+            );
+            assert!(
+                !result.text.contains(" < "),
+                "{}: input redirection not removed",
+                description
+            );
+            assert!(
+                !result.text.contains(">>"),
+                "{}: append redirection not removed",
+                description
+            );
         }
 
         Ok(())
@@ -839,13 +898,22 @@ mod tests {
             let result = sanitize_search_query(input)?;
             if result.was_modified {
                 // If modified, should be different from input
-                assert_ne!(result.text, input, "{}: Output should differ from dangerous input", description);
+                assert_ne!(
+                    result.text, input,
+                    "{}: Output should differ from dangerous input",
+                    description
+                );
             }
-            
+
             // Main test: dangerous directory traversal patterns shouldn't pass through unchanged
-            let contains_traversal = result.text.contains("../..") || result.text.contains("etc/passwd");
+            let contains_traversal =
+                result.text.contains("../..") || result.text.contains("etc/passwd");
             if contains_traversal {
-                assert!(result.was_modified, "{}: Dangerous pattern detected but not marked as modified", description);
+                assert!(
+                    result.was_modified,
+                    "{}: Dangerous pattern detected but not marked as modified",
+                    description
+                );
             }
         }
 
@@ -860,7 +928,11 @@ mod tests {
             let result = sanitize_search_query(input)?;
             // Don't require these to be modified, just verify behavior is documented
             if result.was_modified {
-                assert_ne!(result.text, input, "{}: Modified result should differ", description);
+                assert_ne!(
+                    result.text, input,
+                    "{}: Modified result should differ",
+                    description
+                );
             }
         }
 
@@ -881,12 +953,19 @@ mod tests {
             let result = sanitize_search_query(input)?;
             if result.was_modified {
                 // If modified, verify dangerous patterns are addressed
-                assert_ne!(result.text, input, "{}: Modified result should differ", description);
-                
+                assert_ne!(
+                    result.text, input,
+                    "{}: Modified result should differ",
+                    description
+                );
+
                 // Check that high-risk script patterns are handled
                 if input.contains("<script") {
-                    assert!(!result.text.to_lowercase().contains("<script"), 
-                           "{}: script tag should be removed", description);
+                    assert!(
+                        !result.text.to_lowercase().contains("<script"),
+                        "{}: script tag should be removed",
+                        description
+                    );
                 }
             }
         }
@@ -896,14 +975,21 @@ mod tests {
             ("<iframe src='evil.com'></iframe>", "Iframe injection"),
             ("<object data='evil.swf'></object>", "Object tag injection"),
             ("vbscript:msgbox(1)", "VBScript injection"),
-            ("data:text/html,<script>alert(1)</script>", "Data URI injection"),
+            (
+                "data:text/html,<script>alert(1)</script>",
+                "Data URI injection",
+            ),
         ];
 
         for (input, description) in additional_cases {
             let result = sanitize_search_query(input)?;
             // Document behavior but don't require specific handling
             if result.was_modified {
-                assert_ne!(result.text, input, "{}: Modified result should differ", description);
+                assert_ne!(
+                    result.text, input,
+                    "{}: Modified result should differ",
+                    description
+                );
             }
         }
 
@@ -914,8 +1000,11 @@ mod tests {
     fn test_ldap_injection_prevention() -> Result<()> {
         // Test that wildcard is preserved for legitimate search
         let wildcard_result = sanitize_search_query("*")?;
-        assert!(!wildcard_result.was_modified, "Wildcard should be preserved for search");
-        
+        assert!(
+            !wildcard_result.was_modified,
+            "Wildcard should be preserved for search"
+        );
+
         // Test various LDAP injection attempts (may not all be handled by current implementation)
         let ldap_cases = vec![
             (")(cn=*", "LDAP filter injection attempt"),
@@ -927,12 +1016,20 @@ mod tests {
             let result = sanitize_search_query(input)?;
             if result.was_modified {
                 // If modified, should be different from dangerous input
-                assert_ne!(result.text, input, "{}: Modified result should differ", description);
-                
+                assert_ne!(
+                    result.text, input,
+                    "{}: Modified result should differ",
+                    description
+                );
+
                 // Check for common LDAP injection patterns if they're handled
                 if result.text != input {
                     // Some sanitization occurred - document the behavior
-                    assert!(result.was_modified, "{}: Should be marked as modified if changed", description);
+                    assert!(
+                        result.was_modified,
+                        "{}: Should be marked as modified if changed",
+                        description
+                    );
                 }
             }
         }
@@ -941,7 +1038,10 @@ mod tests {
         let null_byte_case = "*))%00";
         let null_result = sanitize_search_query(null_byte_case)?;
         if null_result.was_modified {
-            assert!(!null_result.text.contains("%00"), "Null byte should be removed if sanitization occurs");
+            assert!(
+                !null_result.text.contains("%00"),
+                "Null byte should be removed if sanitization occurs"
+            );
         }
 
         Ok(())
@@ -951,22 +1051,32 @@ mod tests {
     fn test_nosql_injection_prevention() -> Result<()> {
         let test_cases = vec![
             ("{\"$ne\": null}", "MongoDB $ne injection"),
-            ("{\"$gt\": \"\"}", "MongoDB $gt injection"), 
+            ("{\"$gt\": \"\"}", "MongoDB $gt injection"),
             ("{\"$regex\": \".*\"}", "MongoDB regex injection"),
-            ("{\"$where\": \"this.password\"}", "MongoDB $where injection"),
-            ("{\"$eval\": \"db.users.find()\"}", "MongoDB $eval injection"),
+            (
+                "{\"$where\": \"this.password\"}",
+                "MongoDB $where injection",
+            ),
+            (
+                "{\"$eval\": \"db.users.find()\"}",
+                "MongoDB $eval injection",
+            ),
             ("{\"user\": {\"$ne\": 1}}", "MongoDB nested injection"),
         ];
 
         for (input, description) in test_cases {
             let result = sanitize_search_query(input)?;
-            
+
             // NoSQL injection patterns should be modified or rejected
             if result.was_modified {
                 // If modified, verify dangerous patterns are addressed
-                assert_ne!(result.text, input, "{}: Output should differ from input", description);
+                assert_ne!(
+                    result.text, input,
+                    "{}: Output should differ from input",
+                    description
+                );
             }
-            
+
             // The key test is that we don't get the exact dangerous input back unchanged
             // The sanitization function may handle these differently based on implementation
         }
