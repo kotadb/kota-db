@@ -24,21 +24,22 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # Fast unit tests (Mac Pro advantage)
+  # Fast unit tests (GitHub Actions)
   ultra-fast-unit:
-    name: Ultra-Fast Unit Tests (Mac Pro M2 Ultra)
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    name: Ultra-Fast Unit Tests (GitHub Ubuntu)
+    runs-on: ubuntu-latest
     if: github.event.inputs.test_type == 'unit' || github.event.inputs.test_type == 'full'
     timeout-minutes: 3
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
     - name: Setup optimized environment
       run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
-        # Use all Mac Pro cores
-        echo "RUST_TEST_THREADS=20" >> $GITHUB_ENV
+        # Use GitHub Actions cores efficiently
+        echo "RUST_TEST_THREADS=4" >> $GITHUB_ENV
         cargo --version
     
     - name: Install cargo-nextest
@@ -46,7 +47,7 @@ jobs:
     
     - name: Run unit tests with performance tracking
       run: |
-        echo "🚀 Starting unit tests on Mac Pro M2 Ultra..."
+        echo "🚀 Starting unit tests on GitHub Ubuntu..."
         echo "Expected: 413 tests in <5 seconds"
         
         start_time=$(date +%s)
@@ -70,7 +71,7 @@ jobs:
   # Strategic integration tests (grouped by domain)
   optimized-integration:
     name: Optimized Integration Tests
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     if: github.event.inputs.test_type == 'integration' || github.event.inputs.test_type == 'full'
     timeout-minutes: 8
     strategy:
@@ -84,11 +85,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
     - name: Setup environment
       run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
-        echo "RUST_TEST_THREADS=8" >> $GITHUB_ENV
+        echo "RUST_TEST_THREADS=4" >> $GITHUB_ENV
     
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
@@ -140,7 +142,7 @@ jobs:
   # E2E testing with production-like scenarios
   production-e2e:
     name: Production E2E Validation
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     if: github.event.inputs.test_type == 'e2e' || github.event.inputs.test_type == 'full'
     timeout-minutes: 5
     steps:
@@ -148,8 +150,7 @@ jobs:
     
     - name: Setup environment
       run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
+        # GitHub Actions has Rust pre-configured
     
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
@@ -176,7 +177,7 @@ jobs:
   # Performance benchmarking (production targets)
   performance-benchmarks:
     name: Performance Benchmarks
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     if: github.event.inputs.test_type == 'performance' || github.event.inputs.test_type == 'full'
     timeout-minutes: 10
     steps:
@@ -184,8 +185,7 @@ jobs:
     
     - name: Setup environment
       run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
+        # GitHub Actions has Rust pre-configured
     
     - name: Install tools
       run: |
@@ -215,7 +215,7 @@ jobs:
   # Full testing suite (replicates your local 754 test experience)
   complete-validation:
     name: Complete Testing Suite (Local Replication)
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     needs: [ultra-fast-unit, optimized-integration, production-e2e]
     if: github.event.inputs.test_type == 'full'
     timeout-minutes: 15
@@ -224,8 +224,7 @@ jobs:
     
     - name: Setup environment
       run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
+        # GitHub Actions has Rust pre-configured
         echo "RUST_TEST_THREADS=16" >> $GITHUB_ENV
     
     - name: Install cargo-nextest
@@ -276,7 +275,7 @@ jobs:
         echo "=================================="
         
         echo "🎯 Testing Pyramid Achieved:"
-        echo "  70% Unit Tests (413 tests) - Ultra fast on Mac Pro"
+        echo "  70% Unit Tests (413 tests) - Ultra fast on GitHub"
         echo "  25% Integration (360 tests) - Strategically grouped" 
         echo "   5% E2E Tests (8 tests) - Production user journeys"
         echo ""
@@ -286,4 +285,4 @@ jobs:
         echo "  E2E tests: <5 minutes"
         echo "  Full suite: <60 seconds"
         echo ""
-        echo "✅ Mac Pro M2 Ultra advantage: 754 tests in ~47 seconds"
+        echo "✅ GitHub Actions performance: 754 tests in ~60-120 seconds"
