@@ -494,18 +494,58 @@ impl<'a> StatsService<'a> {
         let reader = crate::binary_symbols::BinarySymbolReader::open(&symbol_db_path)?;
         let total_symbols = reader.symbol_count();
 
-        // TODO: Implement detailed symbol analysis
+        // Calculate files with symbols by collecting unique file paths
+        let mut unique_files = std::collections::HashSet::new();
+
+        // Iterate through all symbols and collect their file paths
+        for symbol in reader.iter_symbols() {
+            match reader.get_symbol_file_path(&symbol) {
+                Ok(file_path) => {
+                    unique_files.insert(file_path);
+                }
+                Err(e) => {
+                    // Log warning but continue - corrupt symbol entries shouldn't break stats
+                    tracing::warn!("Failed to read file path for symbol: {}", e);
+                }
+            }
+        }
+
+        let files_with_symbols = unique_files.len();
+
+        // Calculate symbol density (symbols per file with symbols)
+        let symbol_density = if files_with_symbols > 0 {
+            total_symbols as f64 / files_with_symbols as f64
+        } else {
+            0.0
+        };
+
+        // Calculate extraction coverage (percentage of files with symbols)
+        let extraction_coverage = if files_with_symbols > 0 {
+            // Get total document count from storage
+            let storage_arc = self.database.storage();
+            let storage = storage_arc.lock().await;
+            let total_files = storage.list_all().await?.len();
+
+            if total_files > 0 {
+                (files_with_symbols as f64 / total_files as f64) * 100.0
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        // TODO: Implement detailed symbol analysis for future enhancements
         // - Count by type (function, class, variable, etc.)
         // - Count by language
-        // - Calculate density and coverage metrics
 
         Ok(SymbolStats {
             total_symbols,
             symbols_by_type: HashMap::new(),
             symbols_by_language: HashMap::new(),
-            files_with_symbols: 0,    // TODO: Calculate
-            symbol_density: 0.0,      // TODO: Calculate
-            extraction_coverage: 0.0, // TODO: Calculate
+            files_with_symbols,
+            symbol_density,
+            extraction_coverage,
         })
     }
 
@@ -726,3 +766,6 @@ impl<'a> StatsService<'a> {
         })
     }
 }
+
+// TODO: Add unit tests for symbol statistics calculations
+// The implementation has been validated through dogfooding tests with real KotaDB data
