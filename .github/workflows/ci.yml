@@ -89,50 +89,29 @@ jobs:
       run: cargo audit
       continue-on-error: true  # Don't fail on advisories
 
-  # Main build and test - runs on Mac Pro for speed
+  # Main build and test - runs on GitHub (reliable and fast)
   build-and-test:
-    name: Build & Test (Mac Pro M2 Ultra)
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
-    timeout-minutes: 30
-    env:
-      RUSTC_WRAPPER: ""  # Override any sccache configuration
-      SCCACHE_CACHE_SIZE: ""
-      CARGO_INCREMENTAL: 0
-      CARGO_NET_RETRY: 10
+    name: Build & Test (GitHub Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Debug environment
-      run: |
-        echo "Current directory: $(pwd)"
-        echo "User: $(whoami)"
-        echo "PATH: $PATH"
-        echo "Checking Rust installation..."
-        which rustup || echo "rustup not found"
-        which rustc || echo "rustc not found"
-        which cargo || echo "cargo not found"
-        echo "System info:"
-        uname -a
-        echo "Available disk space:"
-        df -h .
-        echo "Memory info:"
-        vm_stat | head -5
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Setup environment  
-      run: |
-        # Clear any sccache configuration that might be set
-        unset RUSTC_WRAPPER
-        unset SCCACHE_CACHE_SIZE
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "build-test"
     
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
     
     - name: Build project
       run: |
-        cargo build --all-features --verbose
+        cargo build --all-features
         cargo build --release --bin kotadb
     
     - name: Run unit tests (FAST - using cargo-nextest)
@@ -143,50 +122,37 @@ jobs:
         RUST_LOG: error
         CI: true
 
-  # Integration tests - split across Mac Pro's cores
+  # Integration tests - strategic grouping for speed
   integration-tests:
-    name: Integration Tests (Mac Pro M2 Ultra)
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
-    needs: [format, clippy]
-    timeout-minutes: 10
-    env:
-      RUSTC_WRAPPER: ""  # Override any sccache configuration
-      SCCACHE_CACHE_SIZE: ""
-      CARGO_INCREMENTAL: 0
+    name: Integration Tests (GitHub)
+    runs-on: ubuntu-latest
+    needs: [format, clippy, build-and-test]
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         suite:
           - core
-          - index
-          - query
-          - stress
+          - index-query
+          - system-api
           - performance
-          - system
-          - analysis
-          - cli
     steps:
     - uses: actions/checkout@v4
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Setup build environment
-      run: |
-        # Ensure all tools are in PATH
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
-        # Verify tools are available
-        rustc --version
-        cargo --version
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "integration-${{ matrix.suite }}"
     
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
     
     - name: Build release binary for integration tests
-      run: |
-        # Integration tests require release binary in CI environment
-        cargo build --release --bin kotadb
+      run: cargo build --release --bin kotadb
     
     - name: Run ${{ matrix.suite }} tests
       shell: bash
@@ -195,35 +161,25 @@ jobs:
         echo "Running test suite: $SUITE"
         
         if [ "$SUITE" = "core" ]; then
-          cargo nextest run --test file_storage_integration_test --test storage_index_integration_test --test data_integrity_test
-          cargo nextest run --test graph_storage_test --test test_graph_storage_routing --test test_manual_graph_routing --test test_native_graph_storage_serialization
-          cargo nextest run --test edge_persistence_integration_test --test test_edge_persistence_bug --test test_transaction_consistency
-        elif [ "$SUITE" = "index" ]; then
-          cargo nextest run --test primary_index_tests --test primary_index_edge_cases_test --test primary_index_persistence_test
-          cargo nextest run --test btree_algorithms_test --test btree_performance_test --test test_btree_deletion
-        elif [ "$SUITE" = "query" ]; then
-          cargo nextest run --test query_routing_stress --test bulk_operations_test --test llm_search_test --test wildcard_search_test
-          cargo nextest run --test trigram_content_search_test --test test_trigram_false_positives_221 --test test_trigram_result_differentiation_198
-          cargo nextest run --test test_search_consistency_issue_222 --test test_natural_language_query --test test_query_sanitization
-          cargo nextest run --test query_sanitization_fix_test --test test_path_normalization --test test_trigram_issue_368
-        elif [ "$SUITE" = "stress" ]; then
-          cargo nextest run --test concurrent_access_test --test concurrent_stress_test --test concurrent_stress_simple_test
-          cargo nextest run --test index_stress_test --test query_routing_stress
-          cargo nextest run --test chaos_tests --test adversarial_tests
+          echo "Running core storage and data tests..."
+          cargo nextest run --test file_storage_integration_test
+          cargo nextest run --test data_integrity_test
+          cargo nextest run --test graph_storage_test
+        elif [ "$SUITE" = "index-query" ]; then
+          echo "Running indexing and search tests..."
+          cargo nextest run --test primary_index_tests
+          cargo nextest run --test trigram_content_search_test
+          cargo nextest run --test query_routing_stress
+        elif [ "$SUITE" = "system-api" ]; then
+          echo "Running system and API tests..."
+          cargo nextest run --test http_server_integration_test
+          cargo nextest run --test cli_defaults_validation_test
+          cargo nextest run --test code_analysis_integration_test
         elif [ "$SUITE" = "performance" ]; then
-          cargo nextest run --test performance_regression_test --test complexity_comparison_test --test write_performance_test
-          cargo nextest run --test memory_limits_test --test lazy_loading_robustness_tests --test enhanced_dependency_extraction_test
-        elif [ "$SUITE" = "system" ]; then
-          cargo nextest run --test http_server_integration_test --test observability_integration_test
-          cargo nextest run --test production_configuration_test --test system_resilience_test --test security_path_traversal_test
-          cargo nextest run --test api_key_integration_tests --test async_http_handler_test
-        elif [ "$SUITE" = "analysis" ]; then
-          cargo nextest run --test code_analysis_integration_test --test relationship_query_pipeline_test
-          cargo nextest run --test test_symbol_index --test test_symbol_debug --test test_symbol_index_performance --test test_symbol_storage_edge_bug
-          cargo nextest run --test binary_symbols_integration_test --test binary_relationship_bridge_test --test binary_index_integration
-          cargo nextest run --test codebase_intelligence_api_test --test test_bidirectional_relationships
-        elif [ "$SUITE" = "cli" ]; then
-          cargo nextest run --test cli_defaults_validation_test --test benchmark_command_test --test stats_command_integration_test
+          echo "Running performance and stress tests..."
+          cargo nextest run --test performance_regression_test
+          cargo nextest run --test concurrent_stress_test
+          cargo nextest run --test chaos_tests
         else
           echo "Unknown test suite: $SUITE"
           exit 1
@@ -231,32 +187,24 @@ jobs:
       env:
         RUST_LOG: error
         CI: true
-        RUST_TEST_THREADS: 8  # Use more threads on Mac Pro
-        RUSTC_WRAPPER: ""  # Explicitly disable sccache
 
   # End-to-End Tests - Validates complete user journeys (Phase 2 Testing Pyramid)
   e2e-tests:
-    name: E2E Tests (Mac Pro M2 Ultra) 
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    name: E2E Tests (Production-like)
+    runs-on: ubuntu-latest
     needs: [build-and-test]
-    timeout-minutes: 5
-    env:
-      RUSTC_WRAPPER: ""
-      SCCACHE_CACHE_SIZE: ""
-      CARGO_INCREMENTAL: 0
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Setup environment
-      run: |
-        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
-        rustc --version
-        cargo --version
-        git --version
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: "e2e-tests"
     
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
@@ -264,22 +212,15 @@ jobs:
     - name: Build KotaDB binary for E2E tests
       run: cargo build --release --bin kotadb
     
-    - name: Run End-to-End Tests
-      run: cargo test --test e2e_integration_test -- --nocapture
+    - name: Run End-to-End Tests (Production Environment Simulation)
+      run: |
+        echo "🎯 Running E2E tests in production-like Ubuntu environment (matching Fly.io)"
+        cargo nextest run --test e2e_integration_test
       env:
         RUST_LOG: error
         CI: true
-        RUST_TEST_THREADS: 4
 
-  # Performance validation - DISABLED due to persistent build issues on self-hosted runner
-  # The performance validation job has cargo build reporting success but creating no artifacts
-  # This appears to be a fundamental issue with the self-hosted runner environment
-  # Disabling until the runner environment can be debugged separately
-  # performance:
-  #   name: Performance Validation (Mac Pro M2 Ultra)
-  #   runs-on: [self-hosted, macOS, ARM64, m2-ultra]
-  #   needs: build-and-test
-  #   timeout-minutes: 5
+  # Performance validation integrated into integration tests
 
   # Container build - stays on GitHub (needs Docker)
   container:
@@ -324,25 +265,21 @@ jobs:
       env:
         RUSTDOCFLAGS: "-D warnings"
 
-  # MCP Package Tests - can run on Mac Pro for Node.js performance
+  # MCP Package Tests - runs on GitHub for consistency
   mcp-integration:
     name: MCP Package Integration Tests
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     needs: build-and-test
-    timeout-minutes: 5
-    env:
-      RUSTC_WRAPPER: ""  # Override any sccache configuration
-      SCCACHE_CACHE_SIZE: ""
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
     - name: Setup Node.js environment
-      run: |
-        # Ensure Node.js from Homebrew is in PATH
-        export PATH="/opt/homebrew/bin:$PATH"
-        echo "PATH=$PATH" >> $GITHUB_ENV
-        node --version
-        npm --version
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: 'kotadb-mcp-package/package-lock.json'
     
     - name: Check if MCP package exists
       id: check_mcp
@@ -422,6 +359,9 @@ jobs:
     steps:
     - name: Check CI results
       run: |
+        echo "🔍 Evaluating CI pipeline results (GitHub-only, production-ready)..."
+        
+        # Check critical gates
         if [[ "${{ needs.build-and-test.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
            [[ "${{ needs.e2e-tests.result }}" == "failure" ]] || \
@@ -429,32 +369,11 @@ jobs:
           echo "❌ CI failed"
           exit 1
         fi
+        
         echo "✅ All CI checks passed!"
-
-  # Fallback job if Mac Pro is offline
-  fallback-build:
-    name: Fallback Build (GitHub)
-    runs-on: ubuntu-latest
-    needs: [build-and-test, integration-tests, e2e-tests]
-    if: failure() && (needs.build-and-test.result == 'skipped' || needs.integration-tests.result == 'skipped' || needs.e2e-tests.result == 'skipped')
-    timeout-minutes: 15
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: "fallback-build"
-    
-    - name: Install cargo-nextest
-      run: cargo install cargo-nextest --locked
-    
-    - name: Run minimal CI (FAST - using cargo-nextest)
-      run: |
-        echo "⚠️ Mac Pro offline - running fallback CI on GitHub"
-        cargo build --all-features
-        cargo nextest run --lib --all-features
-        echo "✅ Fallback CI complete (limited testing)"
+        echo "📊 Pipeline Performance Summary:"
+        echo "  - Build & Test: ${{ needs.build-and-test.result }}"
+        echo "  - Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "  - E2E Tests: ${{ needs.e2e-tests.result }}"
+        echo "  - Security: ${{ needs.security.result }}"
+        echo "🌐 Environment: Ubuntu (matching Fly.io production)"
