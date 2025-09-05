@@ -75,11 +75,11 @@ jobs:
       if: steps.cache-nextest.outputs.cache-hit != 'true'
       run: cargo install cargo-nextest --locked
     
-    - name: Single comprehensive build (optimized)
+    - name: Build and create nextest archive
       run: |
-        echo "🏗️ Starting optimized single comprehensive build..."
+        echo "🏗️ Building all targets and creating nextest archive..."
         
-        # Build in optimal order for maximum cache reuse
+        # Build all targets (nextest archive will include everything needed)
         echo "📦 Building dev profile with all features..."
         cargo build --all-features
         
@@ -89,69 +89,23 @@ jobs:
         echo "🚀 Building release binary..."
         cargo build --release --bin kotadb
         
-        echo "📊 Build artifacts created:"
-        find target -name "kotadb*" -type f | head -10
+        echo "📦 Creating nextest archive with complete build state..."
+        cargo nextest archive --workspace --all-features \
+          --archive-file nextest-archive.tar.zst
         
-        # Verify critical binaries exist
-        ls -la target/debug/kotadb || echo "Debug binary not found"
-        ls -la target/release/kotadb || echo "Release binary not found"
+        echo "📊 Archive created:"
+        ls -la nextest-archive.tar.zst
+        echo "Archive size: $(du -sh nextest-archive.tar.zst)"
         
-        echo "✅ Single compilation complete"
+        echo "✅ Nextest archive created with zero-recompilation guarantee"
     
-    - name: Package build artifacts
-      run: |
-        echo "📦 Packaging compilation artifacts (executable-only)..."
-        
-        # Create minimal artifact package with only executables
-        mkdir -p artifacts-package/bin
-        mkdir -p artifacts-package/tests
-        
-        # Copy main binaries (small - ~10-50MB total)
-        cp target/debug/kotadb artifacts-package/bin/ 2>/dev/null || echo "Debug kotadb not found"
-        cp target/release/kotadb artifacts-package/bin/kotadb-release 2>/dev/null || echo "Release kotadb not found"
-        
-        # Copy test executables AND their metadata files (crucial for cargo to skip recompilation)
-        echo "🔍 Packaging test executables with metadata..."
-        mkdir -p artifacts-package/deps-meta
-        
-        # Copy test executables
-        find target/debug/deps -maxdepth 1 -type f -executable -name "*-*" \
-          ! -name "*.so" ! -name "*.dylib" \
-          -exec cp {} artifacts-package/tests/ \; 2>/dev/null || echo "Some test binaries not found"
-        
-        # Copy metadata files (.d files) that cargo needs to avoid recompilation
-        find target/debug/deps -maxdepth 1 -name "*.d" \
-          -exec cp {} artifacts-package/deps-meta/ \; 2>/dev/null || echo "Some metadata not found"
-        
-        # Copy integration test binaries 
-        find target/debug -maxdepth 1 -type f -executable -name "*test*" \
-          -exec cp {} artifacts-package/tests/ \; 2>/dev/null || echo "Some integration test binaries not found"
-        
-        echo "📊 Artifact contents:"
-        ls -la artifacts-package/bin/ || echo "No main binaries"
-        echo "Test executables: $(ls artifacts-package/tests/ | wc -l) files"
-        
-        echo "📈 Final artifact package size (should be <500MB):"
-        du -sh artifacts-package/
-        
-        # Validate size - fail if larger than 2GB (reasonable threshold with metadata)
-        SIZE_KB=$(du -k artifacts-package/ | cut -f1)
-        SIZE_MB=$((SIZE_KB / 1024))
-        if [ "$SIZE_MB" -gt 2048 ]; then
-          echo "❌ ERROR: Artifact package too large: ${SIZE_MB}MB"
-          echo "This indicates the filtering failed. Aborting to prevent performance degradation."
-          exit 1
-        fi
-        
-        echo "✅ Artifacts packaged efficiently (${SIZE_MB}MB)"
-    
-    - name: Upload compilation artifacts
+    - name: Upload nextest archive
       uses: actions/upload-artifact@v4
       with:
-        name: compiled-artifacts-${{ steps.cache-key.outputs.key }}
-        path: artifacts-package/
+        name: nextest-archive-${{ steps.cache-key.outputs.key }}
+        path: nextest-archive.tar.zst
         retention-days: 1
-        compression-level: 6
+        compression-level: 1  # Archive is already compressed
 
   # Phase 2: Fast quality checks (run in parallel with build)
   quality-checks:
@@ -193,46 +147,26 @@ jobs:
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
     
-    - name: Download compilation artifacts
+    - name: Download nextest archive
       uses: actions/download-artifact@v4
       with:
-        name: compiled-artifacts-${{ needs.build-artifacts.outputs.cache-key }}
-        path: artifacts-package
+        name: nextest-archive-${{ needs.build-artifacts.outputs.cache-key }}
+        path: .
     
-    - name: Restore build artifacts
+    - name: Run unit tests (zero compilation)
       run: |
-        echo "📥 Restoring compilation artifacts..."
-        mkdir -p target/debug target/release target/debug/deps
+        echo "🚀 Running unit tests from nextest archive..."
         
-        # Restore main binaries
-        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || echo "Debug binary not found"
-        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || echo "Release binary not found"
+        # Run lib tests from archive (zero compilation guaranteed)
+        cargo nextest run --archive-file nextest-archive.tar.zst --lib --no-fail-fast
         
-        # Restore test executables and metadata to correct locations
-        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || echo "Some test binaries not found"
-        cp artifacts-package/deps-meta/* target/debug/deps/ 2>/dev/null || echo "Some metadata not found"
-        
-        # Make binaries executable
-        chmod +x target/debug/kotadb 2>/dev/null || true
-        chmod +x target/release/kotadb 2>/dev/null || true
-        chmod +x target/debug/deps/* 2>/dev/null || true
-        
-        echo "🔍 Verifying restored artifacts:"
-        ls -la target/debug/kotadb 2>/dev/null || echo "Debug kotadb not found"
-        ls -la target/release/kotadb 2>/dev/null || echo "Release kotadb not found"
-        echo "Test executables: $(ls target/debug/deps/ | wc -l) files"
-        
-        echo "✅ Build artifacts restored efficiently"
+        echo "✅ Unit tests completed with zero compilation"
     
-    - name: Run unit tests (no compilation)
+    - name: Run doc tests (requires source)
       run: |
-        echo "🚀 Running unit tests from pre-compiled artifacts..."
-        
-        # Use --no-deps to skip recompilation checks
-        cargo nextest run --lib --all-features --no-fail-fast
+        echo "📚 Running doc tests..."
         cargo test --doc --all-features
-        
-        echo "✅ Unit tests completed using artifacts"
+        echo "✅ Doc tests completed"
       env:
         RUST_LOG: error
         CI: true
@@ -260,50 +194,36 @@ jobs:
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
     
-    - name: Download compilation artifacts
+    - name: Download nextest archive
       uses: actions/download-artifact@v4
       with:
-        name: compiled-artifacts-${{ needs.build-artifacts.outputs.cache-key }}
-        path: artifacts-package
+        name: nextest-archive-${{ needs.build-artifacts.outputs.cache-key }}
+        path: .
     
-    - name: Restore build artifacts
-      run: |
-        echo "📥 Restoring artifacts for ${{ matrix.suite }} tests..."
-        mkdir -p target/debug target/release target/debug/deps
-        
-        # Restore binaries, test executables, and metadata efficiently
-        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || true
-        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || true
-        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || true
-        cp artifacts-package/deps-meta/* target/debug/deps/ 2>/dev/null || true
-        
-        # Ensure executable permissions
-        chmod +x target/debug/kotadb target/release/kotadb target/debug/deps/* 2>/dev/null || true
-    
-    - name: Run ${{ matrix.suite }} integration tests (no compilation)
+    - name: Run ${{ matrix.suite }} integration tests (zero compilation)
       run: |
         SUITE="${{ matrix.suite }}"
-        echo "🧪 Running $SUITE integration tests from artifacts..."
+        echo "🧪 Running $SUITE integration tests from nextest archive..."
         
         if [ "$SUITE" = "core-storage" ]; then
-          cargo nextest run --test file_storage_integration_test
-          cargo nextest run --test data_integrity_test
-          cargo nextest run --test graph_storage_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test file_storage_integration_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test data_integrity_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test graph_storage_test
         elif [ "$SUITE" = "indexing-search" ]; then
-          cargo nextest run --test primary_index_tests
-          cargo nextest run --test trigram_content_search_test
-          cargo nextest run --test query_routing_stress
+          cargo nextest run --archive-file nextest-archive.tar.zst --test primary_index_tests
+          cargo nextest run --archive-file nextest-archive.tar.zst --test trigram_content_search_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test query_routing_stress
         elif [ "$SUITE" = "api-system" ]; then
-          cargo nextest run --test http_server_integration_test
-          cargo nextest run --test cli_defaults_validation_test  
-          cargo nextest run --test code_analysis_integration_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test http_server_integration_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test cli_defaults_validation_test  
+          cargo nextest run --archive-file nextest-archive.tar.zst --test code_analysis_integration_test
         elif [ "$SUITE" = "performance-stress" ]; then
-          cargo nextest run --test performance_regression_test
-          cargo nextest run --test concurrent_stress_test
-          cargo nextest run --test chaos_tests
+          cargo nextest run --archive-file nextest-archive.tar.zst --test performance_regression_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test concurrent_stress_test
+          cargo nextest run --archive-file nextest-archive.tar.zst --test chaos_tests
         fi
         
-        echo "✅ $SUITE integration tests completed"
+        echo "✅ $SUITE integration tests completed with zero compilation"
       env:
         RUST_LOG: error
         CI: true
@@ -323,30 +243,17 @@ jobs:
     - name: Install cargo-nextest
       run: cargo install cargo-nextest --locked
     
-    - name: Download compilation artifacts
+    - name: Download nextest archive
       uses: actions/download-artifact@v4
       with:
-        name: compiled-artifacts-${{ needs.build-artifacts.outputs.cache-key }}
-        path: artifacts-package
+        name: nextest-archive-${{ needs.build-artifacts.outputs.cache-key }}
+        path: .
     
-    - name: Restore build artifacts
+    - name: Run E2E tests (zero compilation)
       run: |
-        echo "📥 Restoring artifacts for E2E tests..."
-        mkdir -p target/debug target/release target/debug/deps
-        
-        # Restore binaries and test executables efficiently  
-        cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || true
-        cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || true
-        cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || true
-        
-        # Ensure executable permissions
-        chmod +x target/debug/kotadb target/release/kotadb target/debug/deps/* 2>/dev/null || true
-    
-    - name: Run E2E tests (no compilation)
-      run: |
-        echo "🎯 Running E2E tests from pre-compiled artifacts..."
-        cargo nextest run --test e2e_integration_test
-        echo "✅ E2E tests completed using artifacts"
+        echo "🎯 Running E2E tests from nextest archive..."
+        cargo nextest run --archive-file nextest-archive.tar.zst --test e2e_integration_test
+        echo "✅ E2E tests completed with zero compilation"
       env:
         RUST_LOG: error
         CI: true
