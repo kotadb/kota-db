@@ -29,7 +29,7 @@ jobs:
   # Pre-deployment validation
   pre-deploy-validation:
     name: Pre-Deployment Validation
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -78,7 +78,7 @@ jobs:
   # Build production artifacts
   build-artifacts:
     name: Build Production Artifacts
-    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    runs-on: ubuntu-latest
     needs: pre-deploy-validation
     if: needs.pre-deploy-validation.outputs.should-deploy == 'true'
     timeout-minutes: 15
