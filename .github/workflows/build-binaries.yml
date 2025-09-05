@@ -37,22 +37,14 @@ jobs:
       - name: Set build matrix
         id: set-matrix
         run: |
-          # Define complete matrix with all fields
-          ALL_PLATFORMS='{"include":[
-            {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","name":"kotadb-linux-x64","ext":"tar.gz"},
-            {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","name":"kotadb-linux-musl-x64","ext":"tar.gz"},
-            {"target":"x86_64-apple-darwin","os":"macos-13","name":"kotadb-macos-x64","ext":"tar.gz"},
-            {"target":"aarch64-apple-darwin","os":"macos-14","name":"kotadb-macos-arm64","ext":"tar.gz"},
-            {"target":"x86_64-pc-windows-msvc","os":"windows-latest","name":"kotadb-windows-x64","ext":"zip"}
-          ]}'
+          # Define complete matrix with all fields as compact JSON
+          ALL_PLATFORMS='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","name":"kotadb-linux-x64","ext":"tar.gz"},{"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","name":"kotadb-linux-musl-x64","ext":"tar.gz"},{"target":"x86_64-apple-darwin","os":"macos-13","name":"kotadb-macos-x64","ext":"tar.gz"},{"target":"aarch64-apple-darwin","os":"macos-14","name":"kotadb-macos-arm64","ext":"tar.gz"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest","name":"kotadb-windows-x64","ext":"zip"}]}'
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.platforms }}" != "all" ]]; then
             # Manual trigger with specific platforms - filter the matrix
             PLATFORMS="${{ inputs.platforms }}"
             # Convert to array and filter the complete matrix
-            FILTERED=$(echo "$ALL_PLATFORMS" | jq --arg platforms "$PLATFORMS" '
-              .include | map(select(.target as $t | $platforms | split(",") | map(gsub("^\\s+|\\s+$"; "")) | index($t))) | {"include": .}
-            ')
+            FILTERED=$(echo "$ALL_PLATFORMS" | jq --arg platforms "$PLATFORMS" '.include | map(select(.target as $t | $platforms | split(",") | map(gsub("^\\s+|\\s+$"; "")) | index($t))) | {"include": .}')
             echo "matrix=$FILTERED" >> $GITHUB_OUTPUT
           else
             # Default: build all platforms
