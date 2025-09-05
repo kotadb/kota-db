@@ -992,4 +992,130 @@ mod tests {
         // Test different extensions
         assert!(!paths_equivalent("src/main.rs", "src/main.py"));
     }
+
+    // Extracted from integration tests - Path normalization utility functions
+    #[test]
+    fn test_path_normalization_utilities_absolute_to_relative() {
+        // Test absolute to relative conversion
+        let repo_root = Path::new("/home/user/project");
+        let absolute_path = Path::new("/home/user/project/src/main.rs");
+        assert_eq!(
+            normalize_path_relative(absolute_path, repo_root),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_path_normalization_utilities_already_relative() {
+        // Test already relative path
+        let repo_root = Path::new("/home/user/project");
+        let relative_path = Path::new("src/main.rs");
+        assert_eq!(
+            normalize_path_relative(relative_path, repo_root),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_path_normalization_utilities_dotted_prefix() {
+        // Test path with ./ prefix
+        let repo_root = Path::new("/home/user/project");
+        let dotted_path = Path::new("./src/main.rs");
+        assert_eq!(
+            normalize_path_relative(dotted_path, repo_root),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_paths_equivalent_exact_match() {
+        // Test exact match
+        assert!(paths_equivalent("src/main.rs", "src/main.rs"));
+    }
+
+    #[test]
+    fn test_paths_equivalent_dotted_prefix() {
+        // Test with ./ prefix
+        assert!(paths_equivalent("./src/main.rs", "src/main.rs"));
+        assert!(paths_equivalent("src/main.rs", "./src/main.rs"));
+    }
+
+    #[test]
+    fn test_paths_equivalent_suffix_matching() {
+        // Test suffix matching - longer path should match shorter suffix
+        assert!(paths_equivalent("/project/src/main.rs", "src/main.rs"));
+        assert!(paths_equivalent(
+            "/home/user/project/src/main.rs",
+            "src/main.rs"
+        ));
+        assert!(paths_equivalent("long/path/to/src/main.rs", "src/main.rs"));
+    }
+
+    #[test]
+    fn test_paths_equivalent_different_files() {
+        // Test different files should not match
+        assert!(!paths_equivalent("src/main.rs", "src/lib.rs"));
+        assert!(!paths_equivalent("src/main.rs", "tests/main.rs"));
+        assert!(!paths_equivalent("main.rs", "lib.rs"));
+    }
+
+    #[test]
+    fn test_paths_equivalent_edge_cases() {
+        // Test edge cases for path equivalency - check actual behavior of paths_equivalent
+
+        // Test empty paths - paths_equivalent may have specific behavior for empty strings
+        let empty_vs_file = paths_equivalent("", "src/main.rs");
+        let file_vs_empty = paths_equivalent("src/main.rs", "");
+        let empty_vs_empty = paths_equivalent("", "");
+
+        // Document the actual behavior rather than assuming
+        assert!(
+            empty_vs_empty,
+            "Empty paths should be equivalent to themselves"
+        );
+
+        // Test root file matching
+        assert!(paths_equivalent("main.rs", "main.rs"));
+        assert!(paths_equivalent("/project/main.rs", "main.rs"));
+
+        // Test nested equivalency - paths_equivalent does suffix matching
+        assert!(paths_equivalent(
+            "deeply/nested/path/file.rs",
+            "path/file.rs"
+        ));
+        assert!(paths_equivalent(
+            "deeply/nested/path/file.rs",
+            "nested/path/file.rs"
+        ));
+
+        // Test that different filenames don't match
+        assert!(!paths_equivalent("file1.rs", "file2.rs"));
+    }
+
+    #[test]
+    fn test_normalize_path_relative_complex_cases() {
+        let repo_root = Path::new("/workspace/project");
+
+        // Test deeply nested absolute path
+        let deep_path = Path::new("/workspace/project/src/modules/auth/handler.rs");
+        assert_eq!(
+            normalize_path_relative(deep_path, repo_root),
+            "src/modules/auth/handler.rs"
+        );
+
+        // Test path with multiple ./ components
+        let multi_dot_path = Path::new("./src/./modules/./auth.rs");
+        assert_eq!(
+            normalize_path_relative(multi_dot_path, repo_root),
+            "src/modules/auth.rs"
+        );
+
+        // Test mixed separators (primarily for Windows compatibility testing)
+        #[cfg(windows)]
+        {
+            let windows_path = Path::new(".\\src\\main.rs");
+            let result = normalize_path_relative(windows_path, repo_root);
+            assert!(result.contains("main.rs"));
+        }
+    }
 }
