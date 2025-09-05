@@ -722,7 +722,9 @@ impl BinaryRelationshipEngine {
     }
 
     /// Get a reference to the dependency graph, ensuring it exists
-    fn get_dependency_graph(&self) -> Result<std::sync::RwLockReadGuard<Option<DependencyGraph>>> {
+    fn get_dependency_graph(
+        &self,
+    ) -> Result<std::sync::RwLockReadGuard<'_, Option<DependencyGraph>>> {
         let graph_ref = self.dependency_graph.read().map_err(|_| {
             anyhow::anyhow!(
                 "Dependency graph lock poisoned - another thread panicked while holding the lock"
