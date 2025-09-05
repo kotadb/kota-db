@@ -283,7 +283,7 @@ When working on search, indexing, MCP, or git features, testing on KotaDB itself
 rm -rf data/analysis && mkdir -p data/analysis
 
 # Core dogfooding commands - USE THESE CONSTANTLY
-cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols    # Index with symbols
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .             # Index with symbols (default enabled)
 cargo run --bin kotadb -- -d ./data/analysis stats --symbols               # Verify extraction
 cargo run --bin kotadb -- -d ./data/analysis search-code "async fn"        # Test content search  
 cargo run --bin kotadb -- -d ./data/analysis search-symbols "Storage"      # Test symbol search
