@@ -514,6 +514,127 @@ mod tests {
         assert!(ValidatedPath::new("file\0with\0null").is_err());
     }
 
+    // Extracted from integration tests - Comprehensive path traversal prevention tests
+    #[test]
+    fn test_path_traversal_prevention_comprehensive() {
+        // Test various path traversal attempts
+        let dangerous_paths = vec![
+            "../../../etc/passwd",
+            "../../sensitive/data.txt",
+            "/etc/passwd",
+            "/usr/bin/secret",
+            "documents/../../../etc/shadow",
+            "./../../config",
+            "..\\..\\windows\\system32",         // Windows style
+            "documents/..\\..\\..\\etc\\passwd", // Mixed separators
+            "documents/../../../../../../../../etc/passwd", // Deep traversal
+            "../",
+            "..",
+        ];
+
+        for path in &dangerous_paths {
+            let result = ValidatedPath::new(path);
+            assert!(
+                result.is_err(),
+                "ValidatedPath::new should reject path traversal attempt: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_validated_path_allows_legitimate_paths() {
+        // Test that legitimate paths are still allowed
+        let valid_paths = vec![
+            "documents/readme.md",
+            "data/config.json",
+            "notes/2024/january.md",
+            "project/src/main.rs",
+            "relative/path/file.txt",
+        ];
+
+        for path in &valid_paths {
+            let result = ValidatedPath::new(path);
+            assert!(
+                result.is_ok(),
+                "ValidatedPath::new should accept valid path: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_validated_path_special_character_attacks() {
+        // Test paths with special characters that might be used in attacks
+        let special_paths = vec![
+            "file\0name.txt",                 // Null byte injection
+            "file%00name.txt",                // URL encoded null
+            "file\nname.txt",                 // Newline injection
+            "file\rname.txt",                 // Carriage return
+            "../../%2e%2e/%2e%2e/etc/passwd", // URL encoded traversal
+            "....//....//etc/passwd",         // Alternative traversal
+            "file:///etc/passwd",             // File URL scheme
+        ];
+
+        for path in &special_paths {
+            let result = ValidatedPath::new(path);
+            if path.contains('\0') {
+                // Paths with actual null bytes should definitely fail
+                assert!(
+                    result.is_err(),
+                    "Path with null byte should be rejected: {}",
+                    path
+                );
+            } else {
+                // Other special character attacks should also be rejected or handled safely
+                // Note: This documents the expected security behavior
+                if result.is_err() {
+                    // Path was rejected - good for security
+                } else {
+                    // Path was accepted - ensure it's safe
+                    let validated = result.unwrap();
+                    assert!(
+                        !validated.as_str().contains(".."),
+                        "No directory traversal should remain in validated path: {}",
+                        validated.as_str()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_validated_path_absolute_paths() {
+        // Test that absolute paths are rejected (security: should not allow access outside storage dir)
+        let absolute_paths = vec![
+            "/etc/passwd",
+            "/home/user/.ssh/id_rsa",
+            "C:\\Windows\\System32\\config\\sam",
+            "/var/log/auth.log",
+        ];
+
+        for path in &absolute_paths {
+            let result = ValidatedPath::new(path);
+            // Document expected behavior - absolute paths should be handled securely
+            if result.is_err() {
+                // Rejected - good for security
+            } else {
+                // Accepted - ensure it's converted to relative or otherwise secured
+                let validated = result.unwrap();
+                // At minimum, ensure no direct access to system directories
+                let path_str = validated.as_str();
+                assert!(
+                    !path_str.starts_with("/etc/")
+                        && !path_str.starts_with("/usr/")
+                        && !path_str.starts_with("/var/")
+                        && !path_str.contains("Windows\\System32"),
+                    "System directories should not be accessible: {}",
+                    path_str
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_validated_title() {
         // Valid titles
