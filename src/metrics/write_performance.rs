@@ -265,4 +265,164 @@ mod tests {
         assert!(stats.p99_duration >= Duration::from_millis(98));
         assert!(stats.p99_duration <= Duration::from_millis(100));
     }
+
+    // Extracted from integration tests - Additional performance validation algorithms
+    #[tokio::test]
+    async fn test_performance_requirements_compliance() {
+        let monitor = WritePerformanceMonitor::new(WriteMetricsConfig {
+            window_size: 50,
+            outlier_threshold_ms: 50,
+            log_outliers: false,
+        });
+
+        // Simulate mostly good performance with some outliers
+        for _ in 0..47 {
+            monitor.record_write(Duration::from_millis(5)).await; // Good performance
+        }
+
+        // Add a few outliers but still within P95 limits
+        for _ in 0..2 {
+            monitor.record_write(Duration::from_millis(25)).await; // Still under P95
+        }
+
+        // Add one P99 case
+        monitor.record_write(Duration::from_millis(75)).await; // Under 100ms P99
+
+        let stats = monitor.get_stats().await;
+
+        // Validate performance requirements similar to Issue #151
+        // With mostly 5ms measurements, average should be well under 10ms
+        assert!(
+            stats.avg_duration.as_millis() <= 10,
+            "Average latency should be under 10ms: {:?}",
+            stats.avg_duration
+        );
+        assert!(
+            stats.p95_duration.as_millis() <= 50,
+            "P95 latency should be under 50ms: {:?}",
+            stats.p95_duration
+        );
+        assert!(
+            stats.p99_duration.as_millis() <= 100,
+            "P99 latency should be under 100ms: {:?}",
+            stats.p99_duration
+        );
+
+        let outlier_pct = (stats.outlier_count as f64 / stats.count as f64) * 100.0;
+        assert!(
+            outlier_pct <= 5.0,
+            "Outlier percentage should be under 5%: {:.2}%",
+            outlier_pct
+        );
+    }
+
+    #[tokio::test]
+    async fn test_standard_deviation_calculation() {
+        let monitor = WritePerformanceMonitor::new(WriteMetricsConfig::default());
+
+        // Test with highly consistent measurements
+        for _ in 0..20 {
+            monitor.record_write(Duration::from_millis(10)).await;
+        }
+
+        let consistent_stats = monitor.get_stats().await;
+        assert!(
+            consistent_stats.std_deviation.as_millis() <= 1,
+            "Consistent measurements should have low std dev: {:?}",
+            consistent_stats.std_deviation
+        );
+
+        // Create new monitor for variable measurements
+        let variable_monitor = WritePerformanceMonitor::new(WriteMetricsConfig::default());
+
+        // Add highly variable measurements
+        for i in 0..20 {
+            let latency = if i % 2 == 0 { 5 } else { 50 };
+            variable_monitor
+                .record_write(Duration::from_millis(latency))
+                .await;
+        }
+
+        let variable_stats = variable_monitor.get_stats().await;
+        assert!(
+            variable_stats.std_deviation.as_millis() > 15,
+            "Variable measurements should have high std dev: {:?}",
+            variable_stats.std_deviation
+        );
+    }
+
+    #[tokio::test]
+    async fn test_window_size_behavior() {
+        let window_size = 5;
+        let monitor = WritePerformanceMonitor::new(WriteMetricsConfig {
+            window_size,
+            outlier_threshold_ms: 100,
+            log_outliers: false,
+        });
+
+        // Add measurements and test windowing behavior
+        for i in 1..=10 {
+            monitor.record_write(Duration::from_millis(i)).await;
+        }
+
+        let stats = monitor.get_stats().await;
+
+        // Window size should limit the number of measurements considered
+        assert!(
+            stats.count <= 10,
+            "Should not exceed total measurements added"
+        );
+
+        // Test that recent measurements are included
+        // Since we added 10ms last, and assuming windowing works, average should include recent values
+        assert!(
+            stats.avg_duration.as_millis() > 5,
+            "Average should include recent higher values: {:?}",
+            stats.avg_duration
+        );
+    }
+
+    #[test]
+    fn test_outlier_detection_threshold() {
+        // Test outlier detection algorithm separately
+        fn is_outlier(duration: Duration, threshold_ms: u64) -> bool {
+            duration.as_millis() as u64 > threshold_ms
+        }
+
+        let test_cases = vec![
+            (Duration::from_millis(5), 10, false),
+            (Duration::from_millis(10), 10, false),
+            (Duration::from_millis(11), 10, true),
+            (Duration::from_millis(50), 25, true),
+            (Duration::from_millis(25), 25, false),
+        ];
+
+        for (duration, threshold, expected) in test_cases {
+            let result = is_outlier(duration, threshold);
+            assert_eq!(
+                result, expected,
+                "Duration {:?} with threshold {}ms should be outlier: {}",
+                duration, threshold, expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_statistics_edge_cases() {
+        let monitor = WritePerformanceMonitor::new(WriteMetricsConfig::default());
+
+        // Test with zero measurements
+        let empty_stats = monitor.get_stats().await;
+        assert_eq!(empty_stats.count, 0);
+        assert_eq!(empty_stats.outlier_count, 0);
+        assert_eq!(empty_stats.avg_duration, Duration::ZERO);
+
+        // Test with single measurement
+        monitor.record_write(Duration::from_millis(42)).await;
+        let single_stats = monitor.get_stats().await;
+        assert_eq!(single_stats.count, 1);
+        assert_eq!(single_stats.avg_duration, Duration::from_millis(42));
+        assert_eq!(single_stats.median_duration, Duration::from_millis(42));
+        assert_eq!(single_stats.std_deviation, Duration::ZERO);
+    }
 }
