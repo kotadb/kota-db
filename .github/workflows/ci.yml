@@ -234,6 +234,43 @@ jobs:
         RUST_TEST_THREADS: 8  # Use more threads on Mac Pro
         RUSTC_WRAPPER: ""  # Explicitly disable sccache
 
+  # End-to-End Tests - Validates complete user journeys (Phase 2 Testing Pyramid)
+  e2e-tests:
+    name: E2E Tests (Mac Pro M2 Ultra) 
+    runs-on: [self-hosted, macOS, ARM64, m2-ultra]
+    needs: [build-and-test]
+    timeout-minutes: 5
+    env:
+      RUSTC_WRAPPER: ""
+      SCCACHE_CACHE_SIZE: ""
+      CARGO_INCREMENTAL: 0
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Setup environment
+      run: |
+        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+        rustc --version
+        cargo --version
+        git --version
+    
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
+    
+    - name: Build KotaDB binary for E2E tests
+      run: cargo build --release --bin kotadb
+    
+    - name: Run End-to-End Tests
+      run: cargo test --test e2e_integration_test -- --nocapture
+      env:
+        RUST_LOG: error
+        CI: true
+        RUST_TEST_THREADS: 4
+
   # Performance validation - DISABLED due to persistent build issues on self-hosted runner
   # The performance validation job has cargo build reporting success but creating no artifacts
   # This appears to be a fundamental issue with the self-hosted runner environment
@@ -379,7 +416,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [build-and-test, integration-tests, security]
+    needs: [build-and-test, integration-tests, e2e-tests, security]
     if: always()
     timeout-minutes: 1
     steps:
@@ -387,6 +424,7 @@ jobs:
       run: |
         if [[ "${{ needs.build-and-test.result }}" == "failure" ]] || \
            [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
+           [[ "${{ needs.e2e-tests.result }}" == "failure" ]] || \
            [[ "${{ needs.security.result }}" == "failure" ]]; then
           echo "❌ CI failed"
           exit 1
@@ -397,8 +435,8 @@ jobs:
   fallback-build:
     name: Fallback Build (GitHub)
     runs-on: ubuntu-latest
-    needs: [build-and-test, integration-tests]
-    if: failure() && (needs.build-and-test.result == 'skipped' || needs.integration-tests.result == 'skipped')
+    needs: [build-and-test, integration-tests, e2e-tests]
+    if: failure() && (needs.build-and-test.result == 'skipped' || needs.integration-tests.result == 'skipped' || needs.e2e-tests.result == 'skipped')
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
