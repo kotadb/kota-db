@@ -943,4 +943,53 @@ mod tests {
             );
         }
     }
+
+    // Extracted from integration tests - Pure path utility function tests
+    #[test]
+    fn test_normalize_path_relative_legacy_interface() {
+        // Test the legacy public interface that integration tests were using
+        let repo_root = Path::new("/home/user/project");
+
+        // Test absolute to relative conversion
+        let absolute_path = Path::new("/home/user/project/src/main.rs");
+        assert_eq!(
+            normalize_path_relative(absolute_path, repo_root),
+            "src/main.rs"
+        );
+
+        // Test already relative path
+        let relative_path = Path::new("src/main.rs");
+        assert_eq!(
+            normalize_path_relative(relative_path, repo_root),
+            "src/main.rs"
+        );
+
+        // Test path with ./ prefix
+        let dotted_path = Path::new("./src/main.rs");
+        assert_eq!(
+            normalize_path_relative(dotted_path, repo_root),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_paths_equivalent_utility() {
+        // Test exact match
+        assert!(paths_equivalent("src/main.rs", "src/main.rs"));
+
+        // Test with ./ prefix
+        assert!(paths_equivalent("./src/main.rs", "src/main.rs"));
+
+        // Test suffix matching
+        assert!(paths_equivalent("/project/src/main.rs", "src/main.rs"));
+
+        // Test different files
+        assert!(!paths_equivalent("src/main.rs", "src/lib.rs"));
+
+        // Test case sensitivity
+        assert!(!paths_equivalent("src/Main.rs", "src/main.rs"));
+
+        // Test different extensions
+        assert!(!paths_equivalent("src/main.rs", "src/main.py"));
+    }
 }

@@ -614,4 +614,152 @@ mod tests {
             );
         }
     }
+
+    // Extracted from integration tests - Pure validation logic for programming terms
+    #[test]
+    fn test_legitimate_programming_terms_allowed() {
+        // Test that common programming terms are not blocked by sanitization
+        let terms = [
+            "rust",
+            "script",
+            "javascript",
+            "typescript",
+            "select",
+            "insert",
+            "update",
+            "delete",
+            "create",
+            "drop",
+            "alter",
+            "union",
+            "exec",
+            "execute",
+            "eval",
+        ];
+
+        for term in &terms {
+            let result = sanitize_search_query(term).unwrap();
+            assert!(
+                !result.is_empty(),
+                "Term '{}' should not be empty after sanitization",
+                term
+            );
+            assert_eq!(
+                result.text.trim(),
+                *term,
+                "Term '{}' should be preserved",
+                term
+            );
+            assert!(
+                !result.was_modified,
+                "Term '{}' should not be modified",
+                term
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_word_programming_queries_allowed() {
+        let queries = [
+            "rust programming",
+            "javascript function",
+            "create component",
+            "select element",
+            "insert data",
+            "script tag",
+        ];
+
+        for query in &queries {
+            let result = sanitize_search_query(query).unwrap();
+            assert!(
+                !result.is_empty(),
+                "Query '{}' should not be empty after sanitization",
+                query
+            );
+            assert_eq!(
+                result.text.trim(),
+                *query,
+                "Query '{}' should be preserved",
+                query
+            );
+        }
+    }
+
+    #[test]
+    fn test_actual_sql_injection_blocked() {
+        // Test that actual SQL injection patterns are still blocked
+        let malicious_queries = [
+            "union select * from users",
+            "select * from passwords",
+            "insert into admin values",
+            "update users set password",
+            "delete from important_table",
+            "drop table users",
+            "create table backdoor",
+            "alter table users add",
+            "; drop table users",
+        ];
+
+        for query in &malicious_queries {
+            let result = sanitize_search_query(query);
+            // These should either fail validation or be heavily sanitized
+            match result {
+                Ok(sanitized) => {
+                    assert!(
+                        sanitized.is_empty() || sanitized.was_modified,
+                        "Malicious query '{}' should be blocked or modified",
+                        query
+                    );
+                }
+                Err(_) => {
+                    // It's ok if these fail entirely
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_html_injection_blocked() {
+        let malicious_html = [
+            "<script>alert('xss')</script>",
+            "<iframe src='evil.com'></iframe>",
+            "<object data='malware.exe'></object>",
+        ];
+
+        for query in &malicious_html {
+            let result = sanitize_search_query(query).unwrap();
+            assert!(
+                result.is_empty()
+                    || !result.text.contains("<script") && !result.text.contains("<iframe"),
+                "HTML injection '{}' should be blocked",
+                query
+            );
+        }
+    }
+
+    #[test]
+    fn test_issue_345_programming_terms_validation() {
+        // Test the exact cases from issue #345 that were failing
+        let test_cases = ["rust programming", "rust", "programming"];
+
+        for query in &test_cases {
+            let result = sanitize_search_query(query).unwrap();
+            assert!(
+                !result.is_empty(),
+                "Query '{}' from issue #345 should work",
+                query
+            );
+            assert_eq!(result.text, *query, "Query '{}' should be unchanged", query);
+            assert!(
+                !result.was_modified,
+                "Query '{}' should not be modified",
+                query
+            );
+            assert!(
+                result.warnings.is_empty(),
+                "Query '{}' should have no warnings",
+                query
+            );
+        }
+    }
 }
