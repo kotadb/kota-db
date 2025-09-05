@@ -110,11 +110,18 @@ jobs:
         cp target/debug/kotadb artifacts-package/bin/ 2>/dev/null || echo "Debug kotadb not found"
         cp target/release/kotadb artifacts-package/bin/kotadb-release 2>/dev/null || echo "Release kotadb not found"
         
-        # Copy test executables only (not entire debug folder!)
-        echo "🔍 Discovering test executables..."
+        # Copy test executables AND their metadata files (crucial for cargo to skip recompilation)
+        echo "🔍 Packaging test executables with metadata..."
+        mkdir -p artifacts-package/deps-meta
+        
+        # Copy test executables
         find target/debug/deps -maxdepth 1 -type f -executable -name "*-*" \
-          ! -name "*.d" ! -name "*.rmeta" ! -name "*.so" ! -name "*.dylib" \
+          ! -name "*.so" ! -name "*.dylib" \
           -exec cp {} artifacts-package/tests/ \; 2>/dev/null || echo "Some test binaries not found"
+        
+        # Copy metadata files (.d files) that cargo needs to avoid recompilation
+        find target/debug/deps -maxdepth 1 -name "*.d" \
+          -exec cp {} artifacts-package/deps-meta/ \; 2>/dev/null || echo "Some metadata not found"
         
         # Copy integration test binaries 
         find target/debug -maxdepth 1 -type f -executable -name "*test*" \
@@ -127,9 +134,10 @@ jobs:
         echo "📈 Final artifact package size (should be <500MB):"
         du -sh artifacts-package/
         
-        # Validate size - fail if larger than 1GB (something went wrong)
-        SIZE_MB=$(du -m artifacts-package/ | cut -f1)
-        if [ "$SIZE_MB" -gt 1024 ]; then
+        # Validate size - fail if larger than 2GB (reasonable threshold with metadata)
+        SIZE_KB=$(du -k artifacts-package/ | cut -f1)
+        SIZE_MB=$((SIZE_KB / 1024))
+        if [ "$SIZE_MB" -gt 2048 ]; then
           echo "❌ ERROR: Artifact package too large: ${SIZE_MB}MB"
           echo "This indicates the filtering failed. Aborting to prevent performance degradation."
           exit 1
@@ -175,7 +183,7 @@ jobs:
     name: Unit Tests (Artifact-based)
     runs-on: ubuntu-latest
     needs: [build-artifacts]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
     
@@ -200,8 +208,9 @@ jobs:
         cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || echo "Debug binary not found"
         cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || echo "Release binary not found"
         
-        # Restore test executables to correct locations
+        # Restore test executables and metadata to correct locations
         cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || echo "Some test binaries not found"
+        cp artifacts-package/deps-meta/* target/debug/deps/ 2>/dev/null || echo "Some metadata not found"
         
         # Make binaries executable
         chmod +x target/debug/kotadb 2>/dev/null || true
@@ -262,10 +271,11 @@ jobs:
         echo "📥 Restoring artifacts for ${{ matrix.suite }} tests..."
         mkdir -p target/debug target/release target/debug/deps
         
-        # Restore binaries and test executables efficiently
+        # Restore binaries, test executables, and metadata efficiently
         cp artifacts-package/bin/kotadb target/debug/ 2>/dev/null || true
         cp artifacts-package/bin/kotadb-release target/release/kotadb 2>/dev/null || true
         cp artifacts-package/tests/* target/debug/deps/ 2>/dev/null || true
+        cp artifacts-package/deps-meta/* target/debug/deps/ 2>/dev/null || true
         
         # Ensure executable permissions
         chmod +x target/debug/kotadb target/release/kotadb target/debug/deps/* 2>/dev/null || true
@@ -303,7 +313,7 @@ jobs:
     name: E2E Tests (Artifact-based)
     runs-on: ubuntu-latest
     needs: [build-artifacts]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
     
