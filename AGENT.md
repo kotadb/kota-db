@@ -220,7 +220,7 @@ When working on search, indexing, MCP, or git features, you MUST test on KotaDB 
 ```bash
 # Primary dogfooding setup - USE THIS CONSTANTLY
 mkdir -p data/analysis  # Separate directory for testing
-cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .
 
 # Essential validation commands - RUN THESE FREQUENTLY
 cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Verify symbol extraction
@@ -237,7 +237,7 @@ cargo run --release -- benchmark --operations 1000  # Compare against benchmarks
 ### Future Testing Methods (Once Available)
 ```bash
 # MCP server dogfooding (coming soon)
-cargo run --bin mcp_server --config kotadb-dev.toml &
+cargo run --bin mcp_server --features="mcp-server" --config kotadb-mcp-dev.toml &
 # Then connect Claude Code to test:
 # - Document search via MCP
 # - Symbol navigation
@@ -256,7 +256,7 @@ cargo run --release -- server --port 8080 &
 # Always start with fresh dogfooding setup
 rm -rf data/analysis
 mkdir -p data/analysis
-cargo run --bin kotadb -- -d ./data/analysis index-codebase . --symbols
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .
 cargo run --bin kotadb -- -d ./data/analysis stats --symbols
 ```
 
@@ -283,6 +283,7 @@ Real-world testing on KotaDB's own codebase consistently reveals integration iss
 - **Issue #179**: Symbol extraction edge cases only surfaced with real Rust code complexity
 - **Issue #203**: Performance degradation under realistic query patterns
 - **Issue #157**: Memory usage issues only visible with large codebases
+- **Issue #576**: SearchService CLI UX failures - regular search returned verbose metadata instead of clean paths, silent failures on no results (found through validation dogfooding, missed by 441 passing unit tests)
 
 **Pattern**: Every major integration bug has been caught by dogfooding, not unit tests.
 

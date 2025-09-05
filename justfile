@@ -29,11 +29,7 @@ watch:
 
 # Run all tests (FAST - uses cargo-nextest for 3-5x speedup)
 test:
-  cargo nextest run --all
-
-# Run all tests (legacy - for fallback compatibility)
-test-legacy:
-  cargo test --all
+  cargo nextest run --all --no-fail-fast
 
 # Fast test execution using cargo-nextest (recommended)
 test-fast:

@@ -72,6 +72,20 @@ impl TestGitRepository {
         Ok(repo)
     }
 
+    /// Creates a test git repository with comprehensive, diverse content for CLI behavior validation
+    ///
+    /// This variant creates a realistic codebase structure with various types of Rust code
+    /// that exercises different CLI interface behaviors. Used for comprehensive UX testing.
+    pub async fn new_with_comprehensive_content() -> Result<Self> {
+        let repo = Self::new().await?;
+
+        Self::add_comprehensive_content(repo.temp_dir.path())
+            .await
+            .context("Failed to add comprehensive content")?;
+
+        Ok(repo)
+    }
+
     /// Creates minimal repository structure for fast testing
     async fn create_initial_structure(repo_path: &Path) -> Result<()> {
         // Create the simplest possible Rust file that still has symbols
@@ -158,6 +172,304 @@ pub fn library_function() {
             .context("Failed to add caller files to git")?;
         Self::run_git_command(repo_path, &["commit", "-m", "Add caller functions"])
             .context("Failed to commit caller functions")?;
+
+        Ok(())
+    }
+
+    /// Adds comprehensive, diverse content for CLI behavior testing
+    async fn add_comprehensive_content(repo_path: &Path) -> Result<()> {
+        // Create diverse Rust code that exercises different CLI behaviors
+
+        // Storage module with complex structures
+        let storage_content = r#"//! Storage module for data persistence
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+pub struct FileStorage {
+    data: HashMap<String, Vec<u8>>,
+    metadata: Arc<Mutex<StorageMetadata>>,
+}
+
+pub struct StorageMetadata {
+    total_files: usize,
+    total_bytes: u64,
+    last_modified: std::time::SystemTime,
+}
+
+impl FileStorage {
+    /// Creates a new FileStorage instance
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+            metadata: Arc::new(Mutex::new(StorageMetadata {
+                total_files: 0,
+                total_bytes: 0,
+                last_modified: std::time::SystemTime::now(),
+            })),
+        }
+    }
+
+    /// Stores data with the given key
+    pub async fn store(&mut self, key: String, value: Vec<u8>) -> Result<(), StorageError> {
+        self.data.insert(key, value);
+        Ok(())
+    }
+
+    /// Retrieves data by key
+    pub async fn retrieve(&self, key: &str) -> Option<&Vec<u8>> {
+        self.data.get(key)
+    }
+
+    /// Deletes data by key
+    pub fn delete(&mut self, key: &str) -> bool {
+        self.data.remove(key).is_some()
+    }
+}
+
+#[derive(Debug)]
+pub enum StorageError {
+    KeyNotFound,
+    PermissionDenied,
+    InsufficientSpace,
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            StorageError::KeyNotFound => write!(f, "Key not found"),
+            StorageError::PermissionDenied => write!(f, "Permission denied"),
+            StorageError::InsufficientSpace => write!(f, "Insufficient space"),
+        }
+    }
+}
+"#;
+
+        fs::write(repo_path.join("storage.rs"), storage_content)?;
+
+        // API module with handlers and routes
+        let api_content = r#"//! API handlers and routing
+use crate::storage::{FileStorage, StorageError};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct ApiRequest {
+    pub operation: String,
+    pub key: String,
+    pub data: Option<Vec<u8>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<Vec<u8>>,
+}
+
+pub struct ApiHandler {
+    storage: FileStorage,
+}
+
+impl ApiHandler {
+    pub fn new() -> Self {
+        Self {
+            storage: FileStorage::new(),
+        }
+    }
+
+    pub async fn handle_request(&mut self, request: ApiRequest) -> ApiResponse {
+        match request.operation.as_str() {
+            "store" => self.handle_store(request).await,
+            "retrieve" => self.handle_retrieve(request).await,
+            "delete" => self.handle_delete(request).await,
+            _ => ApiResponse {
+                success: false,
+                message: "Unknown operation".to_string(),
+                data: None,
+            },
+        }
+    }
+
+    async fn handle_store(&mut self, request: ApiRequest) -> ApiResponse {
+        if let Some(data) = request.data {
+            match self.storage.store(request.key, data).await {
+                Ok(_) => ApiResponse {
+                    success: true,
+                    message: "Data stored successfully".to_string(),
+                    data: None,
+                },
+                Err(e) => ApiResponse {
+                    success: false,
+                    message: format!("Storage error: {}", e),
+                    data: None,
+                },
+            }
+        } else {
+            ApiResponse {
+                success: false,
+                message: "No data provided".to_string(),
+                data: None,
+            }
+        }
+    }
+
+    async fn handle_retrieve(&self, request: ApiRequest) -> ApiResponse {
+        if let Some(data) = self.storage.retrieve(&request.key).await {
+            ApiResponse {
+                success: true,
+                message: "Data retrieved successfully".to_string(),
+                data: Some(data.clone()),
+            }
+        } else {
+            ApiResponse {
+                success: false,
+                message: "Key not found".to_string(),
+                data: None,
+            }
+        }
+    }
+
+    async fn handle_delete(&mut self, request: ApiRequest) -> ApiResponse {
+        if self.storage.delete(&request.key) {
+            ApiResponse {
+                success: true,
+                message: "Data deleted successfully".to_string(),
+                data: None,
+            }
+        } else {
+            ApiResponse {
+                success: false,
+                message: "Key not found".to_string(),
+                data: None,
+            }
+        }
+    }
+}
+
+pub fn create_api_routes() -> Vec<String> {
+    vec![
+        "/api/store".to_string(),
+        "/api/retrieve".to_string(),
+        "/api/delete".to_string(),
+        "/api/health".to_string(),
+    ]
+}
+"#;
+
+        fs::write(repo_path.join("api.rs"), api_content)?;
+
+        // Utils module with helper functions
+        let utils_content = r#"//! Utility functions and helpers
+use std::time::{Duration, SystemTime};
+
+pub const MAX_FILE_SIZE: usize = 1024 * 1024; // 1MB
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Validates a key for storage operations
+pub fn validate_key(key: &str) -> Result<(), String> {
+    if key.is_empty() {
+        return Err("Key cannot be empty".to_string());
+    }
+    if key.len() > 255 {
+        return Err("Key too long".to_string());
+    }
+    if key.contains('/') || key.contains('\\') {
+        return Err("Key cannot contain path separators".to_string());
+    }
+    Ok(())
+}
+
+/// Formats file size in human-readable format
+pub fn format_file_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+
+    format!("{:.2} {}", size, UNITS[unit_index])
+}
+
+/// Calculates elapsed time since a timestamp
+pub fn elapsed_since(start: SystemTime) -> Duration {
+    SystemTime::now().duration_since(start).unwrap_or(Duration::ZERO)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_key() {
+        assert!(validate_key("valid_key").is_ok());
+        assert!(validate_key("").is_err());
+        assert!(validate_key("a".repeat(256).as_str()).is_err());
+        assert!(validate_key("invalid/key").is_err());
+    }
+
+    #[test]
+    fn test_format_file_size() {
+        assert_eq!(format_file_size(0), "0.00 B");
+        assert_eq!(format_file_size(1024), "1.00 KB");
+        assert_eq!(format_file_size(1024 * 1024), "1.00 MB");
+    }
+}
+"#;
+
+        fs::write(repo_path.join("utils.rs"), utils_content)?;
+
+        // Update lib.rs to include all new modules
+        let lib_content = r#"//! Comprehensive test codebase for CLI behavior validation
+pub mod test;
+pub mod storage;
+pub mod api;  
+pub mod utils;
+
+pub use storage::{FileStorage, StorageError};
+pub use api::{ApiHandler, ApiRequest, ApiResponse};
+pub use utils::{validate_key, format_file_size};
+
+/// Main application entry point
+pub fn run_application() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting comprehensive test application");
+    
+    let mut handler = ApiHandler::new();
+    println!("API handler initialized");
+    
+    Ok(())
+}
+
+/// Configuration structure
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub max_connections: usize,
+    pub timeout: std::time::Duration,
+    pub storage_path: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            max_connections: 100,
+            timeout: utils::DEFAULT_TIMEOUT,
+            storage_path: "./data".to_string(),
+        }
+    }
+}
+"#;
+
+        fs::write(repo_path.join("lib.rs"), lib_content)?;
+
+        // Add and commit all the new files
+        Self::run_git_command(repo_path, &["add", "."])
+            .context("Failed to add comprehensive files to git")?;
+        Self::run_git_command(
+            repo_path,
+            &["commit", "-m", "Add comprehensive test content"],
+        )
+        .context("Failed to commit comprehensive content")?;
 
         Ok(())
     }
@@ -303,6 +615,41 @@ mod tests {
             Path::new(&db_path).exists(),
             "Database directory should exist at path: {}",
             db_path
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_comprehensive_content_repository() -> Result<()> {
+        let repo = TestGitRepository::new_with_comprehensive_content().await?;
+
+        // Verify comprehensive modules were created
+        let storage_file = repo.path_ref().join("storage.rs");
+        let api_file = repo.path_ref().join("api.rs");
+        let utils_file = repo.path_ref().join("utils.rs");
+
+        assert!(storage_file.exists(), "storage.rs should exist");
+        assert!(api_file.exists(), "api.rs should exist");
+        assert!(utils_file.exists(), "utils.rs should exist");
+
+        // Verify content includes diverse structures and functions
+        let storage_content = fs::read_to_string(&storage_file)?;
+        assert!(
+            storage_content.contains("FileStorage") && storage_content.contains("async fn store"),
+            "Storage module should contain FileStorage with async methods"
+        );
+
+        let api_content = fs::read_to_string(&api_file)?;
+        assert!(
+            api_content.contains("ApiHandler") && api_content.contains("handle_request"),
+            "API module should contain ApiHandler with request handling"
+        );
+
+        let utils_content = fs::read_to_string(&utils_file)?;
+        assert!(
+            utils_content.contains("validate_key") && utils_content.contains("format_file_size"),
+            "Utils module should contain helper functions"
         );
 
         Ok(())
