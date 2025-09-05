@@ -28,7 +28,7 @@ jobs:
   build-artifacts:
     name: Build All Artifacts (Single Compilation)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
     steps:
@@ -64,18 +64,30 @@ jobs:
         restore-keys: |
           cargo-registry-${{ runner.os }}-
     
-    - name: Install build tools
+    - name: Cache cargo-nextest binary
+      uses: actions/cache@v4
+      id: cache-nextest
+      with:
+        path: ~/.cargo/bin/cargo-nextest
+        key: cargo-nextest-${{ runner.os }}-v1
+    
+    - name: Install cargo-nextest
+      if: steps.cache-nextest.outputs.cache-hit != 'true'
       run: cargo install cargo-nextest --locked
     
-    - name: Single comprehensive build
+    - name: Single comprehensive build (optimized)
       run: |
-        echo "🏗️ Starting single comprehensive build..."
+        echo "🏗️ Starting optimized single comprehensive build..."
         
-        # Build all targets in optimal order
-        cargo build --all-features                    # Dev profile for tests
-        cargo build --all-features --tests           # All test binaries
-        cargo build --all-features --benches         # Benchmark binaries  
-        cargo build --release --bin kotadb           # Release binary
+        # Build in optimal order for maximum cache reuse
+        echo "📦 Building dev profile with all features..."
+        cargo build --all-features
+        
+        echo "🧪 Building test binaries..."
+        cargo build --all-features --tests
+        
+        echo "🚀 Building release binary..."
+        cargo build --release --bin kotadb
         
         echo "📊 Build artifacts created:"
         find target -name "kotadb*" -type f | head -10
