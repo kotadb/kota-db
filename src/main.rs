@@ -524,6 +524,20 @@ fn format_search_result(result: &SearchResult, options: &SearchOptions) -> Strin
     match result.search_type {
         SearchType::LLMOptimized => {
             if let Some(ref response) = result.llm_response {
+                // Check if we have no results and handle appropriately
+                if response.results.is_empty() {
+                    // Always show helpful messages for no-results case, even in quiet mode
+                    // This addresses UX issue #3 - users need feedback when searches find nothing
+                    output.push_str(&format!("No code found matching '{}'\n", options.query));
+                    if !options.quiet {
+                        output.push_str("Try:\n");
+                        output.push_str("  • Different search terms or patterns\n");
+                        output.push_str("  • Wildcard search with '*' for broader results\n");
+                        output.push_str("  • Check if the codebase is properly indexed\n");
+                    }
+                    return output;
+                }
+
                 // Format output based on context level - same logic as original CLI
                 match options.context.as_str() {
                     "none" => {
@@ -624,8 +638,19 @@ fn format_search_result(result: &SearchResult, options: &SearchOptions) -> Strin
         _ => {
             // Regular search and wildcard search
             if result.documents.is_empty() {
-                if !options.quiet {
-                    output.push_str("No documents found matching the query\n");
+                // Always show helpful messages for no-results case, even in quiet mode
+                // This addresses UX issue #3 - users need feedback when searches find nothing
+                output.push_str(&format!("No code found matching '{}'\n", options.query));
+                if options.query != "*" {
+                    if !options.quiet {
+                        output.push_str("Try:\n");
+                        output.push_str("  • Different search terms or patterns\n");
+                        output.push_str("  • Wildcard search with '*' for broader results\n");
+                        output.push_str("  • Check if the codebase is properly indexed\n");
+                    }
+                } else {
+                    output.push_str("The database appears to be empty or not indexed.\n");
+                    output.push_str("Try: kotadb index-codebase /path/to/your/codebase\n");
                 }
             } else {
                 if !options.quiet {
@@ -665,15 +690,28 @@ fn format_symbol_result(
     let mut output = String::new();
 
     if result.matches.is_empty() {
+        // Always show helpful messages for no-results case, even in quiet mode
+        // This addresses UX issue #3 - users need feedback when searches find nothing
+        output.push_str(&format!("No symbols found matching '{}'\n", pattern));
+        if let Some(ref st) = options.symbol_type {
+            output.push_str(&format!("  with type filter: {}\n", st));
+        }
         if !options.quiet {
-            output.push_str(&format!("No symbols found matching '{}'\n", pattern));
-            if let Some(ref st) = options.symbol_type {
-                output.push_str(&format!("  with type filter: {}\n", st));
-            }
             output.push_str(&format!(
                 "  Total symbols in database: {}\n",
                 result.total_symbols
             ));
+        }
+        if result.total_symbols > 0 {
+            if !options.quiet {
+                output.push_str("Try:\n");
+                output.push_str("  • Different symbol patterns or wildcards (e.g., '*Storage*')\n");
+                output.push_str("  • Removing type filters to see all symbol types\n");
+                output.push_str("  • Use 'kotadb stats --symbols' to see available symbols\n");
+            }
+        } else {
+            output.push_str("The database has no symbols. Try:\n");
+            output.push_str("  kotadb index-codebase /path/to/your/codebase --symbols\n");
         }
     } else {
         if !options.quiet {

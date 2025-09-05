@@ -126,8 +126,8 @@ impl<'a> SearchService<'a> {
             });
         }
 
-        // Use LLM-optimized search for non-wildcard queries when content is not minimal
-        if options.query != "*" && options.context != "none" {
+        // Use LLM-optimized search for all non-wildcard queries to ensure consistent formatting
+        if options.query != "*" {
             // Try LLM-optimized search with fallback to regular search on error
             match self.try_llm_search(&options).await {
                 Ok(response) => {
