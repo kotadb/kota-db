@@ -61,7 +61,7 @@ struct Cli {
         short = 'v',
         long,
         global = true,
-        default_value = "quiet",
+        default_value = "normal",
         value_parser = ["quiet", "normal", "verbose", "debug"],
         help = "Set output verbosity level"
     )]
