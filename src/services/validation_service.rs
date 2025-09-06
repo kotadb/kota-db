@@ -423,14 +423,14 @@ impl<'a> ValidationService<'a> {
                 ValidationStatus::Warning
             };
 
-        // Generate summary
-        if !options.quiet {
-            formatted_output.push_str(&self.format_validation_summary(
-                overall_status.clone(),
-                passed_checks,
-                total_checks,
-            )?);
-        }
+        // Generate summary - always show essential results, even in quiet mode
+        // This ensures users get validation status regardless of verbosity level
+        formatted_output.push_str(&self.format_validation_summary(
+            overall_status.clone(),
+            passed_checks,
+            total_checks,
+            options.quiet,
+        )?);
 
         Ok(ValidationResult {
             overall_status,
@@ -741,11 +741,15 @@ impl<'a> ValidationService<'a> {
         status: ValidationStatus,
         passed: usize,
         total: usize,
+        quiet: bool,
     ) -> Result<String> {
         let mut output = String::new();
 
-        output.push_str("\n📋 Validation Summary\n");
-        output.push_str("====================\n");
+        // Always show essential validation results, even in quiet mode
+        if !quiet {
+            output.push_str("\n📋 Validation Summary\n");
+            output.push_str("====================\n");
+        }
 
         let status_emoji = match status {
             ValidationStatus::Passed => "✅",
@@ -753,18 +757,22 @@ impl<'a> ValidationService<'a> {
             ValidationStatus::Failed => "❌",
         };
 
+        // Core validation results - always shown
         output.push_str(&format!("{} Overall Status: {:?}\n", status_emoji, status));
         output.push_str(&format!("📊 Checks Passed: {}/{}\n", passed, total));
 
-        if status == ValidationStatus::Passed {
-            output.push_str("\n🎉 Database validation completed successfully!\n");
-            output.push_str("   All systems operational and ready for use.\n");
-        } else if status == ValidationStatus::Warning {
-            output.push_str("\n⚠️  Validation completed with warnings.\n");
-            output.push_str("   Database is functional but some issues were detected.\n");
-        } else {
-            output.push_str("\n❌ Validation failed with critical issues.\n");
-            output.push_str("   Database repair or recreation may be required.\n");
+        // Detailed explanatory text - only in non-quiet mode
+        if !quiet {
+            if status == ValidationStatus::Passed {
+                output.push_str("\n🎉 Database validation completed successfully!\n");
+                output.push_str("   All systems operational and ready for use.\n");
+            } else if status == ValidationStatus::Warning {
+                output.push_str("\n⚠️  Validation completed with warnings.\n");
+                output.push_str("   Database is functional but some issues were detected.\n");
+            } else {
+                output.push_str("\n❌ Validation failed with critical issues.\n");
+                output.push_str("   Database repair or recreation may be required.\n");
+            }
         }
 
         Ok(output)
