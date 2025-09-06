@@ -245,7 +245,7 @@ mod tests {
             ci_operations_per_task, 10,
             "CI operations per task should be 10"
         );
-        assert_eq!(ci_pool_capacity, 5000, "CI pool capacity should be 5000");
+        assert_eq!(ci_pool_capacity, 20000, "CI pool capacity should be 20000");
 
         // Test local environment configuration
         env::remove_var("CI");
