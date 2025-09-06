@@ -588,17 +588,15 @@ mod tests {
             } else {
                 // Other special character attacks should also be rejected or handled safely
                 // Note: This documents the expected security behavior
-                if result.is_err() {
-                    // Path was rejected - good for security
-                } else {
+                if let Ok(validated) = result {
                     // Path was accepted - ensure it's safe
-                    let validated = result.unwrap();
                     assert!(
                         !validated.as_str().contains(".."),
                         "No directory traversal should remain in validated path: {}",
                         validated.as_str()
                     );
                 }
+                // Paths that are rejected (Err) are good for security - no action needed
             }
         }
     }
@@ -616,12 +614,8 @@ mod tests {
         for path in &absolute_paths {
             let result = ValidatedPath::new(path);
             // Document expected behavior - absolute paths should be handled securely
-            if result.is_err() {
-                // Rejected - good for security
-            } else {
+            if let Ok(validated) = result {
                 // Accepted - ensure it's converted to relative or otherwise secured
-                let validated = result.unwrap();
-                // At minimum, ensure no direct access to system directories
                 let path_str = validated.as_str();
                 assert!(
                     !path_str.starts_with("/etc/")

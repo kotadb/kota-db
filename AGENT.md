@@ -223,7 +223,9 @@ mkdir -p data/analysis  # Separate directory for testing
 cargo run --bin kotadb -- -d ./data/analysis index-codebase .       # Now provides detailed feedback by default
 
 # Essential validation commands - RUN THESE FREQUENTLY
-cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Shows accurate symbol statistics
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Shows accurate symbol statistics (9.1% coverage)
+cargo run --bin kotadb -- -d ./data/analysis stats --relationships   # Test relationship stats (shows 0 when no dependency graph)
+cargo run --bin kotadb -- -d ./data/analysis stats                  # Full stats: storage efficiency (86.1%), indices (4), performance
 cargo run --bin kotadb -- -d ./data/analysis search-code "storage"  # Test content search
 cargo run --bin kotadb -- -d ./data/analysis search-symbols "*"     # Test symbol search
 cargo run --bin kotadb -- -d ./data/analysis find-callers Storage   # Test relationship queries
@@ -257,7 +259,8 @@ cargo run --release -- server --port 8080 &
 rm -rf data/analysis
 mkdir -p data/analysis
 cargo run --bin kotadb -- -d ./data/analysis index-codebase .        # Provides detailed progress feedback
-cargo run --bin kotadb -- -d ./data/analysis stats --symbols         # Shows accurate statistics
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols         # Verify symbol statistics accuracy
+cargo run --bin kotadb -- -d ./data/analysis stats                  # Verify overall statistics (storage efficiency, index count, performance)
 
 # Note: Default verbosity now provides user feedback (no longer silent)
 # Use -v quiet if you need minimal output for automation
@@ -287,6 +290,7 @@ Real-world testing on KotaDB's own codebase consistently reveals integration iss
 - **Issue #203**: Performance degradation under realistic query patterns
 - **Issue #157**: Memory usage issues only visible with large codebases
 - **Issue #576**: SearchService CLI UX failures - regular search returned verbose metadata instead of clean paths, silent failures on no results (found through validation dogfooding, missed by 441 passing unit tests)
+- **Issue #585**: StatsService validation revealed critical data integrity issues - 10000.0% extraction coverage, hardcoded storage efficiency, missing relationship statistics, 50-60x performance degradation (comprehensive dogfooding caught all issues, unit tests showed 100% pass rate)
 
 **Pattern**: Every major integration bug has been caught by dogfooding, not unit tests.
 
