@@ -257,10 +257,9 @@ impl<'a> StatsService<'a> {
         // Show basic document statistics
         if show_basic {
             basic_stats = Some(self.get_basic_statistics().await?);
-            if !options.quiet {
-                if let Some(ref stats) = basic_stats {
-                    formatted_output.push_str(&self.format_basic_statistics(stats).await?);
-                }
+            // Always show essential statistics, even in quiet mode
+            if let Some(ref stats) = basic_stats {
+                formatted_output.push_str(&self.format_basic_statistics(stats).await?);
             }
         }
 
@@ -268,10 +267,9 @@ impl<'a> StatsService<'a> {
         #[cfg(feature = "tree-sitter-parsing")]
         if show_symbols {
             symbol_stats = Some(self.get_symbol_statistics().await?);
-            if !options.quiet {
-                if let Some(ref stats) = symbol_stats {
-                    formatted_output.push_str(&self.format_symbol_statistics(stats).await?);
-                }
+            // Always show essential statistics, even in quiet mode
+            if let Some(ref stats) = symbol_stats {
+                formatted_output.push_str(&self.format_symbol_statistics(stats).await?);
             }
         }
 
@@ -279,10 +277,9 @@ impl<'a> StatsService<'a> {
         #[cfg(feature = "tree-sitter-parsing")]
         if show_relationships {
             relationship_stats = Some(self.get_relationship_statistics().await?);
-            if !options.quiet {
-                if let Some(ref stats) = relationship_stats {
-                    formatted_output.push_str(&self.format_relationship_statistics(stats).await?);
-                }
+            // Always show essential statistics, even in quiet mode
+            if let Some(ref stats) = relationship_stats {
+                formatted_output.push_str(&self.format_relationship_statistics(stats).await?);
             }
         }
 
