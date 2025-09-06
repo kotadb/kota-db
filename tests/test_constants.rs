@@ -242,8 +242,8 @@ mod tests {
             "CI concurrent operations should be 50"
         );
         assert_eq!(
-            ci_operations_per_task, 10,
-            "CI operations per task should be 10"
+            ci_operations_per_task, 30,
+            "CI operations per task should be 30"
         );
         assert_eq!(ci_pool_capacity, 20000, "CI pool capacity should be 20000");
 
