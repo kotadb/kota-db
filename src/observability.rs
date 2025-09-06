@@ -39,9 +39,9 @@ pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
         // In verbose mode, show debug info for kotadb and info for others
         EnvFilter::new("kotadb=debug,info")
     } else {
-        // Normal mode: show warnings and errors only
-        // This provides important feedback without cluttering output
-        EnvFilter::new("warn")
+        // Normal mode: show info, warnings and errors
+        // This provides useful feedback while remaining professional
+        EnvFilter::new("info")
     };
 
     // Quiet mode takes absolute precedence - it means "be quiet"
