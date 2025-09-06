@@ -258,11 +258,9 @@ impl<'a> StatsService<'a> {
         if show_basic {
             basic_stats = Some(self.get_basic_statistics().await?);
             if !options.quiet {
-                formatted_output.push_str(
-                    &self
-                        .format_basic_statistics(basic_stats.as_ref().unwrap())
-                        .await?,
-                );
+                if let Some(ref stats) = basic_stats {
+                    formatted_output.push_str(&self.format_basic_statistics(stats).await?);
+                }
             }
         }
 
@@ -271,11 +269,9 @@ impl<'a> StatsService<'a> {
         if show_symbols {
             symbol_stats = Some(self.get_symbol_statistics().await?);
             if !options.quiet {
-                formatted_output.push_str(
-                    &self
-                        .format_symbol_statistics(symbol_stats.as_ref().unwrap())
-                        .await?,
-                );
+                if let Some(ref stats) = symbol_stats {
+                    formatted_output.push_str(&self.format_symbol_statistics(stats).await?);
+                }
             }
         }
 
@@ -284,11 +280,9 @@ impl<'a> StatsService<'a> {
         if show_relationships {
             relationship_stats = Some(self.get_relationship_statistics().await?);
             if !options.quiet {
-                formatted_output.push_str(
-                    &self
-                        .format_relationship_statistics(relationship_stats.as_ref().unwrap())
-                        .await?,
-                );
+                if let Some(ref stats) = relationship_stats {
+                    formatted_output.push_str(&self.format_relationship_statistics(stats).await?);
+                }
             }
         }
 
@@ -914,5 +908,239 @@ impl<'a> StatsService<'a> {
         }
 
         count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Document;
+
+    // Helper function to create test documents
+    fn create_test_document(path: &str, content: &str, size: usize) -> Document {
+        use chrono::Utc;
+        Document {
+            id: crate::ValidatedDocumentId::new(),
+            path: crate::ValidatedPath::new(path).unwrap(),
+            title: crate::ValidatedTitle::new("Test Title").unwrap(),
+            content: content.as_bytes().to_vec(),
+            tags: Vec::new(),
+            embedding: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            size,
+        }
+    }
+
+    // Mock database access for testing
+    struct MockDatabaseAccess;
+
+    impl DatabaseAccess for MockDatabaseAccess {
+        fn storage(&self) -> std::sync::Arc<tokio::sync::Mutex<dyn crate::Storage>> {
+            unimplemented!("Mock implementation")
+        }
+
+        fn primary_index(&self) -> std::sync::Arc<tokio::sync::Mutex<dyn crate::Index>> {
+            unimplemented!("Mock implementation")
+        }
+
+        fn trigram_index(&self) -> std::sync::Arc<tokio::sync::Mutex<dyn crate::Index>> {
+            unimplemented!("Mock implementation")
+        }
+
+        fn path_cache(
+            &self,
+        ) -> std::sync::Arc<
+            tokio::sync::RwLock<std::collections::HashMap<String, crate::ValidatedDocumentId>>,
+        > {
+            unimplemented!("Mock implementation")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_efficiency_calculation() {
+        let db = MockDatabaseAccess;
+        let service = StatsService::new(&db, PathBuf::from("/tmp/test"));
+
+        // Test case 1: Empty documents
+        let empty_documents = vec![];
+        let efficiency = service
+            .calculate_storage_efficiency(&empty_documents)
+            .await
+            .unwrap();
+        assert_eq!(efficiency, 0.0, "Empty documents should have 0% efficiency");
+
+        // Test case 2: Perfect efficiency (content size = document size)
+        let perfect_documents = vec![create_test_document(
+            "test1.txt",
+            "Hello World",
+            11, // Same as content length
+        )];
+        let efficiency = service
+            .calculate_storage_efficiency(&perfect_documents)
+            .await
+            .unwrap();
+        // Should be less than 1.0 due to format overhead
+        assert!(
+            efficiency > 0.7 && efficiency < 0.95,
+            "Perfect case should be high efficiency but account for overhead: {}",
+            efficiency
+        );
+
+        // Test case 3: Very small files (penalty case)
+        let small_documents = vec![create_test_document("tiny.txt", "hi", 1000)]; // 1KB, much larger than content
+        let efficiency = service
+            .calculate_storage_efficiency(&small_documents)
+            .await
+            .unwrap();
+        assert!(
+            efficiency < 0.2,
+            "Small files should have lower efficiency: {}",
+            efficiency
+        );
+
+        // Test case 4: Large files (good efficiency)
+        let large_documents = vec![create_test_document(
+            "large.txt",
+            &"x".repeat(50000), // 50KB content
+            55000,              // 55KB file
+        )];
+        let efficiency = service
+            .calculate_storage_efficiency(&large_documents)
+            .await
+            .unwrap();
+        assert!(
+            efficiency > 0.7,
+            "Large files should have good efficiency: {}",
+            efficiency
+        );
+
+        // Test case 5: Multiple mixed documents
+        let mixed_documents = vec![
+            create_test_document("small.txt", "small", 1000),
+            create_test_document("medium.txt", &"m".repeat(10000), 12000),
+            create_test_document("large.txt", &"l".repeat(50000), 55000),
+        ];
+        let efficiency = service
+            .calculate_storage_efficiency(&mixed_documents)
+            .await
+            .unwrap();
+        assert!(
+            efficiency > 0.0 && efficiency <= 1.0,
+            "Mixed documents should have valid efficiency range: {}",
+            efficiency
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_existing_indices() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().to_path_buf();
+
+        let db = MockDatabaseAccess;
+        let service = StatsService::new(&db, db_path.clone());
+
+        // Test case 1: No additional indices (just primary index)
+        let count = service.count_existing_indices().await;
+        assert_eq!(count, 1, "Should count primary index only initially");
+
+        // Test case 2: Create trigram binary index file
+        std::fs::File::create(db_path.join("trigrams.bin")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(count, 2, "Should count primary + trigram binary index");
+
+        // Test case 3: Create symbols index file
+        std::fs::File::create(db_path.join("symbols.kota")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(count, 3, "Should count primary + trigram + symbols index");
+
+        // Test case 4: Create dependency graph file
+        std::fs::File::create(db_path.join("dependency_graph.bin")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(
+            count, 4,
+            "Should count primary + trigram + symbols + dependency graph"
+        );
+
+        // Test case 5: Create vector index directory
+        std::fs::create_dir_all(db_path.join("vectors")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(count, 5, "Should count all 5 indices when all exist");
+
+        // Test case 6: Alternative trigram index format
+        std::fs::remove_file(db_path.join("trigrams.bin")).unwrap();
+        std::fs::create_dir_all(db_path.join("trigrams")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(
+            count, 5,
+            "Should still count 5 with alternative trigram format"
+        );
+
+        // Test case 7: Alternative embeddings directory
+        std::fs::remove_dir_all(db_path.join("vectors")).unwrap();
+        std::fs::create_dir_all(db_path.join("embeddings")).unwrap();
+        let count = service.count_existing_indices().await;
+        assert_eq!(
+            count, 5,
+            "Should count embeddings directory as vector index"
+        );
+    }
+
+    #[test]
+    fn test_storage_efficiency_edge_cases() {
+        use tokio::runtime::Runtime;
+        let rt = Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let db = MockDatabaseAccess;
+            let service = StatsService::new(&db, PathBuf::from("/tmp/test"));
+
+            // Test case 1: Document with zero content size
+            let zero_content_docs = vec![create_test_document("empty.txt", "", 100)];
+            let efficiency = service
+                .calculate_storage_efficiency(&zero_content_docs)
+                .await
+                .unwrap();
+            assert!(
+                (0.0..=1.0).contains(&efficiency),
+                "Zero content should have valid efficiency range: {}",
+                efficiency
+            );
+
+            // Test case 2: Document with content larger than reported size (edge case)
+            let large_content_docs = vec![create_test_document(
+                "compressed.txt",
+                &"x".repeat(10000), // 10KB content
+                5000,               // 5KB reported size (like compression)
+            )];
+            let efficiency = service
+                .calculate_storage_efficiency(&large_content_docs)
+                .await
+                .unwrap();
+            // Should handle this gracefully and clamp to 1.0
+            assert!(
+                (0.0..=1.0).contains(&efficiency),
+                "Compressed content case should be clamped: {}",
+                efficiency
+            );
+        });
+    }
+
+    #[test]
+    fn test_stats_service_creation() {
+        let db = MockDatabaseAccess;
+        let service = StatsService::new(&db, PathBuf::from("/tmp/test"));
+        assert_eq!(service.db_path, PathBuf::from("/tmp/test"));
+    }
+
+    #[test]
+    fn test_stats_options_default() {
+        let options = StatsOptions::default();
+        assert!(!options.basic);
+        assert!(!options.symbols);
+        assert!(!options.relationships);
+        assert!(!options.quiet);
     }
 }
