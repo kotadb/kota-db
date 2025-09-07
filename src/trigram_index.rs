@@ -747,37 +747,116 @@ impl Index for TrigramIndex {
         // Find documents that contain these trigrams
         let index = self.trigram_index.read().await;
         let mut candidate_docs: HashMap<ValidatedDocumentId, usize> = HashMap::new();
+        let mut total_trigram_hits = 0;
 
         for trigram in &all_query_trigrams {
             if let Some(doc_ids) = index.get(trigram) {
                 for doc_id in doc_ids {
                     *candidate_docs.entry(*doc_id).or_insert(0) += 1;
                 }
+                total_trigram_hits += doc_ids.len();
             }
         }
 
-        // Calculate minimum match threshold
-        // For better precision, require a higher percentage of trigrams to match
-        // This prevents false positives from common trigrams like "ent", "ing", etc.
+        // If no trigrams found matches at all, return empty results early
+        // This handles cases where query contains completely unknown patterns
+        if candidate_docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Calculate minimum match threshold with improved precision
+        // This prevents false positives from random trigram matches
         debug_assert!(
             !all_query_trigrams.is_empty(),
             "Should not reach threshold calculation with empty trigrams"
         );
         let min_match_threshold = if all_query_trigrams.len() <= 3 {
-            // For short queries (1-3 trigrams), require all trigrams to match
+            // For very short queries (1-3 trigrams), require all trigrams to match
             all_query_trigrams.len()
+        } else if all_query_trigrams.len() <= 6 {
+            // For short queries (4-6 trigrams), require 80% match to reduce false positives
+            std::cmp::max(
+                all_query_trigrams.len() * 8 / 10,
+                all_query_trigrams.len() - 1,
+            )
         } else {
-            // For longer queries, require at least 30% of trigrams to match
-            // This balances between being too strict and too permissive
-            std::cmp::max(2, (all_query_trigrams.len() * 3) / 10)
+            // For longer queries, require at least 60% of trigrams to match
+            // This is more strict than the previous 30% to improve precision
+            std::cmp::max(3, (all_query_trigrams.len() * 6) / 10)
         };
 
         // Filter by minimum threshold first
-        let filtered_candidates: Vec<ValidatedDocumentId> = candidate_docs
-            .into_iter()
-            .filter(|(_, match_count)| *match_count >= min_match_threshold)
-            .map(|(doc_id, _)| doc_id)
+        let mut filtered_candidates: Vec<ValidatedDocumentId> = candidate_docs
+            .iter()
+            .filter(|(_, match_count)| **match_count >= min_match_threshold)
+            .map(|(doc_id, _)| *doc_id)
             .collect();
+
+        // Fallback mechanism: if strict thresholds eliminate all results,
+        // gradually relax thresholds to ensure users get some relevant results
+        if filtered_candidates.is_empty() && !candidate_docs.is_empty() {
+            tracing::debug!(
+                "Strict threshold {} eliminated all {} candidates, applying fallback for query with {} trigrams",
+                min_match_threshold, candidate_docs.len(), all_query_trigrams.len()
+            );
+
+            // Progressive fallback: try increasingly relaxed thresholds
+            let fallback_thresholds = if all_query_trigrams.len() <= 3 {
+                // For very short queries, try 2/3 then 1/3 trigrams
+                vec![all_query_trigrams.len().saturating_sub(1), 1]
+            } else if all_query_trigrams.len() <= 6 {
+                // For medium queries, try 50% then 33% then minimum of 2
+                vec![
+                    all_query_trigrams.len() / 2,
+                    all_query_trigrams.len() / 3,
+                    std::cmp::min(2, all_query_trigrams.len()),
+                ]
+            } else {
+                // For long queries, try 40% then 30% then minimum of 3
+                vec![
+                    (all_query_trigrams.len() * 4) / 10,
+                    all_query_trigrams.len() / 3,
+                    std::cmp::min(3, all_query_trigrams.len()),
+                ]
+            };
+
+            for fallback_threshold in fallback_thresholds {
+                if fallback_threshold > 0 && fallback_threshold < min_match_threshold {
+                    filtered_candidates = candidate_docs
+                        .iter()
+                        .filter(|(_, match_count)| **match_count >= fallback_threshold)
+                        .map(|(doc_id, _)| *doc_id)
+                        .collect();
+
+                    if !filtered_candidates.is_empty() {
+                        tracing::debug!(
+                            "Fallback threshold {} found {} candidates",
+                            fallback_threshold,
+                            filtered_candidates.len()
+                        );
+                        break;
+                    }
+                }
+            }
+
+            // If we still have no results, take the top candidates by trigram match count
+            if filtered_candidates.is_empty() {
+                let mut sorted_candidates: Vec<_> = candidate_docs.iter().collect();
+                sorted_candidates.sort_by(|a, b| b.1.cmp(a.1));
+                filtered_candidates = sorted_candidates
+                    .into_iter()
+                    .take(std::cmp::min(5, candidate_docs.len())) // Take top 5 matches
+                    .map(|(doc_id, _)| *doc_id)
+                    .collect();
+
+                if !filtered_candidates.is_empty() {
+                    tracing::debug!(
+                        "Final fallback: returning top {} candidates by trigram matches",
+                        filtered_candidates.len()
+                    );
+                }
+            }
+        }
 
         // Calculate relevance scores for each candidate document using optimized scoring
         let document_cache = self.document_cache.read().await;

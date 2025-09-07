@@ -23,6 +23,7 @@ fn test_sql_injection_prevention() -> Result<()> {
         assert!(!result.text.to_lowercase().contains("select"));
         assert!(!result.text.to_lowercase().contains("union"));
         assert!(!result.text.to_lowercase().contains("drop"));
+        assert!(!result.text.to_lowercase().contains("table"));
 
         // The sanitized text should still contain some legitimate words
         for word in expected_contains.split_whitespace() {
