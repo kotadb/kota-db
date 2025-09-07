@@ -109,6 +109,106 @@ pub struct AnalysisService<'a> {
 }
 
 impl<'a> AnalysisService<'a> {
+    /// Helper function to safely convert usize line numbers to Option<u32>
+    /// Logs warnings for overflow cases but continues processing
+    fn safe_line_number_conversion(line_number: usize, symbol_name: &str) -> Option<u32> {
+        line_number.try_into().ok().or_else(|| {
+            tracing::warn!(
+                "Line number {} too large for u32 in relationship for symbol '{}'",
+                line_number,
+                symbol_name
+            );
+            None
+        })
+    }
+
+    /// Convert relationship to CallSite with semantically appropriate context
+    fn relationship_to_call_site(
+        relationship: &crate::relationship_query::RelationshipMatch,
+        target: &str,
+    ) -> CallSite {
+        CallSite {
+            caller: relationship.symbol_name.clone(),
+            file_path: relationship.file_path.clone(),
+            line_number: Self::safe_line_number_conversion(
+                relationship.location.line_number,
+                &relationship.symbol_name,
+            ),
+            context: format!(
+                "{} {} at line {}",
+                Self::get_caller_verb(&relationship.relation_type),
+                target,
+                relationship.location.line_number
+            ),
+        }
+    }
+
+    /// Convert relationship to ImpactSite with semantically appropriate impact type
+    fn relationship_to_impact_site(
+        relationship: &crate::relationship_query::RelationshipMatch,
+    ) -> ImpactSite {
+        ImpactSite {
+            affected_symbol: relationship.symbol_name.clone(),
+            file_path: relationship.file_path.clone(),
+            line_number: Self::safe_line_number_conversion(
+                relationship.location.line_number,
+                &relationship.symbol_name,
+            ),
+            impact_type: Self::format_impact_type(&relationship.relation_type),
+        }
+    }
+
+    /// Get appropriate verb for caller relationship types
+    fn get_caller_verb(relation_type: &crate::types::RelationType) -> &'static str {
+        use crate::types::RelationType;
+        match relation_type {
+            RelationType::Calls => "Calls",
+            RelationType::Imports => "Imports",
+            RelationType::Extends => "Extends",
+            RelationType::Implements => "Implements",
+            RelationType::References => "References",
+            RelationType::Returns => "Returns",
+            RelationType::ChildOf => "Is child of",
+            RelationType::Custom(custom) => {
+                // For custom types, try to extract a meaningful verb
+                if custom.contains("uses") || custom.contains("Uses") {
+                    "Uses"
+                } else if custom.contains("contains") || custom.contains("Contains") {
+                    "Contains"
+                } else {
+                    "Has custom relationship with"
+                }
+            }
+        }
+    }
+
+    /// Format impact type for better readability
+    fn format_impact_type(relation_type: &crate::types::RelationType) -> String {
+        use crate::types::RelationType;
+        match relation_type {
+            RelationType::Calls => "Function Call Impact".to_string(),
+            RelationType::Imports => "Import Impact".to_string(),
+            RelationType::Extends => "Inheritance Impact".to_string(),
+            RelationType::Implements => "Interface Impact".to_string(),
+            RelationType::References => "Reference Impact".to_string(),
+            RelationType::Returns => "Return Type Impact".to_string(),
+            RelationType::ChildOf => "Parent-Child Relationship Impact".to_string(),
+            RelationType::Custom(custom) => {
+                // For custom types, create meaningful impact descriptions
+                if custom.contains("uses") || custom.contains("Uses") {
+                    "Usage Impact".to_string()
+                } else if custom.contains("contains") || custom.contains("Contains") {
+                    "Containment Impact".to_string()
+                } else if custom.contains("parameter") || custom.contains("Parameter") {
+                    "Parameter Impact".to_string()
+                } else if custom.contains("exception") || custom.contains("Exception") {
+                    "Exception Impact".to_string()
+                } else {
+                    format!("Custom Relationship Impact ({})", custom)
+                }
+            }
+        }
+    }
     /// Create a new AnalysisService instance
     pub fn new(database: &'a dyn AnalysisServiceDatabase, db_path: PathBuf) -> Self {
         Self {
@@ -124,7 +224,9 @@ impl<'a> AnalysisService<'a> {
             let engine = self.create_relationship_engine().await?;
             self.relationship_engine = Some(engine);
         }
-        Ok(self.relationship_engine.as_ref().unwrap())
+        self.relationship_engine
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Relationship engine not initialized"))
     }
 
     /// Create binary relationship engine with direct binary symbol access
@@ -164,8 +266,12 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract call sites (this would need to be implemented based on actual result structure)
-        let callers = Vec::new(); // TODO: Parse from result
+        // Extract call sites from the relationship query result with semantic mapping
+        let callers: Vec<CallSite> = result
+            .direct_relationships
+            .iter()
+            .map(|relationship| Self::relationship_to_call_site(relationship, &options.target))
+            .collect();
         let total_count = callers.len();
 
         Ok(CallersResult {
@@ -193,8 +299,12 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract impact sites (this would need to be implemented based on actual result structure)
-        let impacts = Vec::new(); // TODO: Parse from result
+        // Extract impact sites from the relationship query result with semantic mapping
+        let impacts: Vec<ImpactSite> = result
+            .direct_relationships
+            .iter()
+            .map(Self::relationship_to_impact_site)
+            .collect();
         let total_count = impacts.len();
 
         Ok(ImpactResult {
