@@ -117,7 +117,7 @@ enum Commands {
             short = 'c',
             long,
             default_value = "minimal",
-            help = "Context detail level - use 'medium' or 'full' for enhanced LLM analysis",
+            help = "Context detail level - 'minimal' (default) for fast search, 'medium'/'full' for enhanced LLM analysis. Note: default changed from 'medium' to 'minimal' in v0.5.1 for 151x performance improvement",
             value_parser = ["none", "minimal", "medium", "full"]
         )]
         context: String,
