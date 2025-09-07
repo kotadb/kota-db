@@ -5,7 +5,7 @@
 //
 // No legacy code, no deprecated endpoints, no document CRUD - pure services architecture.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
     extract::{Query as AxumQuery, State},
     http::StatusCode,
@@ -19,7 +19,7 @@ use std::{collections::HashMap, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     database::Database,
@@ -182,19 +182,26 @@ pub async fn start_services_server(
     let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("❌ Failed to start server on port {}: {}", port, e);
+            error!("Failed to start server on port {}: {}", port, e);
 
             if e.kind() == std::io::ErrorKind::AddrInUse {
-                eprintln!(
-                    "🔍 Port {} is already in use. Try these alternatives:",
-                    port
-                );
-                eprintln!("   - Use a different port: --port {}", port + 1);
-                eprintln!("   - Check what's using port {}: lsof -ti:{}", port, port);
-                eprintln!("   - Kill process using port: kill $(lsof -ti:{})", port);
+                error!("Port {} is already in use. Try these alternatives:", port);
+                error!("   - Use a different port: --port {}", port + 1);
+
+                // Cross-platform command suggestions
+                if cfg!(unix) {
+                    error!("   - Check port usage: lsof -ti:{}", port);
+                    error!("   - Kill process using port: kill $(lsof -ti:{})", port);
+                } else {
+                    error!("   - Check port usage: netstat -ano | findstr :{}", port);
+                    error!("   - Kill process using port: taskkill /PID <PID> /F");
+                }
             }
 
-            return Err(e.into());
+            return Err(e).context(format!(
+                "Failed to bind to port {}. Port may be in use or insufficient permissions",
+                port
+            ));
         }
     };
 
@@ -212,9 +219,9 @@ pub async fn start_services_server(
     info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
     info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
     info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
-    println!();
-    println!("🟢 Server ready at http://localhost:{}", port);
-    println!("   Health check: curl http://localhost:{}/health", port);
+    info!("");
+    info!("🟢 Server ready at http://localhost:{}", port);
+    info!("   Health check: curl http://localhost:{}/health", port);
 
     axum::serve(listener, app).await?;
     Ok(())
