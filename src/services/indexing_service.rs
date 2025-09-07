@@ -3,7 +3,7 @@
 // This service extracts all indexing logic from main.rs and ManagementService
 // to enable consistent indexing operations across CLI, MCP, and future interfaces.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
@@ -254,26 +254,31 @@ impl<'a> IndexingService<'a> {
         // Choose the appropriate ingestion method based on symbol extraction setting
         #[cfg(feature = "tree-sitter-parsing")]
         let result = if should_extract_symbols {
-            // Use binary symbol storage for high performance
+            // Use binary symbol storage with relationship extraction for complete analysis
             let symbol_db_path = self.db_path.join("symbols.kota");
+            let graph_db_path = self.db_path.join("relationships.kota");
             ingester
-                .ingest_with_binary_symbols(
+                .ingest_with_binary_symbols_and_relationships(
                     &options.repo_path,
                     &mut *storage,
                     &symbol_db_path,
+                    &graph_db_path,
                     Some(progress_callback),
                 )
                 .await
+                .context("Failed to ingest repository with symbol and relationship extraction")
         } else {
             ingester
                 .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
                 .await
+                .context("Failed to ingest repository without symbol extraction")
         };
 
         #[cfg(not(feature = "tree-sitter-parsing"))]
         let result = ingester
             .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
-            .await;
+            .await
+            .context("Failed to ingest repository without tree-sitter parsing");
 
         let (files_processed, symbols_extracted, relationships_found) = match result {
             Ok(ingestion_result) => {
@@ -286,8 +291,8 @@ impl<'a> IndexingService<'a> {
                 #[cfg(not(feature = "tree-sitter-parsing"))]
                 let symbols_ext = 0;
 
-                // TODO: Get relationships from a future field or calculate separately
-                let relationships_found = 0;
+                // Extract relationship counts from ingestion result
+                let relationships_found = ingestion_result.relationships_extracted;
 
                 // Defer trigram index population to reduce indexing time
                 // The trigram index will be populated lazily on first search
