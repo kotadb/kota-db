@@ -164,8 +164,20 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract call sites (this would need to be implemented based on actual result structure)
-        let callers = Vec::new(); // TODO: Parse from result
+        // Extract call sites from the relationship query result
+        let callers: Vec<CallSite> = result
+            .direct_relationships
+            .iter()
+            .map(|relationship| CallSite {
+                caller: relationship.symbol_name.clone(),
+                file_path: relationship.file_path.clone(),
+                line_number: Some(relationship.location.line_number as u32),
+                context: format!(
+                    "Calls {} at line {}",
+                    options.target, relationship.location.line_number
+                ),
+            })
+            .collect();
         let total_count = callers.len();
 
         Ok(CallersResult {
@@ -193,8 +205,17 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract impact sites (this would need to be implemented based on actual result structure)
-        let impacts = Vec::new(); // TODO: Parse from result
+        // Extract impact sites from the relationship query result
+        let impacts: Vec<ImpactSite> = result
+            .direct_relationships
+            .iter()
+            .map(|relationship| ImpactSite {
+                affected_symbol: relationship.symbol_name.clone(),
+                file_path: relationship.file_path.clone(),
+                line_number: Some(relationship.location.line_number as u32),
+                impact_type: format!("{:?}", relationship.relation_type),
+            })
+            .collect();
         let total_count = impacts.len();
 
         Ok(ImpactResult {
