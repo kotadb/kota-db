@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "id": "55a65db5-c499-44cc-b1d7-ca919f6031a1",
+  "file_path": "./examples-data/meeting-notes/documents/55a65db5-c499-44cc-b1d7-ca919f6031a1.md",
+  "original_path": "/meetings/2025/08/client-acme-corp-2025-08-06.md",
+  "title": "Client Meeting - ACME Corp - August 6, 2025",
+  "size": 1593,
+  "created": 1754608784,
+  "updated": 1754608784,
+  "hash": [
+    38,
+    174,
+    139,
+    96,
+    41,
+    110,
+    149,
+    22,
+    56,
+    151,
+    228,
+    53,
+    201,
+    108,
+    154,
+    232,
+    254,
+    60,
+    246,
+    200,
+    192,
+    151,
+    201,
+    31,
+    72,
+    145,
+    145,
+    163,
+    37,
+    8,
+    13,
+    183
+  ],
+  "embedding": null
+}

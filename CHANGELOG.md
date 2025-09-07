@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Sunset date set to 3 months from implementation
 
 ### Fixed
+- **CRITICAL**: Fixed 675x performance regression in `search-code` command (#596)
+  - Search queries now take ~0.5s instead of 79+ seconds (151x improvement from broken state)
+  - Root cause: All non-wildcard queries were forced to use expensive LLM processing 
+  - Solution: Default to fast search with option to use LLM search via `-c medium/full`
+  - Changed default context from "medium" to "minimal" for optimal performance
+- **MAJOR**: Fixed complete lack of progress feedback during `index-codebase` operations (#596)
+  - Command now shows essential progress information even in quiet mode
+  - Essential messages always displayed: start, completion status, file count
+  - Detailed information still respects quiet mode settings
+  - Follows same UX pattern as successful PR #595 ValidationService/StatsService fixes
+- Improved trigram search precision to reduce false positives (#596)
+  - Stricter matching thresholds: 80% for short queries, 60% for longer queries  
+  - Better handling of completely nonexistent search terms
+  - Reduced overly aggressive fuzzy matching behavior
 - Fixed test coverage calculation in `codebase-overview` showing incorrect 8% instead of actual coverage (#488)
   - Now uses proper algorithm based on test-to-code file ratio with tanh curve
   - Only counts files with extracted symbols for accurate ratios

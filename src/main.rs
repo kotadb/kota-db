@@ -116,8 +116,8 @@ enum Commands {
         #[arg(
             short = 'c',
             long,
-            default_value = "medium",
-            help = "Context detail level for LLM consumption",
+            default_value = "minimal",
+            help = "Context detail level - use 'medium' or 'full' for enhanced LLM analysis",
             value_parser = ["none", "minimal", "medium", "full"]
         )]
         context: String,

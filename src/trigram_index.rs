@@ -747,29 +747,42 @@ impl Index for TrigramIndex {
         // Find documents that contain these trigrams
         let index = self.trigram_index.read().await;
         let mut candidate_docs: HashMap<ValidatedDocumentId, usize> = HashMap::new();
+        let mut total_trigram_hits = 0;
 
         for trigram in &all_query_trigrams {
             if let Some(doc_ids) = index.get(trigram) {
                 for doc_id in doc_ids {
                     *candidate_docs.entry(*doc_id).or_insert(0) += 1;
                 }
+                total_trigram_hits += doc_ids.len();
             }
         }
 
-        // Calculate minimum match threshold
-        // For better precision, require a higher percentage of trigrams to match
-        // This prevents false positives from common trigrams like "ent", "ing", etc.
+        // If no trigrams found matches at all, return empty results early
+        // This handles cases where query contains completely unknown patterns
+        if candidate_docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Calculate minimum match threshold with improved precision
+        // This prevents false positives from random trigram matches
         debug_assert!(
             !all_query_trigrams.is_empty(),
             "Should not reach threshold calculation with empty trigrams"
         );
         let min_match_threshold = if all_query_trigrams.len() <= 3 {
-            // For short queries (1-3 trigrams), require all trigrams to match
+            // For very short queries (1-3 trigrams), require all trigrams to match
             all_query_trigrams.len()
+        } else if all_query_trigrams.len() <= 6 {
+            // For short queries (4-6 trigrams), require 80% match to reduce false positives
+            std::cmp::max(
+                all_query_trigrams.len() * 8 / 10,
+                all_query_trigrams.len() - 1,
+            )
         } else {
-            // For longer queries, require at least 30% of trigrams to match
-            // This balances between being too strict and too permissive
-            std::cmp::max(2, (all_query_trigrams.len() * 3) / 10)
+            // For longer queries, require at least 60% of trigrams to match
+            // This is more strict than the previous 30% to improve precision
+            std::cmp::max(3, (all_query_trigrams.len() * 6) / 10)
         };
 
         // Filter by minimum threshold first

@@ -1,0 +1,131 @@
+---
+tags:
+- file
+- kota-db
+- ext_dev
+---
+# Development Dockerfile with all tools and dependencies
+FROM rust:1.89-bullseye
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    # Development tools
+    git \
+    curl \
+    wget \
+    vim \
+    nano \
+    htop \
+    tree \
+    jq \
+    # Database tools
+    sqlite3 \
+    postgresql-client \
+    redis-tools \
+    # Networking tools
+    netcat \
+    telnet \
+    # Documentation tools
+    pandoc \
+    graphviz \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust development tools
+RUN rustup component add \
+    rustfmt \
+    clippy \
+    rust-src \
+    rust-analyzer
+
+# Install additional Rust tools
+RUN cargo install \
+    cargo-watch \
+    cargo-edit \
+    cargo-audit \
+    cargo-deny \
+    cargo-llvm-cov \
+    cargo-tarpaulin \
+    cargo-expand \
+    cargo-outdated \
+    cargo-tree \
+    bacon \
+    just
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install gh -y
+
+# Install Node.js for documentation tools
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs
+
+# Install documentation and development tools
+RUN npm install -g \
+    @mermaid-js/mermaid-cli \
+    markdownlint-cli \
+    prettier
+
+# Create development user (non-root)
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd -g ${GROUP_ID} dev \
+    && useradd -u ${USER_ID} -g ${GROUP_ID} -m -s /bin/bash dev \
+    && usermod -aG sudo dev \
+    && echo 'dev ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Set up development environment
+USER dev
+WORKDIR /workspace
+
+# Create useful aliases and environment
+RUN echo 'alias ll="ls -la"' >> ~/.bashrc \
+    && echo 'alias la="ls -A"' >> ~/.bashrc \
+    && echo 'alias l="ls -CF"' >> ~/.bashrc \
+    && echo 'alias ..="cd .."' >> ~/.bashrc \
+    && echo 'alias ...="cd ../.."' >> ~/.bashrc \
+    && echo 'alias c="clear"' >> ~/.bashrc \
+    && echo 'alias h="history"' >> ~/.bashrc \
+    && echo 'alias ct="cargo test"' >> ~/.bashrc \
+    && echo 'alias cb="cargo build"' >> ~/.bashrc \
+    && echo 'alias cc="cargo check"' >> ~/.bashrc \
+    && echo 'alias cf="cargo fmt"' >> ~/.bashrc \
+    && echo 'alias cl="cargo clippy"' >> ~/.bashrc \
+    && echo 'alias cw="cargo watch"' >> ~/.bashrc \
+    && echo 'alias kdb="./run_standalone.sh"' >> ~/.bashrc
+
+# Set up git configuration template
+RUN git config --global init.defaultBranch main \
+    && git config --global pull.rebase false \
+    && git config --global core.editor vim
+
+# Create development directories
+RUN mkdir -p \
+    ~/.cargo \
+    ~/.config \
+    ~/bin \
+    /workspace/data \
+    /workspace/logs \
+    /workspace/cache
+
+# Set environment variables
+ENV RUST_LOG=debug
+ENV RUST_BACKTRACE=1
+ENV CARGO_TARGET_DIR=/workspace/target
+ENV PATH="/home/dev/bin:${PATH}"
+
+# Copy development scripts
+COPY --chown=dev:dev scripts/dev/ /home/dev/bin/
+
+# Expose development ports
+EXPOSE 8080 8000 9090
+
+# Default command
+CMD ["/bin/bash"]

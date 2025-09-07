@@ -126,8 +126,9 @@ impl<'a> SearchService<'a> {
             });
         }
 
-        // Use LLM-optimized search for all non-wildcard queries to ensure consistent formatting
-        if options.query != "*" {
+        // Use LLM-optimized search only when explicitly requested for enhanced context
+        // This ensures fast performance by default while maintaining UX consistency
+        if options.query != "*" && (options.context == "medium" || options.context == "full") {
             // Try LLM-optimized search with fallback to regular search on error
             match self.try_llm_search(&options).await {
                 Ok(response) => {

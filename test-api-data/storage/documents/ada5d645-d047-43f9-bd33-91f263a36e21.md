@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "id": "c3fbe58d-19c3-4688-a797-5e38a2bc2857",
+  "file_path": "./examples-data/personal-kb/documents/c3fbe58d-19c3-4688-a797-5e38a2bc2857.md",
+  "original_path": "/generated/doc-031.md",
+  "title": "Generated Document 31",
+  "size": 202,
+  "created": 1754608781,
+  "updated": 1754608781,
+  "hash": [
+    165,
+    133,
+    205,
+    228,
+    5,
+    31,
+    137,
+    59,
+    198,
+    94,
+    200,
+    22,
+    40,
+    1,
+    106,
+    222,
+    206,
+    21,
+    175,
+    38,
+    233,
+    59,
+    192,
+    233,
+    26,
+    140,
+    213,
+    56,
+    206,
+    179,
+    91,
+    36
+  ],
+  "embedding": null
+}
