@@ -177,22 +177,44 @@ pub async fn start_services_server(
     port: u16,
 ) -> Result<()> {
     let app = create_services_server(storage, primary_index, trigram_index, db_path);
-    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    // Try to bind to the port with enhanced error handling
+    let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("❌ Failed to start server on port {}: {}", port, e);
+
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!(
+                    "🔍 Port {} is already in use. Try these alternatives:",
+                    port
+                );
+                eprintln!("   - Use a different port: --port {}", port + 1);
+                eprintln!("   - Check what's using port {}: lsof -ti:{}", port, port);
+                eprintln!("   - Kill process using port: kill $(lsof -ti:{})", port);
+            }
+
+            return Err(e.into());
+        }
+    };
 
     info!("🚀 KotaDB Services HTTP Server starting on port {}", port);
     info!("🎯 Clean services-only architecture - no legacy endpoints");
-    info!("Available endpoints:");
-    info!("  - GET  /health - Server health check");
-    info!("  - GET  /api/stats - Database statistics (StatsService)");
-    info!("  - POST /api/benchmark - Performance benchmarks (BenchmarkService)");
-    info!("  - POST /api/validate - Database validation (ValidationService)");
-    info!("  - GET  /api/health-check - Detailed health check (ValidationService)");
-    info!("  - POST /api/index-codebase - Index repository (IndexingService)");
-    info!("  - GET  /api/search-code - Search code content (SearchService)");
-    info!("  - GET  /api/search-symbols - Search symbols (SearchService)");
-    info!("  - POST /api/find-callers - Find callers (AnalysisService)");
-    info!("  - POST /api/analyze-impact - Impact analysis (AnalysisService)");
-    info!("  - GET  /api/codebase-overview - Codebase overview (AnalysisService)");
+    info!("📄 Available endpoints:");
+    info!("   GET    /health                    - Server health check");
+    info!("   GET    /api/stats                 - Database statistics (StatsService)");
+    info!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
+    info!("   POST   /api/validate              - Database validation (ValidationService)");
+    info!("   GET    /api/health-check          - Detailed health check (ValidationService)");
+    info!("   POST   /api/index-codebase        - Index repository (IndexingService)");
+    info!("   GET    /api/search-code           - Search code content (SearchService)");
+    info!("   GET    /api/search-symbols        - Search symbols (SearchService)");
+    info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
+    info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
+    info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    println!();
+    println!("🟢 Server ready at http://localhost:{}", port);
+    println!("   Health check: curl http://localhost:{}/health", port);
 
     axum::serve(listener, app).await?;
     Ok(())
