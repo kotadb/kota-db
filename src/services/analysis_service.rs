@@ -109,6 +109,18 @@ pub struct AnalysisService<'a> {
 }
 
 impl<'a> AnalysisService<'a> {
+    /// Helper function to safely convert usize line numbers to Option<u32>
+    /// Logs warnings for overflow cases but continues processing
+    fn safe_line_number_conversion(line_number: usize, symbol_name: &str) -> Option<u32> {
+        line_number.try_into().ok().or_else(|| {
+            tracing::warn!(
+                "Line number {} too large for u32 in relationship for symbol '{}'",
+                line_number,
+                symbol_name
+            );
+            None
+        })
+    }
     /// Create a new AnalysisService instance
     pub fn new(database: &'a dyn AnalysisServiceDatabase, db_path: PathBuf) -> Self {
         Self {
@@ -164,14 +176,17 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract call sites from the relationship query result
+        // Extract call sites from the relationship query result with proper error handling
         let callers: Vec<CallSite> = result
             .direct_relationships
             .iter()
             .map(|relationship| CallSite {
                 caller: relationship.symbol_name.clone(),
                 file_path: relationship.file_path.clone(),
-                line_number: Some(relationship.location.line_number as u32),
+                line_number: Self::safe_line_number_conversion(
+                    relationship.location.line_number,
+                    &relationship.symbol_name,
+                ),
                 context: format!(
                     "Calls {} at line {}",
                     options.target, relationship.location.line_number
@@ -205,14 +220,17 @@ impl<'a> AnalysisService<'a> {
 
         let markdown = result.to_markdown();
 
-        // Extract impact sites from the relationship query result
+        // Extract impact sites from the relationship query result with proper error handling
         let impacts: Vec<ImpactSite> = result
             .direct_relationships
             .iter()
             .map(|relationship| ImpactSite {
                 affected_symbol: relationship.symbol_name.clone(),
                 file_path: relationship.file_path.clone(),
-                line_number: Some(relationship.location.line_number as u32),
+                line_number: Self::safe_line_number_conversion(
+                    relationship.location.line_number,
+                    &relationship.symbol_name,
+                ),
                 impact_type: format!("{:?}", relationship.relation_type),
             })
             .collect();
