@@ -7,9 +7,10 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::DatabaseAccess;
+use crate::QueryBuilder;
 
 /// Configuration options for benchmarking operations
 #[derive(Debug, Clone)]
@@ -534,7 +535,44 @@ impl<'a> BenchmarkService<'a> {
     // Private implementation methods
 
     async fn run_warmup_operations(&self, warmup_ops: usize) -> Result<()> {
-        // TODO: Implement warmup operations to stabilize performance
+        // Warm up the database with realistic codebase intelligence operations
+        // This ensures consistent performance measurements by stabilizing caches and indices
+
+        let storage = self.database.storage();
+        let primary_index = self.database.primary_index();
+        let trigram_index = self.database.trigram_index();
+
+        // Warm up with a mix of typical operations
+        for i in 0..warmup_ops {
+            match i % 3 {
+                0 => {
+                    // Warm up storage: get some documents via primary index search
+                    let index_guard = primary_index.lock().await;
+                    let query = QueryBuilder::new().with_limit(3)?.build()?;
+                    if let Ok(doc_ids) = index_guard.search(&query).await {
+                        if let Some(doc_id) = doc_ids.first() {
+                            let storage_guard = storage.lock().await;
+                            let _ = storage_guard.get(doc_id).await;
+                        }
+                    }
+                }
+                1 => {
+                    // Warm up primary index: wildcard search
+                    let index_guard = primary_index.lock().await;
+                    let query = QueryBuilder::new().with_limit(5)?.build()?;
+                    let _ = index_guard.search(&query).await;
+                }
+                _ => {
+                    // Warm up trigram index: common search terms
+                    let search_terms = ["async", "struct", "impl", "fn"];
+                    let term = &search_terms[i % search_terms.len()];
+                    let index_guard = trigram_index.lock().await;
+                    let query = QueryBuilder::new().with_text(*term)?.build()?;
+                    let _ = index_guard.search(&query).await;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -543,24 +581,49 @@ impl<'a> BenchmarkService<'a> {
         options: &BenchmarkOptions,
     ) -> Result<BenchmarkTypeResult> {
         let mut timings = Vec::new();
-        let errors = Vec::new();
+        let mut errors = Vec::new();
         let start_time = Instant::now();
 
-        // TODO: Implement actual storage benchmarking
-        // This would include:
-        // - Document insertion performance
-        // - Document retrieval performance
-        // - Bulk operations performance
-        // - Storage compaction performance
+        // Benchmark actual storage operations: document retrieval and path lookups
+        // This tests the real codebase intelligence storage layer performance
+        let storage = self.database.storage();
+        let primary_index = self.database.primary_index();
 
-        // Placeholder implementation
-        for _i in 0..std::cmp::min(options.operations, 1000) {
+        // Get some existing document IDs to benchmark retrieval
+        let mut test_doc_ids = Vec::new();
+        {
+            let index_guard = primary_index.lock().await;
+            let query = QueryBuilder::new().with_limit(20)?.build()?;
+            if let Ok(doc_ids) = index_guard.search(&query).await {
+                test_doc_ids = doc_ids;
+            }
+        }
+
+        // Benchmark document retrieval operations
+        let operations_count = std::cmp::min(options.operations, 1000);
+        for i in 0..operations_count {
             let op_start = Instant::now();
 
-            // Simulate storage operation
-            tokio::time::sleep(Duration::from_micros(100)).await;
+            // Benchmark actual document retrieval
+            let result = if !test_doc_ids.is_empty() {
+                let doc_id = &test_doc_ids[i % test_doc_ids.len()];
+                let storage_guard = storage.lock().await;
+                storage_guard.get(doc_id).await
+            } else {
+                // If no documents exist, this is expected - just return None
+                Ok(None)
+            };
 
-            timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+            match result {
+                Ok(_) => {
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+                Err(e) => {
+                    errors.push(format!("Storage operation failed: {}", e));
+                    // Still record timing for failed operations
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+            }
         }
 
         let total_time_ms = start_time.elapsed().as_millis() as u64;
@@ -617,27 +680,349 @@ impl<'a> BenchmarkService<'a> {
         &self,
         options: &BenchmarkOptions,
     ) -> Result<BenchmarkTypeResult> {
-        // TODO: Implement index benchmarking
-        // Similar structure to storage benchmarking but for index operations
-        self.benchmark_storage_operations(options).await
+        let mut timings = Vec::new();
+        let mut errors = Vec::new();
+        let start_time = Instant::now();
+
+        // Benchmark actual index operations: primary index lookups and trigram search
+        // This tests the real codebase intelligence index performance
+        let primary_index = self.database.primary_index();
+        let trigram_index = self.database.trigram_index();
+
+        // Common search terms to benchmark against indexed content
+        let search_terms = vec![
+            "async", "struct", "impl", "fn", "use", "pub", "let", "match", "Result", "Error",
+            "String", "Vec", "HashMap", "tokio", "serde", "anyhow",
+        ];
+
+        let operations_count = std::cmp::min(options.operations, 1000);
+        for i in 0..operations_count {
+            let op_start = Instant::now();
+
+            // Alternate between primary index searches and trigram searches
+            let result = if i % 2 == 0 {
+                // Benchmark primary index search operations
+                let index_guard = primary_index.lock().await;
+                let query = QueryBuilder::new().with_limit(10)?.build()?;
+                index_guard.search(&query).await.map(|_| ())
+            } else {
+                // Benchmark trigram search operations
+                let search_term = &search_terms[i % search_terms.len()];
+                let index_guard = trigram_index.lock().await;
+                let query = QueryBuilder::new().with_text(*search_term)?.build()?;
+                index_guard.search(&query).await.map(|_| ())
+            };
+
+            match result {
+                Ok(_) => {
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+                Err(e) => {
+                    errors.push(format!("Index operation failed: {}", e));
+                    // Still record timing for failed operations
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+            }
+        }
+
+        let total_time_ms = start_time.elapsed().as_millis() as u64;
+        let operations = timings.len();
+        let average_time_ms = if !timings.is_empty() {
+            timings.iter().sum::<f64>() / timings.len() as f64
+        } else {
+            0.0
+        };
+
+        timings.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median_time_ms = if !timings.is_empty() {
+            timings[timings.len() / 2]
+        } else {
+            0.0
+        };
+
+        let p95_time_ms = if timings.len() > 20 {
+            timings[(timings.len() * 95) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let p99_time_ms = if timings.len() > 100 {
+            timings[(timings.len() * 99) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let operations_per_second = if total_time_ms > 0 {
+            (operations as f64 * 1000.0) / total_time_ms as f64
+        } else {
+            0.0
+        };
+
+        Ok(BenchmarkTypeResult {
+            operations,
+            total_time_ms,
+            average_time_ms,
+            median_time_ms,
+            p95_time_ms,
+            p99_time_ms,
+            operations_per_second,
+            success_rate: if operations > 0 {
+                1.0 - (errors.len() as f64 / operations as f64)
+            } else {
+                0.0
+            },
+            errors,
+        })
     }
 
     async fn benchmark_query_operations(
         &self,
         options: &BenchmarkOptions,
     ) -> Result<BenchmarkTypeResult> {
-        // TODO: Implement query benchmarking
-        // Test query performance across different patterns and complexity levels
-        self.benchmark_storage_operations(options).await
+        let mut timings = Vec::new();
+        let mut errors = Vec::new();
+        let start_time = Instant::now();
+
+        // Benchmark complex query operations: path-based queries, range scans, pattern matching
+        // This tests the real codebase intelligence query engine performance
+        let primary_index = self.database.primary_index();
+        let trigram_index = self.database.trigram_index();
+
+        // Complex query patterns for codebase intelligence
+        let path_patterns = [
+            "src/**/*.rs",
+            "tests/**/*",
+            "*.toml",
+            "*.md",
+            "*.yml",
+            "src/services/*",
+            "src/mcp/*",
+            "docs/*",
+            "benches/*",
+        ];
+
+        let complex_queries = [
+            "async fn main",
+            "impl.*Service",
+            "pub struct.*Config",
+            "use.*anyhow::Result",
+            "#[derive.*Serialize",
+            "tokio::.*async",
+            "std::collections::HashMap",
+            "Result<.*Error>",
+        ];
+
+        let operations_count = std::cmp::min(options.operations, 1000);
+        for i in 0..operations_count {
+            let op_start = Instant::now();
+
+            let result = match i % 3 {
+                0 => {
+                    // Benchmark wildcard queries
+                    let index_guard = primary_index.lock().await;
+                    let query = QueryBuilder::new().with_limit(20)?.build()?;
+                    index_guard.search(&query).await.map(|_| ())
+                }
+                1 => {
+                    // Benchmark path pattern matching (use path patterns as text)
+                    let pattern = &path_patterns[i % path_patterns.len()];
+                    let index_guard = primary_index.lock().await;
+                    let query = QueryBuilder::new()
+                        .with_text(*pattern)?
+                        .with_limit(50)?
+                        .build()?;
+                    index_guard.search(&query).await.map(|_| ())
+                }
+                _ => {
+                    // Benchmark complex trigram queries
+                    let complex_query = &complex_queries[i % complex_queries.len()];
+                    let index_guard = trigram_index.lock().await;
+                    let query = QueryBuilder::new().with_text(*complex_query)?.build()?;
+                    index_guard.search(&query).await.map(|_| ())
+                }
+            };
+
+            match result {
+                Ok(_) => {
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+                Err(e) => {
+                    errors.push(format!("Query operation failed: {}", e));
+                    // Still record timing for failed operations
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+            }
+        }
+
+        let total_time_ms = start_time.elapsed().as_millis() as u64;
+        let operations = timings.len();
+        let average_time_ms = if !timings.is_empty() {
+            timings.iter().sum::<f64>() / timings.len() as f64
+        } else {
+            0.0
+        };
+
+        timings.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median_time_ms = if !timings.is_empty() {
+            timings[timings.len() / 2]
+        } else {
+            0.0
+        };
+
+        let p95_time_ms = if timings.len() > 20 {
+            timings[(timings.len() * 95) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let p99_time_ms = if timings.len() > 100 {
+            timings[(timings.len() * 99) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let operations_per_second = if total_time_ms > 0 {
+            (operations as f64 * 1000.0) / total_time_ms as f64
+        } else {
+            0.0
+        };
+
+        Ok(BenchmarkTypeResult {
+            operations,
+            total_time_ms,
+            average_time_ms,
+            median_time_ms,
+            p95_time_ms,
+            p99_time_ms,
+            operations_per_second,
+            success_rate: if operations > 0 {
+                1.0 - (errors.len() as f64 / operations as f64)
+            } else {
+                0.0
+            },
+            errors,
+        })
     }
 
     async fn benchmark_search_operations(
         &self,
         options: &BenchmarkOptions,
     ) -> Result<BenchmarkTypeResult> {
-        // TODO: Implement search benchmarking
-        // Test search performance with various query types and result sizes
-        self.benchmark_storage_operations(options).await
+        let mut timings = Vec::new();
+        let mut errors = Vec::new();
+        let start_time = Instant::now();
+
+        // Benchmark actual search operations: content search and symbol search
+        // This tests the real codebase intelligence SearchService performance
+        use super::{SearchOptions, SearchService, SymbolSearchOptions};
+
+        let search_service = SearchService::new(self.database, self.db_path.join("symbols"));
+
+        // Realistic search queries for codebase intelligence
+        let content_queries = vec![
+            "async fn", "struct", "impl", "Result<", "Error", "Vec<", "HashMap", "tokio",
+            "use std", "pub fn", "let mut", "match", "if let", "unwrap", "expect", "clone",
+        ];
+
+        let symbol_patterns = [
+            "Storage", "Index", "Service", "*Result", "Error*", "Config", "Handler", "Manager",
+            "Builder", "Factory", "Trait", "Enum",
+        ];
+
+        let operations_count = std::cmp::min(options.operations, options.max_search_queries);
+        for i in 0..operations_count {
+            let op_start = Instant::now();
+
+            // Alternate between content search and symbol search
+            let result = if i % 2 == 0 {
+                // Benchmark content search operations
+                let query = &content_queries[i % content_queries.len()];
+                let search_options = SearchOptions {
+                    query: query.to_string(),
+                    limit: 10,
+                    tags: None,
+                    context: "minimal".to_string(), // Use minimal context for performance
+                    quiet: true,
+                };
+                search_service
+                    .search_content(search_options)
+                    .await
+                    .map(|_| ())
+            } else {
+                // Benchmark symbol search operations
+                let pattern = &symbol_patterns[i % symbol_patterns.len()];
+                let symbol_options = SymbolSearchOptions {
+                    pattern: pattern.to_string(),
+                    limit: 10,
+                    symbol_type: None,
+                    quiet: true,
+                };
+                search_service
+                    .search_symbols(symbol_options)
+                    .await
+                    .map(|_| ())
+            };
+
+            match result {
+                Ok(_) => {
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+                Err(e) => {
+                    errors.push(format!("Search operation failed: {}", e));
+                    // Still record timing for failed operations
+                    timings.push(op_start.elapsed().as_micros() as f64 / 1000.0);
+                }
+            }
+        }
+
+        let total_time_ms = start_time.elapsed().as_millis() as u64;
+        let operations = timings.len();
+        let average_time_ms = if !timings.is_empty() {
+            timings.iter().sum::<f64>() / timings.len() as f64
+        } else {
+            0.0
+        };
+
+        timings.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median_time_ms = if !timings.is_empty() {
+            timings[timings.len() / 2]
+        } else {
+            0.0
+        };
+
+        let p95_time_ms = if timings.len() > 20 {
+            timings[(timings.len() * 95) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let p99_time_ms = if timings.len() > 100 {
+            timings[(timings.len() * 99) / 100]
+        } else {
+            average_time_ms
+        };
+
+        let operations_per_second = if total_time_ms > 0 {
+            (operations as f64 * 1000.0) / total_time_ms as f64
+        } else {
+            0.0
+        };
+
+        Ok(BenchmarkTypeResult {
+            operations,
+            total_time_ms,
+            average_time_ms,
+            median_time_ms,
+            p95_time_ms,
+            p99_time_ms,
+            operations_per_second,
+            success_rate: if operations > 0 {
+                1.0 - (errors.len() as f64 / operations as f64)
+            } else {
+                0.0
+            },
+            errors,
+        })
     }
 
     fn format_benchmark_human(
