@@ -89,7 +89,6 @@ pub struct IndexCodebaseRequest {
     pub extract_symbols: Option<bool>,
 }
 
-
 /// Codebase overview request
 #[derive(Debug, Deserialize)]
 pub struct CodebaseOverviewRequest {
@@ -674,7 +673,6 @@ async fn index_codebase(
     }
 }
 
-
 /// Get codebase overview via AnalysisService
 async fn codebase_overview(
     State(state): State<ServicesAppState>,
@@ -903,8 +901,7 @@ async fn find_callers_enhanced(
     request_result: Result<Json<CallersRequest>, axum::extract::rejection::JsonRejection>,
 ) -> ApiResult<serde_json::Value> {
     // Handle JSON parsing errors using shared error handler
-    let Json(request) =
-        request_result.map_err(|e| handle_json_parsing_error(e, "find-callers"))?;
+    let Json(request) = request_result.map_err(|e| handle_json_parsing_error(e, "find-callers"))?;
 
     // Validate symbol input using validation layer
     if request.symbol.trim().is_empty() {
