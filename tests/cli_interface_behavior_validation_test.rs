@@ -118,8 +118,16 @@ async fn create_comprehensive_test_database() -> Result<(String, TempDir, TestGi
 async fn test_search_code_returns_content_snippets_not_just_paths() -> Result<()> {
     let (db_path, _temp_dir, _git_repo) = create_comprehensive_test_database().await?;
 
-    // Execute search-code with default context (should show content)
-    let output = execute_cli_command(&["-d", &db_path, "search-code", "FileStorage"]).await?;
+    // Execute search-code with medium context (should show content with scores)
+    let output = execute_cli_command(&[
+        "-d",
+        &db_path,
+        "search-code",
+        "FileStorage",
+        "--context",
+        "medium",
+    ])
+    .await?;
 
     output.assert_success()?;
 
@@ -316,7 +324,15 @@ async fn test_search_code_no_results_provides_helpful_message() -> Result<()> {
     // Search for something that definitely won't exist
     // Note: The search algorithm is quite permissive, so we need a truly unique string
     let unique_search = "ZZZZZ_DEFINITELY_NO_MATCH_XYZPDQ_999999";
-    let output = execute_cli_command(&["-d", &db_path, "search-code", unique_search]).await?;
+    let output = execute_cli_command(&[
+        "-d",
+        &db_path,
+        "search-code",
+        unique_search,
+        "--context",
+        "medium",
+    ])
+    .await?;
 
     output.assert_success()?;
 
@@ -324,6 +340,7 @@ async fn test_search_code_no_results_provides_helpful_message() -> Result<()> {
     // Check if we get truly no results OR very low relevance results with appropriate scores
     let has_actual_no_results = output.contains("No documents found")
         || output.contains("No matches")
+        || output.contains("No code found matching")
         || output.stdout.trim().is_empty();
 
     let has_low_relevance_matches = output.contains("score: 0.")
