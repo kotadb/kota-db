@@ -89,35 +89,6 @@ pub struct IndexCodebaseRequest {
     pub extract_symbols: Option<bool>,
 }
 
-/// Search request
-#[derive(Debug, Deserialize)]
-pub struct SearchRequest {
-    pub query: String,
-    pub limit: Option<usize>,
-    pub search_type: Option<String>,
-}
-
-/// Symbol search request
-#[derive(Debug, Deserialize)]
-pub struct SymbolSearchRequest {
-    pub pattern: String,
-    pub limit: Option<usize>,
-    pub symbol_type: Option<String>,
-}
-
-/// Callers request
-#[derive(Debug, Deserialize)]
-pub struct CallersRequest {
-    pub target: String,
-    pub limit: Option<usize>,
-}
-
-/// Impact analysis request
-#[derive(Debug, Deserialize)]
-pub struct ImpactAnalysisRequest {
-    pub target: String,
-    pub limit: Option<usize>,
-}
 
 /// Codebase overview request
 #[derive(Debug, Deserialize)]
@@ -131,36 +102,36 @@ pub struct CodebaseOverviewRequest {
 // ENHANCED API STRUCTURES - Standards Compliant, Non-Breaking
 // ================================================================================================
 
-/// Enhanced search request with format options and validation
+/// Search request with format options and validation
 #[derive(Debug, Deserialize)]
-pub struct EnhancedSearchRequest {
+pub struct SearchRequest {
     pub query: String,
     pub limit: Option<usize>,
     pub search_type: Option<String>,
     pub format: Option<String>, // "simple", "rich", "cli" (default: rich)
 }
 
-/// Enhanced symbol search request with format options
+/// Symbol search request with format options
 #[derive(Debug, Deserialize)]
-pub struct EnhancedSymbolSearchRequest {
+pub struct SymbolSearchRequest {
     pub pattern: String,
     pub limit: Option<usize>,
     pub symbol_type: Option<String>,
     pub format: Option<String>, // "simple", "rich", "cli" (default: rich)
 }
 
-/// Enhanced callers request with better field names and validation
+/// Callers request with better field names and validation
 #[derive(Debug, Deserialize)]
-pub struct EnhancedCallersRequest {
+pub struct CallersRequest {
     pub symbol: String, // Intuitive field name
     pub limit: Option<usize>,
     pub format: Option<String>, // "simple", "rich", "cli" (default: rich)
     pub include_indirect: Option<bool>,
 }
 
-/// Enhanced impact analysis request with better field names
+/// Impact analysis request with better field names
 #[derive(Debug, Deserialize)]
-pub struct EnhancedImpactAnalysisRequest {
+pub struct ImpactAnalysisRequest {
     pub symbol: String, // Intuitive field name
     pub limit: Option<usize>,
     pub format: Option<String>, // "simple", "rich", "cli" (default: rich)
@@ -213,7 +184,10 @@ pub struct StandardApiError {
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<StandardApiError>)>;
 
 /// Standardized error handling for JSON parsing failures
-fn handle_json_parsing_error(error: axum::extract::rejection::JsonRejection, endpoint: &str) -> (StatusCode, Json<StandardApiError>) {
+fn handle_json_parsing_error(
+    error: axum::extract::rejection::JsonRejection,
+    endpoint: &str,
+) -> (StatusCode, Json<StandardApiError>) {
     let (error_type, message, suggestions) = match error {
         axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => (
             "missing_content_type",
@@ -258,12 +232,15 @@ fn handle_json_parsing_error(error: axum::extract::rejection::JsonRejection, end
             details: Some(format!("Endpoint: {}", endpoint)),
             suggestions,
             error_code: Some(400),
-        })
+        }),
     )
 }
 
 /// Standardized error handling for service operation failures
-fn handle_service_error(error: anyhow::Error, operation: &str) -> (StatusCode, Json<StandardApiError>) {
+fn handle_service_error(
+    error: anyhow::Error,
+    operation: &str,
+) -> (StatusCode, Json<StandardApiError>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(StandardApiError {
@@ -276,12 +253,16 @@ fn handle_service_error(error: anyhow::Error, operation: &str) -> (StatusCode, J
                 "Contact system administrator if problem persists".to_string(),
             ],
             error_code: Some(500),
-        })
+        }),
     )
 }
 
 /// Standardized validation error handling with helpful messages
-fn handle_validation_error(field_name: &str, message: &str, endpoint: &str) -> (StatusCode, Json<StandardApiError>) {
+fn handle_validation_error(
+    field_name: &str,
+    message: &str,
+    endpoint: &str,
+) -> (StatusCode, Json<StandardApiError>) {
     (
         StatusCode::BAD_REQUEST,
         Json(StandardApiError {
@@ -294,7 +275,7 @@ fn handle_validation_error(field_name: &str, message: &str, endpoint: &str) -> (
                 "Use ValidatedPath for file paths and ValidatedTitle for titles".to_string(),
             ],
             error_code: Some(400),
-        })
+        }),
     )
 }
 
@@ -324,18 +305,13 @@ pub fn create_services_server(
         .route("/api/health-check", get(health_check_detailed))
         // Indexing Service endpoints
         .route("/api/index-codebase", post(index_codebase))
-        // Search Service endpoints
-        .route("/api/search-code", get(search_code))
-        .route("/api/search-symbols", get(search_symbols))
-        // Analysis Service endpoints  
-        .route("/api/find-callers", post(find_callers))
-        .route("/api/analyze-impact", post(analyze_impact))
+        // Search Service endpoints - Enhanced implementations with multi-format support
+        .route("/api/search-code", get(search_code_enhanced))
+        .route("/api/search-symbols", get(search_symbols_enhanced))
+        // Analysis Service endpoints - Enhanced implementations with improved UX
+        .route("/api/find-callers", post(find_callers_enhanced))
+        .route("/api/analyze-impact", post(analyze_impact_enhanced))
         .route("/api/codebase-overview", get(codebase_overview))
-        // Enhanced API endpoints with improved UX (non-breaking additions)
-        .route("/api/v2/search-code", get(enhanced_search_code))
-        .route("/api/v2/search-symbols", get(enhanced_search_symbols))
-        .route("/api/v2/find-callers", post(enhanced_find_callers))
-        .route("/api/v2/analyze-impact", post(enhanced_analyze_impact))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -698,216 +674,6 @@ async fn index_codebase(
     }
 }
 
-/// Search code via SearchService
-async fn search_code(
-    State(state): State<ServicesAppState>,
-    AxumQuery(request): AxumQuery<SearchRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let result = with_trace_id("api_search_code", async move {
-        // Create Database instance to implement DatabaseAccess
-        let database = Database {
-            storage: state.storage.clone(),
-            primary_index: state.primary_index.clone(),
-            trigram_index: state.trigram_index.clone(),
-            path_cache: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        let search_service = SearchService::new(&database, state.db_path.clone());
-
-        let options = SearchOptions {
-            query: request.query,
-            limit: request.limit.unwrap_or(10),
-            tags: None,
-            context: "medium".to_string(),
-            quiet: false,
-        };
-
-        search_service.search_content(options).await
-    })
-    .await;
-
-    match result {
-        Ok(search_result) => {
-            let json_value = serde_json::to_value(search_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
-            Ok(Json(json_value))
-        }
-        Err(e) => {
-            tracing::warn!("Failed to search code: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "search_failed".to_string(),
-                    message: e.to_string(),
-                }),
-            ))
-        }
-    }
-}
-
-/// Search symbols via SearchService
-async fn search_symbols(
-    State(state): State<ServicesAppState>,
-    AxumQuery(request): AxumQuery<SymbolSearchRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let result = with_trace_id("api_search_symbols", async move {
-        // Create Database instance to implement DatabaseAccess
-        let database = Database {
-            storage: state.storage.clone(),
-            primary_index: state.primary_index.clone(),
-            trigram_index: state.trigram_index.clone(),
-            path_cache: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        let search_service = SearchService::new(&database, state.db_path.clone());
-
-        let options = SymbolSearchOptions {
-            pattern: request.pattern,
-            limit: request.limit.unwrap_or(25),
-            symbol_type: request.symbol_type,
-            quiet: false,
-        };
-
-        search_service.search_symbols(options).await
-    })
-    .await;
-
-    match result {
-        Ok(symbol_result) => {
-            let json_value = serde_json::to_value(symbol_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
-            Ok(Json(json_value))
-        }
-        Err(e) => {
-            tracing::warn!("Failed to search symbols: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "symbol_search_failed".to_string(),
-                    message: e.to_string(),
-                }),
-            ))
-        }
-    }
-}
-
-/// Find callers via AnalysisService
-async fn find_callers(
-    State(state): State<ServicesAppState>,
-    Json(request): Json<CallersRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let result = with_trace_id("api_find_callers", async move {
-        // Create Database instance to implement DatabaseAccess
-        let database = Database {
-            storage: state.storage.clone(),
-            primary_index: state.primary_index.clone(),
-            trigram_index: state.trigram_index.clone(),
-            path_cache: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
-
-        let options = CallersOptions {
-            target: request.target,
-            limit: request.limit,
-            quiet: false,
-        };
-
-        analysis_service.find_callers(options).await
-    })
-    .await;
-
-    match result {
-        Ok(callers_result) => {
-            let json_value = serde_json::to_value(callers_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
-            Ok(Json(json_value))
-        }
-        Err(e) => {
-            tracing::warn!("Failed to find callers: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "find_callers_failed".to_string(),
-                    message: e.to_string(),
-                }),
-            ))
-        }
-    }
-}
-
-/// Analyze impact via AnalysisService
-async fn analyze_impact(
-    State(state): State<ServicesAppState>,
-    Json(request): Json<ImpactAnalysisRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let result = with_trace_id("api_analyze_impact", async move {
-        // Create Database instance to implement DatabaseAccess
-        let database = Database {
-            storage: state.storage.clone(),
-            primary_index: state.primary_index.clone(),
-            trigram_index: state.trigram_index.clone(),
-            path_cache: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
-
-        let options = ImpactOptions {
-            target: request.target,
-            limit: request.limit,
-            quiet: false,
-        };
-
-        analysis_service.analyze_impact(options).await
-    })
-    .await;
-
-    match result {
-        Ok(impact_result) => {
-            let json_value = serde_json::to_value(impact_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
-            Ok(Json(json_value))
-        }
-        Err(e) => {
-            tracing::warn!("Failed to analyze impact: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "impact_analysis_failed".to_string(),
-                    message: e.to_string(),
-                }),
-            ))
-        }
-    }
-}
 
 /// Get codebase overview via AnalysisService
 async fn codebase_overview(
@@ -966,14 +732,18 @@ async fn codebase_overview(
 // ENHANCED V2 API ENDPOINTS - Standards Compliant Implementation
 // ================================================================================================
 
-/// Enhanced search code endpoint with format options and validation
-async fn enhanced_search_code(
+/// Search code endpoint with format options and validation
+async fn search_code_enhanced(
     State(state): State<ServicesAppState>,
-    AxumQuery(request): AxumQuery<EnhancedSearchRequest>,
+    AxumQuery(request): AxumQuery<SearchRequest>,
 ) -> ApiResult<serde_json::Value> {
     // Validate query input using validation layer
     if request.query.trim().is_empty() {
-        return Err(handle_validation_error("query", "Query cannot be empty", "v2/search-code"));
+        return Err(handle_validation_error(
+            "query",
+            "Query cannot be empty",
+            "search-code",
+        ));
     }
 
     let result = with_trace_id("api_enhanced_search_code", async move {
@@ -1002,43 +772,48 @@ async fn enhanced_search_code(
     match result {
         Ok(search_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-            
+
             // Convert to appropriate format based on request
             let response_value = match format.as_str() {
                 "simple" => {
-                    let file_paths: Vec<String> = if let Some(ref llm_response) = search_result.llm_response {
-                        // Extract file paths from LLM response
-                        llm_response.results.iter()
-                            .map(|doc| doc.path.clone())
-                            .collect()
-                    } else {
-                        // Extract file paths from regular documents
-                        search_result.documents
-                            .iter()
-                            .map(|doc| doc.path.to_string())
-                            .collect()
-                    };
-                    
+                    let file_paths: Vec<String> =
+                        if let Some(ref llm_response) = search_result.llm_response {
+                            // Extract file paths from LLM response
+                            llm_response
+                                .results
+                                .iter()
+                                .map(|doc| doc.path.clone())
+                                .collect()
+                        } else {
+                            // Extract file paths from regular documents
+                            search_result
+                                .documents
+                                .iter()
+                                .map(|doc| doc.path.to_string())
+                                .collect()
+                        };
+
                     serde_json::to_value(SimpleSearchResponse {
                         results: file_paths,
                         total_count: search_result.total_count,
                         query_time_ms: 0, // TODO: Add timing
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                },
+                    })
+                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
+                }
                 "cli" => {
                     let cli_output = format_search_as_cli(&search_result);
-                    serde_json::to_value(CliFormatResponse {
-                        output: cli_output,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                },
-                _ => { // "rich" format (default)
+                    serde_json::to_value(CliFormatResponse { output: cli_output })
+                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
+                }
+                _ => {
+                    // "rich" format (default)
                     serde_json::to_value(search_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
                 }
             };
-            
+
             Ok(Json(response_value))
-        },
+        }
         Err(e) => {
             tracing::warn!("Enhanced search failed: {}", e);
             Err(handle_service_error(e, "search_code"))
@@ -1046,14 +821,18 @@ async fn enhanced_search_code(
     }
 }
 
-/// Enhanced symbol search endpoint with format options
-async fn enhanced_search_symbols(
+/// Symbol search endpoint with format options
+async fn search_symbols_enhanced(
     State(state): State<ServicesAppState>,
-    AxumQuery(request): AxumQuery<EnhancedSymbolSearchRequest>,
+    AxumQuery(request): AxumQuery<SymbolSearchRequest>,
 ) -> ApiResult<serde_json::Value> {
     // Validate pattern input
     if request.pattern.trim().is_empty() {
-        return Err(handle_validation_error("pattern", "Pattern cannot be empty", "v2/search-symbols"));
+        return Err(handle_validation_error(
+            "pattern",
+            "Pattern cannot be empty",
+            "search-symbols",
+        ));
     }
 
     let result = with_trace_id("api_enhanced_search_symbols", async move {
@@ -1081,34 +860,36 @@ async fn enhanced_search_symbols(
     match result {
         Ok(symbol_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-            
+
             // Convert to appropriate format based on request
             let response_value = match format.as_str() {
                 "simple" => {
-                    let symbol_names: Vec<String> = symbol_result.matches
+                    let symbol_names: Vec<String> = symbol_result
+                        .matches
                         .iter()
                         .map(|m| m.name.clone())
                         .collect();
-                    
+
                     serde_json::to_value(SimpleSymbolResponse {
                         symbols: symbol_names,
                         total_count: symbol_result.total_symbols,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                },
+                    })
+                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
+                }
                 "cli" => {
                     let cli_output = format_symbols_as_cli(&symbol_result);
-                    serde_json::to_value(CliFormatResponse {
-                        output: cli_output,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                },
-                _ => { // "rich" format (default)
+                    serde_json::to_value(CliFormatResponse { output: cli_output })
+                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
+                }
+                _ => {
+                    // "rich" format (default)
                     serde_json::to_value(symbol_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
                 }
             };
-            
+
             Ok(Json(response_value))
-        },
+        }
         Err(e) => {
             tracing::warn!("Enhanced symbol search failed: {}", e);
             Err(handle_service_error(e, "symbol_search"))
@@ -1116,18 +897,22 @@ async fn enhanced_search_symbols(
     }
 }
 
-/// Enhanced find callers endpoint with format options and validation
-async fn enhanced_find_callers(
+/// Find callers endpoint with format options and validation
+async fn find_callers_enhanced(
     State(state): State<ServicesAppState>,
-    request_result: Result<Json<EnhancedCallersRequest>, axum::extract::rejection::JsonRejection>,
+    request_result: Result<Json<CallersRequest>, axum::extract::rejection::JsonRejection>,
 ) -> ApiResult<serde_json::Value> {
     // Handle JSON parsing errors using shared error handler
-    let Json(request) = request_result
-        .map_err(|e| handle_json_parsing_error(e, "v2/find-callers"))?;
+    let Json(request) =
+        request_result.map_err(|e| handle_json_parsing_error(e, "find-callers"))?;
 
     // Validate symbol input using validation layer
     if request.symbol.trim().is_empty() {
-        return Err(handle_validation_error("symbol", "Symbol name cannot be empty", "v2/find-callers"));
+        return Err(handle_validation_error(
+            "symbol",
+            "Symbol name cannot be empty",
+            "find-callers",
+        ));
     }
 
     let result = with_trace_id("api_enhanced_find_callers", async move {
@@ -1154,39 +939,41 @@ async fn enhanced_find_callers(
     match result {
         Ok(callers_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-            
+
             // Convert to appropriate format based on request
             let response_value = match format.as_str() {
                 "simple" => {
                     // Extract just the relevant caller information
-                    let simple_results: Vec<String> = if let Ok(json_val) = serde_json::to_value(&callers_result) {
-                        extract_simple_caller_results(&json_val)
-                    } else {
-                        vec!["Error parsing results".to_string()]
-                    };
+                    let simple_results: Vec<String> =
+                        if let Ok(json_val) = serde_json::to_value(&callers_result) {
+                            extract_simple_caller_results(&json_val)
+                        } else {
+                            vec!["Error parsing results".to_string()]
+                        };
                     let count = simple_results.len();
-                    
+
                     serde_json::to_value(SimpleAnalysisResponse {
                         results: simple_results,
                         total_count: count,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?
-                },
+                    })
+                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?
+                }
                 "cli" => {
                     let json_val = serde_json::to_value(&callers_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?;
                     let cli_output = format_callers_as_cli(&json_val);
-                    serde_json::to_value(CliFormatResponse {
-                        output: cli_output,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?
-                },
-                _ => { // "rich" format (default)
+                    serde_json::to_value(CliFormatResponse { output: cli_output })
+                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?
+                }
+                _ => {
+                    // "rich" format (default)
                     serde_json::to_value(callers_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "find_callers"))?
                 }
             };
-            
+
             Ok(Json(response_value))
-        },
+        }
         Err(e) => {
             tracing::warn!("Enhanced find callers failed: {}", e);
             Err(handle_service_error(e, "find_callers"))
@@ -1194,18 +981,22 @@ async fn enhanced_find_callers(
     }
 }
 
-/// Enhanced impact analysis endpoint with format options and validation  
-async fn enhanced_analyze_impact(
+/// Impact analysis endpoint with format options and validation  
+async fn analyze_impact_enhanced(
     State(state): State<ServicesAppState>,
-    request_result: Result<Json<EnhancedImpactAnalysisRequest>, axum::extract::rejection::JsonRejection>,
+    request_result: Result<Json<ImpactAnalysisRequest>, axum::extract::rejection::JsonRejection>,
 ) -> ApiResult<serde_json::Value> {
     // Handle JSON parsing errors using shared error handler
-    let Json(request) = request_result
-        .map_err(|e| handle_json_parsing_error(e, "v2/analyze-impact"))?;
+    let Json(request) =
+        request_result.map_err(|e| handle_json_parsing_error(e, "analyze-impact"))?;
 
     // Validate symbol input using validation layer
     if request.symbol.trim().is_empty() {
-        return Err(handle_validation_error("symbol", "Symbol name cannot be empty", "v2/analyze-impact"));
+        return Err(handle_validation_error(
+            "symbol",
+            "Symbol name cannot be empty",
+            "analyze-impact",
+        ));
     }
 
     let result = with_trace_id("api_enhanced_analyze_impact", async move {
@@ -1232,39 +1023,41 @@ async fn enhanced_analyze_impact(
     match result {
         Ok(impact_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-            
+
             // Convert to appropriate format based on request
             let response_value = match format.as_str() {
                 "simple" => {
                     // Extract just the relevant impact information
-                    let simple_results: Vec<String> = if let Ok(json_val) = serde_json::to_value(&impact_result) {
-                        extract_simple_impact_results(&json_val)
-                    } else {
-                        vec!["Error parsing results".to_string()]
-                    };
+                    let simple_results: Vec<String> =
+                        if let Ok(json_val) = serde_json::to_value(&impact_result) {
+                            extract_simple_impact_results(&json_val)
+                        } else {
+                            vec!["Error parsing results".to_string()]
+                        };
                     let count = simple_results.len();
-                    
+
                     serde_json::to_value(SimpleAnalysisResponse {
                         results: simple_results,
                         total_count: count,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?
-                },
+                    })
+                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?
+                }
                 "cli" => {
                     let json_val = serde_json::to_value(&impact_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?;
                     let cli_output = format_impact_as_cli(&json_val);
-                    serde_json::to_value(CliFormatResponse {
-                        output: cli_output,
-                    }).map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?
-                },
-                _ => { // "rich" format (default)
+                    serde_json::to_value(CliFormatResponse { output: cli_output })
+                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?
+                }
+                _ => {
+                    // "rich" format (default)
                     serde_json::to_value(impact_result)
                         .map_err(|e| handle_service_error(anyhow::anyhow!(e), "analyze_impact"))?
                 }
             };
-            
+
             Ok(Json(response_value))
-        },
+        }
         Err(e) => {
             tracing::warn!("Enhanced impact analysis failed: {}", e);
             Err(handle_service_error(e, "analyze_impact"))
@@ -1279,10 +1072,10 @@ async fn enhanced_analyze_impact(
 /// Format search results as CLI-style output
 fn format_search_as_cli(search_result: &crate::services::search_service::SearchResult) -> String {
     let mut output = String::new();
-    
+
     if let Some(ref llm_response) = search_result.llm_response {
         output.push_str(&format!("Query: {}\n\n", llm_response.query));
-        
+
         for doc in &llm_response.results {
             output.push_str(&format!("📄 {}\n", doc.path));
             output.push_str(&format!("   {}\n", doc.content_snippet));
@@ -1292,7 +1085,7 @@ fn format_search_as_cli(search_result: &crate::services::search_service::SearchR
             output.push_str(&format!("📄 {}\n", doc.path));
         }
     }
-    
+
     output.push_str(&format!("\nTotal matches: {}", search_result.total_count));
     output
 }
@@ -1300,20 +1093,19 @@ fn format_search_as_cli(search_result: &crate::services::search_service::SearchR
 /// Format symbol search results as CLI-style output
 fn format_symbols_as_cli(symbol_result: &crate::services::search_service::SymbolResult) -> String {
     let mut output = String::new();
-    
+
     for symbol_match in &symbol_result.matches {
         output.push_str(&format!(
             "🔍 {} ({}:{})\n   Type: {}\n",
-            symbol_match.name,
-            symbol_match.file_path,
-            symbol_match.start_line,
-            symbol_match.kind
+            symbol_match.name, symbol_match.file_path, symbol_match.start_line, symbol_match.kind
         ));
     }
-    
-    output.push_str(&format!("\nTotal symbols found: {}/{}", 
-                            symbol_result.matches.len(), 
-                            symbol_result.total_symbols));
+
+    output.push_str(&format!(
+        "\nTotal symbols found: {}/{}",
+        symbol_result.matches.len(),
+        symbol_result.total_symbols
+    ));
     output
 }
 
@@ -1336,7 +1128,7 @@ fn format_callers_as_cli(callers_result: &serde_json::Value) -> String {
             return output;
         }
     }
-    
+
     // Fallback to JSON string representation
     serde_json::to_string_pretty(callers_result).unwrap_or_else(|_| "No callers found".to_string())
 }
@@ -1356,7 +1148,7 @@ fn format_impact_as_cli(impact_result: &serde_json::Value) -> String {
             return output;
         }
     }
-    
+
     // Fallback to JSON string representation
     serde_json::to_string_pretty(impact_result).unwrap_or_else(|_| "No impact found".to_string())
 }
@@ -1364,7 +1156,7 @@ fn format_impact_as_cli(impact_result: &serde_json::Value) -> String {
 /// Extract simple caller results for simple format
 fn extract_simple_caller_results(json_val: &serde_json::Value) -> Vec<String> {
     let mut results = Vec::new();
-    
+
     if let Some(callers) = json_val.get("callers") {
         if let Some(callers_array) = callers.as_array() {
             for caller in callers_array {
@@ -1374,18 +1166,18 @@ fn extract_simple_caller_results(json_val: &serde_json::Value) -> Vec<String> {
             }
         }
     }
-    
+
     if results.is_empty() {
         results.push("No callers found".to_string());
     }
-    
+
     results
 }
 
 /// Extract simple impact results for simple format
 fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
     let mut results = Vec::new();
-    
+
     if let Some(impact) = json_val.get("impacted_files") {
         if let Some(impact_array) = impact.as_array() {
             for file in impact_array {
@@ -1395,10 +1187,10 @@ fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
             }
         }
     }
-    
+
     if results.is_empty() {
         results.push("No impact found".to_string());
     }
-    
+
     results
 }
