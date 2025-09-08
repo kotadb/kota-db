@@ -3,18 +3,27 @@
 //! This middleware intercepts HTTP requests, validates API keys,
 //! enforces rate limits, and records usage metrics.
 
+#[cfg(feature = "saas-api-keys")]
 use crate::api_keys::ApiKeyService;
+#[cfg(feature = "saas-api-keys")]
+use axum::extract::{ConnectInfo, State};
+#[cfg(feature = "saas-api-keys")]
+use axum::http::header;
 use axum::{
-    extract::{ConnectInfo, Request, State},
-    http::{header, HeaderMap, StatusCode},
+    extract::Request,
+    http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
 use serde::Serialize;
+#[cfg(feature = "saas-api-keys")]
 use std::net::SocketAddr;
+#[cfg(feature = "saas-api-keys")]
 use std::sync::Arc;
+#[cfg(feature = "saas-api-keys")]
 use std::time::Instant;
 use tracing::{debug, instrument, warn};
+#[cfg(feature = "saas-api-keys")]
 use uuid::Uuid;
 
 /// Header name for API key
@@ -44,6 +53,7 @@ impl IntoResponse for AuthError {
 }
 
 /// Context information added to requests after successful authentication
+#[cfg(feature = "saas-api-keys")]
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     pub key_id: i64,
@@ -75,6 +85,7 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Extract client IP address from request
+#[cfg(feature = "saas-api-keys")]
 fn extract_ip_address(headers: &HeaderMap, remote_addr: Option<SocketAddr>) -> Option<String> {
     // Check X-Forwarded-For header first (for proxied requests)
     if let Some(forwarded) = headers.get("X-Forwarded-For") {
@@ -98,6 +109,7 @@ fn extract_ip_address(headers: &HeaderMap, remote_addr: Option<SocketAddr>) -> O
 }
 
 /// Authentication middleware for API endpoints
+#[cfg(feature = "saas-api-keys")]
 #[instrument(skip_all)]
 pub async fn auth_middleware(
     State(api_key_service): State<Arc<ApiKeyService>>,
@@ -288,10 +300,12 @@ pub async fn internal_auth_middleware(
 }
 
 /// Extension trait to extract auth context from request
+#[cfg(feature = "saas-api-keys")]
 pub trait AuthContextExt {
     fn auth_context(&self) -> Option<&AuthContext>;
 }
 
+#[cfg(feature = "saas-api-keys")]
 impl AuthContextExt for Request {
     fn auth_context(&self) -> Option<&AuthContext> {
         self.extensions().get::<AuthContext>()
@@ -324,6 +338,7 @@ mod tests {
         assert_eq!(key, Some("kdb_live_test456".to_string()));
     }
 
+    #[cfg(feature = "saas-api-keys")]
     #[test]
     fn test_extract_ip_from_forwarded() {
         let mut headers = HeaderMap::new();
@@ -336,6 +351,7 @@ mod tests {
         assert_eq!(ip, Some("192.168.1.1".to_string()));
     }
 
+    #[cfg(feature = "saas-api-keys")]
     #[test]
     fn test_extract_ip_from_real_ip() {
         let mut headers = HeaderMap::new();

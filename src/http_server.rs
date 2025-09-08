@@ -2,10 +2,11 @@
 // Provides JSON API for document CRUD operations
 
 use anyhow::Result;
+#[cfg(feature = "saas-api-keys")]
+use axum::middleware;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
     http::{HeaderMap, StatusCode},
-    middleware,
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
@@ -20,8 +21,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    api_keys::{ApiKeyConfig, ApiKeyService, CreateApiKeyRequest, CreateApiKeyResponse},
-    auth_middleware::{auth_middleware, internal_auth_middleware},
     binary_relationship_engine_async::AsyncBinaryRelationshipEngine,
     builders::DocumentBuilder,
     codebase_intelligence_api::{self, CodebaseIntelligenceState},
@@ -35,6 +34,11 @@ use crate::{
 };
 use std::path::PathBuf;
 use tokio::sync::RwLock;
+
+#[cfg(feature = "saas-api-keys")]
+use crate::api_keys::{ApiKeyConfig, ApiKeyService, CreateApiKeyRequest, CreateApiKeyResponse};
+#[cfg(feature = "saas-api-keys")]
+use crate::auth_middleware::{auth_middleware, internal_auth_middleware};
 
 // Constants for default resource statistics
 const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
@@ -63,6 +67,7 @@ pub struct AppState {
     #[allow(dead_code)] // Used for router state composition
     codebase_intelligence: Option<CodebaseIntelligenceState>,
     #[allow(dead_code)] // Used for authentication middleware
+    #[cfg(feature = "saas-api-keys")]
     api_key_service: Option<Arc<ApiKeyService>>,
 }
 
@@ -260,6 +265,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         storage,
         connection_pool: None,
         codebase_intelligence: None,
+        #[cfg(feature = "saas-api-keys")]
         api_key_service: None,
     };
 
@@ -303,6 +309,7 @@ pub fn create_server_with_pool(
         storage,
         connection_pool: Some(connection_pool),
         codebase_intelligence: None,
+        #[cfg(feature = "saas-api-keys")]
         api_key_service: None,
     };
 
@@ -360,6 +367,7 @@ pub async fn create_server_with_intelligence(
         storage,
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
+        #[cfg(feature = "saas-api-keys")]
         api_key_service: None,
     };
 
@@ -458,6 +466,7 @@ pub async fn start_server_with_intelligence(
 }
 
 /// Create HTTP server with full SaaS features (API keys + codebase intelligence)
+#[cfg(feature = "saas-api-keys")]
 pub async fn create_saas_server(
     storage: Arc<Mutex<dyn Storage>>,
     db_path: PathBuf,
@@ -486,6 +495,7 @@ pub async fn create_saas_server(
         storage,
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
+        #[cfg(feature = "saas-api-keys")]
         api_key_service: Some(api_key_service.clone()),
     };
 
@@ -553,6 +563,7 @@ pub async fn create_saas_server(
 }
 
 /// Start the SaaS HTTP server with API keys and codebase intelligence
+#[cfg(feature = "saas-api-keys")]
 pub async fn start_saas_server(
     storage: Arc<Mutex<dyn Storage>>,
     db_path: PathBuf,
@@ -583,6 +594,7 @@ pub async fn start_saas_server(
 }
 
 /// Internal endpoint to create API keys (called by web app)
+#[cfg(feature = "saas-api-keys")]
 async fn create_api_key_internal(
     State(api_key_service): State<Arc<ApiKeyService>>,
     Json(request): Json<CreateApiKeyRequest>,
@@ -1173,7 +1185,6 @@ async fn get_resource_stats(
 
                 // Determine system health based on various factors
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
@@ -1239,7 +1250,6 @@ async fn get_aggregated_stats(
                 // Resource stats
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)

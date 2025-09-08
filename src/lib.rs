@@ -1,6 +1,7 @@
 // KotaDB - A Custom Database for Distributed Cognition
 // Root library module
 
+#[cfg(feature = "saas-api-keys")]
 pub mod api_keys;
 pub mod auth_middleware;
 pub mod binary_trigram_index;
@@ -116,13 +117,14 @@ pub use wrappers::optimization::{
 pub use file_storage::{create_file_storage, FileStorage};
 
 // Re-export API key management
+#[cfg(feature = "saas-api-keys")]
 pub use api_keys::{ApiKeyConfig, ApiKeyService};
 
 // Utility functions for deployment and debugging
-use anyhow::Result;
 
 /// Test database connection for deployment troubleshooting
-pub async fn test_database_connection(config: &ApiKeyConfig) -> Result<()> {
+#[cfg(feature = "saas-api-keys")]
+pub async fn test_database_connection(config: &ApiKeyConfig) -> anyhow::Result<()> {
     use sqlx::postgres::PgPoolOptions;
     use std::time::Duration;
     use tracing::info;
@@ -158,9 +160,11 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
+#[cfg(feature = "saas-api-keys")]
+pub use http_server::{create_saas_server, start_saas_server};
 pub use http_server::{
-    create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
-    start_server, start_server_with_intelligence,
+    create_server, create_server_with_intelligence, create_server_with_pool, start_server,
+    start_server_with_intelligence,
 };
 
 // Re-export index implementations

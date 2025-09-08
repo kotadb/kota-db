@@ -3,6 +3,8 @@
 //! This module provides secure API key generation, validation, and management
 //! for the KotaDB SaaS platform. Keys are stored in PostgreSQL with proper
 //! hashing and support for rate limiting and usage tracking.
+//!
+//! This module is only compiled when the "saas-api-keys" feature is enabled.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};

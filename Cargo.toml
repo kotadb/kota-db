@@ -67,8 +67,8 @@ crc32c = "0.6"
 sha2 = "0.10"
 md5 = "0.7"
 
-# Database
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
+# Database (optional - only needed for SaaS API key management)
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid", "macros", "migrate"], default-features = false, optional = true }
 
 # Encoding
 base64 = "0.21"
@@ -151,6 +151,8 @@ default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing"]
 advanced-search = ["tantivy", "hnsw"]
 # MCP Server features
 mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
+# SaaS API key management (PostgreSQL-based)
+saas-api-keys = ["sqlx"]
 # Embedding features
 embeddings-onnx = ["ort", "tokenizers", "ndarray"]           # ONNX Runtime embeddings (default)
 # Git repository integration
@@ -193,6 +195,7 @@ required-features = ["mcp-server"]
 [[bin]]
 name = "kotadb-api-server"
 path = "src/bin/kotadb-api-server.rs"
+required-features = ["saas-api-keys"]
 
 [[bin]]
 name = "test_minimal_cli"
