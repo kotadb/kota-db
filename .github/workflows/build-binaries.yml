@@ -100,7 +100,7 @@ jobs:
     - name: Build binary
       run: |
         cargo build --release --target ${{ matrix.target }} --bin kotadb
-        cargo build --release --target ${{ matrix.target }} --bin mcp_server
+        cargo build --release --target ${{ matrix.target }} --bin mcp_server --features mcp-server
     
     - name: Create checksum
       shell: bash
