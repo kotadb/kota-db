@@ -11,6 +11,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::{net::TcpListener, sync::Mutex};
@@ -424,7 +425,11 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -452,7 +457,11 @@ pub async fn start_server_with_intelligence(
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -577,7 +586,11 @@ pub async fn start_saas_server(
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -1173,7 +1186,7 @@ async fn get_resource_stats(
 
                 // Determine system health based on various factors
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                // Note: max_connections not exposed in current ConnectionStats implementation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
@@ -1239,7 +1252,7 @@ async fn get_aggregated_stats(
                 // Resource stats
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                // Note: max_connections not exposed in current ConnectionStats implementation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
