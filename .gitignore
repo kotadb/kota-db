@@ -95,6 +95,7 @@ kota-db-data/
 # Benchmark results
 /benchmarks/results/
 criterion/
+benchmark-data/
 
 # Local development
 .local/
@@ -145,3 +146,22 @@ build/
 *.js.map
 *.d.ts.map
 .eslintcache
+# Dogfooding artifacts (temporary testing on KotaDB itself)
+kotadb-analysis/
+kotadb-test-data/
+kotadb-dogfood.toml
+kotadb-dogfood-*.toml
+data/dogfood/
+data/analysis/
+data/code-analysis-test/
+test-data/
+test-db-data/
+
+# Code analysis test suite artifacts
+/tests/code_analysis_artifacts/
+/tests/test_repos/
+*.test.kotadb
+code-analysis-bench-results/
+test-db/
+# Exclude dogfood testing data directories - should never be committed
+dogfood-test/

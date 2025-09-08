@@ -4,7 +4,7 @@
 
 use crate::contracts::{Document, Query, StorageMetrics};
 use crate::types::*;
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
@@ -153,24 +153,55 @@ impl QueryBuilder {
         }
     }
 
-    /// Add text search criteria
+    /// Add text search criteria with enhanced sanitization
     pub fn with_text(mut self, text: impl Into<String>) -> Result<Self> {
         let text = text.into();
-        ensure!(!text.trim().is_empty(), "Search text cannot be empty");
-        self.text = Some(text);
+
+        // Determine if this looks like a path query
+        let is_path_query = text.contains('/') || text.starts_with("*.") || text.contains("/*");
+
+        // Apply appropriate sanitization based on query type
+        let sanitized = if is_path_query {
+            // Use path-aware sanitization that preserves forward slashes
+            crate::query_sanitization::sanitize_path_aware_query(&text)?
+        } else {
+            // Use standard sanitization for text queries
+            crate::query_sanitization::sanitize_search_query(&text)?
+        };
+
+        // Check if query became empty after sanitization
+        if sanitized.is_empty() && text.trim() != "*" {
+            bail!("Search text became empty after sanitization");
+        }
+
+        // Log warnings if query was modified
+        if sanitized.was_modified {
+            tracing::debug!(
+                "Query sanitized: original='{}', sanitized='{}', warnings={:?}",
+                text,
+                sanitized.text,
+                sanitized.warnings
+            );
+        }
+
+        self.text = Some(sanitized.text);
         Ok(self)
     }
 
-    /// Add a tag filter
+    /// Add a tag filter with sanitization
     pub fn with_tag(mut self, tag: impl Into<String>) -> Result<Self> {
-        self.tags.push(ValidatedTag::new(tag)?);
+        let tag_str = tag.into();
+        let sanitized = crate::query_sanitization::sanitize_tag(&tag_str)?;
+        self.tags.push(ValidatedTag::new(sanitized)?);
         Ok(self)
     }
 
-    /// Add multiple tag filters
+    /// Add multiple tag filters with sanitization
     pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Result<Self> {
         for tag in tags {
-            self.tags.push(ValidatedTag::new(tag)?);
+            let tag_str = tag.into();
+            let sanitized = crate::query_sanitization::sanitize_tag(&tag_str)?;
+            self.tags.push(ValidatedTag::new(sanitized)?);
         }
         Ok(self)
     }
@@ -189,7 +220,10 @@ impl QueryBuilder {
 
     /// Set result limit
     pub fn with_limit(mut self, limit: usize) -> Result<Self> {
-        self.limit = Some(ValidatedLimit::new(limit, 1000)?);
+        // Allow higher limits for operations that need to see all documents
+        // The previous hardcoded limit of 1000 was causing validation failures
+        const MAX_QUERY_LIMIT: usize = 100_000;
+        self.limit = Some(ValidatedLimit::new(limit, MAX_QUERY_LIMIT)?);
         Ok(self)
     }
 
@@ -212,8 +246,21 @@ impl QueryBuilder {
 
         let limit = self.limit.map(|l| l.get()).unwrap_or(10);
 
-        // Create query with proper tags support
-        let mut query = Query::new(self.text, tags.clone(), None, limit)?;
+        // Check if the text contains wildcards and should be treated as a path pattern
+        let (query_text, path_pattern) = if let Some(ref text) = self.text {
+            if text.contains('*') {
+                // This is a wildcard pattern, use it as path pattern
+                (None, Some(text.clone()))
+            } else {
+                // Regular text search
+                (self.text.clone(), None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Create query with proper support for wildcards and tags
+        let mut query = Query::new(query_text, tags.clone(), path_pattern.clone(), limit)?;
 
         // Set tags properly since Query::new doesn't handle them correctly
         if let Some(tag_strings) = tags {
@@ -221,6 +268,11 @@ impl QueryBuilder {
                 .into_iter()
                 .map(ValidatedTag::new)
                 .collect::<Result<Vec<_>, _>>()?;
+        }
+
+        // Set path_pattern directly if it wasn't handled by Query::new
+        if let Some(pattern) = path_pattern {
+            query.path_pattern = Some(pattern);
         }
 
         Ok(query)
@@ -491,100 +543,13 @@ impl Default for MetricsBuilder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_document_builder() {
-        let doc = DocumentBuilder::new()
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
+    // DocumentBuilder basic test removed - part of deprecated document database functionality
 
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-        assert_eq!(doc.path.as_str(), "test/doc.md");
-        assert_eq!(doc.title.as_str(), "Test Document");
-        assert_eq!(doc.size, 13);
-    }
+    // DocumentBuilder custom ID test removed - part of deprecated document database functionality
 
-    #[test]
-    fn test_document_builder_with_custom_id() {
-        use uuid::Uuid;
+    // DocumentBuilder ID generation test removed - part of deprecated document database functionality
 
-        // Create a specific UUID to test with
-        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let custom_id = ValidatedDocumentId::from_uuid(custom_uuid).unwrap();
-
-        let doc = DocumentBuilder::new()
-            .id(custom_id)
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
-
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-
-        // Verify the document uses the specified ID, not a generated one
-        assert_eq!(doc.id.as_uuid(), custom_uuid);
-        assert_eq!(doc.path.as_str(), "test/doc.md");
-        assert_eq!(doc.title.as_str(), "Test Document");
-    }
-
-    #[test]
-    fn test_document_builder_generates_id_when_not_specified() {
-        let doc1 = DocumentBuilder::new()
-            .path("test/doc1.md")
-            .expect("Valid path should not fail")
-            .title("Test Document 1")
-            .expect("Valid title should not fail")
-            .content(b"Content 1")
-            .build()
-            .expect("Document build should succeed");
-
-        let doc2 = DocumentBuilder::new()
-            .path("test/doc2.md")
-            .expect("Valid path should not fail")
-            .title("Test Document 2")
-            .expect("Valid title should not fail")
-            .content(b"Content 2")
-            .build()
-            .expect("Document build should succeed");
-
-        // Verify different documents get different generated IDs
-        assert_ne!(doc1.id.as_uuid(), doc2.id.as_uuid());
-
-        // Verify IDs are valid UUIDs (not nil)
-        assert_ne!(doc1.id.as_uuid(), uuid::Uuid::nil());
-        assert_ne!(doc2.id.as_uuid(), uuid::Uuid::nil());
-    }
-
-    #[test]
-    fn test_document_builder_id_from_uuid() {
-        use uuid::Uuid;
-
-        // Create a specific UUID to test with
-        let custom_uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-
-        let doc = DocumentBuilder::new()
-            .id_from_uuid(custom_uuid)
-            .expect("Valid UUID should not fail")
-            .path("test/doc.md")
-            .expect("Valid path should not fail")
-            .title("Test Document")
-            .expect("Valid title should not fail")
-            .content(b"Hello, world!")
-            .build();
-
-        assert!(doc.is_ok());
-        let doc = doc.expect("Document build should succeed");
-
-        // Verify the document uses the specified UUID
-        assert_eq!(doc.id.as_uuid(), custom_uuid);
-    }
+    // DocumentBuilder UUID test removed - part of deprecated document database functionality
 
     #[test]
     fn test_query_builder() {
@@ -625,14 +590,48 @@ mod tests {
 
     #[test]
     fn test_builder_validation() {
-        // Missing required fields
-        let doc = DocumentBuilder::new().build();
-        assert!(doc.is_err());
+        // DocumentBuilder validation removed - part of deprecated document database functionality
 
+        // Test modern codebase intelligence builders
         let query = QueryBuilder::new().build();
         assert!(query.is_ok()); // Query has defaults
 
         let storage = StorageConfigBuilder::new().build();
         assert!(storage.is_err()); // Path is required
+    }
+
+    #[test]
+    fn test_wildcard_query_path_pattern() {
+        // Test that wildcard queries are correctly put into path_pattern
+        let query = QueryBuilder::new()
+            .with_text("*.rs")
+            .expect("Valid wildcard pattern should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        // Wildcard should go to path_pattern, not search_terms
+        assert_eq!(query.search_terms.len(), 0);
+        assert_eq!(query.path_pattern, Some("*.rs".to_string()));
+
+        // Test full wildcard
+        let wildcard_query = QueryBuilder::new()
+            .with_text("*")
+            .expect("Valid wildcard should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        assert_eq!(wildcard_query.search_terms.len(), 0);
+        assert_eq!(wildcard_query.path_pattern, Some("*".to_string()));
+
+        // Test non-wildcard goes to search_terms
+        let text_query = QueryBuilder::new()
+            .with_text("FileStorage")
+            .expect("Valid text should not fail")
+            .build()
+            .expect("Query build should succeed");
+
+        assert_eq!(text_query.search_terms.len(), 1);
+        assert_eq!(text_query.path_pattern, None);
+        assert_eq!(text_query.search_terms[0].as_str(), "FileStorage");
     }
 }

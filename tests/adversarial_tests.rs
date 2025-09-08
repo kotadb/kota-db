@@ -599,8 +599,8 @@ async fn test_invalid_inputs() -> Result<()> {
     // Invalid limit (0)
     assert!(Query::new(Some("test".to_string()), None, None, 0).is_err());
 
-    // Invalid limit (too large)
-    assert!(Query::new(Some("test".to_string()), None, None, 10000).is_err());
+    // Invalid limit (too large - updated to match new 100,000 limit from issue #248)
+    assert!(Query::new(Some("test".to_string()), None, None, 100_001).is_err());
 
     // Valid queries should work
     assert!(Query::new(Some("test".to_string()), None, None, 10).is_ok());

@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/kotadb-mcp.svg)](https://badge.fury.io/js/kotadb-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Model Context Protocol server for KotaDB - Enable Claude Desktop to search and manage your documents**
+**Model Context Protocol server for KotaDB - Enable Claude Desktop to understand and analyze your codebase**
 
 ## Quick Start (30 seconds)
 
@@ -17,7 +17,7 @@ npm install -g kotadb-mcp
 
 ## Features
 
-✅ **7 MCP Tools**: Complete document management (CRUD + search + stats)  
+✅ **MCP Tools**: Complete codebase intelligence (symbol extraction, search, impact analysis)  
 ✅ **Zero Setup**: No Rust compilation or binary dependencies required  
 ✅ **Fast & Lightweight**: In-memory storage with file persistence  
 ✅ **Claude Desktop Ready**: Official MCP SDK with STDIO transport  
@@ -38,7 +38,7 @@ This package provides a **self-contained MCP server** that doesn't require the f
 
 #### ⚠️ **Trade-offs (What You're Missing)**
 - **Advanced Indexing**: No trigram or vector search indices (simple text matching instead)
-- **Scalability**: Designed for personal use (hundreds of documents, not millions)
+- **Scalability**: Designed for personal projects (thousands of files, not millions)
 - **Storage Format**: Independent from main KotaDB database files
 - **Performance**: JavaScript vs Rust performance characteristics
 
@@ -46,12 +46,12 @@ This package provides a **self-contained MCP server** that doesn't require the f
 
 | Use Case | This Package | Full KotaDB Rust |
 |----------|-------------|------------------|
-| **Personal Knowledge Base** | ✅ Perfect | Overkill |
+| **Personal Projects** | ✅ Perfect | Overkill |
 | **Claude Desktop Integration** | ✅ Ideal | Complex setup |
-| **Quick Prototyping** | ✅ Great | Too heavy |
-| **Enterprise/Production** | Consider Rust | ✅ Recommended |
-| **Advanced Search Features** | Basic only | ✅ Full-featured |
-| **Large Document Collections** | < 1000 docs | ✅ Unlimited |
+| **Code Analysis** | ✅ Great | More features |
+| **Enterprise Codebases** | Consider Rust | ✅ Recommended |
+| **Advanced Symbol Search** | Basic only | ✅ Full-featured |
+| **Large Repositories** | < 10K files | ✅ Unlimited |
 
 ## Installation & Setup
 
@@ -99,15 +99,15 @@ Completely quit and restart Claude Desktop to load the new MCP server.
 
 ## Available Tools
 
-### Document Management
-- **`kotadb_document_create`** - Create documents with content, title, and tags
-- **`kotadb_document_get`** - Retrieve documents by ID
-- **`kotadb_document_update`** - Update document content  
-- **`kotadb_document_delete`** - Delete documents
-- **`kotadb_document_list`** - List all documents (with pagination)
+### Codebase Intelligence
+- **`kotadb_index_codebase`** - Index a codebase with symbol extraction
+- **`kotadb_search_code`** - Search for code patterns and symbols
+- **`kotadb_search_symbols`** - Find functions, classes, and variables by name
+- **`kotadb_find_callers`** - Find all references to a symbol
+- **`kotadb_analyze_impact`** - Analyze what breaks if you change something
 
-### Search & Discovery  
-- **`kotadb_search`** - Full-text search with relevance scoring
+### Analysis & Statistics  
+- **`kotadb_symbol_stats`** - View extracted symbol statistics
 - **`kotadb_stats`** - Database statistics and information
 
 ### Tool Name Differences from Full KotaDB Rust Implementation
@@ -116,13 +116,12 @@ The TypeScript MCP package uses consistent `kotadb_` prefixes to clearly disting
 
 | This Package (TypeScript) | Full KotaDB Rust | Functionality |
 |---------------------------|------------------|---------------|
-| `kotadb_document_create` | `document_create` | Create new documents |
-| `kotadb_document_get` | `document_get` | Retrieve documents by ID |
-| `kotadb_document_update` | `document_update` | Update document content |
-| `kotadb_document_delete` | `document_delete` | Delete documents |
-| `kotadb_document_list` | `document_list` | List all documents |
-| `kotadb_search` | `search` | Full-text search |
-| `kotadb_stats` | `stats` | Database statistics |
+| `kotadb_index_codebase` | `index-codebase` | Index repository with symbols |
+| `kotadb_search_code` | `search-code` | Full-text code search |
+| `kotadb_search_symbols` | `search-symbols` | Find symbols by pattern |
+| `kotadb_find_callers` | `find-callers` | Find references to symbols |
+| `kotadb_analyze_impact` | `analyze-impact` | Impact analysis |
+| `kotadb_stats` | `stats` | Comprehensive database statistics (documents, symbols, relationships) |
 
 **Why Different Names?**
 - **Clear Origin**: Easy to identify which implementation provided the tool
@@ -134,28 +133,28 @@ The functionality is intentionally similar to maintain consistency, but the impl
 
 ## Usage Examples
 
-### Creating Documents
+### Indexing Your Codebase
 ```typescript
 // In Claude Desktop, you can say:
-"Create a document about TypeScript best practices with some examples"
+"Index my TypeScript project at /path/to/project"
 
-// This uses kotadb_document_create internally
+// This uses kotadb_index_codebase internally
 ```
 
-### Searching Content
+### Searching Code
 ```typescript  
 // In Claude Desktop:
-"Search my documents for anything about testing"
+"Search for all functions that handle authentication"
 
-// Uses kotadb_search with intelligent relevance scoring
+// Uses kotadb_search_code with symbol understanding
 ```
 
-### Managing Knowledge
+### Impact Analysis
 ```typescript
 // In Claude Desktop:
-"Show me all my documents and then update the one about React hooks"
+"What would break if I change the DatabaseConnection class?"
 
-// Combines kotadb_document_list and kotadb_document_update
+// Uses kotadb_analyze_impact to trace dependencies
 ```
 
 ## Data Storage

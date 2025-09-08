@@ -127,36 +127,21 @@ fn main() -> Result<()> {
     // Create data directory if it doesn't exist
     std::fs::create_dir_all(&config.database.data_dir)?;
 
-    // Create a new runtime and run the server
+    // Initialize the server with minimal async setup
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { run_server(config).await })?;
+    let server = rt.block_on(async { init_mcp_server(config).await })?;
 
-    Ok(())
-}
+    // Drop the runtime to avoid conflicts
+    drop(rt);
 
-/// Run the MCP server with the given configuration
-#[cfg(feature = "mcp-server")]
-async fn run_server(config: MCPConfig) -> Result<()> {
-    // Initialize and start the MCP server
-    let server = init_mcp_server(config).await?;
-
-    tracing::info!("MCP server initialization complete");
-
-    // Start the server and get a handle
-    let server_handle = server.start().await?;
+    // Start the server outside of any async context
+    let server_handle = server.start_sync()?;
 
     tracing::info!("MCP server started, listening for connections");
 
-    // Handle graceful shutdown
-    tokio::select! {
-        _ = setup_shutdown_handler() => {
-            tracing::info!("Received shutdown signal, closing server");
-        }
-    }
+    // Use the server's blocking wait method
+    server_handle.wait();
 
-    // Don't call server_handle.close() here as it causes runtime panic
-    // The server will be cleaned up when the runtime drops
-    tracing::info!("MCP server shutdown initiated");
     Ok(())
 }
 
@@ -210,29 +195,6 @@ async fn perform_health_check() -> Result<()> {
         Err(_) => {
             eprintln!("✗ Health check timed out after 10 seconds");
             std::process::exit(1);
-        }
-    }
-}
-
-/// Setup graceful shutdown handler
-#[cfg(feature = "mcp-server")]
-async fn setup_shutdown_handler() {
-    use tokio::signal;
-
-    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-        .expect("Failed to register SIGTERM handler");
-    let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-        .expect("Failed to register SIGINT handler");
-
-    tokio::select! {
-        _ = sigterm.recv() => {
-            tracing::info!("Received SIGTERM");
-        }
-        _ = sigint.recv() => {
-            tracing::info!("Received SIGINT");
-        }
-        _ = signal::ctrl_c() => {
-            tracing::info!("Received Ctrl+C");
         }
     }
 }

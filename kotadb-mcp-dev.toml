@@ -18,11 +18,12 @@ max_blocking_threads = 16
 # MCP Protocol Configuration
 protocol_version = "2024-11-05"
 server_name = "kotadb"
-server_version = "0.2.0"
+server_version = "0.5.0"
 
-# Tool Categories
-enable_document_tools = true
+# Tool Categories - Document tools removed per issue #401 codebase intelligence transition
+enable_document_tools = false
 enable_search_tools = true
+enable_relationship_tools = true
 
 [logging]
 level = "debug"
@@ -41,9 +42,3 @@ max_request_size = "10MB"
 rate_limit_requests_per_minute = 1000
 enable_request_validation = true
 
-[embeddings]
-# Embedding Configuration for Semantic Search
-provider = "local"
-model = "all-MiniLM-L6-v2"
-dimension = 384
-batch_size = 32

@@ -13,15 +13,15 @@ created_by: "Claude Code"
 
 ## System Overview
 
-The KOTA Database (KotaDB) is a purpose-built storage engine designed specifically for distributed cognition between human and AI. It combines the best aspects of document stores, graph databases, and vector databases while maintaining compatibility with KOTA's existing file-based architecture.
+The KOTA Database (KotaDB) is a codebase intelligence platform designed to transform source code into a queryable knowledge graph. It combines symbol extraction, dependency analysis, and impact assessment with high-performance search capabilities, enabling developers and AI systems to understand code relationships at scale.
 
 ### Design Philosophy
 
-1. **Memory as a Graph, Not a Hierarchy**: Documents are nodes in a knowledge graph
-2. **Time as a First-Class Dimension**: All data is temporal by default
-3. **Semantic Understanding Built-In**: Vector embeddings for every document
-4. **Human-Readable Storage**: Markdown files remain the source of truth
-5. **AI-Native Query Language**: Designed for LLM interaction patterns
+1. **Code as a Knowledge Graph**: Symbols, dependencies, and relationships are first-class entities
+2. **Dual Storage Architecture**: Optimized separation of documents and graph data
+3. **Lightning-Fast Search**: <3ms trigram search with 210x performance improvement
+4. **Symbol-Aware Analysis**: Automatic extraction of functions, classes, traits, and their relationships
+5. **Impact Understanding**: Know what breaks when code changes
 
 ## Core Architecture Components
 
@@ -69,13 +69,21 @@ The KOTA Database (KotaDB) is a purpose-built storage engine designed specifical
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
+│              Codebase Intelligence Manager                   │
+├──────────────┬───────────────┬───────────────┬──────────────┤
+│   Symbol     │  Dependency   │    Impact     │  Semantic    │
+│  Extraction  │    Graph      │   Analysis    │    (HNSW)    │
+│      ✅      │       ✅      │      ✅       │      ✅      │
+├──────────────┴───────────────┴───────────────┴──────────────┤
 │                      Index Manager                           │
 ├──────────────┬───────────────┬───────────────┬──────────────┤
-│   Primary    │   Full-Text   │     Graph     │   Semantic   │
-│   (B+ Tree)  │   (Trigram)   │  (Adjacency)  │    (HNSW)    │
+│   Primary    │   Full-Text   │     Graph     │   Wildcard   │
+│   (B+ Tree)  │   (Trigram)   │  (Relations)  │   Patterns   │
+│      ✅      │   ✅ (<3ms)   │      ✅       │      ✅      │
 ├──────────────┼───────────────┼───────────────┼──────────────┤
 │   Temporal   │      Tag      │   Metadata    │   Spatial    │
-│ (Time-Series)│   (Bitmap)    │    (Hash)     │  (R-Tree)    │
+│   (Planned)  │   (Basic)     │    (Hash)     │  (Planned)   │
+│      🚧      │       ✅      │      ✅       │      🚧      │
 └──────────────┴───────────────┴───────────────┴──────────────┘
 ```
 

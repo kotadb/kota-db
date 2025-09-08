@@ -17,7 +17,7 @@ interface BinaryInfo {
 
 class BinaryInstaller {
   private readonly binDir: string;
-  private readonly version: string = '0.3.1'; // Should match KotaDB version
+  private readonly version: string = '0.5.0'; // Should match KotaDB version
   private readonly baseUrl: string = 'https://github.com/jayminwest/kota-db/releases/download';
 
   constructor() {

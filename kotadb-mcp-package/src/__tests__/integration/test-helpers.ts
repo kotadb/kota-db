@@ -39,22 +39,40 @@ export class MCPTestClient extends EventEmitter {
   }
 
   async cleanup(): Promise<void> {
-    if (this.process) {
-      this.process.kill('SIGTERM');
-      // Wait for process to exit gracefully
-      await new Promise<void>((resolve) => {
-        if (!this.process) {
-          resolve();
-          return;
-        }
-        this.process.on('exit', () => resolve());
-        setTimeout(() => {
-          if (this.process && !this.process.killed) {
-            this.process.kill('SIGKILL');
+    if (this.process && !this.process.killed) {
+      try {
+        // More robust process cleanup to prevent Jest hanging
+        this.process.kill('SIGTERM');
+        
+        // Wait for process to exit with proper timeout handling
+        await new Promise<void>((resolve) => {
+          if (!this.process || this.process.killed) {
+            resolve();
+            return;
           }
-          resolve();
-        }, 2000);
-      });
+          
+          let resolved = false;
+          const resolveOnce = () => {
+            if (!resolved) {
+              resolved = true;
+              resolve();
+            }
+          };
+          
+          this.process.on('exit', resolveOnce);
+          this.process.on('close', resolveOnce);
+          
+          // Force kill after timeout to prevent Jest hanging
+          setTimeout(() => {
+            if (this.process && !this.process.killed) {
+              this.process.kill('SIGKILL');
+            }
+            resolveOnce();
+          }, 1500);
+        });
+      } catch (error) {
+        console.warn('Error during process cleanup:', error);
+      }
       this.process = null;
     }
 
@@ -207,11 +225,11 @@ export class MCPTestClient extends EventEmitter {
     return response.result?.tools || [];
   }
 
-  async callTool(name: string, args: any): Promise<any> {
+  async callTool(name: string, args: any, timeoutMs: number = 5000): Promise<any> {
     const response = await this.sendRequest('tools/call', {
       name,
       arguments: args,
-    });
+    }, timeoutMs);
     return response.result;
   }
 
@@ -225,8 +243,8 @@ export class MCPTestClient extends EventEmitter {
     return response.result;
   }
 
-  async createDocument(doc: TestDocument): Promise<any> {
-    const result = await this.callTool('kotadb_document_create', doc);
+  async createDocument(doc: TestDocument, timeoutMs: number = 5000): Promise<any> {
+    const result = await this.callTool('kotadb_document_create', doc, timeoutMs);
     const content = JSON.parse(result.content[0].text);
     if (!content.success) {
       throw new Error(`Create failed: ${content.error}`);

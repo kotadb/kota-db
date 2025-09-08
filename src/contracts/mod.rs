@@ -78,8 +78,36 @@ pub trait Index: Send + Sync {
     /// Insert a key-value pair into the index
     async fn insert(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
 
+    /// Insert with document content for content-aware indices
+    ///
+    /// Default implementation calls insert() for backward compatibility.
+    /// Indices that need content (like trigram) should override this method.
+    async fn insert_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        _content: &[u8],
+    ) -> Result<()> {
+        // Default implementation ignores content and delegates to insert()
+        self.insert(id, path).await
+    }
+
     /// Update an existing entry in the index
     async fn update(&mut self, id: ValidatedDocumentId, path: ValidatedPath) -> Result<()>;
+
+    /// Update with document content for content-aware indices
+    ///
+    /// Default implementation calls update() for backward compatibility.
+    /// Indices that need content (like trigram) should override this method.
+    async fn update_with_content(
+        &mut self,
+        id: ValidatedDocumentId,
+        path: ValidatedPath,
+        _content: &[u8],
+    ) -> Result<()> {
+        // Default implementation ignores content and delegates to update()
+        self.update(id, path).await
+    }
 
     /// Delete an entry from the index
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool>;
@@ -179,21 +207,26 @@ impl Query {
     pub fn new(
         text: Option<String>,
         _tags: Option<Vec<String>>,
-        _path_pattern: Option<String>,
+        path_pattern: Option<String>,
         limit: usize,
     ) -> anyhow::Result<Self> {
         let mut search_terms = Vec::new();
         if let Some(text) = text {
             if !text.is_empty() && text != "*" {
-                search_terms.push(ValidatedSearchQuery::new(&text, 1)?); // min_length = 1
+                // Apply sanitization to the query text
+                let sanitized = crate::query_sanitization::sanitize_search_query(&text)?;
+                if !sanitized.is_empty() {
+                    search_terms.push(ValidatedSearchQuery::new(&sanitized.text, 1)?);
+                    // min_length = 1
+                }
             }
         }
 
         Ok(Self {
             search_terms,
             tags: Vec::new(),
-            path_pattern: None,
-            limit: ValidatedLimit::new(limit, 1000)?,
+            path_pattern,
+            limit: ValidatedLimit::new(limit, 100_000)?, // Increased from 1000 to handle large repositories
             offset: ValidatedPageId::new(1)?,
         })
     }
@@ -204,7 +237,7 @@ impl Query {
             search_terms: Vec::new(),
             tags: Vec::new(),
             path_pattern: None,
-            limit: ValidatedLimit::new(10, 1000).expect("Default limit values are valid"),
+            limit: ValidatedLimit::new(10, 100_000).expect("Default limit values are valid"),
             offset: ValidatedPageId::new(1).expect("Default page ID is valid"),
         }
     }

@@ -169,26 +169,36 @@ describe('MCP Stress Testing and Performance', () => {
       const numDocs = 75;
       const largeContent = 'Large document content. '.repeat(500); // ~10KB per document
       
-      const creationPromises = Array.from({ length: numDocs }, (_, i) =>
-        client.createDocument({
-          path: `/memory-stress/large-doc-${i}.md`,
-          title: `Large Document ${i}`,
-          content: largeContent + ` Document ID: ${i}`,
-          tags: ['memory', 'stress', 'large']
-        })
-      );
-
+      // Create documents in smaller batches to avoid overwhelming the system
+      const docs: any[] = [];
+      const createBatchSize = 15;
       perfTimer.start();
-      const docs = await Promise.all(creationPromises);
+      
+      for (let i = 0; i < numDocs; i += createBatchSize) {
+        const batchPromises = [];
+        for (let j = i; j < Math.min(i + createBatchSize, numDocs); j++) {
+          batchPromises.push(
+            client.createDocument({
+              path: `/memory-stress/large-doc-${j}.md`,
+              title: `Large Document ${j}`,
+              content: largeContent + ` Document ID: ${j}`,
+              tags: ['memory', 'stress', 'large']
+            }, 15000) // 15 second timeout for memory-intensive operations
+          );
+        }
+        const batchDocs = await Promise.all(batchPromises);
+        docs.push(...batchDocs);
+      }
+      
       const creationTime = perfTimer.end();
       
       const afterCreationMemory = process.memoryUsage();
       console.log(`After creation: ${Math.round(afterCreationMemory.heapUsed / 1024 / 1024)}MB`);
       
       // Perform operations on all documents in smaller batches to avoid timeouts
-      const batchSize = 10;
-      for (let i = 0; i < docs.length; i += batchSize) {
-        const batch = docs.slice(i, i + batchSize);
+      const operationBatchSize = 10;
+      for (let i = 0; i < docs.length; i += operationBatchSize) {
+        const batch = docs.slice(i, i + operationBatchSize);
         const operationPromises = batch.map(doc => 
           Promise.all([
             client.getDocument(doc.id),
@@ -210,7 +220,7 @@ describe('MCP Stress Testing and Performance', () => {
       console.log(`Memory growth: ${memoryGrowthMB.toFixed(2)}MB`);
       
       expect(memoryGrowthMB).toBeLessThan(100); // Less than 100MB growth for the test
-    });
+    }, 30000);
 
     test('should handle file descriptor limits', async () => {
       // Test rapid file operations to stress file descriptor usage

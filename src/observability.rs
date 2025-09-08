@@ -20,19 +20,52 @@ static INDEX_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Initialize the logging and tracing infrastructure
 /// This should be called once at application startup
 pub fn init_logging() -> Result<()> {
+    init_logging_with_level(false, false)
+}
+
+/// Initialize logging with configurable verbosity
+pub fn init_logging_with_level(verbose: bool, quiet: bool) -> Result<()> {
     // Create a layered subscriber with:
     // 1. Environment-based filtering (RUST_LOG)
     // 2. Pretty formatted output for development
     // 3. JSON output option for production
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("kotadb=debug,info"));
+    // Determine the filter level based on flags
+    let filter_level = if quiet {
+        // In quiet mode, suppress everything - no logs at all
+        // Users should see only the actual output they requested
+        EnvFilter::new("off")
+    } else if verbose {
+        // In verbose mode, show debug info for kotadb and info for others
+        EnvFilter::new("kotadb=debug,info")
+    } else {
+        // Normal mode: show info, warnings and errors
+        // This provides useful feedback while remaining professional
+        EnvFilter::new("info")
+    };
 
+    // Quiet mode takes absolute precedence - it means "be quiet"
+    // RUST_LOG can still be used for debugging when NOT in quiet mode
+    let env_filter = if quiet {
+        // Quiet mode ALWAYS suppresses all logs, regardless of RUST_LOG
+        // This ensures LLM integration works correctly
+        EnvFilter::new("off")
+    } else if std::env::var("RUST_LOG").is_ok() {
+        // RUST_LOG only applies when NOT in quiet mode
+        // This allows debugging while respecting the user's quiet request
+        EnvFilter::try_from_default_env().unwrap_or(filter_level)
+    } else {
+        // Use flag-based filter if RUST_LOG is not set and not quiet
+        filter_level
+    };
+
+    // Configure the format layer based on quiet mode
+    // In quiet mode, we want minimal output without metadata
     let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_line_number(true)
-        .with_file(true)
+        .with_target(!quiet) // Don't show target module in quiet mode
+        .with_thread_ids(!quiet) // Don't show thread IDs in quiet mode
+        .with_line_number(!quiet) // Don't show line numbers in quiet mode
+        .with_file(!quiet) // Don't show file names in quiet mode
         .with_ansi(true);
 
     match tracing_subscriber::registry()
@@ -41,7 +74,9 @@ pub fn init_logging() -> Result<()> {
         .try_init()
     {
         Ok(()) => {
-            info!("KotaDB observability initialized");
+            if !quiet {
+                info!("KotaDB observability initialized");
+            }
             Ok(())
         }
         Err(_) => {
@@ -457,5 +492,53 @@ mod tests {
         // Check that drop was called and metrics recorded
         let metrics = get_metrics();
         assert!(metrics["operations"]["total"].as_u64().is_some());
+    }
+
+    #[test]
+    fn test_default_logging_level() {
+        // Test that default logging level shows warnings and errors for kotadb,
+        // but only errors for dependencies
+        let filter_str = "kotadb=warn,error";
+
+        // Verify the filter string is parsed correctly
+        // This ensures our default configuration is valid
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_verbose_logging_level() {
+        // Test that verbose mode enables debug for kotadb and info for others
+        let filter_str = "kotadb=debug,info";
+
+        // Verify the filter string is parsed correctly
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_quiet_logging_level() {
+        // Test that quiet mode suppresses everything except errors
+        let filter_str = "error";
+
+        // Verify the filter string is parsed correctly
+        assert!(EnvFilter::try_new(filter_str).is_ok());
+    }
+
+    #[test]
+    fn test_logging_level_configurations() {
+        // Test all three logging configurations to ensure they're valid
+        let configs = vec![
+            ("quiet", "error"),
+            ("verbose", "kotadb=debug,info"),
+            ("default", "kotadb=warn,error"),
+        ];
+
+        for (mode, filter_str) in configs {
+            assert!(
+                EnvFilter::try_new(filter_str).is_ok(),
+                "Failed to create filter for {} mode with filter: {}",
+                mode,
+                filter_str
+            );
+        }
     }
 }

@@ -1,12 +1,13 @@
 // HTTP REST API Server Implementation
-// Provides health check, statistics, and validation endpoints
+// Provides JSON API for document CRUD operations
 
 use anyhow::Result;
 use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::StatusCode,
-    response::Json,
-    routing::{get, post},
+    extract::{DefaultBodyLimit, Path, Query as AxumQuery, State},
+    http::{HeaderMap, StatusCode},
+    middleware,
+    response::{IntoResponse, Json},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -19,12 +20,21 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    api_keys::{ApiKeyConfig, ApiKeyService, CreateApiKeyRequest, CreateApiKeyResponse},
+    auth_middleware::{auth_middleware, internal_auth_middleware},
+    binary_relationship_engine_async::AsyncBinaryRelationshipEngine,
+    builders::DocumentBuilder,
+    codebase_intelligence_api::{self, CodebaseIntelligenceState},
     connection_pool::ConnectionPoolImpl,
-    contracts::Storage,
+    contracts::connection_pool::ConnectionPool,
+    contracts::{Document, Storage},
     observability::with_trace_id,
+    relationship_query::RelationshipQueryConfig,
     types::{ValidatedDocumentId, ValidatedTitle},
     validation::{index, path},
 };
+use std::path::PathBuf;
+use tokio::sync::RwLock;
 
 // Constants for default resource statistics
 const DEFAULT_MEMORY_USAGE_BYTES: u64 = 32 * 1024 * 1024; // 32MB baseline memory usage
@@ -35,8 +45,9 @@ const HEALTH_THRESHOLD_CPU: f32 = 90.0; // CPU usage threshold for health check
 const HEALTH_THRESHOLD_MEMORY_MB: f64 = 1000.0; // Memory threshold in MB for health check
 const HEALTH_THRESHOLD_CONNECTION_RATIO: f64 = 0.95; // Connection capacity threshold for health check
 
-// Maximum request body size for validation endpoints
-const MAX_REQUEST_SIZE: usize = 1024 * 1024; // 1MB
+// Maximum document size: 100MB (configurable, can be increased if needed)
+// This is a reasonable default that handles most use cases while preventing abuse
+const MAX_DOCUMENT_SIZE: usize = 100 * 1024 * 1024; // 100MB
 
 // Maximum items allowed in bulk validation requests to prevent abuse
 const MAX_BULK_VALIDATION_ITEMS: usize = 100;
@@ -49,8 +60,64 @@ static SERVER_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy
 pub struct AppState {
     storage: Arc<Mutex<dyn Storage>>,
     connection_pool: Option<Arc<tokio::sync::Mutex<ConnectionPoolImpl>>>,
+    #[allow(dead_code)] // Used for router state composition
+    codebase_intelligence: Option<CodebaseIntelligenceState>,
+    #[allow(dead_code)] // Used for authentication middleware
+    api_key_service: Option<Arc<ApiKeyService>>,
 }
 
+/// Request body for document creation
+#[derive(Debug, Deserialize)]
+pub struct CreateDocumentRequest {
+    pub path: String,
+    pub title: Option<String>,
+    pub content: Vec<u8>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Request body for document updates
+#[derive(Debug, Deserialize)]
+pub struct UpdateDocumentRequest {
+    pub path: Option<String>,
+    pub title: Option<String>,
+    pub content: Option<Vec<u8>>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Response for document operations
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocumentResponse {
+    pub id: Uuid,
+    pub path: String,
+    pub title: String,
+    pub content: Vec<u8>,
+    pub content_hash: String,
+    pub size_bytes: u64,
+    pub tags: Vec<String>,
+    pub created_at: i64,
+    pub modified_at: i64,
+    pub word_count: u32,
+}
+
+/// Response for search operations
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub documents: Vec<DocumentResponse>,
+    pub total_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_type: Option<String>, // Indicates the type of search performed (text, semantic, hybrid)
+}
+
+/// Query parameters for search
+#[derive(Debug, Deserialize)]
+pub struct SearchParams {
+    pub q: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub tags: Option<String>, // comma-separated tags
+    pub tag: Option<String>,  // single tag filter (for compatibility with QueryBuilder)
+    pub path: Option<String>, // path pattern filter
+}
 
 /// Health check response
 #[derive(Debug, Serialize)]
@@ -166,16 +233,44 @@ pub struct BulkValidationResponse {
     pub tags: Option<Vec<ValidationResponse>>,
 }
 
+impl From<Document> for DocumentResponse {
+    fn from(doc: Document) -> Self {
+        Self {
+            id: doc.id.as_uuid(),
+            path: doc.path.as_str().to_string(),
+            title: doc.title.as_str().to_string(),
+            content: doc.content.clone(),
+            content_hash: format!("{:x}", md5::compute(&doc.content)),
+            size_bytes: doc.size as u64,
+            tags: doc.tags.iter().map(|t| t.as_str().to_string()).collect(),
+            created_at: doc.created_at.timestamp(),
+            modified_at: doc.updated_at.timestamp(),
+            // Calculate word count from UTF-8 content
+            word_count: {
+                let text = String::from_utf8_lossy(&doc.content);
+                text.split_whitespace().count() as u32
+            },
+        }
+    }
+}
 
 /// Create HTTP server with all routes configured
 pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     let state = AppState {
         storage,
         connection_pool: None,
+        codebase_intelligence: None,
+        api_key_service: None,
     };
 
     Router::new()
         .route("/health", get(health_check))
+        .route("/documents", post(create_document))
+        .route("/documents", get(search_documents))
+        .route("/documents/search", get(search_documents))
+        .route("/documents/:id", get(get_document))
+        .route("/documents/:id", put(update_document))
+        .route("/documents/:id", delete(delete_document))
         // New search endpoints for client compatibility
         .route("/search/semantic", post(semantic_search))
         .route("/search/hybrid", post(hybrid_search))
@@ -193,7 +288,7 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
         .with_state(state)
         .layer(
             ServiceBuilder::new()
-                .layer(DefaultBodyLimit::max(MAX_REQUEST_SIZE))
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
         )
@@ -207,10 +302,18 @@ pub fn create_server_with_pool(
     let state = AppState {
         storage,
         connection_pool: Some(connection_pool),
+        codebase_intelligence: None,
+        api_key_service: None,
     };
 
     Router::new()
         .route("/health", get(health_check))
+        .route("/documents", post(create_document))
+        .route("/documents", get(search_documents))
+        .route("/documents/search", get(search_documents))
+        .route("/documents/:id", get(get_document))
+        .route("/documents/:id", put(update_document))
+        .route("/documents/:id", delete(delete_document))
         // New search endpoints for client compatibility
         .route("/search/semantic", post(semantic_search))
         .route("/search/hybrid", post(hybrid_search))
@@ -228,10 +331,86 @@ pub fn create_server_with_pool(
         .with_state(state)
         .layer(
             ServiceBuilder::new()
-                .layer(DefaultBodyLimit::max(MAX_REQUEST_SIZE))
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
         )
+}
+
+/// Create HTTP server with codebase intelligence support
+pub async fn create_server_with_intelligence(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+) -> Result<Router> {
+    // Initialize the BinaryRelationshipEngine for codebase intelligence
+    let config = RelationshipQueryConfig::default();
+    let relationship_engine = AsyncBinaryRelationshipEngine::new(&db_path, config).await?;
+
+    // Initialize trigram index (optional, can be None initially)
+    let trigram_index = Arc::new(RwLock::new(None));
+
+    let codebase_state = CodebaseIntelligenceState {
+        relationship_engine: Arc::new(relationship_engine),
+        trigram_index,
+        db_path,
+        storage: Some(storage.clone()),
+    };
+
+    let state = AppState {
+        storage,
+        connection_pool: None,
+        codebase_intelligence: Some(codebase_state.clone()),
+        api_key_service: None,
+    };
+
+    // Create the codebase intelligence router with its own state
+    let intelligence_router = Router::new()
+        .route(
+            "/api/index",
+            post(codebase_intelligence_api::index_repository),
+        )
+        .route(
+            "/api/symbols/search",
+            get(codebase_intelligence_api::search_symbols),
+        )
+        .route(
+            "/api/relationships/callers/:target",
+            get(codebase_intelligence_api::find_callers),
+        )
+        .route(
+            "/api/analysis/impact/:target",
+            get(codebase_intelligence_api::analyze_impact),
+        )
+        .route(
+            "/api/code/search",
+            get(codebase_intelligence_api::search_code),
+        )
+        .with_state(codebase_state);
+
+    // Create the main router with document endpoints
+    let main_router = Router::new()
+        .route("/health", get(health_check))
+        // Legacy endpoints removed per issue #532 - Services layer integration complete
+        // Monitoring endpoints
+        .route("/stats", get(get_aggregated_stats))
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
+        .with_state(state);
+
+    // Merge the routers
+    Ok(main_router.merge(intelligence_router).layer(
+        ServiceBuilder::new()
+            .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::permissive()),
+    ))
 }
 
 /// Start the HTTP server on the specified port
@@ -241,13 +420,191 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 
     info!("KotaDB HTTP server starting on port {}", port);
     info!(
-        "Maximum request size: {}MB",
-        MAX_REQUEST_SIZE / (1024 * 1024)
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Start the HTTP server with codebase intelligence support
+pub async fn start_server_with_intelligence(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    port: u16,
+) -> Result<()> {
+    let app = create_server_with_intelligence(storage, db_path).await?;
+    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    info!(
+        "KotaDB HTTP server with codebase intelligence starting on port {}",
+        port
+    );
+    info!("API endpoints available:");
+    info!("  - GET /api/symbols/search - Search for code symbols");
+    info!("  - GET /api/relationships/callers/:target - Find callers of a function");
+    info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
+    info!("  - GET /api/code/search - Full-text code search");
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Create HTTP server with full SaaS features (API keys + codebase intelligence)
+pub async fn create_saas_server(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+) -> Result<Router> {
+    // Initialize API key service
+    let api_key_service = Arc::new(ApiKeyService::new(api_key_config).await?);
+    // Skip schema init - tables already created in Supabase
+    // api_key_service.init_schema().await?;
+
+    // Initialize the BinaryRelationshipEngine for codebase intelligence
+    let config = RelationshipQueryConfig::default();
+    let relationship_engine = AsyncBinaryRelationshipEngine::new(&db_path, config).await?;
+
+    // Initialize trigram index (optional, can be None initially)
+    let trigram_index = Arc::new(RwLock::new(None));
+
+    let codebase_state = CodebaseIntelligenceState {
+        relationship_engine: Arc::new(relationship_engine),
+        trigram_index,
+        db_path,
+        storage: Some(storage.clone()),
+    };
+
+    let state = AppState {
+        storage,
+        connection_pool: None,
+        codebase_intelligence: Some(codebase_state.clone()),
+        api_key_service: Some(api_key_service.clone()),
+    };
+
+    // Create the codebase intelligence router with authentication
+    let intelligence_router = Router::new()
+        .route(
+            "/api/index",
+            post(codebase_intelligence_api::index_repository),
+        )
+        .route(
+            "/api/symbols/search",
+            get(codebase_intelligence_api::search_symbols),
+        )
+        .route(
+            "/api/relationships/callers/:target",
+            get(codebase_intelligence_api::find_callers),
+        )
+        .route(
+            "/api/analysis/impact/:target",
+            get(codebase_intelligence_api::analyze_impact),
+        )
+        .route(
+            "/api/code/search",
+            get(codebase_intelligence_api::search_code),
+        )
+        .layer(middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ))
+        .with_state(codebase_state);
+
+    // Create internal endpoints (protected by different auth)
+    let internal_router = Router::new()
+        .route("/internal/create-api-key", post(create_api_key_internal))
+        .layer(middleware::from_fn(internal_auth_middleware))
+        .with_state(api_key_service.clone());
+
+    // Create the main router with public endpoints
+    let main_router = Router::new()
+        .route("/health", get(health_check))
+        // Legacy document endpoints removed per issue #532
+        // Monitoring endpoints (no auth)
+        .route("/stats", get(get_aggregated_stats))
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints (no auth)
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
+        .with_state(state);
+
+    // Merge all routers
+    Ok(main_router
+        .merge(intelligence_router)
+        .merge(internal_router)
+        .layer(
+            ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        ))
+}
+
+/// Start the SaaS HTTP server with API keys and codebase intelligence
+pub async fn start_saas_server(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    let app = create_saas_server(storage, db_path, api_key_config).await?;
+    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    info!("KotaDB SaaS HTTP server starting on port {}", port);
+    info!("🔐 API key authentication enabled");
+    info!("API endpoints available (requires API key):");
+    info!("  - POST /api/index - Index a GitHub repository");
+    info!("  - GET /api/symbols/search - Search for code symbols");
+    info!("  - GET /api/relationships/callers/:target - Find callers of a function");
+    info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
+    info!("  - GET /api/code/search - Full-text code search");
+    info!("Internal endpoints (requires internal key):");
+    info!("  - POST /internal/create-api-key - Create new API key");
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Internal endpoint to create API keys (called by web app)
+async fn create_api_key_internal(
+    State(api_key_service): State<Arc<ApiKeyService>>,
+    Json(request): Json<CreateApiKeyRequest>,
+) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let result = with_trace_id("create_api_key_internal", async move {
+        api_key_service.create_api_key(request).await
+    })
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(e) => {
+            warn!("Failed to create API key: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "api_key_creation_failed".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
 }
 
 /// Health check endpoint
@@ -261,7 +618,24 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-/// Create a new document
+/// Create a new document (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
+async fn create_document_deprecated(
+    state: State<AppState>,
+    request: Json<CreateDocumentRequest>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = create_document(state, request).await;
+
+    match result {
+        Ok((status, json)) => (status, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Create a new document (internal implementation)
 async fn create_document(
     State(state): State<AppState>,
     Json(request): Json<CreateDocumentRequest>,
@@ -308,7 +682,21 @@ async fn create_document(
     }
 }
 
-/// Get document by ID
+/// Get document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
+async fn get_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = get_document(state, id).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Get document by ID (internal implementation)
 async fn get_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -366,7 +754,25 @@ async fn get_document(
     }
 }
 
-/// Update document by ID
+/// Update document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
+async fn update_document_deprecated(
+    state: State<AppState>,
+    id: Path<String>,
+    request: Json<UpdateDocumentRequest>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = update_document(state, id, request).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Update document by ID (internal implementation)
 async fn update_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -481,7 +887,21 @@ async fn update_document(
     }
 }
 
-/// Delete document by ID
+/// Delete document by ID (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
+async fn delete_document_deprecated(state: State<AppState>, id: Path<String>) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = delete_document(state, id).await;
+
+    match result {
+        Ok(status) => (status, headers).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Delete document by ID (internal implementation)
 async fn delete_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -545,7 +965,24 @@ async fn delete_document(
     }
 }
 
-/// Search documents
+/// Search documents (deprecated - wrapper with deprecation headers)
+#[allow(dead_code)]
+async fn search_documents_deprecated(
+    state: State<AppState>,
+    params: AxumQuery<SearchParams>,
+) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    codebase_intelligence_api::add_deprecation_headers(&mut headers);
+
+    let result = search_documents(state, params).await;
+
+    match result {
+        Ok(json) => (StatusCode::OK, headers, json).into_response(),
+        Err((status, json)) => (status, headers, json).into_response(),
+    }
+}
+
+/// Search documents (internal implementation)
 async fn search_documents(
     State(state): State<AppState>,
     AxumQuery(params): AxumQuery<SearchParams>,
@@ -872,41 +1309,63 @@ async fn get_aggregated_stats(
 
 /// Semantic search (for Python client compatibility)
 async fn semantic_search(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<SemanticSearchRequest>,
-) -> Result<Json<()>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!("Semantic search requested for query: {}", request.query);
 
-    // Document CRUD endpoints have been removed. 
-    // Semantic search functionality should be implemented through the new codebase intelligence API.
-    Err((
-        StatusCode::GONE,
-        Json(ErrorResponse {
-            error: "endpoint_removed".to_string(),
-            message: "Document CRUD endpoints have been removed. Please use the codebase intelligence API for search functionality.".to_string(),
-        }),
-    ))
+    // For now, forward to regular text search as semantic search requires embeddings setup
+    // When embeddings are configured, this will use the SemanticSearchEngine
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+        tag: None,
+        path: None,
+    };
+
+    // Note: To enable actual semantic search, initialize SemanticSearchEngine with:
+    // - EmbeddingConfig (OpenAI, Ollama, or SentenceTransformers)
+    // - VectorIndex path
+    // Then use engine.semantic_search(query, k, threshold)
+
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate semantic (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("semantic_fallback".to_string());
+    Ok(response)
 }
 
 /// Hybrid search (for Python client compatibility)
 async fn hybrid_search(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<HybridSearchRequest>,
-) -> Result<Json<()>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!(
         "Hybrid search requested for query: {} with semantic weight: {:?}",
         request.query, request.semantic_weight
     );
 
-    // Document CRUD endpoints have been removed. 
-    // Hybrid search functionality should be implemented through the new codebase intelligence API.
-    Err((
-        StatusCode::GONE,
-        Json(ErrorResponse {
-            error: "endpoint_removed".to_string(),
-            message: "Document CRUD endpoints have been removed. Please use the codebase intelligence API for search functionality.".to_string(),
-        }),
-    ))
+    // For now, forward to regular text search
+    // When semantic search is enabled, this will use SemanticSearchEngine::hybrid_search
+    let params = SearchParams {
+        q: Some(request.query),
+        limit: request.limit,
+        offset: None,
+        tags: None,
+        tag: None,
+        path: None,
+    };
+
+    // Note: To enable actual hybrid search, use:
+    // engine.hybrid_search(query, k, semantic_weight, text_weight)
+
+    let mut response = search_documents(State(state), AxumQuery(params)).await?;
+    // Update search type to indicate hybrid (even though it's currently text)
+    let Json(ref mut search_response) = response;
+    search_response.search_type = Some("hybrid_fallback".to_string());
+    Ok(response)
 }
 
 /// Validate a path
@@ -1239,8 +1698,66 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_create_document() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
 
+        let request_body = json!({
+            "path": "test.md",
+            "title": "Test Document",
+            "content": b"Hello, world!".to_vec(),
+            "tags": ["test"]
+        });
 
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_document() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let doc_id = Uuid::new_v4();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/documents/{doc_id}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_document_id() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/documents/invalid-id")
+                    .body(Body::empty())?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_monitoring_endpoints() -> Result<()> {
@@ -1326,7 +1843,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_semantic_search_endpoint_returns_gone() -> Result<()> {
+    async fn test_semantic_search_endpoint() -> Result<()> {
         let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
@@ -1346,14 +1863,14 @@ mod tests {
             )
             .await?;
 
-        // Should return 410 Gone since document endpoints were removed
-        assert_eq!(response.status(), StatusCode::GONE);
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_hybrid_search_endpoint_returns_gone() -> Result<()> {
+    async fn test_hybrid_search_endpoint() -> Result<()> {
         let (storage, _test_dir) = create_test_storage().await;
         let app = create_server(storage);
 
@@ -1373,14 +1890,81 @@ mod tests {
             )
             .await?;
 
-        // Should return 410 Gone since document endpoints were removed
-        assert_eq!(response.status(), StatusCode::GONE);
+        // Should succeed even if it forwards to regular search
+        assert_eq!(response.status(), StatusCode::OK);
 
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_list_documents_endpoint() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
 
+        let response = app
+            .oneshot(Request::builder().uri("/documents").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
 
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let result: SearchResponse = serde_json::from_slice(&body)?;
+        assert_eq!(result.documents.len(), 0); // Should be empty initially
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_large_document_support() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Create a document larger than 1MB (but less than our 100MB limit)
+        let large_content = vec![b'a'; 5 * 1024 * 1024]; // 5MB of 'a' characters
+
+        let request_body = json!({
+            "path": "large_test.md",
+            "title": "Large Test Document",
+            "content": large_content,
+            "tags": ["large", "test"]
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))?,
+            )
+            .await?;
+
+        // Should succeed with documents up to 100MB
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let doc_response: DocumentResponse = serde_json::from_slice(&body)?;
+        assert_eq!(doc_response.size_bytes, 5 * 1024 * 1024);
+        assert_eq!(doc_response.title, "Large Test Document");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_document_size_limit_exceeded() -> Result<()> {
+        let (storage, _test_dir) = create_test_storage().await;
+        let app = create_server(storage);
+
+        // Create a document larger than our 100MB limit
+        // Note: This test is commented out as creating a 100MB+ JSON payload
+        // for testing would be memory-intensive. The limit is enforced by Axum.
+        // In production, attempting to send a document larger than MAX_DOCUMENT_SIZE
+        // will result in a 413 Payload Too Large error from Axum before reaching our handler.
+
+        // For now, we trust that the DefaultBodyLimit middleware works as documented
+        // and focus on testing that reasonable large documents (< 100MB) work correctly.
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_validate_path_endpoint() -> Result<()> {

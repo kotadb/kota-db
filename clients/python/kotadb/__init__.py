@@ -14,6 +14,7 @@ Example usage:
 from .builders import DocumentBuilder, QueryBuilder, UpdateBuilder
 from .client import KotaDB
 from .exceptions import ConnectionError, KotaDBError, ValidationError
+from .server import KotaDBServer, start_server, ensure_binary_installed
 from .types import Document, QueryResult, SearchResult
 from .validated_types import (
     NonZeroSize,
@@ -25,7 +26,7 @@ from .validated_types import (
 )
 from .validation import ValidationError as ClientValidationError
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"
 __all__ = [
     "ClientValidationError",
     "ConnectionError",
@@ -33,6 +34,7 @@ __all__ = [
     "DocumentBuilder",
     "KotaDB",
     "KotaDBError",
+    "KotaDBServer",
     "NonZeroSize",
     "QueryBuilder",
     "QueryResult",
@@ -44,4 +46,6 @@ __all__ = [
     "ValidatedTimestamp",
     "ValidatedTitle",
     "ValidationError",
+    "ensure_binary_installed",
+    "start_server",
 ]

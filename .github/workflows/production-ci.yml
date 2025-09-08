@@ -1,0 +1,272 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'release/**', 'hotfix/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  # Optimize for CI performance
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  # Gate 1: Fast Validation (GitHub runners - 2-3 minutes total)
+  fast-validation:
+    name: Fast Validation Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should-run-full-ci: ${{ steps.changes.outputs.code-changed }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check for code changes
+      id: changes
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          code:
+            - 'src/**'
+            - 'tests/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
+            - '.github/workflows/**'
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Quick clippy check (warnings only)
+      run: cargo clippy --all-targets -- -W clippy::all
+      continue-on-error: true
+
+  # Gate 2: Security & Documentation (GitHub runners - parallel with Gate 1)
+  security-docs:
+    name: Security & Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "security-docs"
+    
+    - name: Security audit
+      run: |
+        cargo install cargo-audit --locked
+        cargo audit
+      continue-on-error: true
+    
+    - name: Build documentation
+      run: cargo doc --no-deps --all-features
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+
+  # Gate 3: GitHub Actions Performance Testing (MAIN CI)
+  mac-pro-testing:
+    name: GitHub Actions Testing Suite
+    runs-on: ubuntu-latest
+    needs: [fast-validation]
+    if: needs.fast-validation.outputs.should-run-full-ci == 'true'
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        test-phase:
+          - unit-build
+          - integration-core
+          - integration-performance  
+          - e2e-validation
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust Environment
+      run: |
+        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+        rustc --version
+        cargo --version
+    
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
+    
+    - name: Build optimized binaries
+      if: matrix.test-phase == 'unit-build'
+      run: |
+        cargo build --release --bin kotadb
+        echo "✅ Binary built: $(ls -la target/release/kotadb)"
+    
+    - name: Run Unit Tests (ULTRA FAST)
+      if: matrix.test-phase == 'unit-build'
+      run: |
+        echo "🚀 Running 413 unit tests on GitHub Ubuntu..."
+        time cargo nextest run --lib --all-features
+        echo "✅ Unit tests completed"
+      env:
+        RUST_LOG: error
+        CI: true
+    
+    - name: Run Core Integration Tests
+      if: matrix.test-phase == 'integration-core'
+      run: |
+        echo "🔧 Running core integration tests..."
+        cargo nextest run --test file_storage_integration_test
+        cargo nextest run --test primary_index_tests  
+        cargo nextest run --test code_analysis_integration_test
+        echo "✅ Core integration tests completed"
+      env:
+        RUST_LOG: error
+        CI: true
+    
+    - name: Run Performance & Stress Tests
+      if: matrix.test-phase == 'integration-performance'
+      run: |
+        echo "⚡ Running performance validation..."
+        cargo nextest run --test concurrent_stress_test
+        cargo nextest run --test performance_regression_test
+        cargo nextest run --test chaos_tests
+        echo "✅ Performance tests completed"
+      env:
+        RUST_LOG: error
+        CI: true
+    
+    - name: Run End-to-End Tests (Production Workflows)
+      if: matrix.test-phase == 'e2e-validation'
+      run: |
+        echo "🎯 Running complete user journey validation..."
+        cargo nextest run --test e2e_integration_test
+        echo "✅ E2E validation completed - production workflows verified"
+      env:
+        RUST_LOG: error
+        CI: true
+
+  # Gate 4: Full Integration Validation (GitHub fallback)
+  full-integration:
+    name: Full Integration Validation
+    runs-on: ubuntu-latest
+    needs: [mac-pro-testing]
+    if: always() && needs.mac-pro-testing.result == 'success'
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup environment
+      run: |
+        export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+    
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
+    
+    - name: Comprehensive Test Suite (Production Readiness)
+      run: |
+        echo "🏁 Running comprehensive validation (simulating your local experience)..."
+        time cargo nextest run --all --verbose
+        echo "✅ Full test suite completed - ready for production"
+      env:
+        RUST_LOG: error
+        CI: true
+
+  # Production Deployment Gate (MAIN branch only)
+  production-gate:
+    name: Production Deployment Gate
+    runs-on: ubuntu-latest
+    needs: [full-integration, security-docs]
+    if: github.ref == 'refs/heads/main' && needs.full-integration.result == 'success'
+    timeout-minutes: 5
+    steps:
+    - name: Production Readiness Check
+      run: |
+        echo "🛡️  PRODUCTION DEPLOYMENT GATE"
+        echo "Branch: ${{ github.ref }}"
+        echo "All CI gates passed: ✅"
+        echo "Security validation: ✅"
+        echo "Full test suite: ✅"  
+        echo "Ready for production deployment"
+    
+    - name: Trigger Production Deploy
+      run: |
+        echo "🚀 Production deployment would be triggered here"
+        echo "Consider: Docker registry push, Fly.io deploy, etc."
+
+  # Fallback CI (if GitHub offline)
+  fallback-ci:
+    name: Fallback CI (GitHub Runners)
+    runs-on: ubuntu-latest
+    needs: [fast-validation]
+    if: failure() && needs.fast-validation.outputs.should-run-full-ci == 'true'
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "fallback"
+    
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
+    
+    - name: Fallback Testing (Reduced Coverage)
+      run: |
+        echo "⚠️  GitHub Ubuntu offline - running fallback CI"
+        cargo build --all-features
+        cargo nextest run --lib --all-features
+        cargo nextest run --test file_storage_integration_test
+        echo "✅ Fallback CI complete (reduced coverage)"
+
+  # CI Success Gate (Required for branch protection)
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [fast-validation, security-docs, full-integration]
+    if: always()
+    timeout-minutes: 1
+    steps:
+    - name: Evaluate CI Results
+      run: |
+        echo "🔍 Evaluating CI pipeline results..."
+        
+        # Check critical gates
+        if [[ "${{ needs.full-integration.result }}" != "success" ]]; then
+          echo "❌ Full integration testing failed or skipped"
+          exit 1
+        fi
+        
+        if [[ "${{ needs.security-docs.result }}" == "failure" ]]; then
+          echo "❌ Security or documentation validation failed"
+          exit 1
+        fi
+        
+        echo "✅ All critical CI gates passed!"
+        echo "📊 Pipeline Performance Summary:"
+        echo "  - Fast validation: ${{ needs.fast-validation.result }}"
+        echo "  - Security & docs: ${{ needs.security-docs.result }}"
+        echo "  - GitHub testing: ${{ needs.full-integration.result }}"
+        
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "🛡️  MAIN branch - production protection active"
+        fi

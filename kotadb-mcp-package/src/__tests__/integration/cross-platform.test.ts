@@ -306,7 +306,7 @@ describe('Cross-Platform Compatibility', () => {
           title: `Memory Test Document ${i}`,
           content: `Content for memory test document ${i}. `.repeat(100), // ~4KB per doc
           tags: ['memory', 'test'],
-        });
+        }, 10000); // 10 second timeout for memory-intensive operations
         docs.push(doc);
       }
 

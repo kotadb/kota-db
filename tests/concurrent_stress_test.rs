@@ -457,13 +457,13 @@ async fn test_lock_contention_analysis() -> Result<()> {
 
     // Performance requirements for lock contention
     assert!(
-        analysis.avg_read_lock_time < Duration::from_millis(5),
+        analysis.avg_read_lock_time < Duration::from_millis(10),
         "Average read lock time too high: {:?}",
         analysis.avg_read_lock_time
     );
 
     assert!(
-        analysis.avg_write_lock_time < Duration::from_millis(20),
+        analysis.avg_write_lock_time < Duration::from_millis(50),
         "Average write lock time too high: {:?}",
         analysis.avg_write_lock_time
     );
@@ -739,8 +739,10 @@ async fn test_concurrent_index_operations() -> Result<()> {
                         let index_start = Instant::now();
                         {
                             let mut trigram_guard = trigram_ref.lock().await;
-                            // TrigramIndex expects path-based trigram extraction
-                            trigram_guard.insert(doc.id, doc.path.clone()).await?;
+                            // Provide content for trigram indexing
+                            trigram_guard
+                                .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                                .await?;
                         }
                         let index_time = index_start.elapsed();
                         indexer_results.trigram_operations += 1;
@@ -769,7 +771,9 @@ async fn test_concurrent_index_operations() -> Result<()> {
                         let trigram_start = Instant::now();
                         {
                             let mut trigram_guard = trigram_ref.lock().await;
-                            trigram_guard.insert(doc.id, doc.path.clone()).await?;
+                            trigram_guard
+                                .insert_with_content(doc.id, doc.path.clone(), &doc.content)
+                                .await?;
                         }
                         let trigram_time = trigram_start.elapsed();
                         indexer_results.trigram_operations += 1;

@@ -69,7 +69,15 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
 
                 if is_read_operation {
                     // Read operation - simulate random document access
-                    let random_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+                    // Use a valid UUID but one that likely doesn't exist (expected behavior)
+                    let random_id = match ValidatedDocumentId::from_uuid(Uuid::new_v4()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            errors += 1;
+                            operations_completed += 1;
+                            continue;
+                        }
+                    };
 
                     match async {
                         let storage_guard = storage_ref.lock().await;
@@ -77,58 +85,56 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
                     }
                     .await
                     {
-                        Ok(_) => reads += 1,
-                        Err(_) => errors += 1,
+                        Ok(_) => reads += 1,   // Success whether found or not found
+                        Err(_) => errors += 1, // Only count actual errors
                     }
                 } else {
-                    // Write operation
-                    let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-                    let path =
-                        ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
-                    let title =
-                        ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
-                    let content = format!(
-                        "Phase 2B enhanced concurrent stress test content for pattern {pattern_id} operation {op_num}. \
-                         This tests advanced concurrent access patterns beyond the 100 user baseline."
-                    ).into_bytes();
-                    let tags = vec![
-                        ValidatedTag::new(format!("pattern-{pattern_id}"))?,
-                        ValidatedTag::new("phase2b-stress")?,
-                    ];
-                    let now = chrono::Utc::now();
-                    let content_size = content.len();
+                    // Write operation - handle validation errors gracefully
+                    let write_result = async {
+                        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+                        let path = ValidatedPath::new(format!("stress/pattern_{pattern_id}/op_{op_num}.md"))?;
+                        let title = ValidatedTitle::new(format!("Stress Test Doc P{pattern_id} O{op_num}"))?;
+                        let content = format!(
+                            "Enhanced concurrent stress test content for pattern {pattern_id} operation {op_num}. \
+                             This tests advanced concurrent access patterns under high load."
+                        ).into_bytes();
+                        let tags = vec![
+                            ValidatedTag::new(format!("pattern-{pattern_id}"))?,
+                            ValidatedTag::new("concurrent-stress")?,
+                        ];
+                        let now = chrono::Utc::now();
+                        let content_size = content.len();
 
-                    let doc = Document {
-                        id: doc_id,
-                        path: path.clone(),
-                        title,
-                        content,
-                        tags,
-                        created_at: now,
-                        updated_at: now,
-                        size: content_size,
-                        embedding: None,
-                    };
+                        let doc = Document {
+                            id: doc_id,
+                            path: path.clone(),
+                            title,
+                            content,
+                            tags,
+                            created_at: now,
+                            updated_at: now,
+                            size: content_size,
+                            embedding: None,
+                        };
 
-                    // Storage write
-                    match async {
-                        let mut storage_guard = storage_ref.lock().await;
-                        storage_guard.insert(doc.clone()).await
-                    }
-                    .await
-                    {
-                        Ok(_) => {
-                            // Index update
-                            match async {
-                                let mut index_guard = index_ref.lock().await;
-                                index_guard.insert(doc.id, path).await
-                            }
-                            .await
-                            {
-                                Ok(_) => writes += 1,
-                                Err(_) => errors += 1,
-                            }
+                        // Storage write
+                        {
+                            let mut storage_guard = storage_ref.lock().await;
+                            storage_guard.insert(doc.clone()).await?;
                         }
+
+                        // Index update
+                        {
+                            let mut index_guard = index_ref.lock().await;
+                            index_guard.insert(doc.id, path).await?;
+                        }
+
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .await;
+
+                    match write_result {
+                        Ok(_) => writes += 1,
                         Err(_) => errors += 1,
                     }
                 }
@@ -183,7 +189,7 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
     let throughput = total_ops as f64 / total_duration.as_secs_f64();
     let error_rate = total_errors as f64 / (total_ops + total_errors) as f64;
 
-    println!("\n🎯 Phase 2B Enhanced Concurrent Stress Test Results:");
+    println!("\n🎯 Enhanced Concurrent Stress Test Results:");
     println!("  📊 Total Operations: {total_ops}");
     println!("  📖 Read Operations: {total_reads}");
     println!("  ✏️  Write Operations: {total_writes}");
@@ -192,21 +198,21 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
     println!("  🚀 Throughput: {throughput:.1} ops/sec");
     println!("  📊 Error Rate: {:.2}%", error_rate * 100.0);
 
-    // Performance assertions for Phase 2B
+    // Performance assertions for concurrent stress testing
     assert!(
         error_rate < 0.05,
-        "Error rate too high for Phase 2B: {:.2}%",
+        "Error rate too high for concurrent stress test: {:.2}%",
         error_rate * 100.0
     );
 
     assert!(
         throughput > 150.0,
-        "Throughput below Phase 2B requirement: {throughput:.1} ops/sec"
+        "Throughput below requirement: {throughput:.1} ops/sec"
     );
 
     assert!(
         total_duration < Duration::from_secs(45),
-        "Phase 2B test duration too long: {total_duration:?}"
+        "Stress test duration too long: {total_duration:?}"
     );
 
     // Verify system integrity after high load
@@ -214,7 +220,7 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
     let final_docs = final_storage.list_all().await?;
     assert!(
         !final_docs.is_empty(),
-        "No documents survived Phase 2B stress test"
+        "No documents survived concurrent stress test"
     );
 
     println!("  ✅ Final document count: {}", final_docs.len());
@@ -224,7 +230,7 @@ async fn test_enhanced_concurrent_stress_simple() -> Result<()> {
 
 /// Test concurrent read scaling with 200+ readers
 #[tokio::test]
-async fn test_phase2b_concurrent_read_scaling() -> Result<()> {
+async fn test_concurrent_read_scaling() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("read_scaling_storage");
 
@@ -250,7 +256,7 @@ async fn test_phase2b_concurrent_read_scaling() -> Result<()> {
     let reads_per_reader = 50;
     let mut handles = Vec::new();
 
-    println!("📖 Phase 2B: Concurrent Read Scaling with {concurrent_readers} readers");
+    println!("📖 Concurrent Read Scaling with {concurrent_readers} readers");
 
     let start = Instant::now();
 
@@ -308,7 +314,7 @@ async fn test_phase2b_concurrent_read_scaling() -> Result<()> {
 
 /// Test concurrent write contention with 100+ writers
 #[tokio::test]
-async fn test_phase2b_concurrent_write_contention() -> Result<()> {
+async fn test_concurrent_write_contention() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("write_contention_storage");
     let index_path = temp_dir.path().join("write_contention_index");
@@ -326,7 +332,7 @@ async fn test_phase2b_concurrent_write_contention() -> Result<()> {
     let writes_per_writer = 25;
     let mut handles = Vec::new();
 
-    println!("✏️  Phase 2B: Concurrent Write Contention with {concurrent_writers} writers");
+    println!("✏️  Concurrent Write Contention with {concurrent_writers} writers");
 
     let start = Instant::now();
 
@@ -413,7 +419,7 @@ async fn test_phase2b_concurrent_write_contention() -> Result<()> {
 
 /// Test burst workload patterns
 #[tokio::test]
-async fn test_phase2b_burst_workload_patterns() -> Result<()> {
+async fn test_burst_workload_patterns() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("burst_storage");
 
@@ -421,7 +427,7 @@ async fn test_phase2b_burst_workload_patterns() -> Result<()> {
         create_file_storage(&storage_path.to_string_lossy(), Some(10000)).await?,
     ));
 
-    println!("💥 Phase 2B: Burst Workload Patterns");
+    println!("💥 Burst Workload Patterns");
 
     // Test different burst patterns
     let burst_configs = vec![
@@ -499,9 +505,9 @@ async fn create_test_document(index: usize, test_type: &str) -> Result<Document>
         "# Test Document {}\n\n\
          Test type: {}\n\
          Index: {}\n\
-         Content: This is a test document for Phase 2B concurrent stress testing. \
+         Content: This is a test document for concurrent stress testing. \
          It contains realistic text content to test both storage and indexing performance under load. \
-         Keywords: phase2b, concurrent, stress, test, performance, validation.\n\n\
+         Keywords: concurrent, stress, test, performance, validation.\n\n\
          Timestamp: {}\n\
          Random data: {}",
         index,
@@ -513,7 +519,7 @@ async fn create_test_document(index: usize, test_type: &str) -> Result<Document>
 
     let tags = vec![
         ValidatedTag::new(test_type)?,
-        ValidatedTag::new("phase2b")?,
+        ValidatedTag::new("stress-test")?,
         ValidatedTag::new("concurrent-test")?,
     ];
 

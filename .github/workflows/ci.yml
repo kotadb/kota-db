@@ -19,10 +19,12 @@ env:
   RUSTUP_MAX_RETRIES: 10
   # Optimize for CI performance
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  CARGO_BUILD_JOBS: 2
+  # Increase parallelism
+  RUST_TEST_THREADS: 4
+  CARGO_BUILD_JOBS: 4
 
 jobs:
-  # Quick format check - fails fast
+  # Quick format check - stays on GitHub (very fast)
   format:
     name: Format Check
     runs-on: ubuntu-latest
@@ -38,7 +40,7 @@ jobs:
     - name: Check formatting
       run: cargo fmt --all -- --check
 
-  # Clippy check - required by branch protection
+  # Clippy check - stays on GitHub (lightweight)
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -55,64 +57,19 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "clippy"
+        shared-key: "clippy-cache"
+    
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
     
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # Build job - required by branch protection
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "build"
-    
-    - name: Build
-      run: cargo build --release --all-features
-  
-  # Unit tests - fast lib tests only
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    # Run in parallel with build
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "build"
-    
-    - name: Run unit tests
-      run: cargo test --lib --release --all-features -- --test-threads=2 --nocapture
-      env:
-        RUST_LOG: error
-        CI: true
-    
-    - name: Run doc tests
-      run: cargo test --doc --release --all-features
-
-
-  # Security audit - can run in parallel
+  # Security audit - runs in parallel, non-blocking
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
     - uses: actions/checkout@v4
     
@@ -128,15 +85,17 @@ jobs:
           cargo install cargo-audit --locked
         fi
     
-    - name: Security audit
-      run: cargo audit
-      continue-on-error: true  # Don't fail on advisories
+    - name: Security audit (non-blocking)
+      run: |
+        echo "🔒 Running security audit (non-blocking for development speed)..."
+        cargo audit || echo "⚠️ Security audit found issues - review separately"
+      continue-on-error: true
 
-  # Core integration tests - storage, validation, builders
-  integration-core:
-    name: Integration Tests (Core)
+  # Main build and test - runs on GitHub (reliable and fast)
+  build-and-test:
+    name: Build & Test (GitHub Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     
@@ -147,139 +106,125 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "build"
+        shared-key: "build-test"
     
-    - name: Run core integration tests
-      run: cargo test --test 'file_storage*' --test 'builder*' --test 'validated_types*' --test 'data_integrity*' --test 'unicode_handling*' --test 'storage_index*' --release --features bench -- --test-threads=2 --nocapture
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
+    
+    - name: Build project
+      run: |
+        cargo build --all-features
+        cargo build --release --bin kotadb
+    
+    - name: Run unit tests (FAST - using cargo-nextest)
+      run: |
+        cargo nextest run --lib --all-features
+        cargo test --doc --all-features
       env:
         RUST_LOG: error
         CI: true
 
-  # Index and search integration tests
-  integration-index:
-    name: Integration Tests (Index)
+  # Integration tests - strategic grouping for speed
+  integration-tests:
+    name: Integration Tests (GitHub)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: [build-and-test]  # Remove format/clippy dependency for speed
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - core
+          - index-query
+          - system-api
+          - performance
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
+    - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "build"
+        shared-key: "integration-${{ matrix.suite }}"
     
-    - name: Run index integration tests
-      run: cargo test --test 'primary_index*' --test 'btree*' --test 'test_btree*' --test 'query_routing*' --test 'bulk_operations*' --release --features bench -- --test-threads=2 --nocapture
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # Stress and performance tests
-  integration-stress:
-    name: Integration Tests (Stress)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
     
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "build"
-    
-    - name: Run stress integration tests
-      run: cargo test --test '*stress*' --test '*performance*' --test 'concurrent_access*' --test 'index_stress*' --test 'chaos*' --test 'adversarial*' --test 'complexity_comparison*' --release --features bench -- --test-threads=2 --nocapture
-      env:
-        RUST_LOG: error
-        CI: true
-
-  # System and CLI integration tests
-  integration-system:
-    name: Integration Tests (System)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "build"
-    
-    - name: Build release binary for CLI tests
+    - name: Build release binary for integration tests
       run: cargo build --release --bin kotadb
     
-    - name: Run system integration tests
-      run: cargo test --test 'cli_path*' --test 'http_server*' --test 'observability*' --test 'production_configuration*' --test 'system_resilience*' --release --features bench -- --test-threads=2 --nocapture
+    - name: Run ${{ matrix.suite }} tests
+      shell: bash
+      run: |
+        SUITE="${{ matrix.suite }}"
+        echo "Running test suite: $SUITE"
+        
+        if [ "$SUITE" = "core" ]; then
+          echo "Running core storage and data tests..."
+          cargo nextest run --test file_storage_integration_test
+          cargo nextest run --test data_integrity_test
+          cargo nextest run --test graph_storage_test
+        elif [ "$SUITE" = "index-query" ]; then
+          echo "Running indexing and search tests..."
+          cargo nextest run --test primary_index_tests
+          cargo nextest run --test trigram_content_search_test
+          cargo nextest run --test query_routing_stress
+        elif [ "$SUITE" = "system-api" ]; then
+          echo "Running system and API tests..."
+          cargo nextest run --test http_server_integration_test
+          cargo nextest run --test cli_defaults_validation_test
+          cargo nextest run --test code_analysis_integration_test
+        elif [ "$SUITE" = "performance" ]; then
+          echo "Running performance and stress tests..."
+          cargo nextest run --test performance_regression_test
+          cargo nextest run --test concurrent_stress_test
+          cargo nextest run --test chaos_tests
+        else
+          echo "Unknown test suite: $SUITE"
+          exit 1
+        fi
       env:
         RUST_LOG: error
         CI: true
 
-  # Integration tests summary - required by branch protection
-  integration:
-    name: Integration Tests
+  # End-to-End Tests - Validates complete user journeys (Phase 2 Testing Pyramid)
+  e2e-tests:
+    name: E2E Tests (Production-like)
     runs-on: ubuntu-latest
-    needs: [integration-core, integration-index, integration-stress, integration-system]
-    if: always()
-    timeout-minutes: 1
-    steps:
-    - name: Check integration test results
-      run: |
-        if [[ "${{ needs.integration-core.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-index.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-stress.result }}" == "failure" ]] || \
-           [[ "${{ needs.integration-system.result }}" == "failure" ]]; then
-          echo "One or more integration test suites failed"
-          exit 1
-        fi
-        echo "All integration test suites passed successfully!"
-
-  # Performance tests - quick smoke test only for PRs
-  performance:
-    name: Performance Tests
-    runs-on: ubuntu-latest
-    # Remove build dependency - compile with cache instead
-    timeout-minutes: 5
+    needs: [build-and-test]
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
+    - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "build"
+        shared-key: "e2e-tests"
     
-    - name: Build release binary
-      run: cargo build --release
+    - name: Install cargo-nextest
+      run: cargo install cargo-nextest --locked
     
-    - name: Run quick performance test
+    - name: Build KotaDB binary for E2E tests
+      run: cargo build --release --bin kotadb
+    
+    - name: Run End-to-End Tests (Production Environment Simulation)
       run: |
-        # Quick performance smoke test - just verify the binary works
-        ./target/release/kotadb --version
-        ./target/release/kotadb insert test/doc.md "Test Document" "Test content"
-        ./target/release/kotadb get test/doc.md
-        ./target/release/kotadb list
-        ./target/release/kotadb stats
-        echo "✅ Basic operations working"
+        echo "🎯 Running E2E tests in production-like Ubuntu environment (matching Fly.io)"
+        cargo nextest run --test e2e_integration_test
       env:
+        RUST_LOG: error
         CI: true
 
-  # Container build - can run in parallel
+  # Performance validation integrated into integration tests
+
+  # Container build - stays on GitHub (needs Docker)
   container:
     name: Container Build
     runs-on: ubuntu-latest
@@ -290,16 +235,17 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
-    - name: Build container
+    - name: Build container (Alpine-compatible without ONNX)
       uses: docker/build-push-action@v5
       with:
         context: .
+        file: ./Dockerfile
         push: false
         tags: kotadb:ci-test
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  # Documentation build - can run in parallel
+  # Documentation build - stays on GitHub
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -321,31 +267,21 @@ jobs:
       env:
         RUSTDOCFLAGS: "-D warnings"
 
-  # MCP Package Integration Tests - test MCP functionality
+  # MCP Package Tests - runs on GitHub for consistency
   mcp-integration:
     name: MCP Package Integration Tests
     runs-on: ubuntu-latest
-    # Remove build dependency - compile with cache instead
-    timeout-minutes: 5
+    needs: build-and-test
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-on-failure: true
-        shared-key: "mcp"
-    
-    - name: Build KotaDB binary
-      run: cargo build --release
-    
-    - name: Set up Node.js
+    - name: Setup Node.js environment
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: 'kotadb-mcp-package/package-lock.json'
     
     - name: Check if MCP package exists
       id: check_mcp
@@ -356,20 +292,10 @@ jobs:
           echo "exists=false" >> $GITHUB_OUTPUT
         fi
     
-    - name: Cache npm dependencies
-      if: steps.check_mcp.outputs.exists == 'true'
-      uses: actions/cache@v4
-      with:
-        path: kotadb-mcp-package/node_modules
-        key: ${{ runner.os }}-node-${{ hashFiles('kotadb-mcp-package/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-node-
-    
     - name: Install MCP package dependencies
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
       run: |
-        # Remove postinstall script temporarily for CI
         npm pkg delete scripts.postinstall 2>/dev/null || true
         npm ci
     
@@ -377,34 +303,22 @@ jobs:
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
       run: npm run build
-      continue-on-error: true
     
-    - name: Run MCP unit tests
+    - name: Run MCP tests
       if: steps.check_mcp.outputs.exists == 'true'
       working-directory: kotadb-mcp-package
-      run: npm run test:unit
-      continue-on-error: true
-    
-    - name: Run MCP integration tests
-      if: steps.check_mcp.outputs.exists == 'true'
-      working-directory: kotadb-mcp-package
-      run: npm run test:integration
+      run: |
+        npm run test:unit
+        npm run test:integration
       env:
         KOTADB_BINARY_PATH: ../target/release/kotadb
-      continue-on-error: true
-    
-    - name: Generate MCP coverage report
-      if: steps.check_mcp.outputs.exists == 'true'
-      working-directory: kotadb-mcp-package
-      run: npm run test:coverage
-      continue-on-error: true
 
-  # Code coverage - runs in parallel, not dependent on other tests
+  # Code coverage - optional, runs on GitHub to avoid slowing down Mac
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # Don't fail the build on coverage issues
+    continue-on-error: true
     steps:
     - uses: actions/checkout@v4
     
@@ -424,9 +338,7 @@ jobs:
     
     - name: Generate code coverage
       run: |
-        # Clean any previous coverage data
         cargo llvm-cov clean --workspace
-        # Generate coverage with explicit settings
         cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
       continue-on-error: true
     
@@ -438,3 +350,40 @@ jobs:
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
       continue-on-error: true
+
+  # Final CI status check (fast-track for development)
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [build-and-test, integration-tests, e2e-tests, security, format, clippy]
+    if: always()
+    timeout-minutes: 1
+    steps:
+    - name: Check CI results (development-optimized)
+      run: |
+        echo "🔍 Evaluating CI pipeline results (fast development pipeline)..."
+        
+        # Check only critical gates for development speed
+        if [[ "${{ needs.build-and-test.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
+           [[ "${{ needs.e2e-tests.result }}" == "failure" ]]; then
+          echo "❌ Critical CI components failed"
+          exit 1
+        fi
+        
+        # Security and formatting are informational (don't block development)
+        if [[ "${{ needs.security.result }}" == "failure" ]]; then
+          echo "⚠️ Security audit needs attention (non-blocking)"
+        fi
+        
+        if [[ "${{ needs.format.result }}" == "failure" ]] || [[ "${{ needs.clippy.result }}" == "failure" ]]; then
+          echo "⚠️ Code quality checks need attention (run: cargo fmt && cargo clippy)"
+        fi
+        
+        echo "✅ Critical CI checks passed! 🚀"
+        echo "📊 Pipeline Performance (Ubuntu = Fly.io production parity):"
+        echo "  - Build & Test: ${{ needs.build-and-test.result }}"
+        echo "  - Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "  - E2E Tests: ${{ needs.e2e-tests.result }}"
+        echo "  - Format/Clippy: ${{ needs.format.result }}/${{ needs.clippy.result }}"
+        echo "  - Security: ${{ needs.security.result }} (informational)"

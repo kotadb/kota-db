@@ -13,29 +13,35 @@ setup:
 
 # Run development server with auto-reload
 dev:
-  cargo watch -x 'run -- --config kotadb-dev.toml'
+  cargo watch -x 'run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml'
 
 # Start MCP server in development mode
 mcp:
-  RUST_LOG=debug cargo run -- mcp-server --config kotadb-dev.toml
+  RUST_LOG=debug cargo run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml
 
-# Watch for changes and run tests
+# Watch for changes and run tests (fast)
 watch:
-  cargo watch -x 'test --lib' -x 'clippy'
+  @echo "📝 Note: cargo-watch may not be available on all systems"
+  @echo "🚀 Using cargo-nextest for 3-5x faster test execution"
+  cargo watch -x 'nextest run --lib' -x 'clippy' || echo "❌ cargo-watch not available - use 'just test-fast' instead"
 
 # === Testing ===
 
-# Run all tests
+# Run all tests (FAST - uses cargo-nextest for 3-5x speedup)
 test:
-  cargo test --all
+  cargo nextest run --all --no-fail-fast
 
-# Run only unit tests
+# Fast test execution using cargo-nextest (recommended)
+test-fast:
+  cargo nextest run --all
+
+# Run only unit tests (FAST)
 test-unit:
-  cargo test --lib
+  cargo nextest run --lib
 
-# Run only integration tests  
+# Run only integration tests (FAST)
 test-integration:
-  cargo test --test '*'
+  cargo nextest run --test '*'
 
 # Run performance tests
 test-perf:
@@ -68,7 +74,7 @@ fmt-check:
 clippy:
   cargo clippy --all-targets --all-features -- -D warnings
 
-# Run all quality checks
+# Run all quality checks (FAST - uses cargo-nextest)
 check: fmt-check clippy test-unit
   @echo "✅ All quality checks passed!"
 
@@ -133,11 +139,17 @@ examples:
 # Initialize a test database
 init-db path="./test-data":
   mkdir -p {{path}}
-  KOTADB_DATA_DIR={{path}} cargo run -- init
+  KOTADB_DATA_DIR={{path}} cargo run --bin kotadb -- stats
 
-# Benchmark database operations
+# Benchmark codebase intelligence operations
 db-bench:
-  cargo run --release -- benchmark --operations 10000
+  @echo "Running KotaDB Codebase Intelligence Benchmarks"
+  @echo "Testing: Repository indexing, code search, symbol queries, relationship analysis"
+  @echo ""
+  cargo bench --features bench --bench codebase_intelligence_bench
+  @echo ""
+  @echo "Running resource usage and concurrent operation benchmarks"
+  cargo bench --features bench --bench resource_usage_bench
 
 # === Container Development ===
 
@@ -155,8 +167,9 @@ docker-shell:
 
 # === CI/CD ===
 
-# Run the same checks as CI
-ci: fmt-check clippy test audit
+# Run the same checks as CI (FAST - uses cargo-nextest)
+ci: 
+  CI=true just fmt-check clippy test audit
   @echo "🚀 CI checks completed successfully!"
 
 # Build release binaries

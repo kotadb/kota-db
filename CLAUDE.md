@@ -101,42 +101,74 @@ The release process automatically:
 - Pushes to main branch
 - Triggers GitHub Actions for binaries, Docker images, crates.io, PyPI, and npm
 
+### Installation Requirements for Optimal Development
+
+For the fastest development experience, install these tools:
+
+```bash
+# REQUIRED for fast testing (3-5x speed improvement)
+cargo install cargo-nextest --locked
+
+# OPTIONAL for file watching and auto-reload (may have platform issues)
+cargo install cargo-watch --locked  # Note: May fail on some macOS configurations
+
+# REQUIRED for development workflow
+cargo install just              # Task runner (if not available system-wide)
+```
+
 ### Build and Run
 ```bash
 # Build the project
 cargo build
 cargo build --release  # Production build
 
-# Run the main server with configuration
-cargo run -- --config kotadb-dev.toml
+# Run codebase intelligence commands
+cargo run --bin kotadb -- -d ./kota-db-data stats              # Show database statistics
+cargo run --bin kotadb -- -d ./kota-db-data search-code "rust" # Full-text code search (<3ms)
+cargo run --bin kotadb -- -d ./kota-db-data search-symbols "*" # Wildcard symbol search
 
-# Run with specific commands
-cargo run stats              # Show database statistics
-cargo run search "rust"      # Full-text search (trigram index)
-cargo run search "*"         # Wildcard search (primary index)
+# Codebase indexing with symbol extraction
+cargo run --bin kotadb -- -d ./kota-db-data index-codebase .           # Index repository with symbols
+cargo run --bin kotadb -- -d ./kota-db-data stats --symbols               # Check extracted symbols
+cargo run --bin kotadb -- -d ./kota-db-data find-callers FileStorage   # Find who calls a function
+cargo run --bin kotadb -- -d ./kota-db-data analyze-impact Config      # Analyze change impact
+
+# Performance benchmarking
+cargo run --release -- benchmark --operations 10000   # Run performance benchmarks
+cargo run --release -- benchmark -t storage -o 5000   # Benchmark storage operations
+cargo run --release -- benchmark -f json              # Output results as JSON
 
 # Development server with auto-reload
 just dev                     # Uses cargo watch for auto-reload
 ```
 
-### Testing
+### Testing (FAST - 3-5x Speed Improvement)
 ```bash
-# Run all tests
-cargo test --all
-just test
+# FAST: Run all tests with cargo-nextest (3-5x faster than standard cargo test)
+cargo nextest run --all
+just test                                  # Now uses cargo-nextest by default
 
-# Run specific test types
-cargo test --lib                           # Unit tests only
-cargo test --test '*'                      # Integration tests only
-cargo test test_name                       # Run tests matching name
-cargo test --test phase2b_concurrent_stress  # Run specific test file
+# FAST: Run specific test types  
+cargo nextest run --lib                    # Unit tests only (FAST)
+cargo nextest run --test '*'               # Integration tests only (FAST)
+just test-unit                             # Unit tests (FAST)
+just test-integration                      # Integration tests (FAST)
 
-# Performance and stress tests
+# Legacy commands (for compatibility/fallback)
+cargo test --all                           # Legacy - slower
+just test-legacy                           # Legacy - slower
+just test-fast                             # Explicit fast testing
+
+# Performance and stress tests (still use cargo test for benchmarking)
 cargo test --release --features bench performance_regression_test
 just test-perf
 
 # Run single test with output
-cargo test test_name -- --nocapture
+cargo nextest run test_name                # FAST single test
+cargo test test_name -- --nocapture        # Legacy with output
+
+# Watch mode (if cargo-watch is available)
+just watch                                 # Auto-runs tests on file changes with nextest
 ```
 
 ### Code Quality
@@ -165,14 +197,14 @@ cargo bench --features bench
 
 ## High-Level Architecture
 
-KotaDB is a custom database designed for distributed human-AI cognition, built in Rust with zero external database dependencies.
+KotaDB is a codebase intelligence platform that helps AI assistants understand code relationships, dependencies, and structure. Built in Rust with zero external database dependencies.
 
 ### Core Components
 
 #### Storage Layer (`src/file_storage.rs`)
 - **FileStorage**: Page-based storage engine with Write-Ahead Log (WAL)
-- **Factory Function**: `create_file_storage()` returns production-ready wrapped storage with tracing, validation, retries, and caching
-- **Documents**: Stored as both Markdown (`.md`) and JSON (`.json`) files
+- **Binary Storage**: High-performance binary format for symbols and relationships (10x faster)
+- **Dual Architecture**: Separates code content from relationship data for optimal performance
 - **Persistence**: 4KB page-based architecture with checksums
 
 #### Index Systems
@@ -187,7 +219,7 @@ KotaDB is a custom database designed for distributed human-AI cognition, built i
    - Fuzzy search tolerance with ranking
 
 3. **Vector Index** (`src/vector_index.rs`)
-   - HNSW (Hierarchical Navigable Small World) for semantic search
+   - HNSW (Hierarchical Navigable Small World) for vector similarity search
    - Supports embeddings from multiple providers
 
 #### Wrapper System (`src/wrappers.rs`)
@@ -205,9 +237,10 @@ Validated types ensure compile-time and runtime safety:
 - Comprehensive validation rules
 
 #### Query System
-- **Query Routing**: Automatic selection between primary and trigram indices based on query pattern
-- **Natural Language**: Designed for LLM interaction patterns
-- **Performance**: Sub-10ms query latency for most operations
+- **Code Intelligence**: Find callers, analyze impact, track dependencies
+- **Symbol Search**: Fast pattern-based symbol discovery (functions, classes, variables)
+- **Relationship Queries**: Find function calls, dependencies, and usage patterns
+- **Performance**: Sub-10ms query latency for code analysis operations
 
 ### MCP Server (`src/mcp/`)
 Model Context Protocol server for LLM integration:
@@ -237,6 +270,100 @@ Model Context Protocol server for LLM integration:
 2. Implement using existing patterns and wrappers
 3. Ensure all tests pass including integration tests
 4. Run `just check` to verify code quality
+
+### Dogfooding for Validation - MANDATORY Practice
+
+**🚨 CRITICAL: Always dogfood your changes on KotaDB's own codebase before submitting PRs.**
+
+When working on search, indexing, MCP, or git features, testing on KotaDB itself is required, not optional. This practice has prevented every major integration bug from reaching production.
+
+#### Current Dogfooding (CLI-based)
+```bash
+# ALWAYS start with fresh setup for accurate testing
+rm -rf data/analysis && mkdir -p data/analysis
+
+# Core dogfooding commands - USE THESE CONSTANTLY
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .             # Index with symbols (default enabled)
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols               # Verify extraction
+cargo run --bin kotadb -- -d ./data/analysis search-code "async fn"        # Test content search  
+cargo run --bin kotadb -- -d ./data/analysis search-symbols "Storage"      # Test symbol search
+cargo run --bin kotadb -- -d ./data/analysis find-callers FileStorage      # Test relationships
+cargo run --bin kotadb -- -d ./data/analysis analyze-impact Config         # Test impact analysis
+
+# Performance validation - MEASURE REAL LATENCY
+time cargo run --release --bin kotadb -- -d ./data/analysis search-code "rust"
+cargo run --release -- benchmark --operations 1000  # Compare to baseline
+```
+
+#### Future Dogfooding (API/MCP Integration)
+```bash
+# MCP server dogfooding (connect Claude Code once available)
+cargo run --bin mcp_server --config kotadb-dev.toml &
+# Test through Claude Code:
+# - Real AI assistant query patterns
+# - Concurrent request handling  
+# - Long-running sessions
+# - Memory usage under AI load
+
+# HTTP API dogfooding (future capability)
+cargo run --release -- server --port 8080 &
+# Integration testing through API endpoints
+```
+
+#### Mandatory Dogfooding Protocol
+
+**Before starting work:**
+- Fresh index of KotaDB codebase in `data/analysis/`
+- Baseline performance measurements
+- Verify all core operations work correctly
+
+**During development:**  
+- Re-test after every significant change
+- Use realistic queries an AI assistant would generate
+- Monitor performance impact continuously
+- Test edge cases with actual code complexity
+
+**Before PR submission:**
+- Complete re-index and validation
+- Performance regression testing  
+- Edge case validation (malformed queries, empty results, large datasets)
+- Create GitHub issues for any problems discovered
+
+#### Proven Bug Detection Record
+
+Real-world testing on KotaDB consistently reveals integration issues that unit tests miss:
+- **Issue #191**: Search disconnection after git ingestion (dogfooding only)
+- **Issue #196**: Trigram index architectural limitation (self-analysis discovery)
+- **Issue #184**: Multiple UX and functionality gaps (comprehensive validation)
+- **Issue #179**: Symbol extraction edge cases with complex Rust code
+- **Issue #203**: Performance degradation under realistic query patterns
+- **Issue #157**: Memory usage issues only visible with large codebases
+
+**Key insight**: Every major integration bug has been caught through dogfooding, demonstrating its critical importance.
+
+#### Dogfooding Best Practices
+
+**Directory management:**
+- **Use separate directories**: `data/analysis/` for testing, `data/test-scenarios/` for specific cases
+- **Clean up thoroughly**: Delete all analysis data when done (never commit artifacts)
+- **Preserve baselines**: Keep `kota-db-data/` for normal usage if needed
+
+**Testing thoroughness:**
+- Test queries that AI assistants actually use
+- Validate performance meets <10ms targets
+- Verify symbol extraction >95% accuracy
+- Test concurrent access patterns
+- Validate incremental update behavior
+
+**Issue reporting:**
+When dogfooding reveals problems, immediately create GitHub issues:
+```bash
+gh issue create --title "[Dogfooding] Found: [description]" \
+  --body "Found during dogfooding test. Scenario: [details]. Impact: [analysis]" \
+  --label "bug,dogfooding,priority-high"
+```
+
+This systematic approach maintains KotaDB's 99% reliability while enabling rapid AI-first feature development.
 
 ### Performance Considerations
 - Use `MeteredIndex` wrapper for new indices

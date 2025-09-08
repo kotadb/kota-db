@@ -94,34 +94,34 @@ This keeps your main context focused on high-level coordination and decision-mak
 
 ## 🏗️ Project Overview
 
-**KotaDB** is a custom database for distributed human-AI cognition built in Rust.
+**KotaDB** is a codebase intelligence platform that helps AI assistants understand code relationships, dependencies, and structure. Built in Rust with zero external database dependencies.
 
 ### Key Facts
 - **Language**: Rust (edition 2021)
 - **Repository**: https://github.com/jayminwest/kota-db
-- **Status**: Storage engine complete, ready for index implementation
+- **Purpose**: Reduce LLM context usage by 70% while improving code understanding
 - **Architecture**: 6-stage risk reduction methodology (99% success rate)
-- **Testing**: Property-based, integration, and performance tests required
+- **Performance**: Sub-10ms query latency for code analysis
 
 ## 🎯 Current Status & Priorities
 
 ### ✅ COMPLETED (DO NOT BREAK)
-- **All 6 Risk Reduction Stages** - This is the foundation, never compromise it
-- **FileStorage Implementation** - Production-ready with full safety wrappers
-- **Component Library** - Validated types, builders, wrappers all functional
+- **Codebase Intelligence Core** - Symbol extraction, dependency analysis, impact analysis
+- **Index Systems** - B+ tree, trigram search (<3ms), HNSW vector, relationship graph
+- **Binary Storage Pipeline** - 10x faster than JSON for symbol operations
 - **CI/CD Pipeline** - Comprehensive testing and deployment automation
 
 ### 🔄 ACTIVE DEVELOPMENT AREAS
-- **Index Implementation** - Primary, full-text, graph, and semantic indices
-- **MCP Server** - Model Context Protocol integration
-- **Query Engine** - Natural language and structured query processing
-- **Performance Optimization** - Sub-10ms query latency target
+- **MCP Integration** - Seamless Claude Code integration via Model Context Protocol
+- **Query Performance** - Optimize for AI assistant usage patterns
+- **Relationship Queries** - Enhanced "who calls what" and impact analysis
+- **Symbol Search** - Advanced pattern matching and code navigation
 
 ### 📋 UPCOMING PHASES
-- CLI interface with builder patterns
-- Advanced analytics tools
-- Multi-tenant support
-- Distributed indexing
+- One-click MCP setup for Claude Code
+- GitHub auto-sync for repositories
+- Advanced code intelligence features
+- Support for more AI assistants
 
 ## 🌳 Branching Strategy (Git Flow)
 
@@ -209,6 +209,152 @@ just docker-shell      # Connect to development container
 ./run_standalone.sh demo     # Stage 6 demo
 ./run_standalone.sh build    # Build project
 ```
+
+## 🔬 Dogfooding - MANDATORY for Development
+
+**🚨 CRITICAL: Always dogfood KotaDB on its own codebase when working on core features.**
+
+When working on search, indexing, MCP, or git features, you MUST test on KotaDB itself. This is not optional - it's how we prevent deployment issues.
+
+### Current Testing Methods (CLI)
+```bash
+# Primary dogfooding setup - USE THIS CONSTANTLY
+mkdir -p data/analysis  # Separate directory for testing
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .       # Now provides detailed feedback by default
+
+# Essential validation commands - RUN THESE FREQUENTLY
+cargo run --bin kotadb -- -d ./data/analysis validate               # Database validation: shows status & pass/fail counts
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols        # Shows accurate symbol statistics (9.1% coverage)
+cargo run --bin kotadb -- -d ./data/analysis stats --relationships   # Test relationship stats (shows 0 when no dependency graph)
+cargo run --bin kotadb -- -d ./data/analysis stats                  # Full stats: storage efficiency (86.1%), indices (4), performance
+cargo run --bin kotadb -- -d ./data/analysis search-code "storage"  # Test content search
+cargo run --bin kotadb -- -d ./data/analysis search-symbols "*"     # Test symbol search
+cargo run --bin kotadb -- -d ./data/analysis find-callers Storage   # Test relationship queries
+cargo run --bin kotadb -- -d ./data/analysis analyze-impact Config  # Test impact analysis
+
+# Performance validation - MEASURE EVERYTHING
+time cargo run --release --bin kotadb -- -d ./data/analysis search-code "async fn"
+cargo run --release -- benchmark --operations 1000  # Compare against benchmarks
+```
+
+### Future Testing Methods (Once Available)
+```bash
+# MCP server dogfooding (coming soon)
+cargo run --bin mcp_server --features="mcp-server" --config kotadb-mcp-dev.toml &
+# Then connect Claude Code to test:
+# - Document search via MCP
+# - Symbol navigation
+# - Code intelligence queries
+# - Performance under AI assistant load
+
+# API dogfooding (future)
+cargo run --release -- server --port 8080 &
+# Test via HTTP API for integration scenarios
+```
+
+### Dogfooding Protocol - FOLLOW THIS RELIGIOUSLY
+
+#### 1. Before Starting Any Work
+```bash
+# Always start with fresh dogfooding setup
+rm -rf data/analysis
+mkdir -p data/analysis
+cargo run --bin kotadb -- -d ./data/analysis index-codebase .        # Provides detailed progress feedback
+cargo run --bin kotadb -- -d ./data/analysis validate               # Verify database validation (shows status & pass/fail counts)
+cargo run --bin kotadb -- -d ./data/analysis stats --symbols         # Verify symbol statistics accuracy  
+cargo run --bin kotadb -- -d ./data/analysis stats                  # Verify overall statistics (storage efficiency, index count, performance)
+
+# Note: Default verbosity now provides user feedback (no longer silent)
+# Use -v quiet if you need minimal output for automation
+```
+
+#### 2. During Development
+**Test your changes continuously against the live codebase:**
+- After every significant change, re-index and test critical queries
+- Use the exact same queries AI assistants would use
+- Test performance with realistic data loads
+- Verify symbol extraction accuracy on actual complex code
+
+#### 3. Before Submitting PRs
+**Mandatory dogfooding validation:**
+- Full re-index of KotaDB codebase
+- Test all major query types (content, symbols, relationships, impact)
+- Performance regression testing
+- Edge case validation (empty results, malformed queries, large datasets)
+- Create GitHub issues for any problems found
+
+### Why Dogfood? (Proven Track Record)
+Real-world testing on KotaDB's own codebase consistently reveals integration issues that unit tests miss:
+- **Issue #191**: Search disconnection after git ingestion (found only through dogfooding)
+- **Issue #196**: Trigram index architectural limitation (discovered during self-analysis) 
+- **Issue #184**: Comprehensive validation revealed multiple UX and functionality gaps
+- **Issue #179**: Symbol extraction edge cases only surfaced with real Rust code complexity
+- **Issue #203**: Performance degradation under realistic query patterns
+- **Issue #157**: Memory usage issues only visible with large codebases
+- **Issue #576**: SearchService CLI UX failures - regular search returned verbose metadata instead of clean paths, silent failures on no results (found through validation dogfooding, missed by 441 passing unit tests)
+- **Issue #585**: StatsService validation revealed critical data integrity issues - 10000.0% extraction coverage, hardcoded storage efficiency, missing relationship statistics, 50-60x performance degradation (comprehensive dogfooding caught all issues, unit tests showed 100% pass rate)
+- **Issue #594**: ValidationService/StatsService quiet mode UX failure - `validate` and `stats` commands completely silent in default quiet mode, making them appear broken to users (discovered during systematic ValidationService validation #580, passed 439 unit tests but failed basic usability test)
+
+**Pattern**: Every major integration bug has been caught by dogfooding, not unit tests.
+
+### Dogfooding Best Practices - STRICTLY ENFORCE
+
+#### Directory Structure
+```bash
+# ALWAYS use separate analysis directory
+data/analysis/           # Dogfooding tests - DELETE after use
+data/test-scenarios/     # Specific test cases - DELETE after use  
+kota-db-data/           # Normal usage data - OK to keep
+```
+
+#### Testing Scenarios
+1. **Fresh Repository Analysis**
+   - Clone KotaDB to temp directory
+   - Index from scratch
+   - Validate symbol extraction completeness
+
+2. **Incremental Updates**
+   - Make code changes
+   - Test incremental indexing
+   - Verify consistency
+
+3. **Performance Under Load**
+   - Multiple concurrent queries
+   - Large result sets
+   - Complex relationship traversals
+
+4. **Integration Points**
+   - MCP server responsiveness
+   - API endpoint behavior
+   - CLI tool usability
+
+#### Issue Creation Protocol
+**When you find problems through dogfooding:**
+```bash
+# IMMEDIATELY create GitHub issue
+gh issue create \
+  --title "[Dogfooding] Found issue: [brief description]" \
+  --body "
+## Problem Found During Dogfooding
+**Test scenario:** [what you were testing]
+**Expected behavior:** [what should happen]
+**Actual behavior:** [what actually happened]
+**Reproduction steps:** [exact commands to reproduce]
+**Impact:** [how this affects real usage]
+**Data:** [relevant stats, performance numbers, error messages]
+" \
+  --label "bug,dogfooding,priority-high"
+```
+
+### Quality Gate
+**NO CODE SHIPS WITHOUT DOGFOODING VALIDATION**
+- All PRs must include dogfooding test results in description
+- Performance regression tests must pass
+- Symbol extraction must be >95% accurate on KotaDB codebase
+- Query latency must remain <10ms for typical operations
+- All integration points must work smoothly
+
+This is how we maintain KotaDB's 99% reliability while shipping AI-first features.
 
 ## 🏛️ Architecture Principles
 

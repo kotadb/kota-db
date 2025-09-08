@@ -1,6 +1,10 @@
-module.exports = {
-  preset: 'ts-jest',
+export default {
+  preset: 'ts-jest/presets/default-esm',
+  extensionsToTreatAsEsm: ['.ts'],
   testEnvironment: 'node',
+  transform: {
+    '^.+\\.ts$': ['ts-jest', { useESM: true }]
+  },
   rootDir: '.',
   roots: ['<rootDir>/src/__tests__'],
   testMatch: ['<rootDir>/src/__tests__/**/*.test.ts'],
@@ -34,6 +38,10 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
   // Run tests in bands for better stability with integration tests
   maxConcurrency: 2,
+  // Force Jest to exit after tests complete to prevent hanging
+  forceExit: true,
+  // Detect open handles to help debug leaks
+  detectOpenHandles: false, // Disabled to prevent false positives in CI
   // Global setup and teardown for integration tests
   // globalSetup: '<rootDir>/src/__tests__/global-setup.ts',
   // globalTeardown: '<rootDir>/src/__tests__/global-teardown.ts',

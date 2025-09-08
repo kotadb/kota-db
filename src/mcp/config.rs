@@ -9,7 +9,6 @@ pub struct MCPConfig {
     pub logging: LoggingConfig,
     pub performance: PerformanceConfig,
     pub security: SecurityConfig,
-    pub embeddings: EmbeddingsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -38,6 +37,7 @@ pub struct MCPProtocolConfig {
     pub server_version: String,
     pub enable_document_tools: bool,
     pub enable_search_tools: bool,
+    pub enable_relationship_tools: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -61,14 +61,6 @@ pub struct SecurityConfig {
     pub enable_request_validation: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct EmbeddingsConfig {
-    pub provider: String,
-    pub model: String,
-    pub dimension: usize,
-    pub batch_size: usize,
-}
-
 impl Default for MCPConfig {
     fn default() -> Self {
         Self {
@@ -89,9 +81,10 @@ impl Default for MCPConfig {
             mcp: MCPProtocolConfig {
                 protocol_version: "2024-11-05".to_string(),
                 server_name: "kotadb".to_string(),
-                server_version: "0.2.0".to_string(),
-                enable_document_tools: true,
+                server_version: "0.5.0".to_string(),
+                enable_document_tools: false, // Disabled per issue #401 - pure codebase intelligence
                 enable_search_tools: true,
+                enable_relationship_tools: true,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
@@ -107,12 +100,6 @@ impl Default for MCPConfig {
                 max_request_size: "10MB".to_string(),
                 rate_limit_requests_per_minute: 1000,
                 enable_request_validation: true,
-            },
-            embeddings: EmbeddingsConfig {
-                provider: "local".to_string(),
-                model: "all-MiniLM-L6-v2".to_string(),
-                dimension: 384,
-                batch_size: 32,
             },
         }
     }

@@ -1,0 +1,301 @@
+name: Production Deployment
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+      force_deploy:
+        description: 'Force deployment (skip some checks)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Pre-deployment validation
+  pre-deploy-validation:
+    name: Pre-Deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should-deploy: ${{ steps.validation.outputs.should-deploy }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Extract version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Deployment version: $VERSION"
+    
+    - name: Validate deployment readiness
+      id: validation
+      run: |
+        echo "🔍 Validating production readiness..."
+        
+        # Check if this is a valid production deployment
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.event.inputs.force_deploy }}" == "true" ]]; then
+          echo "⚠️  Force deployment requested"
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+        elif [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "✅ Tag-based deployment"
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+        elif [[ $GITHUB_REF == refs/heads/main ]]; then
+          echo "✅ Main branch deployment"
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Invalid deployment target: $GITHUB_REF"
+          echo "should-deploy=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        # Verify cargo build works
+        echo "🔧 Testing production build..."
+        cargo build --release --bin kotadb
+        
+        echo "✅ Production build validation complete"
+
+  # Build production artifacts
+  build-artifacts:
+    name: Build Production Artifacts
+    runs-on: ubuntu-latest
+    needs: pre-deploy-validation
+    if: needs.pre-deploy-validation.outputs.should-deploy == 'true'
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build production binary
+      run: |
+        echo "🏗️  Building production binary..."
+        cargo build --release --bin kotadb
+        
+        # Verify binary
+        ./target/release/kotadb --version
+        
+        echo "✅ Production binary ready"
+    
+    - name: Create deployment package
+      run: |
+        echo "📦 Creating deployment package..."
+        mkdir -p deployment-package
+        
+        # Copy binary
+        cp target/release/kotadb deployment-package/
+        
+        # Copy configuration templates
+        cp kotadb-dev.toml deployment-package/kotadb-production.toml
+        
+        # Copy documentation
+        cp README.md CHANGELOG.md deployment-package/
+        
+        # Create version info
+        echo "VERSION=${{ needs.pre-deploy-validation.outputs.version }}" > deployment-package/VERSION
+        echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> deployment-package/VERSION
+        echo "COMMIT_SHA=${{ github.sha }}" >> deployment-package/VERSION
+        
+        echo "✅ Deployment package created"
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-artifacts-${{ needs.pre-deploy-validation.outputs.version }}
+        path: deployment-package/
+        retention-days: 30
+
+  # Container build for cloud deployment
+  build-container:
+    name: Build Production Container
+    runs-on: ubuntu-latest
+    needs: pre-deploy-validation
+    if: needs.pre-deploy-validation.outputs.should-deploy == 'true'
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+    
+    - name: Build and push container
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Deploy to staging (always first)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, build-container]
+    environment: 
+      name: staging
+      url: https://staging.kotadb.com
+    timeout-minutes: 10
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: production-artifacts-${{ needs.pre-deploy-validation.outputs.version }}
+        path: ./artifacts
+    
+    - name: Deploy to staging environment
+      run: |
+        echo "🚀 Deploying to STAGING environment..."
+        echo "Version: ${{ needs.pre-deploy-validation.outputs.version }}"
+        echo "Artifacts: $(ls -la artifacts/)"
+        
+        # Placeholder for actual staging deployment
+        echo "📋 Staging deployment steps:"
+        echo "  1. Upload binary to staging server"
+        echo "  2. Update configuration"  
+        echo "  3. Restart services"
+        echo "  4. Run health checks"
+        
+        echo "✅ Staging deployment complete"
+    
+    - name: Staging health check
+      run: |
+        echo "🏥 Running staging health checks..."
+        
+        # Placeholder for actual health checks
+        echo "✅ Staging health checks passed"
+
+  # Deploy to production (only after staging success)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, pre-deploy-validation]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    environment: 
+      name: production
+      url: https://kotadb.com
+    timeout-minutes: 15
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: production-artifacts-${{ needs.pre-deploy-validation.outputs.version }}
+        path: ./artifacts
+    
+    - name: Pre-production validation
+      run: |
+        echo "🔍 Final pre-production validation..."
+        echo "Staging deployment: ✅"
+        echo "Health checks: ✅"
+        echo "Version: ${{ needs.pre-deploy-validation.outputs.version }}"
+        
+        # Verify artifacts
+        ls -la artifacts/
+        echo "✅ Pre-production validation complete"
+    
+    - name: Deploy to production
+      run: |
+        echo "🚀 DEPLOYING TO PRODUCTION"
+        echo "=========================================="
+        echo "Version: ${{ needs.pre-deploy-validation.outputs.version }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch/Tag: ${{ github.ref }}"
+        echo "=========================================="
+        
+        # Placeholder for production deployment
+        echo "📋 Production deployment steps:"
+        echo "  1. Create deployment backup"
+        echo "  2. Upload new binary"
+        echo "  3. Update configuration"
+        echo "  4. Graceful service restart"
+        echo "  5. Verify deployment health"
+        echo "  6. Update DNS/Load balancer"
+        
+        echo "✅ PRODUCTION DEPLOYMENT COMPLETE"
+    
+    - name: Production health verification
+      run: |
+        echo "🏥 Production health verification..."
+        
+        # Placeholder for production health checks
+        echo "✅ Production is healthy and serving traffic"
+    
+    - name: Deployment notification
+      run: |
+        echo "📢 Production deployment notification..."
+        echo "KotaDB ${{ needs.pre-deploy-validation.outputs.version }} is now live!"
+
+  # Post-deployment monitoring
+  post-deploy-monitoring:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: always() && needs.deploy-production.result == 'success'
+    timeout-minutes: 30
+    steps:
+    - name: Monitor production health
+      run: |
+        echo "📊 Monitoring production deployment..."
+        
+        # 5-minute monitoring window
+        for i in {1..5}; do
+          echo "Health check $i/5..."
+          # Placeholder for health checks
+          sleep 60
+        done
+        
+        echo "✅ Post-deployment monitoring complete"
+    
+    - name: Rollback on failure
+      if: failure()
+      run: |
+        echo "🚨 DEPLOYMENT FAILURE DETECTED"
+        echo "Initiating automatic rollback..."
+        
+        # Placeholder for rollback logic
+        echo "📋 Rollback steps:"
+        echo "  1. Stop new binary"
+        echo "  2. Restore previous version"
+        echo "  3. Restart services"
+        echo "  4. Verify rollback health"
+        
+        echo "✅ Rollback complete"

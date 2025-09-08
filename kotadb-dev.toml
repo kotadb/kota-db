@@ -1,30 +1,39 @@
 # KotaDB Development Configuration
+# Schema matches src/mcp/config.rs MCPConfig structure
+
+[server]
+host = "0.0.0.0"
+port = 3000
+max_connections = 100
+request_timeout = "30s"
+enable_cors = true
 
 [database]
-data_directory = "./data"
-cache_size_mb = 256
+data_dir = "./kotadb-data"
+max_cache_size = 1000
 enable_wal = true
-sync_mode = "normal"
+worker_threads = 4
+max_blocking_threads = 16
+
+[mcp]
+protocol_version = "2024-11-05"
+server_name = "kotadb"
+server_version = "0.5.0"
+enable_document_tools = false  # Disabled per issue #401 - pure codebase intelligence
+enable_search_tools = true
+enable_relationship_tools = true
 
 [logging]
 level = "debug"
-format = "pretty"
-log_to_file = true
-log_directory = "./logs"
+format = "json"
+output = "stdout"
 
 [performance]
-enable_metrics = true
-metrics_port = 9090
-benchmark_on_startup = false
+max_query_latency_ms = 10
+max_semantic_search_latency_ms = 100
+bulk_operation_batch_size = 1000
 
-[development]
-auto_reload = true
-enable_debug_endpoints = true
-relaxed_validation = false
-
-[mcp_server]
-enabled = true
-host = "localhost"
-port = 8080
-max_connections = 10
-timeout_seconds = 30
+[security]
+max_request_size = "10MB"
+rate_limit_requests_per_minute = 1000
+enable_request_validation = true

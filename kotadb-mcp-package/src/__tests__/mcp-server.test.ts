@@ -44,14 +44,20 @@ describe('KotaDB MCP Server', () => {
       });
 
       serverProcess.on('error', reject);
+
+      serverProcess.on('exit', (code, signal) => {
+        if (!initialized) {
+          reject(new Error(`Server process exited early with code ${code}, signal ${signal}`));
+        }
+      });
       
-      // Timeout after 5 seconds
+      // Timeout after 10 seconds (increased for CI)
       setTimeout(() => {
         if (!initialized) {
           serverProcess.kill();
           reject(new Error('Server startup timeout'));
         }
-      }, 5000);
+      }, 10000);
     });
   };
 

@@ -32,6 +32,13 @@ export {
   validateSize
 } from './validation';
 export * from './builders';
+export { 
+  KotaDBServer,
+  startServer,
+  ensureBinaryInstalled,
+  downloadBinary,
+  ServerOptions
+} from './server';
 
 // Default export for convenience
 import { KotaDB } from './client';

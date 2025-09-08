@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -50,7 +52,7 @@ class KotaDBMCPServer {
     this.server = new Server(
       {
         name: 'kotadb-mcp',
-        version: '0.1.0',
+        version: '0.5.0',
       },
       {
         capabilities: {
@@ -442,7 +444,11 @@ process.on('SIGTERM', () => {
 });
 
 // Start the server
-if (require.main === module) {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Check if this module is the entry point
+if (import.meta.url === `file://${process.argv[1]}`) {
   const server = new KotaDBMCPServer();
   server.start().catch((error) => {
     console.error('Error starting server:', error);

@@ -1,7 +1,9 @@
-use crate::contracts::Storage;
-use crate::create_file_storage;
+use crate::contracts::{Index, Storage};
 use crate::mcp::{config::MCPConfig, tools::MCPToolRegistry};
 use crate::wrappers::*;
+use crate::{
+    create_file_storage, create_primary_index, create_trigram_index, CoordinatedDeletionService,
+};
 use anyhow::Result;
 use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
@@ -16,6 +18,10 @@ pub struct MCPServer {
     config: MCPConfig,
     tool_registry: Arc<MCPToolRegistry>,
     storage: Arc<Mutex<dyn Storage>>,
+    #[allow(dead_code)] // Will be used for path-based operations
+    primary_index: Arc<Mutex<dyn Index>>,
+    #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
+    deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
 }
 
@@ -73,82 +79,119 @@ impl MCPServer {
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
 
-        // Create wrapped storage using the component library
-        let storage = create_mcp_storage(
+        // Create SINGLE storage instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
+        let storage_impl = create_mcp_storage(
             &config.database.data_dir,
             Some(config.database.max_cache_size),
         )
         .await?;
-        let storage = Arc::new(Mutex::new(storage));
+        let storage: Arc<Mutex<dyn Storage>> = Arc::new(Mutex::new(storage_impl));
+
+        // Create SINGLE primary index instance shared across all components
+        let primary_index_path =
+            std::path::Path::new(&config.database.data_dir).join("primary_index");
+        std::fs::create_dir_all(&primary_index_path)?;
+        let primary_index =
+            create_primary_index(primary_index_path.to_str().unwrap(), None).await?;
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+
+        // Create SINGLE trigram index instance shared across most components
+        // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
+        let trigram_index_path =
+            std::path::Path::new(&config.database.data_dir).join("trigram_index");
+        std::fs::create_dir_all(&trigram_index_path)?;
+        let trigram_index =
+            create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+        // Create coordinated deletion service using the SAME shared instances
+        let deletion_service = Arc::new(CoordinatedDeletionService::new(
+            Arc::clone(&storage),
+            Arc::clone(&primary_index),
+            Arc::clone(&trigram_index),
+        ));
 
         // Initialize tool registry based on configuration
         let mut tool_registry = MCPToolRegistry::new();
 
+        // Document tools removed per issue #401 - pure codebase intelligence platform
         if config.mcp.enable_document_tools {
-            use crate::mcp::tools::document_tools::DocumentTools;
-            let document_tools = Arc::new(DocumentTools::new(storage.clone()));
-            tool_registry = tool_registry.with_document_tools(document_tools);
+            tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
-        if config.mcp.enable_search_tools {
-            use crate::mcp::tools::search_tools::SearchTools;
-            use crate::{
-                create_trigram_index, embeddings::EmbeddingConfig,
-                semantic_search::SemanticSearchEngine,
-            };
-            use std::path::Path;
+        // Search tools removed - semantic search eliminated from MCP server
+        // Use trigram search via other KotaDB interfaces (CLI, HTTP API)
 
-            // Create trigram index for text search
-            let trigram_index_path = Path::new(&config.database.data_dir).join("trigram_index");
-            std::fs::create_dir_all(&trigram_index_path)?;
-            let trigram_index =
-                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
-            let trigram_index: Arc<Mutex<dyn crate::contracts::Index>> =
-                Arc::new(Mutex::new(trigram_index));
+        #[cfg(feature = "tree-sitter-parsing")]
+        if config.mcp.enable_relationship_tools {
+            use crate::mcp::tools::relationship_tools::RelationshipTools;
+            use crate::services::AnalysisServiceDatabase;
+            use std::path::PathBuf;
 
-            // Create semantic search engine with trigram support for hybrid search
-            let vector_index_path = Path::new(&config.database.data_dir).join("vector_index");
-            std::fs::create_dir_all(&vector_index_path)?;
-            let embedding_config = EmbeddingConfig::default();
+            // Create database access wrapper for AnalysisService
+            struct AnalysisServiceDatabaseImpl {
+                storage: Arc<Mutex<dyn Storage>>,
+            }
 
-            // Create a storage instance for semantic search (needs owned storage)
-            let semantic_storage = create_mcp_storage(
-                &config.database.data_dir,
-                Some(config.database.max_cache_size),
-            )
-            .await?;
+            impl AnalysisServiceDatabase for AnalysisServiceDatabaseImpl {
+                fn storage(&self) -> Arc<Mutex<dyn Storage>> {
+                    self.storage.clone()
+                }
+            }
 
-            // Create a trigram index for the semantic engine's hybrid search
-            let trigram_index_for_semantic =
-                create_trigram_index(trigram_index_path.to_str().unwrap(), None).await?;
+            let database_access: Arc<dyn AnalysisServiceDatabase> =
+                Arc::new(AnalysisServiceDatabaseImpl {
+                    storage: storage.clone(),
+                });
 
-            let semantic_engine = SemanticSearchEngine::new_with_trigram(
-                Box::new(semantic_storage),
-                vector_index_path.to_str().unwrap(),
-                embedding_config,
-                Box::new(trigram_index_for_semantic),
-            )
-            .await?;
-            let semantic_engine = Arc::new(Mutex::new(semantic_engine));
-
-            let search_tools = Arc::new(SearchTools::new(
-                trigram_index,
-                semantic_engine,
-                storage.clone(),
-            ));
-            tool_registry = tool_registry.with_search_tools(search_tools);
+            let db_path = PathBuf::from(&config.database.data_dir);
+            let relationship_tools = Arc::new(RelationshipTools::new(database_access, db_path));
+            tool_registry = tool_registry.with_relationship_tools(relationship_tools);
         }
 
         Ok(Self {
             config,
             tool_registry: Arc::new(tool_registry),
             storage,
+            primary_index,
+            deletion_service,
             start_time: Instant::now(),
         })
     }
 
     /// Start the MCP server and return a handle to control it
     pub async fn start(self) -> Result<MCPServerHandle> {
+        let mut io = IoHandler::new();
+        let server_impl = MCPServerImpl {
+            config: self.config.clone(),
+            tool_registry: self.tool_registry.clone(),
+            storage: self.storage.clone(),
+            start_time: self.start_time,
+        };
+
+        io.extend_with(server_impl.to_delegate());
+
+        let server = ServerBuilder::new(io)
+            .cors(DomainsValidation::AllowOnly(vec![
+                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
+            ]))
+            .start_http(
+                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
+
+        tracing::info!(
+            "MCP server started on {}:{}",
+            self.config.server.host,
+            self.config.server.port
+        );
+
+        Ok(MCPServerHandle { server })
+    }
+
+    /// Start the MCP server synchronously outside of async context to avoid runtime conflicts
+    pub fn start_sync(self) -> Result<MCPServerHandle> {
         let mut io = IoHandler::new();
         let server_impl = MCPServerImpl {
             config: self.config.clone(),

@@ -1,4 +1,5 @@
 use crate::contracts::{Index, Query, Storage};
+use crate::llm_search::{ContextConfig, LLMSearchEngine, RelevanceConfig};
 use crate::mcp::tools::MCPToolHandler;
 use crate::mcp::types::*;
 use crate::semantic_search::{ScoredDocument, SemanticSearchEngine};
@@ -14,6 +15,8 @@ pub struct SearchTools {
     trigram_index: Arc<Mutex<dyn Index>>,
     semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
     storage: Arc<Mutex<dyn Storage>>,
+    #[allow(dead_code)]
+    llm_search_engine: LLMSearchEngine,
 }
 
 impl SearchTools {
@@ -26,6 +29,23 @@ impl SearchTools {
             trigram_index,
             semantic_engine,
             storage,
+            llm_search_engine: LLMSearchEngine::new(),
+        }
+    }
+
+    /// Create with custom LLM search configuration
+    pub fn with_llm_config(
+        trigram_index: Arc<Mutex<dyn Index>>,
+        semantic_engine: Arc<Mutex<SemanticSearchEngine>>,
+        storage: Arc<Mutex<dyn Storage>>,
+        relevance_config: RelevanceConfig,
+        context_config: ContextConfig,
+    ) -> Self {
+        Self {
+            trigram_index,
+            semantic_engine,
+            storage,
+            llm_search_engine: LLMSearchEngine::with_config(relevance_config, context_config),
         }
     }
 }
@@ -53,6 +73,10 @@ impl MCPToolHandler for SearchTools {
             "kotadb://find_similar" => {
                 let request: FindSimilarRequest = serde_json::from_value(params)?;
                 self.find_similar(request).await
+            }
+            "kotadb://llm_optimized_search" => {
+                let request: LLMOptimizedSearchRequest = serde_json::from_value(params)?;
+                self.llm_optimized_search(request).await
             }
             _ => Err(anyhow::anyhow!("Unknown search method: {}", method)),
         }
@@ -171,6 +195,40 @@ impl MCPToolHandler for SearchTools {
                         }
                     },
                     "required": ["document_id"]
+                }),
+            },
+            ToolDefinition {
+                name: "kotadb://llm_optimized_search".to_string(),
+                description: "LLM-optimized search with relevance ranking, context optimization, and structured output".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query with LLM optimization for relevance and context"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 5, max: 20)",
+                            "minimum": 1,
+                            "maximum": 20
+                        },
+                        "token_budget": {
+                            "type": "integer",
+                            "description": "Available tokens for response content (default: 4000)",
+                            "minimum": 500,
+                            "maximum": 32000
+                        },
+                        "include_context": {
+                            "type": "boolean",
+                            "description": "Include related code context (callers, callees) when relevant (default: true)"
+                        },
+                        "strip_comments": {
+                            "type": "boolean",
+                            "description": "Remove non-essential comments to save tokens (default: false)"
+                        }
+                    },
+                    "required": ["query"]
                 }),
             },
         ]
@@ -443,6 +501,59 @@ impl SearchTools {
         }))
     }
 
+    /// LLM-optimized search with relevance ranking and context optimization
+    async fn llm_optimized_search(
+        &self,
+        request: LLMOptimizedSearchRequest,
+    ) -> Result<serde_json::Value> {
+        let start_time = Instant::now();
+
+        // Validate query
+        if request.query.trim().is_empty() {
+            return Err(anyhow::anyhow!("LLM search query cannot be empty"));
+        }
+
+        let limit = request.limit.unwrap_or(5).min(20);
+
+        // Configure the LLM search engine with custom settings if provided
+        let mut context_config = ContextConfig::default();
+        if let Some(budget) = request.token_budget {
+            context_config.token_budget = budget;
+        }
+        if let Some(include) = request.include_context {
+            context_config.include_related = include;
+        }
+        if let Some(strip) = request.strip_comments {
+            context_config.strip_comments = strip;
+        }
+
+        // Create a custom LLM search engine for this request
+        let search_engine =
+            LLMSearchEngine::with_config(RelevanceConfig::default(), context_config);
+
+        // Perform the LLM-optimized search by borrowing the guards directly
+        let storage_guard = self.storage.lock().await;
+        let index_guard = self.trigram_index.lock().await;
+
+        let llm_response = search_engine
+            .search_optimized(&request.query, &*storage_guard, &*index_guard, Some(limit))
+            .await?;
+
+        drop(index_guard);
+        drop(storage_guard);
+
+        tracing::info!(
+            "LLM-optimized search completed: '{}' returned {} results in {}ms ({}% efficiency)",
+            request.query,
+            llm_response.results.len(),
+            llm_response.metadata.query_time_ms,
+            (llm_response.optimization.token_usage.efficiency * 100.0) as u32
+        );
+
+        // Return the structured LLM response as JSON
+        Ok(serde_json::to_value(llm_response)?)
+    }
+
     /// Create a content preview from document bytes
     fn create_content_preview(content: &[u8], max_chars: usize) -> String {
         let content_str = String::from_utf8_lossy(content);
@@ -474,6 +585,15 @@ struct FindSimilarRequest {
     document_id: String,
     k: Option<usize>,
     threshold: Option<f32>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct LLMOptimizedSearchRequest {
+    query: String,
+    limit: Option<usize>,
+    token_budget: Option<usize>,
+    include_context: Option<bool>,
+    strip_comments: Option<bool>,
 }
 
 #[cfg(test)]

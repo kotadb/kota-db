@@ -30,6 +30,8 @@ pub struct PrimaryIndex {
     wal_writer: RwLock<Option<tokio::fs::File>>,
     /// Index metadata
     metadata: RwLock<IndexMetadata>,
+    /// State tracking for lazy loading with error protection
+    load_state: RwLock<LoadState>,
 }
 
 /// Metadata for the primary index
@@ -53,6 +55,19 @@ impl Default for IndexMetadata {
     }
 }
 
+/// Loading state for lazy loading with error protection
+#[derive(Debug, Clone)]
+enum LoadState {
+    /// Index has not been loaded yet
+    NotLoaded,
+    /// Index is currently being loaded (prevents concurrent loads)
+    Loading,
+    /// Index has been successfully loaded
+    Loaded,
+    /// Index failed to load with error message (prevents retry storms)
+    Failed(String),
+}
+
 impl PrimaryIndex {
     /// Create a new PrimaryIndex instance
     pub fn new(index_path: PathBuf, _cache_capacity: usize) -> Self {
@@ -61,7 +76,50 @@ impl PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
+            load_state: RwLock::new(LoadState::NotLoaded),
         }
+    }
+
+    /// Match a path against a wildcard pattern
+    /// Supports patterns like "*.rs", "*Controller.rs", "test_*", etc.
+    fn matches_wildcard_pattern(path: &str, pattern: &str) -> bool {
+        // Handle pure wildcard
+        if pattern == "*" {
+            return true;
+        }
+
+        // Split pattern by '*' to get fixed parts
+        let parts: Vec<&str> = pattern.split('*').collect();
+
+        // Handle patterns with wildcards
+        let mut pos = 0;
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue; // Skip empty parts (from consecutive * or leading/trailing *)
+            }
+
+            // First part must match at beginning unless pattern starts with *
+            if i == 0 && !pattern.starts_with('*') {
+                if !path.starts_with(part) {
+                    return false;
+                }
+                pos = part.len();
+            }
+            // Last part must match at end unless pattern ends with *
+            else if i == parts.len() - 1 && !pattern.ends_with('*') {
+                if !path.ends_with(part) {
+                    return false;
+                }
+            }
+            // Middle parts or wildcard-bounded parts can appear anywhere after current position
+            else if let Some(found_pos) = path[pos..].find(part) {
+                pos += found_pos + part.len();
+            } else {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Create directory structure for the index
@@ -93,6 +151,107 @@ impl PrimaryIndex {
 
         *self.wal_writer.write().await = Some(wal_file);
         Ok(())
+    }
+
+    /// Ensure index is loaded (lazy loading with error protection)
+    async fn ensure_loaded(&self) -> Result<()> {
+        // Fast path: check if already loaded or failed
+        {
+            let state = self.load_state.read().await;
+            match &*state {
+                LoadState::Loaded => return Ok(()),
+                LoadState::Failed(err) => {
+                    return Err(anyhow::anyhow!(
+                        "Primary index previously failed to load and retry is disabled: {}",
+                        err
+                    ));
+                }
+                LoadState::Loading => {
+                    // Another thread is loading, wait briefly then check again
+                    drop(state);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    let state = self.load_state.read().await;
+                    match &*state {
+                        LoadState::Loaded => return Ok(()),
+                        LoadState::Failed(err) => {
+                            return Err(anyhow::anyhow!(
+                                "Primary index failed to load during concurrent attempt: {}",
+                                err
+                            ));
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Primary index loading is taking too long, another thread may have failed"
+                            ));
+                        }
+                    }
+                }
+                LoadState::NotLoaded => {
+                    // Continue to loading logic below
+                }
+            }
+        }
+
+        // Acquire write lock to begin loading
+        let mut state = self.load_state.write().await;
+
+        // Double-check after acquiring write lock
+        match &*state {
+            LoadState::Loaded => return Ok(()),
+            LoadState::Failed(err) => {
+                return Err(anyhow::anyhow!(
+                    "Primary index previously failed to load: {}",
+                    err
+                ));
+            }
+            LoadState::Loading => {
+                return Err(anyhow::anyhow!(
+                    "Concurrent loading detected in primary index - this should not happen"
+                ));
+            }
+            LoadState::NotLoaded => {
+                // Good to proceed with loading
+            }
+        }
+
+        // Set loading state
+        *state = LoadState::Loading;
+        drop(state); // Release write lock during loading
+
+        // Load the index with error capture
+        tracing::info!("Lazy loading primary index on first access");
+        let start = std::time::Instant::now();
+
+        // Log memory pressure information
+        tracing::info!("Loading primary index (B+ tree structure)");
+
+        let load_result = self.load_existing_index().await;
+
+        // Update state based on result
+        let mut state = self.load_state.write().await;
+        match load_result {
+            Ok(()) => {
+                *state = LoadState::Loaded;
+                let elapsed = start.elapsed();
+                tracing::info!("Primary index loaded successfully in {:?}", elapsed);
+
+                // Monitor loading performance
+                if elapsed.as_millis() > 500 {
+                    tracing::warn!(
+                        "Primary index loading took {}ms - performance may be impacted",
+                        elapsed.as_millis()
+                    );
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                *state = LoadState::Failed(error_msg.clone());
+                tracing::error!("Failed to load primary index: {}", error_msg);
+                Err(e.context("Failed to lazy load primary index"))
+            }
+        }
     }
 
     /// Load existing index from disk
@@ -304,6 +463,7 @@ impl Index for PrimaryIndex {
             btree_root: RwLock::new(btree::create_empty_tree()),
             wal_writer: RwLock::new(None),
             metadata: RwLock::new(IndexMetadata::default()),
+            load_state: RwLock::new(LoadState::NotLoaded),
         };
 
         // Ensure directory structure exists
@@ -312,11 +472,9 @@ impl Index for PrimaryIndex {
         // Initialize WAL
         index.init_wal().await?;
 
-        // Load existing state from disk
-        index
-            .load_existing_index()
-            .await
-            .context("Failed to load existing index from disk")?;
+        // Skip loading existing index - will be loaded lazily on first search
+        // This dramatically improves cold start performance
+        tracing::debug!("Skipping primary index load during initialization for faster cold start");
 
         Ok(index)
     }
@@ -411,31 +569,112 @@ impl Index for PrimaryIndex {
     /// Primary index only supports wildcard searches (no text search terms).
     /// For text search, use a dedicated text search index.
     async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>> {
+        // Ensure index is loaded before searching (lazy loading)
+        self.ensure_loaded().await?;
+
         // Stage 2: Contract enforcement - validate preconditions
         Self::validate_search_preconditions(query)?;
 
-        // Primary index only supports wildcard ("*") searches
-        // If there are specific search terms, return empty (no text search capability)
-        if !query.search_terms.is_empty() {
-            return Ok(Vec::new());
-        }
+        // DEBUG: Log query details
+        tracing::debug!(
+            "Primary Index search called with query: path_pattern={:?}, search_terms={:?}, limit={}",
+            query.path_pattern,
+            query.search_terms,
+            query.limit.get()
+        );
 
         let btree_root = self.btree_root.read().await;
 
         // Use B+ tree traversal to get all documents (O(n) for full scan, but sorted)
         let all_pairs = extract_all_pairs(&btree_root)?;
 
-        // Extract just the document IDs for results
-        let mut results: Vec<ValidatedDocumentId> =
-            all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect();
+        // DEBUG: Log what we found in the index
+        tracing::debug!(
+            "Primary Index contains {} document(s) after loading",
+            all_pairs.len()
+        );
+
+        // DEBUG: Log first few entries for verification
+        for (i, (doc_id, path)) in all_pairs.iter().take(5).enumerate() {
+            tracing::debug!(
+                "Document {}: {} -> {}",
+                i + 1,
+                doc_id.as_uuid(),
+                path.to_string()
+            );
+        }
+
+        // Check for wildcard patterns in path_pattern field first, then search_terms
+        // The QueryBuilder puts wildcard queries in path_pattern (see issue #337)
+        let wildcard_pattern = if let Some(ref pattern) = query.path_pattern {
+            // Use the path_pattern field if it's set (this is where wildcards go)
+            tracing::debug!("Using path_pattern: '{}'", pattern);
+            Some(pattern.clone())
+        } else if query.search_terms.len() == 1 {
+            // Fall back to checking search_terms for backward compatibility
+            let term = &query.search_terms[0];
+            if term.as_str().contains('*') {
+                tracing::debug!("Using wildcard from search_terms: '{}'", term.as_str());
+                Some(term.as_str().to_string())
+            } else {
+                tracing::debug!("No wildcard in search_terms: '{}'", term.as_str());
+                None
+            }
+        } else if query.search_terms.is_empty() {
+            // Empty search terms means return all
+            tracing::debug!("Empty search terms, returning all documents");
+            None
+        } else {
+            // Multiple search terms not supported for wildcard patterns
+            tracing::debug!("Multiple search terms not supported for wildcard patterns");
+            return Ok(Vec::new());
+        };
+
+        // Filter results based on wildcard pattern if present
+        let mut results: Vec<ValidatedDocumentId> = if let Some(pattern) = wildcard_pattern {
+            tracing::debug!(
+                "Filtering {} documents with pattern: '{}'",
+                all_pairs.len(),
+                pattern
+            );
+
+            let filtered: Vec<_> = all_pairs
+                .into_iter()
+                .filter(|(_, path)| {
+                    let path_str = path.to_string();
+                    let matches = Self::matches_wildcard_pattern(&path_str, &pattern);
+                    if matches {
+                        tracing::debug!("Pattern '{}' MATCHES path: '{}'", pattern, path_str);
+                    }
+                    matches
+                })
+                .map(|(doc_id, _)| doc_id)
+                .collect();
+
+            tracing::debug!("Pattern matching resulted in {} documents", filtered.len());
+            filtered
+        } else {
+            // No pattern, return all documents
+            tracing::debug!(
+                "No pattern specified, returning all {} documents",
+                all_pairs.len()
+            );
+            all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect()
+        };
 
         // Apply limit from query
         let limit_value = query.limit.get();
         if results.len() > limit_value {
+            tracing::debug!(
+                "Truncating {} results to limit of {}",
+                results.len(),
+                limit_value
+            );
             results.truncate(limit_value);
         }
 
         // Results are already sorted by key order from B+ tree
+        tracing::debug!("Primary Index search returning {} results", results.len());
 
         Ok(results)
     }
@@ -510,6 +749,7 @@ pub async fn create_primary_index(
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
+        load_state: RwLock::new(LoadState::NotLoaded),
     };
 
     // Ensure directory structure exists
@@ -536,6 +776,7 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
         btree_root: RwLock::new(btree::create_empty_tree()),
         wal_writer: RwLock::new(None),
         metadata: RwLock::new(IndexMetadata::default()),
+        load_state: RwLock::new(LoadState::NotLoaded),
     };
 
     index.ensure_directories().await?;
@@ -548,6 +789,70 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_matches_wildcard_pattern() {
+        // Test pure wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern("anything", "*"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("test.rs", "*"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("", "*"));
+
+        // Test suffix wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern("test.rs", "*.rs"));
+        assert!(PrimaryIndex::matches_wildcard_pattern("main.rs", "*.rs"));
+        assert!(!PrimaryIndex::matches_wildcard_pattern("test.tsx", "*.rs"));
+        assert!(!PrimaryIndex::matches_wildcard_pattern("test", "*.rs"));
+
+        // Test prefix wildcard
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "test_file.rs",
+            "test_*"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "test_another.tsx",
+            "test_*"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "main_test.rs",
+            "test_*"
+        ));
+
+        // Test suffix wildcard with pattern
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "UserController.rs",
+            "*Controller.rs"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "AuthController.rs",
+            "*Controller.rs"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "ControllerUser.rs",
+            "*Controller.rs"
+        ));
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "UserController.tsx",
+            "*Controller.rs"
+        ));
+
+        // Test complex patterns
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "UserPanel.tsx",
+            "*Panel.tsx"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "AdminPanel.tsx",
+            "*Panel.tsx"
+        ));
+        assert!(PrimaryIndex::matches_wildcard_pattern(
+            "Panel.tsx",
+            "*Panel.tsx"
+        )); // Should match
+        assert!(!PrimaryIndex::matches_wildcard_pattern(
+            "UserPanel.rs",
+            "*Panel.tsx"
+        ));
+    }
 
     #[tokio::test]
     async fn test_primary_index_contract_enforcement() -> Result<()> {

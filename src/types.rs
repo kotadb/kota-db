@@ -9,6 +9,28 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Represents different types of relationships between code symbols
+/// This is used throughout the codebase for dependency tracking
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RelationType {
+    /// Symbol imports/uses another
+    Imports,
+    /// Symbol extends/inherits from another
+    Extends,
+    /// Symbol implements an interface/trait
+    Implements,
+    /// Symbol calls/invokes another
+    Calls,
+    /// Symbol is defined within another
+    ChildOf,
+    /// Symbol returns another as a type
+    Returns,
+    /// Symbol references another (weak dependency)
+    References,
+    /// Custom relationship type
+    Custom(String),
+}
+
 /// A path that has been validated and is guaranteed to be safe
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ValidatedPath {
@@ -284,15 +306,22 @@ pub struct ValidatedSearchQuery {
 }
 
 impl ValidatedSearchQuery {
-    /// Create a new validated search query
+    /// Create a new validated search query with enhanced sanitization
     ///
     /// # Invariants
     /// - Non-empty after trimming
     /// - Meets minimum length requirement
     /// - Not too long (max 1024 chars)
+    /// - Free from injection patterns
+    /// - Properly sanitized
     pub fn new(query: impl Into<String>, min_length: usize) -> Result<Self> {
         let query = query.into();
-        let trimmed = query.trim();
+
+        // Apply comprehensive sanitization
+        let sanitized = crate::query_sanitization::sanitize_search_query(&query)?;
+
+        // Use sanitized text for validation
+        let trimmed = sanitized.text.trim();
 
         ensure!(!trimmed.is_empty(), "Search query cannot be empty");
         ensure!(
@@ -483,6 +512,121 @@ mod tests {
         assert!(ValidatedPath::new("").is_err());
         assert!(ValidatedPath::new("../../../etc/passwd").is_err());
         assert!(ValidatedPath::new("file\0with\0null").is_err());
+    }
+
+    // Extracted from integration tests - Comprehensive path traversal prevention tests
+    #[test]
+    fn test_path_traversal_prevention_comprehensive() {
+        // Test various path traversal attempts
+        let dangerous_paths = vec![
+            "../../../etc/passwd",
+            "../../sensitive/data.txt",
+            "/etc/passwd",
+            "/usr/bin/secret",
+            "documents/../../../etc/shadow",
+            "./../../config",
+            "..\\..\\windows\\system32",         // Windows style
+            "documents/..\\..\\..\\etc\\passwd", // Mixed separators
+            "documents/../../../../../../../../etc/passwd", // Deep traversal
+            "../",
+            "..",
+        ];
+
+        for path in &dangerous_paths {
+            let result = ValidatedPath::new(path);
+            assert!(
+                result.is_err(),
+                "ValidatedPath::new should reject path traversal attempt: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_validated_path_allows_legitimate_paths() {
+        // Test that legitimate paths are still allowed
+        let valid_paths = vec![
+            "documents/readme.md",
+            "data/config.json",
+            "notes/2024/january.md",
+            "project/src/main.rs",
+            "relative/path/file.txt",
+        ];
+
+        for path in &valid_paths {
+            let result = ValidatedPath::new(path);
+            assert!(
+                result.is_ok(),
+                "ValidatedPath::new should accept valid path: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_validated_path_special_character_attacks() {
+        // Test paths with special characters that might be used in attacks
+        let special_paths = vec![
+            "file\0name.txt",                 // Null byte injection
+            "file%00name.txt",                // URL encoded null
+            "file\nname.txt",                 // Newline injection
+            "file\rname.txt",                 // Carriage return
+            "../../%2e%2e/%2e%2e/etc/passwd", // URL encoded traversal
+            "....//....//etc/passwd",         // Alternative traversal
+            "file:///etc/passwd",             // File URL scheme
+        ];
+
+        for path in &special_paths {
+            let result = ValidatedPath::new(path);
+            if path.contains('\0') {
+                // Paths with actual null bytes should definitely fail
+                assert!(
+                    result.is_err(),
+                    "Path with null byte should be rejected: {}",
+                    path
+                );
+            } else {
+                // Other special character attacks should also be rejected or handled safely
+                // Note: This documents the expected security behavior
+                if let Ok(validated) = result {
+                    // Path was accepted - ensure it's safe
+                    assert!(
+                        !validated.as_str().contains(".."),
+                        "No directory traversal should remain in validated path: {}",
+                        validated.as_str()
+                    );
+                }
+                // Paths that are rejected (Err) are good for security - no action needed
+            }
+        }
+    }
+
+    #[test]
+    fn test_validated_path_absolute_paths() {
+        // Test that absolute paths are rejected (security: should not allow access outside storage dir)
+        let absolute_paths = vec![
+            "/etc/passwd",
+            "/home/user/.ssh/id_rsa",
+            "C:\\Windows\\System32\\config\\sam",
+            "/var/log/auth.log",
+        ];
+
+        for path in &absolute_paths {
+            let result = ValidatedPath::new(path);
+            // Document expected behavior - absolute paths should be handled securely
+            if let Ok(validated) = result {
+                // Accepted - ensure it's converted to relative or otherwise secured
+                let path_str = validated.as_str();
+                assert!(
+                    !path_str.starts_with("/etc/")
+                        && !path_str.starts_with("/usr/")
+                        && !path_str.starts_with("/var/")
+                        && !path_str.contains("Windows\\System32"),
+                    "System directories should not be accessible: {}",
+                    path_str
+                );
+            }
+        }
     }
 
     #[test]
