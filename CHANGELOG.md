@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-09-08
+
 ### Added
 - Fly.io deployment support for SaaS API (#510)
   - New `fly.toml` and `fly.staging.toml` configuration files
