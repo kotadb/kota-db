@@ -16,7 +16,6 @@ use anyhow::Result;
 /// 6. Relationship Analysis - Test dependency tracking
 /// 7. Impact Analysis - Test change impact evaluation
 #[tokio::test]
-#[ignore = "Temporarily disabled - E2E integration test failure tracked in issue #590"]
 async fn test_complete_codebase_analysis_journey() -> Result<()> {
     // Step 1: Setup clean test environment
     let env = TestEnvironment::new()?;
