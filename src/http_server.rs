@@ -425,7 +425,11 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -453,7 +457,11 @@ pub async fn start_server_with_intelligence(
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
