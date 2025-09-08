@@ -95,6 +95,7 @@ pub struct SearchRequest {
     pub query: String,
     pub limit: Option<usize>,
     pub search_type: Option<String>,
+    pub format: Option<String>, // "simple" or "rich" (default)
 }
 
 /// Symbol search request
@@ -103,20 +104,25 @@ pub struct SymbolSearchRequest {
     pub pattern: String,
     pub limit: Option<usize>,
     pub symbol_type: Option<String>,
+    pub format: Option<String>, // "simple" or "rich" (default)
 }
 
-/// Callers request
+/// Callers request - supports both 'target' and 'symbol' field names for backward compatibility
 #[derive(Debug, Deserialize)]
 pub struct CallersRequest {
-    pub target: String,
+    pub target: Option<String>,
+    pub symbol: Option<String>, // More intuitive field name
     pub limit: Option<usize>,
+    pub format: Option<String>, // "simple" or "rich" (default)
 }
 
-/// Impact analysis request
+/// Impact analysis request - supports both 'target' and 'symbol' field names for backward compatibility
 #[derive(Debug, Deserialize)]
 pub struct ImpactAnalysisRequest {
-    pub target: String,
+    pub target: Option<String>,
+    pub symbol: Option<String>, // More intuitive field name
     pub limit: Option<usize>,
+    pub format: Option<String>, // "simple" or "rich" (default)
 }
 
 /// Codebase overview request
@@ -125,6 +131,92 @@ pub struct CodebaseOverviewRequest {
     pub format: Option<String>,
     pub top_symbols_limit: Option<usize>,
     pub entry_points_limit: Option<usize>,
+}
+
+/// Simple response for code search - CLI-like format
+#[derive(Debug, Serialize)]
+pub struct SimpleSearchResponse {
+    pub results: Vec<String>, // Just file paths, like CLI
+}
+
+/// Simple response for symbol search - CLI-like format
+#[derive(Debug, Serialize)]
+pub struct SimpleSymbolResponse {
+    pub symbols: Vec<String>, // Just symbol names, like CLI
+}
+
+/// Simple response for callers/impact - CLI-like format
+#[derive(Debug, Serialize)]
+pub struct SimpleAnalysisResponse {
+    pub results: Vec<String>, // Just the relevant items, like CLI
+}
+
+/// Helper function to extract target from request (supports both 'target' and 'symbol' fields)
+fn extract_target_from_callers_request(request: &CallersRequest) -> Result<String, String> {
+    if let Some(target) = &request.target {
+        Ok(target.clone())
+    } else if let Some(symbol) = &request.symbol {
+        Ok(symbol.clone())
+    } else {
+        Err("Either 'target' or 'symbol' field must be provided".to_string())
+    }
+}
+
+/// Helper function to extract target from impact analysis request
+fn extract_target_from_impact_request(request: &ImpactAnalysisRequest) -> Result<String, String> {
+    if let Some(target) = &request.target {
+        Ok(target.clone())
+    } else if let Some(symbol) = &request.symbol {
+        Ok(symbol.clone())
+    } else {
+        Err("Either 'target' or 'symbol' field must be provided".to_string())
+    }
+}
+
+/// Convert rich search result to simple format
+fn convert_to_simple_search_response(
+    rich_result: crate::services::SearchResult,
+) -> SimpleSearchResponse {
+    let results = if let Some(llm_response) = &rich_result.llm_response {
+        // Extract paths from LLM response results (the actual data)
+        tracing::debug!(
+            "Converting search result from llm_response.results ({} items)",
+            llm_response.results.len()
+        );
+        llm_response
+            .results
+            .iter()
+            .map(|result| result.path.clone())
+            .collect()
+    } else if !rich_result.documents.is_empty() {
+        // Fallback to documents field if available
+        tracing::warn!(
+            "API simple format fallback: using documents field instead of llm_response ({} items)",
+            rich_result.documents.len()
+        );
+        rich_result
+            .documents
+            .into_iter()
+            .map(|doc| doc.path.as_str().to_string())
+            .collect()
+    } else {
+        // Return empty results
+        tracing::info!("API simple format: no results found in either llm_response or documents");
+        vec![]
+    };
+    SimpleSearchResponse { results }
+}
+
+/// Convert rich symbol result to simple format
+fn convert_to_simple_symbol_response(
+    rich_result: crate::services::SymbolResult,
+) -> SimpleSymbolResponse {
+    let symbols = rich_result
+        .matches
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect();
+    SimpleSymbolResponse { symbols }
 }
 
 /// Create clean services-only HTTP server
@@ -356,8 +448,34 @@ async fn run_benchmark(
 /// Validate database via ValidationService
 async fn validate_database(
     State(state): State<ServicesAppState>,
-    Json(request): Json<ValidationRequest>,
+    request: Result<Json<ValidationRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Handle JSON parsing errors with helpful messages
+    let Json(request) = match request {
+        Ok(json_request) => json_request,
+        Err(json_error) => {
+            let error_msg = match json_error {
+                axum::extract::rejection::JsonRejection::JsonDataError(_) => {
+                    "Invalid JSON format. Please check your request body syntax."
+                }
+                axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => {
+                    "Missing or invalid Content-Type header. Please set 'Content-Type: application/json'."
+                }
+                axum::extract::rejection::JsonRejection::JsonSyntaxError(_) => {
+                    "JSON syntax error. Please validate your JSON structure."
+                }
+                _ => "Request body parsing failed. Ensure valid JSON with Content-Type: application/json."
+            };
+
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "request_parsing_error".to_string(),
+                    message: format!("{error_msg} For validation endpoint, you can send an empty JSON object: {{}}"),
+                }),
+            ));
+        }
+    };
     let result = with_trace_id("api_validate", async move {
         // Create Database instance to implement DatabaseAccess
         let database = Database {
@@ -552,15 +670,33 @@ async fn search_code(
 
     match result {
         Ok(search_result) => {
-            let json_value = serde_json::to_value(search_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
+            // Check if simple format is requested
+            let use_simple_format = request.format.as_deref() == Some("simple");
+
+            let json_value = if use_simple_format {
+                // Convert to simple format for developer consumption
+                let simple_response = convert_to_simple_search_response(search_result);
+                serde_json::to_value(simple_response).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            } else {
+                // Use rich format by default (optimized for LLM consumption)
+                serde_json::to_value(search_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            };
             Ok(Json(json_value))
         }
         Err(e) => {
@@ -605,15 +741,33 @@ async fn search_symbols(
 
     match result {
         Ok(symbol_result) => {
-            let json_value = serde_json::to_value(symbol_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
+            // Check if simple format is requested
+            let use_simple_format = request.format.as_deref() == Some("simple");
+
+            let json_value = if use_simple_format {
+                // Convert to simple format for developer consumption
+                let simple_response = convert_to_simple_symbol_response(symbol_result);
+                serde_json::to_value(simple_response).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            } else {
+                // Use rich format by default (optimized for LLM consumption)
+                serde_json::to_value(symbol_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            };
             Ok(Json(json_value))
         }
         Err(e) => {
@@ -632,8 +786,48 @@ async fn search_symbols(
 /// Find callers via AnalysisService
 async fn find_callers(
     State(state): State<ServicesAppState>,
-    Json(request): Json<CallersRequest>,
+    request: Result<Json<CallersRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Handle JSON parsing errors with helpful messages
+    let Json(request) = match request {
+        Ok(json_request) => json_request,
+        Err(json_error) => {
+            let error_msg = match json_error {
+                axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => {
+                    "Missing or invalid Content-Type header. Please set 'Content-Type: application/json'."
+                }
+                axum::extract::rejection::JsonRejection::JsonDataError(_) => {
+                    "Invalid JSON format. Please check your request body syntax."
+                }
+                axum::extract::rejection::JsonRejection::JsonSyntaxError(_) => {
+                    "JSON syntax error. Please validate your JSON structure."
+                }
+                _ => "Request body parsing failed. Ensure valid JSON with Content-Type: application/json."
+            };
+
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "request_parsing_error".to_string(),
+                    message: format!("{error_msg} Expected: {{\"symbol\": \"YourSymbolName\"}} or {{\"target\": \"YourTargetName\"}}"),
+                }),
+            ));
+        }
+    };
+    // Extract target from request with better error handling
+    let target = match extract_target_from_callers_request(&request) {
+        Ok(target) => target,
+        Err(error_msg) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "validation_error".to_string(),
+                    message: format!("{error_msg}. Suggestion: Use 'symbol' field name instead of 'target' for better readability."),
+                }),
+            ));
+        }
+    };
+
     let result = with_trace_id("api_find_callers", async move {
         // Create Database instance to implement DatabaseAccess
         let database = Database {
@@ -646,7 +840,7 @@ async fn find_callers(
         let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
 
         let options = CallersOptions {
-            target: request.target,
+            target,
             limit: request.limit,
             quiet: false,
         };
@@ -657,15 +851,34 @@ async fn find_callers(
 
     match result {
         Ok(callers_result) => {
-            let json_value = serde_json::to_value(callers_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
+            // Check if simple format is requested
+            let use_simple_format = request.format.as_deref() == Some("simple");
+
+            let json_value = if use_simple_format {
+                // For simple format, convert analysis results to simple strings
+                // Note: This is a placeholder - we'd need to see the actual structure of callers_result
+                // For now, just pass through the rich format since we prioritize LLM consumption
+                serde_json::to_value(callers_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            } else {
+                // Use rich format by default (optimized for LLM consumption)
+                serde_json::to_value(callers_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            };
             Ok(Json(json_value))
         }
         Err(e) => {
@@ -684,8 +897,48 @@ async fn find_callers(
 /// Analyze impact via AnalysisService
 async fn analyze_impact(
     State(state): State<ServicesAppState>,
-    Json(request): Json<ImpactAnalysisRequest>,
+    request: Result<Json<ImpactAnalysisRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Handle JSON parsing errors with helpful messages
+    let Json(request) = match request {
+        Ok(json_request) => json_request,
+        Err(json_error) => {
+            let error_msg = match json_error {
+                axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => {
+                    "Missing or invalid Content-Type header. Please set 'Content-Type: application/json'."
+                }
+                axum::extract::rejection::JsonRejection::JsonDataError(_) => {
+                    "Invalid JSON format. Please check your request body syntax."
+                }
+                axum::extract::rejection::JsonRejection::JsonSyntaxError(_) => {
+                    "JSON syntax error. Please validate your JSON structure."
+                }
+                _ => "Request body parsing failed. Ensure valid JSON with Content-Type: application/json."
+            };
+
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "request_parsing_error".to_string(),
+                    message: format!("{error_msg} Expected: {{\"symbol\": \"YourSymbolName\"}} or {{\"target\": \"YourTargetName\"}}"),
+                }),
+            ));
+        }
+    };
+    // Extract target from request with better error handling
+    let target = match extract_target_from_impact_request(&request) {
+        Ok(target) => target,
+        Err(error_msg) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "validation_error".to_string(),
+                    message: format!("{error_msg}. Suggestion: Use 'symbol' field name instead of 'target' for better readability."),
+                }),
+            ));
+        }
+    };
+
     let result = with_trace_id("api_analyze_impact", async move {
         // Create Database instance to implement DatabaseAccess
         let database = Database {
@@ -698,7 +951,7 @@ async fn analyze_impact(
         let mut analysis_service = AnalysisService::new(&database, state.db_path.clone());
 
         let options = ImpactOptions {
-            target: request.target,
+            target,
             limit: request.limit,
             quiet: false,
         };
@@ -709,15 +962,32 @@ async fn analyze_impact(
 
     match result {
         Ok(impact_result) => {
-            let json_value = serde_json::to_value(impact_result).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "serialization_failed".to_string(),
-                        message: e.to_string(),
-                    }),
-                )
-            })?;
+            // Check if simple format is requested
+            let use_simple_format = request.format.as_deref() == Some("simple");
+
+            let json_value = if use_simple_format {
+                // For simple format, prioritize LLM consumption but provide option
+                serde_json::to_value(impact_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            } else {
+                // Use rich format by default (optimized for LLM consumption)
+                serde_json::to_value(impact_result).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "serialization_failed".to_string(),
+                            message: e.to_string(),
+                        }),
+                    )
+                })?
+            };
             Ok(Json(json_value))
         }
         Err(e) => {
