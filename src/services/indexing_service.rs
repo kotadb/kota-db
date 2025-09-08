@@ -256,7 +256,7 @@ impl<'a> IndexingService<'a> {
         let result = if should_extract_symbols {
             // Use binary symbol storage with relationship extraction for complete analysis
             let symbol_db_path = self.db_path.join("symbols.kota");
-            let graph_db_path = self.db_path.join("relationships.kota");
+            let graph_db_path = self.db_path.join("dependency_graph.bin");
             ingester
                 .ingest_with_binary_symbols_and_relationships(
                     &options.repo_path,
