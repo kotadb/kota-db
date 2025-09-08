@@ -1,0 +1,11 @@
+# MkDocs and Material theme
+mkdocs>=1.5.3
+mkdocs-material>=9.5.0
+
+# MkDocs plugins (only those actually used in mkdocs.yml)
+mkdocs-minify-plugin>=0.8.0
+mike>=2.0.0
+
+# Additional dependencies for Material theme features
+pygments>=2.17.0
+pymdown-extensions>=10.7.0
