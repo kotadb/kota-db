@@ -245,7 +245,7 @@ fn handle_service_error(
     operation: &str,
 ) -> (StatusCode, Json<StandardApiError>) {
     let error_message = error.to_string();
-    
+
     // Check for specific error types that should not be 500 errors
     if error_message.contains("No symbols found in database") {
         // This is a precondition failure - database needs to be indexed first
@@ -264,7 +264,7 @@ fn handle_service_error(
             }),
         );
     }
-    
+
     // Default to 500 Internal Server Error for other service errors
     (
         StatusCode::INTERNAL_SERVER_ERROR,

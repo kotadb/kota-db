@@ -183,7 +183,10 @@ async fn test_find_callers_endpoint_v1() -> Result<()> {
     // Verify we get a structured error response
     assert!(body.is_object());
     assert_eq!(body["error_code"], 409);
-    assert!(body["message"].as_str().unwrap().contains("No symbols found"));
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("No symbols found"));
 
     server_handle.abort();
     Ok(())
@@ -212,7 +215,10 @@ async fn test_analyze_impact_endpoint_v1() -> Result<()> {
     // Verify we get a structured error response
     assert!(body.is_object());
     assert_eq!(body["error_code"], 409);
-    assert!(body["message"].as_str().unwrap().contains("No symbols found"));
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("No symbols found"));
 
     server_handle.abort();
     Ok(())
