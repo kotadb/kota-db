@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    create_file_storage, search_validation::ValidationStatus, start_server,
+    search_validation::ValidationStatus, services_http_server::start_services_server,
     validate_post_ingestion_search,
 };
 
@@ -336,31 +336,29 @@ impl<'a> ManagementService<'a> {
         })
     }
 
-    /// Start HTTP server using the same logic as CLI Serve command
+    /// Start HTTP server using the services server architecture
     pub async fn start_server(&self, options: ServerOptions) -> Result<()> {
-        // Create storage for the HTTP server
-        let storage_path = self.db_path.join("storage");
-        std::fs::create_dir_all(&storage_path)?;
-
-        let storage = create_file_storage(
-            storage_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid storage path: {:?}", storage_path))?,
-            Some(1000), // Cache size
-        )
-        .await?;
-
         if !options.quiet {
-            println!("🚀 Starting KotaDB HTTP Server");
+            println!("🚀 Starting KotaDB Services HTTP Server");
             println!("   Port: {}", options.port);
-            println!("   Storage: {:?}", storage_path);
+            println!("   Database: {:?}", self.db_path);
             println!("   Access: http://localhost:{}", options.port);
         }
 
-        // Start the server (this will run indefinitely)
-        // Wrap storage in Arc<Mutex<>> for server compatibility
-        let storage_arc = std::sync::Arc::new(tokio::sync::Mutex::new(storage));
-        start_server(storage_arc, options.port).await?;
+        // Use the existing database components from the DatabaseAccess trait
+        let storage_arc = self.database.storage();
+        let primary_index_arc = self.database.primary_index();
+        let trigram_index_arc = self.database.trigram_index();
+
+        // Start the services server (this will run indefinitely)
+        start_services_server(
+            storage_arc,
+            primary_index_arc,
+            trigram_index_arc,
+            self.db_path.clone(),
+            options.port,
+        )
+        .await?;
 
         Ok(())
     }
