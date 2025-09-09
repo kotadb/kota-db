@@ -12,7 +12,8 @@ use axum::{
     routing::get,
 };
 use kotadb::{
-    create_file_storage, create_server, create_server_with_intelligence, create_wrapped_storage,
+    create_file_storage, create_primary_index, create_server, create_server_with_intelligence,
+    create_services_server, create_trigram_index, create_wrapped_storage,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -209,6 +210,135 @@ async fn test_connectinfo_error_handling() -> Result<()> {
     server_handle.abort();
 
     assert_eq!(response.status(), 200);
+
+    Ok(())
+}
+
+/// Test that the services server properly provides ConnectInfo for middleware
+#[tokio::test]
+async fn test_services_server_provides_connectinfo() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let storage = create_file_storage(temp_dir.path().to_str().unwrap(), Some(100)).await?;
+    let wrapped_storage = create_wrapped_storage(storage, 50).await;
+
+    // Create indices required by services server
+    let primary_index = create_primary_index(
+        temp_dir.path().join("primary").to_str().unwrap(),
+        Some(100),
+    )
+    .await?;
+    let trigram_index = create_trigram_index(
+        temp_dir.path().join("trigram").to_str().unwrap(),
+        Some(100),
+    )
+    .await?;
+
+    // Create services server and add ConnectInfo test middleware
+    let app = create_services_server(
+        Arc::new(tokio::sync::Mutex::new(wrapped_storage)),
+        Arc::new(tokio::sync::Mutex::new(primary_index)),
+        Arc::new(tokio::sync::Mutex::new(trigram_index)),
+        temp_dir.path().to_path_buf(),
+    )
+    .route("/test-connectinfo", get(test_endpoint))
+    .layer(axum::middleware::from_fn(test_connectinfo_middleware));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+    });
+
+    // Give server time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Test request to services server
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://127.0.0.1:{}/test-connectinfo", addr.port()))
+        .send()
+        .await?;
+
+    server_handle.abort();
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await?, "ConnectInfo middleware working");
+
+    Ok(())
+}
+
+/// Test ConnectInfo with services server under concurrent load
+#[tokio::test]
+async fn test_services_server_concurrent_connectinfo() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let storage = create_file_storage(temp_dir.path().to_str().unwrap(), Some(100)).await?;
+    let wrapped_storage = create_wrapped_storage(storage, 50).await;
+
+    // Create indices required by services server
+    let primary_index = create_primary_index(
+        temp_dir.path().join("primary").to_str().unwrap(),
+        Some(100),
+    )
+    .await?;
+    let trigram_index = create_trigram_index(
+        temp_dir.path().join("trigram").to_str().unwrap(),
+        Some(100),
+    )
+    .await?;
+
+    let app = create_services_server(
+        Arc::new(tokio::sync::Mutex::new(wrapped_storage)),
+        Arc::new(tokio::sync::Mutex::new(primary_index)),
+        Arc::new(tokio::sync::Mutex::new(trigram_index)),
+        temp_dir.path().to_path_buf(),
+    )
+    .route("/test-connectinfo", get(test_endpoint))
+    .layer(axum::middleware::from_fn(test_connectinfo_middleware));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+    });
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Test multiple concurrent requests
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/test-connectinfo", addr.port());
+
+    let mut handles = vec![];
+    for _ in 0..5 {
+        let client = client.clone();
+        let url = url.clone();
+        let handle = tokio::spawn(async move {
+            let response = client.get(&url).send().await?;
+            Ok::<(reqwest::StatusCode, String), anyhow::Error>((
+                response.status(),
+                response.text().await?,
+            ))
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all requests to complete
+    for handle in handles {
+        let (status, text) = handle.await??;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(text, "ConnectInfo middleware working");
+    }
+
+    server_handle.abort();
 
     Ok(())
 }

@@ -103,6 +103,17 @@ pub fn utility_function(input: &str) -> String {
 "#,
     )?;
 
+    // Add and commit files to git repository (required for symbol extraction)
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&repo_path)
+        .output()?;
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial test commit"])
+        .current_dir(&repo_path)
+        .output()?;
+
     Ok(repo_path)
 }
 
@@ -111,7 +122,10 @@ async fn test_index_codebase_basic_functionality() -> Result<()> {
     let (database, temp_dir) = create_test_database().await?;
     let repo_path = create_test_repository(temp_dir.path())?;
 
-    let indexing_service = IndexingService::new(&database, temp_dir.path().to_path_buf());
+    // Ensure the database path exists and is writable
+    let db_path = temp_dir.path().to_path_buf();
+    std::fs::create_dir_all(&db_path)?;
+    let indexing_service = IndexingService::new(&database, db_path);
 
     let options = IndexCodebaseOptions {
         repo_path: repo_path.clone(),

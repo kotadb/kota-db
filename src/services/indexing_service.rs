@@ -162,8 +162,10 @@ impl<'a> IndexingService<'a> {
             });
         }
 
-        // Essential progress info: always show regardless of quiet mode
-        formatted_output.push_str(&format!("🔄 Indexing codebase: {:?}\n", options.repo_path));
+        // Essential progress info: show unless in quiet mode
+        if !options.quiet {
+            formatted_output.push_str(&format!("🔄 Indexing codebase: {:?}\n", options.repo_path));
+        }
 
         // Determine symbol extraction settings
         #[cfg(feature = "tree-sitter-parsing")]
@@ -297,8 +299,8 @@ impl<'a> IndexingService<'a> {
                 // Defer trigram index population to reduce indexing time
                 // The trigram index will be populated lazily on first search
                 // This dramatically improves indexing performance while maintaining functionality
-                if files_proc > 0 {
-                    // Essential completion info: always show regardless of quiet mode
+                if files_proc > 0 && !options.quiet {
+                    // Essential completion info: show unless in quiet mode
                     formatted_output.push_str("📝 Documents stored successfully. Search index will be built on first search.\n");
                 }
 
@@ -323,8 +325,10 @@ impl<'a> IndexingService<'a> {
             }
         };
 
-        // Essential completion status: always show regardless of quiet mode
-        formatted_output.push_str(&format!("Indexed {} files\n", files_processed));
+        // Essential completion status: show unless in quiet mode
+        if !options.quiet {
+            formatted_output.push_str(&format!("Indexed {} files\n", files_processed));
+        }
 
         // Detailed info: only in non-quiet mode
         if !options.quiet {

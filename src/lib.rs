@@ -16,6 +16,7 @@ pub mod embeddings;
 pub mod file_storage;
 pub mod graph_storage;
 pub mod http_server;
+pub mod http_types;
 pub mod hybrid_storage;
 pub mod llm_search;
 pub mod memory;
@@ -158,10 +159,27 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
+// Re-export legacy HTTP server functions (for backward compatibility and document CRUD endpoints)
 pub use http_server::{
-    create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
-    start_server, start_server_with_intelligence,
+    create_server, create_server_with_intelligence, create_server_with_pool, start_server,
+    start_server_with_intelligence,
 };
+
+// Re-export start_saas_server with deprecation notice (use start_services_saas_server instead)
+#[deprecated(
+    since = "0.6.1",
+    note = "Use start_services_saas_server from services_http_server module instead. This provides the same functionality with cleaner architecture."
+)]
+pub use http_server::start_saas_server;
+
+// Re-export services HTTP server (clean architecture - preferred for new usage)
+pub use services_http_server::{
+    create_services_saas_server, create_services_server, start_services_saas_server,
+    start_services_server,
+};
+
+// Re-export shared HTTP types
+pub use http_types::ErrorResponse;
 
 // Re-export index implementations
 pub use binary_trigram_index::{create_binary_trigram_index, BinaryTrigramIndex};
