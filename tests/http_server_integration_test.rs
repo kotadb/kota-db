@@ -3,6 +3,7 @@
 // Following anti-mock philosophy - uses real server and real HTTP calls
 
 use anyhow::Result;
+#[allow(deprecated)]
 use kotadb::{create_file_storage, create_wrapped_storage, start_server};
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
@@ -33,6 +34,7 @@ async fn start_test_server() -> (u16, TempDir, tokio::task::JoinHandle<Result<()
     drop(listener); // Close the listener so the server can bind to it
 
     let storage_clone = storage.clone();
+    #[allow(deprecated)]
     let server_handle = tokio::spawn(async move { start_server(storage_clone, port).await });
 
     // Give the server a moment to start

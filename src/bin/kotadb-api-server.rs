@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use clap::Parser;
+#[allow(deprecated)]
 use kotadb::{create_file_storage, start_saas_server, ApiKeyConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -131,6 +132,7 @@ async fn main() -> Result<()> {
     }
 
     info!("🚀 Starting server on port {}...", args.port);
+    #[allow(deprecated)]
     match start_saas_server(storage, args.data_dir, api_key_config, args.port).await {
         Ok(_) => {
             info!("✅ Server started successfully");

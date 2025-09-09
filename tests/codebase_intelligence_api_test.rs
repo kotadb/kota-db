@@ -62,6 +62,7 @@ async fn start_test_server_with_real_intelligence(
     let storage_clone = storage.clone();
     let db_path_clone = db_path.clone();
     let server_handle = tokio::spawn(async move {
+        #[allow(deprecated)]
         kotadb::start_server_with_intelligence(storage_clone, db_path_clone, port).await
     });
 

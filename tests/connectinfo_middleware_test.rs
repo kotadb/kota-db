@@ -3,6 +3,8 @@
 //! This test validates that all three server startup functions properly provide
 //! ConnectInfo<SocketAddr> to authentication middleware, preventing HTTP 500 errors.
 
+#![allow(deprecated)]
+
 use anyhow::Result;
 use axum::{
     extract::{ConnectInfo, Request},
@@ -11,6 +13,7 @@ use axum::{
     response::Response,
     routing::get,
 };
+#[allow(deprecated)]
 use kotadb::{
     create_file_storage, create_server, create_server_with_intelligence, create_wrapped_storage,
 };

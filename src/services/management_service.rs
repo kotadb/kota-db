@@ -8,6 +8,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[allow(deprecated)]
 use crate::{
     create_file_storage, search_validation::ValidationStatus, start_server,
     validate_post_ingestion_search,
@@ -360,6 +361,7 @@ impl<'a> ManagementService<'a> {
         // Start the server (this will run indefinitely)
         // Wrap storage in Arc<Mutex<>> for server compatibility
         let storage_arc = std::sync::Arc::new(tokio::sync::Mutex::new(storage));
+        #[allow(deprecated)]
         start_server(storage_arc, options.port).await?;
 
         Ok(())

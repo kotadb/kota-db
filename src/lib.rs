@@ -158,10 +158,16 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
+// Legacy HTTP server (deprecated - use services_http_server instead)
+#[allow(deprecated)]
+#[deprecated(since = "0.6.0", note = "Use services_http_server exports instead")]
 pub use http_server::{
     create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
     start_server, start_server_with_intelligence,
 };
+
+// Modern services-based HTTP server (recommended)
+pub use services_http_server::{create_services_server, start_services_server};
 
 // Re-export index implementations
 pub use binary_trigram_index::{create_binary_trigram_index, BinaryTrigramIndex};

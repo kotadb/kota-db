@@ -256,6 +256,14 @@ impl From<Document> for DocumentResponse {
 }
 
 /// Create HTTP server with all routes configured
+///
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::create_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::create_services_server instead"
+)]
 pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
     let state = AppState {
         storage,
@@ -296,6 +304,13 @@ pub fn create_server(storage: Arc<Mutex<dyn Storage>>) -> Router {
 }
 
 /// Create HTTP server with connection pool integration
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::create_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::create_services_server instead"
+)]
 pub fn create_server_with_pool(
     storage: Arc<Mutex<dyn Storage>>,
     connection_pool: Arc<tokio::sync::Mutex<ConnectionPoolImpl>>,
@@ -339,6 +354,14 @@ pub fn create_server_with_pool(
 }
 
 /// Create HTTP server with codebase intelligence support
+///
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::create_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::create_services_server instead"
+)]
 pub async fn create_server_with_intelligence(
     storage: Arc<Mutex<dyn Storage>>,
     db_path: PathBuf,
@@ -415,7 +438,16 @@ pub async fn create_server_with_intelligence(
 }
 
 /// Start the HTTP server on the specified port
+///
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::start_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::start_services_server instead"
+)]
 pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result<()> {
+    #[allow(deprecated)]
     let app = create_server(storage);
     let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
 
@@ -435,11 +467,20 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
 }
 
 /// Start the HTTP server with codebase intelligence support
+///
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::start_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::start_services_server instead"
+)]
 pub async fn start_server_with_intelligence(
     storage: Arc<Mutex<dyn Storage>>,
     db_path: PathBuf,
     port: u16,
 ) -> Result<()> {
+    #[allow(deprecated)]
     let app = create_server_with_intelligence(storage, db_path).await?;
     let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
 
@@ -562,6 +603,14 @@ pub async fn create_saas_server(
 }
 
 /// Start the SaaS HTTP server with API keys and codebase intelligence
+///
+/// # Deprecation Warning
+/// This legacy HTTP server is deprecated. Please use `services_http_server::start_services_server` instead.
+/// The legacy server will be removed in a future version.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use services_http_server::start_services_server instead"
+)]
 pub async fn start_saas_server(
     storage: Arc<Mutex<dyn Storage>>,
     db_path: PathBuf,
@@ -1650,6 +1699,7 @@ async fn validate_bulk(Json(request): Json<BulkValidationRequest>) -> Json<BulkV
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::{create_file_storage, wrappers::create_wrapped_storage};
