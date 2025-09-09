@@ -3,7 +3,7 @@
 //! Production HTTP server with API key authentication,
 //! rate limiting, and codebase intelligence features.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use kotadb::{
     create_file_storage, create_primary_index, create_trigram_index, start_services_saas_server,
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
         Some(1000), // Cache capacity
     )
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to create primary index: {}", e))?;
+    .context("Failed to create primary index for SaaS server")?;
     let primary_index = Arc::new(tokio::sync::Mutex::new(primary_index));
 
     let trigram_index_path = args.data_dir.join("trigram");
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
         Some(1000), // Cache capacity
     )
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to create trigram index: {}", e))?;
+    .context("Failed to create trigram index for SaaS server")?;
     let trigram_index = Arc::new(tokio::sync::Mutex::new(trigram_index));
 
     info!("🔑 Configuring API key service...");

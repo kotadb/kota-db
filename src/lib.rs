@@ -160,11 +160,17 @@ pub use connection_pool::{
     TokenBucketRateLimiter,
 };
 // Re-export legacy HTTP server functions (for backward compatibility and document CRUD endpoints)
-// Note: start_saas_server has been migrated to start_services_saas_server (preferred)
 pub use http_server::{
     create_server, create_server_with_intelligence, create_server_with_pool, start_server,
     start_server_with_intelligence,
 };
+
+// Re-export start_saas_server with deprecation notice (use start_services_saas_server instead)
+#[deprecated(
+    since = "0.6.1",
+    note = "Use start_services_saas_server from services_http_server module instead. This provides the same functionality with cleaner architecture."
+)]
+pub use http_server::start_saas_server;
 
 // Re-export services HTTP server (clean architecture - preferred for new usage)
 pub use services_http_server::{

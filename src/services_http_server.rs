@@ -42,6 +42,21 @@ pub struct ServicesAppState {
     pub api_key_service: Option<Arc<crate::ApiKeyService>>,
 }
 
+impl ServicesAppState {
+    /// Validate that the state is configured correctly for SaaS mode
+    pub fn validate_saas_mode(&self) -> Result<(), String> {
+        if self.api_key_service.is_none() {
+            return Err("SaaS mode requires API key service to be configured".to_string());
+        }
+        Ok(())
+    }
+
+    /// Check if this state is configured for SaaS mode
+    pub fn is_saas_mode(&self) -> bool {
+        self.api_key_service.is_some()
+    }
+}
+
 /// Health check response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
