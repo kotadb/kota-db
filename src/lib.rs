@@ -16,6 +16,7 @@ pub mod embeddings;
 pub mod file_storage;
 pub mod graph_storage;
 pub mod http_server;
+pub mod http_types;
 pub mod hybrid_storage;
 pub mod llm_search;
 pub mod memory;
@@ -162,6 +163,9 @@ pub use http_server::{
     create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
     start_server, start_server_with_intelligence,
 };
+
+// Re-export shared HTTP types
+pub use http_types::ErrorResponse;
 
 // Re-export index implementations
 pub use binary_trigram_index::{create_binary_trigram_index, BinaryTrigramIndex};
