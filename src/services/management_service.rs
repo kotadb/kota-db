@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    create_file_storage, search_validation::ValidationStatus, start_server,
+    create_file_storage, search_validation::ValidationStatus, start_services_server,
     validate_post_ingestion_search,
 };
 
@@ -358,9 +358,32 @@ impl<'a> ManagementService<'a> {
         }
 
         // Start the server (this will run indefinitely)
-        // Wrap storage in Arc<Mutex<>> for server compatibility
+        // Create indices and wrap storage for services server compatibility
+        use crate::{create_primary_index, create_trigram_index};
+
         let storage_arc = std::sync::Arc::new(tokio::sync::Mutex::new(storage));
-        start_server(storage_arc, options.port).await?;
+        let db_path = PathBuf::from(&self.db_path);
+
+        // Create basic indices for the services server
+        let primary_index_path = db_path.join("primary_index");
+        let trigram_index_path = db_path.join("trigram_index");
+
+        let primary_index =
+            create_primary_index(primary_index_path.to_str().unwrap(), Some(1000)).await?;
+        let primary_index = std::sync::Arc::new(tokio::sync::Mutex::new(primary_index));
+
+        let trigram_index =
+            create_trigram_index(trigram_index_path.to_str().unwrap(), Some(1000)).await?;
+        let trigram_index = std::sync::Arc::new(tokio::sync::Mutex::new(trigram_index));
+
+        start_services_server(
+            storage_arc,
+            primary_index,
+            trigram_index,
+            db_path,
+            options.port,
+        )
+        .await?;
 
         Ok(())
     }

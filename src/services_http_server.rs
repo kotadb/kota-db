@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use axum::{
     extract::{Query as AxumQuery, State},
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -22,6 +22,8 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info};
 
 use crate::{
+    api_keys::{ApiKeyConfig, ApiKeyService, CreateApiKeyRequest, CreateApiKeyResponse},
+    auth_middleware::{auth_middleware, internal_auth_middleware},
     database::Database,
     services::{
         AnalysisService, BenchmarkOptions, BenchmarkService, CallersOptions, ImpactOptions,
@@ -30,6 +32,7 @@ use crate::{
     },
 };
 use crate::{observability::with_trace_id, Index, Storage};
+use axum::middleware;
 
 /// Application state for services-only HTTP server
 #[derive(Clone)]
@@ -38,6 +41,7 @@ pub struct ServicesAppState {
     pub primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
     pub trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
     pub db_path: PathBuf,
+    pub api_key_service: Option<Arc<ApiKeyService>>,
 }
 
 /// Health check response
@@ -290,27 +294,46 @@ pub fn create_services_server(
         primary_index,
         trigram_index,
         db_path,
+        api_key_service: None,
     };
 
     Router::new()
         // Health endpoint
         .route("/health", get(health_check))
         // Statistics Service endpoints
-        .route("/api/stats", get(get_stats))
+        .route("/api/v1/stats", get(get_stats))
         // Benchmark Service endpoints
-        .route("/api/benchmark", post(run_benchmark))
+        .route("/api/v1/benchmark", post(run_benchmark))
         // Validation Service endpoints
-        .route("/api/validate", post(validate_database))
-        .route("/api/health-check", get(health_check_detailed))
+        .route("/api/v1/validate", post(validate_database))
+        .route("/api/v1/health-check", get(health_check_detailed))
         // Indexing Service endpoints
-        .route("/api/index-codebase", post(index_codebase))
+        .route("/api/v1/index-codebase", post(index_codebase))
         // Search Service endpoints - Enhanced implementations with multi-format support
-        .route("/api/search-code", get(search_code_enhanced))
-        .route("/api/search-symbols", get(search_symbols_enhanced))
+        .route("/api/v1/search-code", get(search_code_enhanced))
+        .route("/api/v1/search-symbols", get(search_symbols_enhanced))
         // Analysis Service endpoints - Enhanced implementations with improved UX
-        .route("/api/find-callers", post(find_callers_enhanced))
-        .route("/api/analyze-impact", post(analyze_impact_enhanced))
-        .route("/api/codebase-overview", get(codebase_overview))
+        .route("/api/v1/find-callers", post(find_callers_enhanced))
+        .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
+        .route("/api/v1/codebase-overview", get(codebase_overview))
+        // BACKWARD COMPATIBILITY ROUTES - DEPRECATED (remove after v0.8)
+        // Proxy /api/* routes to /api/v1/* with deprecation headers
+        .route("/api/stats", get(deprecated_get_stats))
+        .route("/api/benchmark", post(deprecated_run_benchmark))
+        .route("/api/validate", post(deprecated_validate_database))
+        .route("/api/health-check", get(deprecated_health_check_detailed))
+        .route("/api/index-codebase", post(deprecated_index_codebase))
+        .route("/api/search-code", get(deprecated_search_code_enhanced))
+        .route(
+            "/api/search-symbols",
+            get(deprecated_search_symbols_enhanced),
+        )
+        .route("/api/find-callers", post(deprecated_find_callers_enhanced))
+        .route(
+            "/api/analyze-impact",
+            post(deprecated_analyze_impact_enhanced),
+        )
+        .route("/api/codebase-overview", get(deprecated_codebase_overview))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -360,22 +383,212 @@ pub async fn start_services_server(
     info!("🎯 Clean services-only architecture - no legacy endpoints");
     info!("📄 Available endpoints:");
     info!("   GET    /health                    - Server health check");
-    info!("   GET    /api/stats                 - Database statistics (StatsService)");
-    info!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
-    info!("   POST   /api/validate              - Database validation (ValidationService)");
-    info!("   GET    /api/health-check          - Detailed health check (ValidationService)");
-    info!("   POST   /api/index-codebase        - Index repository (IndexingService)");
-    info!("   GET    /api/search-code           - Search code content (SearchService)");
-    info!("   GET    /api/search-symbols        - Search symbols (SearchService)");
-    info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
-    info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
-    info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    info!("   GET    /api/v1/stats             - Database statistics (StatsService)");
+    info!("   POST   /api/v1/benchmark         - Performance benchmarks (BenchmarkService)");
+    info!("   POST   /api/v1/validate          - Database validation (ValidationService)");
+    info!("   GET    /api/v1/health-check      - Detailed health check (ValidationService)");
+    info!("   POST   /api/v1/index-codebase    - Index repository (IndexingService)");
+    info!("   GET    /api/v1/search-code       - Search code content (SearchService)");
+    info!("   GET    /api/v1/search-symbols    - Search symbols (SearchService)");
+    info!("   POST   /api/v1/find-callers      - Find callers (AnalysisService)");
+    info!("   POST   /api/v1/analyze-impact    - Impact analysis (AnalysisService)");
+    info!("   GET    /api/v1/codebase-overview - Codebase overview (AnalysisService)");
     info!("");
     info!("🟢 Server ready at http://localhost:{}", port);
     info!("   Health check: curl http://localhost:{}/health", port);
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Create SaaS services server with API key authentication
+pub async fn create_saas_services_server(
+    storage: Arc<tokio::sync::Mutex<dyn Storage>>,
+    primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+) -> Result<Router> {
+    // Initialize API key service
+    let api_key_service = Arc::new(ApiKeyService::new(api_key_config).await?);
+
+    let state = ServicesAppState {
+        storage,
+        primary_index,
+        trigram_index,
+        db_path,
+        api_key_service: Some(api_key_service.clone()),
+    };
+
+    // Create protected routes with API key authentication
+    let protected_routes = Router::new()
+        // Statistics Service endpoints
+        .route("/api/v1/stats", get(get_stats))
+        // Benchmark Service endpoints
+        .route("/api/v1/benchmark", post(run_benchmark))
+        // Validation Service endpoints
+        .route("/api/v1/validate", post(validate_database))
+        .route("/api/v1/health-check", get(health_check_detailed))
+        // Indexing Service endpoints
+        .route("/api/v1/index-codebase", post(index_codebase))
+        // Search Service endpoints - Enhanced implementations with multi-format support
+        .route("/api/v1/search-code", get(search_code_enhanced))
+        .route("/api/v1/search-symbols", get(search_symbols_enhanced))
+        // Analysis Service endpoints - Enhanced implementations with improved UX
+        .route("/api/v1/find-callers", post(find_callers_enhanced))
+        .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
+        .route("/api/v1/codebase-overview", get(codebase_overview))
+        .layer(middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ))
+        .with_state(state.clone());
+
+    // Create internal endpoints (protected by different auth)
+    let internal_routes = Router::new()
+        .route("/internal/create-api-key", post(create_api_key_internal))
+        .layer(middleware::from_fn(internal_auth_middleware))
+        .with_state(api_key_service.clone());
+
+    // Create public endpoints (no authentication required)
+    let public_routes = Router::new()
+        .route("/health", get(health_check))
+        .with_state(state);
+
+    // Merge all routers
+    Ok(public_routes
+        .merge(protected_routes)
+        .merge(internal_routes)
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        ))
+}
+
+/// Start the SaaS server with the legacy API interface (for compatibility)
+pub async fn start_saas_server(
+    storage: Arc<tokio::sync::Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    // Create basic indices for the services
+    use crate::{create_primary_index, create_trigram_index};
+
+    let primary_index_path = db_path.join("primary_index");
+    let trigram_index_path = db_path.join("trigram_index");
+
+    let primary_index =
+        create_primary_index(primary_index_path.to_str().unwrap(), Some(1000)).await?;
+    let primary_index = Arc::new(tokio::sync::Mutex::new(primary_index));
+
+    let trigram_index =
+        create_trigram_index(trigram_index_path.to_str().unwrap(), Some(1000)).await?;
+    let trigram_index = Arc::new(tokio::sync::Mutex::new(trigram_index));
+
+    start_saas_services_server(
+        storage,
+        primary_index,
+        trigram_index,
+        db_path,
+        api_key_config,
+        port,
+    )
+    .await
+}
+
+/// Start the SaaS services server with API key authentication
+pub async fn start_saas_services_server(
+    storage: Arc<tokio::sync::Mutex<dyn Storage>>,
+    primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    let app = create_saas_services_server(
+        storage,
+        primary_index,
+        trigram_index,
+        db_path,
+        api_key_config,
+    )
+    .await?;
+
+    // Try to bind to the port with enhanced error handling
+    let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            error!("Failed to start server on port {}: {}", port, e);
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                error!("Port {} is already in use. Try these alternatives:", port);
+                error!("   - Use a different port: --port {}", port + 1);
+
+                // Cross-platform command suggestions
+                if cfg!(unix) {
+                    error!("   - Check port usage: lsof -ti:{}", port);
+                    error!("   - Kill process using port: kill $(lsof -ti:{})", port);
+                } else {
+                    error!("   - Check port usage: netstat -ano | findstr :{}", port);
+                    error!("   - Kill process using port: taskkill /PID <PID> /F");
+                }
+            }
+            return Err(e).context(format!(
+                "Failed to bind to port {}. Port may be in use or insufficient permissions",
+                port
+            ));
+        }
+    };
+
+    info!("🚀 KotaDB SaaS Services Server starting on port {}", port);
+    info!("🎯 Clean services-only architecture with API key authentication");
+    info!("🔐 API key authentication enabled");
+    info!("📄 Available endpoints:");
+    info!("   GET    /health                       - Server health check (public)");
+    info!("   GET    /api/v1/stats                 - Database statistics (authenticated)");
+    info!("   POST   /api/v1/benchmark             - Performance benchmarks (authenticated)");
+    info!("   POST   /api/v1/validate              - Database validation (authenticated)");
+    info!("   GET    /api/v1/health-check          - Detailed health check (authenticated)");
+    info!("   POST   /api/v1/index-codebase        - Index repository (authenticated)");
+    info!("   GET    /api/v1/search-code           - Search code content (authenticated)");
+    info!("   GET    /api/v1/search-symbols        - Search symbols (authenticated)");
+    info!("   POST   /api/v1/find-callers          - Find callers (authenticated)");
+    info!("   POST   /api/v1/analyze-impact        - Impact analysis (authenticated)");
+    info!("   GET    /api/v1/codebase-overview     - Codebase overview (authenticated)");
+    info!("Internal endpoints (requires internal key):");
+    info!("   POST   /internal/create-api-key      - Create new API key");
+    info!("");
+    info!("🟢 Server ready at http://localhost:{}", port);
+    info!("   Health check: curl http://localhost:{}/health", port);
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Internal endpoint to create API keys (called by web app)
+async fn create_api_key_internal(
+    State(api_key_service): State<Arc<ApiKeyService>>,
+    Json(request): Json<CreateApiKeyRequest>,
+) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let result = with_trace_id("create_api_key_internal", async move {
+        api_key_service.create_api_key(request).await
+    })
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(e) => {
+            tracing::warn!("Failed to create API key: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "api_key_creation_failed".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
 }
 
 /// Basic health check
@@ -1059,6 +1272,178 @@ async fn analyze_impact_enhanced(
             tracing::warn!("Enhanced impact analysis failed: {}", e);
             Err(handle_service_error(e, "analyze_impact"))
         }
+    }
+}
+
+// ================================================================================================
+// DEPRECATED API ENDPOINTS - BACKWARD COMPATIBILITY (Remove after v0.8)
+// ================================================================================================
+
+/// Helper to add deprecation headers to any response
+fn add_deprecation_headers(mut response: axum::response::Response) -> axum::response::Response {
+    let headers = response.headers_mut();
+    headers.insert("Deprecation", "true".parse().unwrap());
+    headers.insert(
+        "Sunset",
+        "2025-12-01T00:00:00Z".parse().unwrap(), // 3 months deprecation period
+    );
+    headers.insert(
+        "Link",
+        "</api/v1>; rel=\"successor-version\"".parse().unwrap(),
+    );
+    headers.insert(
+        "Warning",
+        "299 - \"This endpoint is deprecated. Please use /api/v1 endpoints instead. Migration guide: https://docs.kotadb.com/api-migration\"".parse().unwrap(),
+    );
+    response
+}
+
+/// Deprecated wrapper for /api/stats -> /api/v1/stats
+async fn deprecated_get_stats(
+    State(state): State<ServicesAppState>,
+    query: AxumQuery<StatsQuery>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = get_stats(State(state), query).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
+    }
+}
+
+/// Deprecated wrapper for /api/benchmark -> /api/v1/benchmark
+async fn deprecated_run_benchmark(
+    State(state): State<ServicesAppState>,
+    request: Json<BenchmarkRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = run_benchmark(State(state), request).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
+    }
+}
+
+/// Deprecated wrapper for /api/validate -> /api/v1/validate
+async fn deprecated_validate_database(
+    State(state): State<ServicesAppState>,
+    request: Json<ValidationRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = validate_database(State(state), request).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
+    }
+}
+
+/// Deprecated wrapper for /api/health-check -> /api/v1/health-check
+async fn deprecated_health_check_detailed(
+    State(state): State<ServicesAppState>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = health_check_detailed(State(state)).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
+    }
+}
+
+/// Deprecated wrapper for /api/index-codebase -> /api/v1/index-codebase
+async fn deprecated_index_codebase(
+    State(state): State<ServicesAppState>,
+    request: Json<IndexCodebaseRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = index_codebase(State(state), request).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
+    }
+}
+
+/// Deprecated wrapper for /api/search-code -> /api/v1/search-code
+async fn deprecated_search_code_enhanced(
+    State(state): State<ServicesAppState>,
+    query: AxumQuery<SearchRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<StandardApiError>)> {
+    let result = search_code_enhanced(State(state), query).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err((status, error_response)) => Err((status, error_response)),
+    }
+}
+
+/// Deprecated wrapper for /api/search-symbols -> /api/v1/search-symbols
+async fn deprecated_search_symbols_enhanced(
+    State(state): State<ServicesAppState>,
+    query: AxumQuery<SymbolSearchRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<StandardApiError>)> {
+    let result = search_symbols_enhanced(State(state), query).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err((status, error_response)) => Err((status, error_response)),
+    }
+}
+
+/// Deprecated wrapper for /api/find-callers -> /api/v1/find-callers
+async fn deprecated_find_callers_enhanced(
+    State(state): State<ServicesAppState>,
+    request_result: Result<Json<CallersRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<axum::response::Response, (StatusCode, Json<StandardApiError>)> {
+    let result = find_callers_enhanced(State(state), request_result).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err((status, error_response)) => Err((status, error_response)),
+    }
+}
+
+/// Deprecated wrapper for /api/analyze-impact -> /api/v1/analyze-impact
+async fn deprecated_analyze_impact_enhanced(
+    State(state): State<ServicesAppState>,
+    request_result: Result<Json<ImpactAnalysisRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<axum::response::Response, (StatusCode, Json<StandardApiError>)> {
+    let result = analyze_impact_enhanced(State(state), request_result).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err((status, error_response)) => Err((status, error_response)),
+    }
+}
+
+/// Deprecated wrapper for /api/codebase-overview -> /api/v1/codebase-overview
+async fn deprecated_codebase_overview(
+    State(state): State<ServicesAppState>,
+    request: AxumQuery<CodebaseOverviewRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let result = codebase_overview(State(state), request).await;
+    match result {
+        Ok(json_response) => {
+            let response = Json(json_response.0).into_response();
+            Ok(add_deprecation_headers(response))
+        }
+        Err(error_response) => Err(error_response),
     }
 }
 

@@ -197,7 +197,10 @@ pub struct CodebaseIntelligenceState {
 pub async fn search_symbols(
     State(state): State<CodebaseIntelligenceState>,
     AxumQuery(params): AxumQuery<SymbolSearchParams>,
-) -> Result<Json<SymbolSearchResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+) -> Result<
+    Json<SymbolSearchResponse>,
+    (StatusCode, Json<crate::services_http_server::ErrorResponse>),
+> {
     let start = Instant::now();
 
     let result = with_trace_id("search_symbols", async move {
@@ -253,7 +256,7 @@ pub async fn search_symbols(
             warn!("Symbol search failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::http_server::ErrorResponse {
+                Json(crate::services_http_server::ErrorResponse {
                     error: "symbol_search_failed".to_string(),
                     message: e.to_string(),
                 }),
@@ -268,7 +271,8 @@ pub async fn find_callers(
     State(state): State<CodebaseIntelligenceState>,
     Path(target): Path<String>,
     AxumQuery(params): AxumQuery<FindCallersParams>,
-) -> Result<Json<FindCallersResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+) -> Result<Json<FindCallersResponse>, (StatusCode, Json<crate::services_http_server::ErrorResponse>)>
+{
     let start = Instant::now();
 
     let result = with_trace_id("find_callers", async move {
@@ -317,7 +321,7 @@ pub async fn find_callers(
             warn!("Find callers failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::http_server::ErrorResponse {
+                Json(crate::services_http_server::ErrorResponse {
                     error: "find_callers_failed".to_string(),
                     message: e.to_string(),
                 }),
@@ -332,7 +336,10 @@ pub async fn analyze_impact(
     State(state): State<CodebaseIntelligenceState>,
     Path(target): Path<String>,
     AxumQuery(params): AxumQuery<ImpactAnalysisParams>,
-) -> Result<Json<ImpactAnalysisResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+) -> Result<
+    Json<ImpactAnalysisResponse>,
+    (StatusCode, Json<crate::services_http_server::ErrorResponse>),
+> {
     let start = Instant::now();
 
     let result = with_trace_id("analyze_impact", async move {
@@ -402,7 +409,7 @@ pub async fn analyze_impact(
             warn!("Impact analysis failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::http_server::ErrorResponse {
+                Json(crate::services_http_server::ErrorResponse {
                     error: "impact_analysis_failed".to_string(),
                     message: e.to_string(),
                 }),
@@ -416,7 +423,8 @@ pub async fn analyze_impact(
 pub async fn search_code(
     State(state): State<CodebaseIntelligenceState>,
     AxumQuery(params): AxumQuery<CodeSearchParams>,
-) -> Result<Json<CodeSearchResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+) -> Result<Json<CodeSearchResponse>, (StatusCode, Json<crate::services_http_server::ErrorResponse>)>
+{
     let start = Instant::now();
 
     let result = with_trace_id("search_code", async move {
@@ -488,7 +496,7 @@ pub async fn search_code(
             warn!("Code search failed: {}", e);
             Err((
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(crate::http_server::ErrorResponse {
+                Json(crate::services_http_server::ErrorResponse {
                     error: "code_search_unavailable".to_string(),
                     message: e.to_string(),
                 }),
@@ -523,7 +531,10 @@ pub fn add_deprecation_headers(headers: &mut HeaderMap) {
 pub async fn index_repository(
     State(state): State<CodebaseIntelligenceState>,
     axum::extract::Json(request): axum::extract::Json<IndexRepositoryRequest>,
-) -> Result<Json<IndexRepositoryResponse>, (StatusCode, Json<crate::http_server::ErrorResponse>)> {
+) -> Result<
+    Json<IndexRepositoryResponse>,
+    (StatusCode, Json<crate::services_http_server::ErrorResponse>),
+> {
     let start = Instant::now();
 
     let result = with_trace_id("index_repository", async move {
@@ -658,7 +669,7 @@ pub async fn index_repository(
             warn!("Repository indexing failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::http_server::ErrorResponse {
+                Json(crate::services_http_server::ErrorResponse {
                     error: "indexing_failed".to_string(),
                     message: e.to_string(),
                 }),

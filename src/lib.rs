@@ -15,7 +15,6 @@ pub mod embedding_transformer;
 pub mod embeddings;
 pub mod file_storage;
 pub mod graph_storage;
-pub mod http_server;
 pub mod hybrid_storage;
 pub mod llm_search;
 pub mod memory;
@@ -158,9 +157,9 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
-pub use http_server::{
-    create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
-    start_server, start_server_with_intelligence,
+pub use services_http_server::{
+    create_saas_services_server, create_services_server, start_saas_server,
+    start_saas_services_server, start_services_server,
 };
 
 // Re-export index implementations

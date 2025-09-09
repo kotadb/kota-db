@@ -430,8 +430,8 @@ async fn test_comprehensive_api_response_validation() -> Result<()> {
             context: "Calls DatabaseConfig at line 45".to_string(),
         },
         CallSite {
-            caller: "HttpServer::init".to_string(),
-            file_path: "src/http_server.rs".to_string(),
+            caller: "ServicesServer::init".to_string(),
+            file_path: "src/services_http_server.rs".to_string(),
             line_number: Some(120),
             context: "Imports DatabaseConfig at line 120".to_string(),
         },
