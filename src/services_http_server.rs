@@ -405,7 +405,7 @@ pub async fn create_services_saas_server(
     api_key_config: crate::ApiKeyConfig,
 ) -> Result<Router> {
     use crate::auth_middleware::auth_middleware;
-    
+
     // Initialize API key service
     let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
 
@@ -421,7 +421,7 @@ pub async fn create_services_saas_server(
     let authenticated_routes = Router::new()
         // Statistics Service endpoints
         .route("/api/stats", get(get_stats))
-        // Benchmark Service endpoints  
+        // Benchmark Service endpoints
         .route("/api/benchmark", post(run_benchmark))
         // Validation Service endpoints
         .route("/api/validate", post(validate_database))
@@ -478,7 +478,8 @@ pub async fn start_services_saas_server(
         trigram_index,
         db_path.clone(),
         api_key_config,
-    ).await?;
+    )
+    .await?;
 
     // Try to bind to the port with enhanced error handling
     let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
@@ -495,7 +496,10 @@ pub async fn start_services_saas_server(
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    error!("   - Find process using port: sudo netstat -tulpn | grep :{}", port);
+                    error!(
+                        "   - Find process using port: sudo netstat -tulpn | grep :{}",
+                        port
+                    );
                     error!("   - Kill process using port: sudo kill -9 <PID>");
                 }
                 #[cfg(target_os = "windows")]
@@ -533,7 +537,10 @@ pub async fn start_services_saas_server(
     info!("");
     info!("🟢 SaaS Server ready at http://localhost:{}", port);
     info!("   Health check: curl http://localhost:{}/health", port);
-    info!("   Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats", port);
+    info!(
+        "   Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats",
+        port
+    );
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -1357,17 +1364,22 @@ fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
 async fn create_api_key_handler(
     State(state): State<ServicesAppState>,
     Json(request): Json<crate::api_keys::CreateApiKeyRequest>,
-) -> Result<Json<crate::api_keys::CreateApiKeyResponse>, (StatusCode, Json<crate::http_types::ErrorResponse>)> {
-    use crate::observability::with_trace_id;
+) -> Result<
+    Json<crate::api_keys::CreateApiKeyResponse>,
+    (StatusCode, Json<crate::http_types::ErrorResponse>),
+> {
     use crate::http_types::ErrorResponse;
-    
+    use crate::observability::with_trace_id;
+
     // Extract API key service from state
     let api_key_service = match &state.api_key_service {
         Some(service) => service.clone(),
         None => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::internal_server_error("API key service not configured")),
+                Json(ErrorResponse::internal_server_error(
+                    "API key service not configured",
+                )),
             ));
         }
     };

@@ -15,9 +15,9 @@ fn filter_application_logs(stderr: &str) -> String {
         .lines()
         .filter(|line| {
             // Skip cargo compilation output
-            !line.contains("Finished `dev` profile") &&
-            !line.contains("Running `target/debug/kotadb") &&
-            !line.trim().is_empty()
+            !line.contains("Finished `dev` profile")
+                && !line.contains("Running `target/debug/kotadb")
+                && !line.trim().is_empty()
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -249,21 +249,21 @@ async fn test_verbosity_modes_for_ai_integration() -> Result<()> {
     // 1. Both commands succeed (showing the verbosity parsing works)
     // 2. Both produce the expected stdout output
     // 3. Quiet mode has no application logs (already checked above)
-    
+
     let quiet_stdout = String::from_utf8_lossy(&quiet_output.stdout);
     let normal_stdout = String::from_utf8_lossy(&normal_output.stdout);
-    
+
     // Both modes should produce the same stdout (stats output)
     assert!(
         !quiet_stdout.is_empty() && !normal_stdout.is_empty(),
         "Both verbosity modes should produce stats output"
     );
-    
+
     assert!(
         quiet_output.status.success() && normal_output.status.success(),
         "Both verbosity commands should succeed"
     );
-    
+
     // The key test: different verbosity levels should be parsed successfully
     // This is evidenced by the commands succeeding with different arguments
     // If verbosity parsing was broken, one of the commands would fail

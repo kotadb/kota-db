@@ -222,16 +222,10 @@ async fn test_services_server_provides_connectinfo() -> Result<()> {
     let wrapped_storage = create_wrapped_storage(storage, 50).await;
 
     // Create indices required by services server
-    let primary_index = create_primary_index(
-        temp_dir.path().join("primary").to_str().unwrap(),
-        Some(100),
-    )
-    .await?;
-    let trigram_index = create_trigram_index(
-        temp_dir.path().join("trigram").to_str().unwrap(),
-        Some(100),
-    )
-    .await?;
+    let primary_index =
+        create_primary_index(temp_dir.path().join("primary").to_str().unwrap(), Some(100)).await?;
+    let trigram_index =
+        create_trigram_index(temp_dir.path().join("trigram").to_str().unwrap(), Some(100)).await?;
 
     // Create services server and add ConnectInfo test middleware
     let app = create_services_server(
@@ -280,16 +274,10 @@ async fn test_services_server_concurrent_connectinfo() -> Result<()> {
     let wrapped_storage = create_wrapped_storage(storage, 50).await;
 
     // Create indices required by services server
-    let primary_index = create_primary_index(
-        temp_dir.path().join("primary").to_str().unwrap(),
-        Some(100),
-    )
-    .await?;
-    let trigram_index = create_trigram_index(
-        temp_dir.path().join("trigram").to_str().unwrap(),
-        Some(100),
-    )
-    .await?;
+    let primary_index =
+        create_primary_index(temp_dir.path().join("primary").to_str().unwrap(), Some(100)).await?;
+    let trigram_index =
+        create_trigram_index(temp_dir.path().join("trigram").to_str().unwrap(), Some(100)).await?;
 
     let app = create_services_server(
         Arc::new(tokio::sync::Mutex::new(wrapped_storage)),
