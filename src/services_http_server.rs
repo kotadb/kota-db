@@ -244,11 +244,33 @@ fn handle_service_error(
     error: anyhow::Error,
     operation: &str,
 ) -> (StatusCode, Json<StandardApiError>) {
+    let error_message = error.to_string();
+    
+    // Check for specific error types that should not be 500 errors
+    if error_message.contains("No symbols found in database") {
+        // This is a precondition failure - database needs to be indexed first
+        return (
+            StatusCode::CONFLICT,
+            Json(StandardApiError {
+                error_type: format!("{}_precondition_failed", operation),
+                message: error_message,
+                details: Some("Database has not been indexed with symbols".to_string()),
+                suggestions: vec![
+                    "Index a codebase first: POST /api/v1/index-codebase".to_string(),
+                    "Verify indexing completed successfully".to_string(),
+                    "Check that the database path is correct".to_string(),
+                ],
+                error_code: Some(409),
+            }),
+        );
+    }
+    
+    // Default to 500 Internal Server Error for other service errors
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(StandardApiError {
             error_type: format!("{}_failed", operation),
-            message: error.to_string(),
+            message: error_message,
             details: Some(format!("Operation: {}", operation)),
             suggestions: vec![
                 "Check system resources and database connectivity".to_string(),

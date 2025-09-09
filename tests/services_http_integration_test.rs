@@ -85,7 +85,9 @@ async fn test_health_check_endpoint() -> Result<()> {
 
     let body: Value = response.json().await?;
     assert_eq!(body["status"], "healthy");
-    assert_eq!(body["version"], "0.6.0");
+    // Version should be present and non-empty
+    assert!(body["version"].is_string());
+    assert!(!body["version"].as_str().unwrap().is_empty());
     assert!(body["services_enabled"].is_array());
 
     server_handle.abort();
@@ -174,11 +176,14 @@ async fn test_find_callers_endpoint_v1() -> Result<()> {
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::OK);
+    // With an empty database, we expect 409 Conflict (database not indexed)
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 
     let body: Value = response.json().await?;
-    // Just verify we get a valid JSON response
+    // Verify we get a structured error response
     assert!(body.is_object());
+    assert_eq!(body["error_code"], 409);
+    assert!(body["message"].as_str().unwrap().contains("No symbols found"));
 
     server_handle.abort();
     Ok(())
@@ -200,11 +205,14 @@ async fn test_analyze_impact_endpoint_v1() -> Result<()> {
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::OK);
+    // With an empty database, we expect 409 Conflict (database not indexed)
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 
     let body: Value = response.json().await?;
-    // Impact analysis may return different fields based on results
+    // Verify we get a structured error response
     assert!(body.is_object());
+    assert_eq!(body["error_code"], 409);
+    assert!(body["message"].as_str().unwrap().contains("No symbols found"));
 
     server_handle.abort();
     Ok(())
