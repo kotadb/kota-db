@@ -164,6 +164,12 @@ pub use http_server::{
     start_server, start_server_with_intelligence,
 };
 
+// Re-export services HTTP server (clean architecture)
+pub use services_http_server::{
+    create_services_saas_server, create_services_server, start_services_saas_server,
+    start_services_server,
+};
+
 // Re-export shared HTTP types
 pub use http_types::ErrorResponse;
 

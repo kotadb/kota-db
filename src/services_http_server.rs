@@ -19,7 +19,7 @@ use std::{collections::HashMap, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     database::Database,
@@ -38,6 +38,8 @@ pub struct ServicesAppState {
     pub primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
     pub trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
     pub db_path: PathBuf,
+    /// Optional API key service for SaaS functionality
+    pub api_key_service: Option<Arc<crate::ApiKeyService>>,
 }
 
 /// Health check response
@@ -290,6 +292,7 @@ pub fn create_services_server(
         primary_index,
         trigram_index,
         db_path,
+        api_key_service: None, // No authentication for basic services server
     };
 
     Router::new()
@@ -373,6 +376,149 @@ pub async fn start_services_server(
     info!("");
     info!("🟢 Server ready at http://localhost:{}", port);
     info!("   Health check: curl http://localhost:{}/health", port);
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Create services server with SaaS capabilities (API key authentication)
+pub async fn create_services_saas_server(
+    storage: Arc<tokio::sync::Mutex<dyn Storage>>,
+    primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    db_path: PathBuf,
+    api_key_config: crate::ApiKeyConfig,
+) -> Result<Router> {
+    use crate::auth_middleware::auth_middleware;
+    
+    // Initialize API key service
+    let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
+
+    let state = ServicesAppState {
+        storage,
+        primary_index,
+        trigram_index,
+        db_path,
+        api_key_service: Some(api_key_service.clone()),
+    };
+
+    // Create authenticated routes (require API key)
+    let authenticated_routes = Router::new()
+        // Statistics Service endpoints
+        .route("/api/stats", get(get_stats))
+        // Benchmark Service endpoints  
+        .route("/api/benchmark", post(run_benchmark))
+        // Validation Service endpoints
+        .route("/api/validate", post(validate_database))
+        // Indexing Service endpoints
+        .route("/api/index-codebase", post(index_codebase))
+        // Search Service endpoints - Enhanced implementations with multi-format support
+        .route("/api/search-code", get(search_code_enhanced))
+        .route("/api/search-symbols", get(search_symbols_enhanced))
+        // Analysis Service endpoints - Enhanced implementations with improved UX
+        .route("/api/find-callers", post(find_callers_enhanced))
+        .route("/api/analyze-impact", post(analyze_impact_enhanced))
+        .route("/api/codebase-overview", get(codebase_overview))
+        .layer(axum::middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ));
+
+    // Create internal routes (require internal API key)
+    let internal_routes = Router::new()
+        .route("/internal/create-api-key", post(create_api_key_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware, // Will check for internal key
+        ));
+
+    Ok(Router::new()
+        // Public endpoints (no authentication required)
+        .route("/health", get(health_check))
+        .route("/api/health-check", get(health_check_detailed))
+        // Merge authenticated routes
+        .merge(authenticated_routes)
+        // Merge internal routes
+        .merge(internal_routes)
+        .with_state(state)
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        ))
+}
+
+/// Start services server with SaaS capabilities (API key authentication)
+pub async fn start_services_saas_server(
+    storage: Arc<tokio::sync::Mutex<dyn Storage>>,
+    primary_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    trigram_index: Arc<tokio::sync::Mutex<dyn Index>>,
+    db_path: PathBuf,
+    api_key_config: crate::ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    let app = create_services_saas_server(
+        storage,
+        primary_index,
+        trigram_index,
+        db_path.clone(),
+        api_key_config,
+    ).await?;
+
+    // Try to bind to the port with enhanced error handling
+    let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            error!("Failed to start server on port {}: {}", port, e);
+
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                error!("Port {} is already in use. Try these alternatives:", port);
+                #[cfg(target_os = "macos")]
+                {
+                    error!("   - Find process using port: sudo lsof -i :{}", port);
+                    error!("   - Kill process using port: sudo kill -9 <PID>");
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    error!("   - Find process using port: sudo netstat -tulpn | grep :{}", port);
+                    error!("   - Kill process using port: sudo kill -9 <PID>");
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    error!("   - Check port usage: netstat -ano | findstr :{}", port);
+                    error!("   - Kill process using port: taskkill /PID <PID> /F");
+                }
+            }
+
+            return Err(e).context(format!(
+                "Failed to bind to port {}. Port may be in use or insufficient permissions",
+                port
+            ));
+        }
+    };
+
+    info!("🚀 KotaDB Services SaaS Server starting on port {}", port);
+    info!("🔐 API key authentication enabled");
+    info!("🎯 Clean services architecture with SaaS capabilities");
+    info!("📄 Available endpoints:");
+    info!("   GET    /health                    - Server health check (public)");
+    info!("   GET    /api/health-check          - Detailed health check (public)");
+    info!("   🔐 Authenticated endpoints (require API key):");
+    info!("   GET    /api/stats                 - Database statistics (StatsService)");
+    info!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
+    info!("   POST   /api/validate              - Database validation (ValidationService)");
+    info!("   POST   /api/index-codebase        - Index repository (IndexingService)");
+    info!("   GET    /api/search-code           - Search code content (SearchService)");
+    info!("   GET    /api/search-symbols        - Search symbols (SearchService)");
+    info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
+    info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
+    info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    info!("   🔒 Internal endpoints (require internal API key):");
+    info!("   POST   /internal/create-api-key   - Create new API key");
+    info!("");
+    info!("🟢 SaaS Server ready at http://localhost:{}", port);
+    info!("   Health check: curl http://localhost:{}/health", port);
+    info!("   Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats", port);
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -1190,4 +1336,40 @@ fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
     }
 
     results
+}
+
+/// Create API key handler for internal endpoints
+async fn create_api_key_handler(
+    State(state): State<ServicesAppState>,
+    Json(request): Json<crate::api_keys::CreateApiKeyRequest>,
+) -> Result<Json<crate::api_keys::CreateApiKeyResponse>, (StatusCode, Json<crate::http_types::ErrorResponse>)> {
+    use crate::observability::with_trace_id;
+    use crate::http_types::ErrorResponse;
+    
+    // Extract API key service from state
+    let api_key_service = match &state.api_key_service {
+        Some(service) => service.clone(),
+        None => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::internal_server_error("API key service not configured")),
+            ));
+        }
+    };
+
+    let result = with_trace_id("create_api_key_internal", async move {
+        api_key_service.create_api_key(request).await
+    })
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(e) => {
+            warn!("Failed to create API key: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::internal_server_error(e.to_string())),
+            ))
+        }
+    }
 }
