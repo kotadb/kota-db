@@ -159,12 +159,14 @@ pub use connection_pool::{
     create_connection_pool, create_rate_limiter, ConnectionPoolImpl, SystemResourceMonitor,
     TokenBucketRateLimiter,
 };
+// Re-export legacy HTTP server functions (for backward compatibility and document CRUD endpoints)
+// Note: start_saas_server has been migrated to start_services_saas_server (preferred)
 pub use http_server::{
-    create_server, create_server_with_intelligence, create_server_with_pool, start_saas_server,
-    start_server, start_server_with_intelligence,
+    create_server, create_server_with_intelligence, create_server_with_pool, start_server,
+    start_server_with_intelligence,
 };
 
-// Re-export services HTTP server (clean architecture)
+// Re-export services HTTP server (clean architecture - preferred for new usage)
 pub use services_http_server::{
     create_services_saas_server, create_services_server, start_services_saas_server,
     start_services_server,
