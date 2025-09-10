@@ -4,7 +4,7 @@
 //! pipeline to enable intelligent code searches including function signatures,
 //! dependencies, and code patterns.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -20,17 +20,39 @@ use crate::parsing::SymbolType;
 use crate::symbol_storage::{SymbolEntry, SymbolStorage};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 
-// Pre-compiled regex patterns for common searches
-static ERROR_HANDLING_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(try|catch|Result|Error|panic|unwrap|expect)").unwrap());
-static ASYNC_AWAIT_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(async|await|tokio|futures|spawn)").unwrap());
-static TEST_CODE_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(#\[test\]|#\[cfg\(test\)]|assert|test_)").unwrap());
-static TODO_COMMENTS_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(TODO|FIXME|HACK|XXX|NOTE)").unwrap());
-static SECURITY_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(password|secret|key|token|auth|credential)").unwrap());
+// Pre-compiled regex patterns for common searches with safe compilation
+static SEARCH_PATTERNS: Lazy<Result<HashMap<&'static str, Regex>, regex::Error>> =
+    Lazy::new(|| {
+        let mut patterns = HashMap::new();
+        patterns.insert(
+            "error_handling",
+            Regex::new(r"(try|catch|Result|Error|panic|unwrap|expect)")?,
+        );
+        patterns.insert(
+            "async_await",
+            Regex::new(r"(async|await|tokio|futures|spawn)")?,
+        );
+        patterns.insert(
+            "test_code",
+            Regex::new(r"(#\[test\]|#\[cfg\(test\)]|assert|test_)")?,
+        );
+        patterns.insert("todo_comments", Regex::new(r"(TODO|FIXME|HACK|XXX|NOTE)")?);
+        patterns.insert(
+            "security",
+            Regex::new(r"(password|secret|key|token|auth|credential)")?,
+        );
+        Ok(patterns)
+    });
+
+/// Helper function to safely get a compiled regex pattern
+fn get_pattern(pattern_name: &str) -> Result<&Regex, anyhow::Error> {
+    let patterns = SEARCH_PATTERNS
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("Failed to compile search patterns: {}", e))?;
+    patterns
+        .get(pattern_name)
+        .ok_or_else(|| anyhow::anyhow!("Pattern '{}' not found", pattern_name))
+}
 
 /// Code-specific query types for advanced searches
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -606,11 +628,31 @@ impl SymbolIndex {
 
         // Get the regex pattern to use
         let regex_arc: Arc<Regex> = match pattern {
-            CodePattern::ErrorHandling => Arc::new(ERROR_HANDLING_PATTERN.clone()),
-            CodePattern::AsyncAwait => Arc::new(ASYNC_AWAIT_PATTERN.clone()),
-            CodePattern::TestCode => Arc::new(TEST_CODE_PATTERN.clone()),
-            CodePattern::TodoComments => Arc::new(TODO_COMMENTS_PATTERN.clone()),
-            CodePattern::SecurityPatterns => Arc::new(SECURITY_PATTERN.clone()),
+            CodePattern::ErrorHandling => Arc::new(
+                get_pattern("error_handling")
+                    .context("Failed to get error handling pattern")?
+                    .clone(),
+            ),
+            CodePattern::AsyncAwait => Arc::new(
+                get_pattern("async_await")
+                    .context("Failed to get async/await pattern")?
+                    .clone(),
+            ),
+            CodePattern::TestCode => Arc::new(
+                get_pattern("test_code")
+                    .context("Failed to get test code pattern")?
+                    .clone(),
+            ),
+            CodePattern::TodoComments => Arc::new(
+                get_pattern("todo_comments")
+                    .context("Failed to get TODO comments pattern")?
+                    .clone(),
+            ),
+            CodePattern::SecurityPatterns => Arc::new(
+                get_pattern("security")
+                    .context("Failed to get security pattern")?
+                    .clone(),
+            ),
             CodePattern::Custom(regex_str) => {
                 // Check cache first
                 let cache = self.regex_cache.read().await;

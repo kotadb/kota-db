@@ -259,6 +259,12 @@ pub use factory::{
 #[cfg(feature = "mcp-server")]
 pub mod mcp;
 
+// Safe MCP implementations
+#[cfg(feature = "mcp-server")]
+pub mod mcp_api_mapper;
+#[cfg(feature = "mcp-server")]
+pub mod mcp_bridge_safe;
+
 // Test modules
 #[cfg(test)]
 mod btree_test;
