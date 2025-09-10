@@ -31,6 +31,7 @@ tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = "1.7"
 reqwest = { version = "0.11", features = ["json"] }
+url = "2.4"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -193,6 +194,10 @@ required-features = ["mcp-server"]
 [[bin]]
 name = "kotadb-api-server"
 path = "src/bin/kotadb-api-server.rs"
+
+[[bin]]
+name = "intent_mcp_server"
+path = "src/bin/intent_mcp_server.rs"
 
 [[bin]]
 name = "test_minimal_cli"
