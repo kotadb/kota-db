@@ -180,7 +180,7 @@ impl IntentMcpServer {
         let base_url = Url::parse(&config.api_base_url)?;
 
         Ok(Self {
-            intent_parser: IntentParser::new(),
+            intent_parser: IntentParser::new()?,
             orchestrator: QueryOrchestrator::new(base_url, http_client.clone()),
             context_manager: ContextManager::new(),
             http_client,
@@ -313,104 +313,90 @@ impl IntentMcpServer {
     }
 }
 
-impl Default for IntentParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl IntentParser {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let search_patterns = vec![
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*function")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*function")?,
                 SearchScope::Functions,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*class")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*class")?,
                 SearchScope::Classes,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*variable")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*variable")?,
                 SearchScope::Variables,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*symbol")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*symbol")?,
                 SearchScope::Symbols,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*file")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*file")?,
                 SearchScope::Files,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*code")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*code")?,
                 SearchScope::Code,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)")?,
                 SearchScope::All,
             ),
         ];
 
         let analysis_patterns = vec![
             (
-                Regex::new(r"(?i)\b(impact|affect|change|break)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(impact|affect|change|break)")?,
                 AnalysisType::Impact,
             ),
             (
-                Regex::new(r"(?i)\b(who\s+calls|what\s+calls|callers)")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(who\s+calls|what\s+calls|callers)")?,
                 AnalysisType::Callers,
             ),
             (
-                Regex::new(r"(?i)\b(calls\s+what|what.*calls|callees)")
-                    .expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(calls\s+what|what.*calls|callees)")?,
                 AnalysisType::Callees,
             ),
             (
-                Regex::new(r"(?i)\b(depend|dependenc)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(depend|dependenc)")?,
                 AnalysisType::Dependencies,
             ),
             (
-                Regex::new(r"(?i)\b(usage|used|how.*used)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(usage|used|how.*used)")?,
                 AnalysisType::Usage,
             ),
             (
-                Regex::new(r"(?i)\b(relation|connect|link)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(relation|connect|link)")?,
                 AnalysisType::Relationships,
             ),
         ];
 
         let navigation_patterns = vec![
             (
-                Regex::new(r"(?i)\b(show.*implement|implementation)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(show.*implement|implementation)")?,
                 NavigationContext::Implementation,
             ),
             (
-                Regex::new(r"(?i)\b(definition|define|declared)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(definition|define|declared)")?,
                 NavigationContext::Definition,
             ),
             (
-                Regex::new(r"(?i)\b(usage|used|example)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(usage|used|example)")?,
                 NavigationContext::Usage,
             ),
             (
-                Regex::new(r"(?i)\b(related|similar|connect)").expect("valid regex pattern"),
+                Regex::new(r"(?i)\b(related|similar|connect)")?,
                 NavigationContext::Related,
             ),
         ];
 
-        Self {
+        Ok(Self {
             search_patterns,
             analysis_patterns,
             navigation_patterns,
-        }
+        })
     }
 
     /// Parse natural language query into structured intent
@@ -503,8 +489,8 @@ impl IntentParser {
     fn extract_search_query(&self, query: &str) -> String {
         // Remove common search prefixes and extract the actual search term
         let cleaned = Regex::new(r"(?i)^(find|search|look\s+for|locate)\s+")
-            .expect("valid regex pattern")
-            .replace(query, "");
+            .map(|re| re.replace(query, ""))
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(query));
 
         cleaned.trim().to_string()
     }
@@ -808,7 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_parser_search() -> Result<()> {
-        let parser = IntentParser::new();
+        let parser = IntentParser::new()?;
 
         let intent = parser.parse("find function validate_path").await?;
         assert!(matches!(
@@ -833,7 +819,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_parser_analysis() -> Result<()> {
-        let parser = IntentParser::new();
+        let parser = IntentParser::new()?;
 
         let intent = parser.parse("who calls validate_path").await?;
         assert!(matches!(
@@ -860,7 +846,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_parser_overview() -> Result<()> {
-        let parser = IntentParser::new();
+        let parser = IntentParser::new()?;
 
         let intent = parser.parse("give me an overview of the codebase").await?;
         assert!(matches!(intent, Intent::Overview { .. }));

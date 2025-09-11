@@ -44,7 +44,13 @@ pub struct McpToolResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<McpErrorPayload>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct McpErrorPayload {
+    pub code: String,
+    pub message: String,
 }
 
 /// List available MCP tools
@@ -86,13 +92,34 @@ pub fn create_mcp_bridge_router() -> Router<McpHttpBridgeState> {
         .route("/mcp/tools/find_callers", post(find_callers))
         .route("/mcp/tools/analyze_impact", post(analyze_impact))
         .route("/mcp/tools/stats", post(get_stats))
+        .route("/mcp/tools/stats", get(get_stats))
 }
 
 /// List available MCP tools
-#[instrument(skip(_state))]
+#[instrument(skip(state))]
 async fn list_mcp_tools(
-    State(_state): State<McpHttpBridgeState>,
+    State(state): State<McpHttpBridgeState>,
 ) -> Result<Json<McpToolsListResponse>, (StatusCode, Json<McpToolResponse>)> {
+    #[cfg(feature = "mcp-server")]
+    if let Some(registry) = state.tool_registry.clone() {
+        let tools = registry
+            .get_all_tool_definitions()
+            .into_iter()
+            .map(|t| McpToolDefinition {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                category: categorize_tool(&t.name),
+            })
+            .collect::<Vec<_>>();
+        let response = McpToolsListResponse {
+            total_count: tools.len(),
+            tools,
+        };
+        info!("Listed {} MCP tools from registry", response.total_count);
+        return Ok(Json(response));
+    }
+
+    // Fallback static list when registry is not available or feature disabled
     let response = McpToolsListResponse {
         tools: vec![
             McpToolDefinition {
@@ -119,8 +146,20 @@ async fn list_mcp_tools(
         total_count: 4,
     };
 
-    info!("Listed {} MCP tools", response.total_count);
+    info!("Listed {} MCP tools (static)", response.total_count);
     Ok(Json(response))
+}
+
+fn categorize_tool(name: &str) -> String {
+    if name.contains("symbol") || name.contains("search") {
+        "search".into()
+    } else if name.contains("caller") || name.contains("relationship") {
+        "relationships".into()
+    } else if name.contains("impact") || name.contains("analysis") {
+        "analysis".into()
+    } else {
+        "general".into()
+    }
 }
 
 /// Call a specific MCP tool by name
@@ -135,7 +174,10 @@ async fn call_mcp_tool(
         return Ok(Json(McpToolResponse {
             success: false,
             data: None,
-            error: Some("MCP server feature is disabled".to_string()),
+            error: Some(McpErrorPayload {
+                code: "feature_disabled".to_string(),
+                message: "MCP server feature is disabled".to_string(),
+            }),
         }));
     }
 
@@ -148,7 +190,10 @@ async fn call_mcp_tool(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(format!("Unknown tool: {}", tool_name)),
+                    error: Some(McpErrorPayload {
+                        code: "tool_not_found".to_string(),
+                        message: format!("Unknown tool: {}", tool_name),
+                    }),
                 }),
             ));
         };
@@ -159,7 +204,10 @@ async fn call_mcp_tool(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some("MCP tool registry not configured".to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "registry_unavailable".to_string(),
+                        message: "MCP tool registry not configured".to_string(),
+                    }),
                 }),
             ));
         };
@@ -175,7 +223,10 @@ async fn call_mcp_tool(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             )),
         }
@@ -193,7 +244,10 @@ async fn search_code(
         return Ok(Json(McpToolResponse {
             success: false,
             data: None,
-            error: Some("MCP server feature is disabled".to_string()),
+            error: Some(McpErrorPayload {
+                code: "feature_disabled".to_string(),
+                message: "MCP server feature is disabled".to_string(),
+            }),
         }));
     }
 
@@ -205,7 +259,10 @@ async fn search_code(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some("MCP tool registry not configured".to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "registry_unavailable".to_string(),
+                        message: "MCP tool registry not configured".to_string(),
+                    }),
                 }),
             ));
         };
@@ -223,7 +280,10 @@ async fn search_code(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             )),
         }
@@ -241,7 +301,10 @@ async fn search_symbols(
         return Ok(Json(McpToolResponse {
             success: false,
             data: None,
-            error: Some("MCP server feature is disabled".to_string()),
+            error: Some(McpErrorPayload {
+                code: "feature_disabled".to_string(),
+                message: "MCP server feature is disabled".to_string(),
+            }),
         }));
     }
 
@@ -253,7 +316,10 @@ async fn search_symbols(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some("MCP tool registry not configured".to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "registry_unavailable".to_string(),
+                        message: "MCP tool registry not configured".to_string(),
+                    }),
                 }),
             ));
         };
@@ -272,7 +338,10 @@ async fn search_symbols(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             )),
         }
@@ -293,7 +362,10 @@ async fn find_callers(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some("MCP tool registry not configured".to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "registry_unavailable".to_string(),
+                        message: "MCP tool registry not configured".to_string(),
+                    }),
                 }),
             ));
         };
@@ -311,7 +383,10 @@ async fn find_callers(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             )),
         }
@@ -325,7 +400,10 @@ async fn find_callers(
             Json(McpToolResponse {
                 success: false,
                 data: None,
-                error: Some("Relationship tools are not available".to_string()),
+                error: Some(McpErrorPayload {
+                    code: "feature_disabled".to_string(),
+                    message: "Relationship tools are not available".to_string(),
+                }),
             }),
         ))
     }
@@ -345,7 +423,10 @@ async fn analyze_impact(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some("MCP tool registry not configured".to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "registry_unavailable".to_string(),
+                        message: "MCP tool registry not configured".to_string(),
+                    }),
                 }),
             ));
         };
@@ -363,7 +444,10 @@ async fn analyze_impact(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             )),
         }
@@ -377,7 +461,10 @@ async fn analyze_impact(
             Json(McpToolResponse {
                 success: false,
                 data: None,
-                error: Some("Relationship tools are not available".to_string()),
+                error: Some(McpErrorPayload {
+                    code: "feature_disabled".to_string(),
+                    message: "Relationship tools are not available".to_string(),
+                }),
             }),
         ))
     }
@@ -425,7 +512,10 @@ async fn get_stats(
                 Json(McpToolResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(McpErrorPayload {
+                        code: "internal_error".to_string(),
+                        message: e.to_string(),
+                    }),
                 }),
             ))
         }
@@ -451,6 +541,7 @@ mod tests {
         #[cfg(not(feature = "mcp-server"))]
         let state = McpHttpBridgeState::new();
         let app = create_mcp_bridge_router().with_state(state);
+        let app2 = app.clone();
 
         let response = app
             .oneshot(
@@ -463,6 +554,18 @@ mod tests {
             .await?;
 
         assert_eq!(response.status(), AxumStatusCode::OK);
+
+        // Also verify GET works
+        let response_get = app2
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/mcp/tools")
+                    .header("content-type", "application/json")
+                    .body(Body::from(""))?,
+            )
+            .await?;
+        assert_eq!(response_get.status(), AxumStatusCode::OK);
         Ok(())
     }
 

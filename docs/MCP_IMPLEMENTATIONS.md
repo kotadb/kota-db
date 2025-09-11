@@ -24,7 +24,7 @@ Enables Claude Code integration without requiring local Rust compilation by prov
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /mcp/tools` | List available MCP tools |
+| `GET /mcp/tools` | List available MCP tools (POST supported, deprecated) |
 | `POST /mcp/tools/:tool_name` | Execute specific MCP tool |
 | `POST /mcp/tools/search_code` | Search code content |
 | `POST /mcp/tools/search_symbols` | Search symbols |
@@ -37,10 +37,10 @@ Enables Claude Code integration without requiring local Rust compilation by prov
 cargo run --bin kotadb-api-server --features mcp-server
 
 # Example API call
-curl -X POST http://localhost:8080/mcp/tools \
+curl -X GET http://localhost:8080/mcp/tools \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d ''
 ```
 
 ### Implementation Files
