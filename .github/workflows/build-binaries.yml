@@ -9,12 +9,6 @@ on:
       - '**.md'
       - 'docs/**'
       - '.gitignore'
-  pull_request:
-    branches: [ develop ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
   workflow_dispatch:
     inputs:
       platforms:

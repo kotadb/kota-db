@@ -506,6 +506,11 @@ tests/
 
 ## 🚀 CI/CD Pipeline
 
+### Simplified PR Workflow
+- PRs run a single unified pipeline at `.github/workflows/ci.yml` (formatting, clippy, build, all tests via nextest, doc tests, docs build).
+- Other workflows (optimized CI variants, fast CI, production gates, client/docs builds) no longer trigger on PRs; they run on push or manual dispatch.
+- Local parity: run `just ci` to execute the same critical gates locally; use `just ci-fast` for a quick iteration loop.
+
 ### Automated Checks (DO NOT BREAK)
 Every PR triggers:
 1. **Formatting** - `cargo fmt --check`

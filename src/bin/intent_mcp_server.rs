@@ -78,16 +78,19 @@ async fn main() -> Result<()> {
 
     // Build configuration
     let config = IntentMcpConfig {
-        api_base_url: matches.get_one::<String>("api-url").unwrap().clone(),
+        api_base_url: matches
+            .get_one::<String>("api-url")
+            .cloned()
+            .unwrap_or_else(|| "http://localhost:8080".to_string()),
         api_key: matches.get_one::<String>("api-key").cloned(),
         max_results: matches
             .get_one::<String>("max-results")
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("missing --max-results"))?
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid max-results: {}", e))?,
         default_timeout_ms: matches
             .get_one::<String>("timeout")
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("missing --timeout"))?
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid timeout: {}", e))?,
     };

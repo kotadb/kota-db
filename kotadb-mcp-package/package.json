@@ -38,7 +38,6 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:all": "npm run test:unit && npm run test:integration",
-    "postinstall": "node dist/install-binary.js",
     "prepublishOnly": "npm run build && npm run test:all"
   },
   "dependencies": {

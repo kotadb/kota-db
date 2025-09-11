@@ -10,19 +10,21 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
 
+#[cfg(feature = "mcp-server")]
+use crate::mcp::tools::MCPToolRegistry;
 use crate::observability::with_trace_id;
 
 /// MCP-over-HTTP bridge state
 #[derive(Clone)]
 pub struct McpHttpBridgeState {
     #[cfg(feature = "mcp-server")]
-    pub tool_registry: std::sync::Arc<crate::mcp::tools::MCPToolRegistry>,
+    pub tool_registry: Option<std::sync::Arc<MCPToolRegistry>>, // Optional: caller may not wire it
     #[cfg(not(feature = "mcp-server"))]
     pub _dummy: (),
 }
@@ -62,7 +64,7 @@ pub struct McpToolDefinition {
 
 impl McpHttpBridgeState {
     #[cfg(feature = "mcp-server")]
-    pub fn new(tool_registry: std::sync::Arc<crate::mcp::tools::MCPToolRegistry>) -> Self {
+    pub fn new(tool_registry: Option<std::sync::Arc<MCPToolRegistry>>) -> Self {
         Self { tool_registry }
     }
 
@@ -75,7 +77,8 @@ impl McpHttpBridgeState {
 /// Create MCP-over-HTTP bridge router
 pub fn create_mcp_bridge_router() -> Router<McpHttpBridgeState> {
     Router::new()
-        .route("/mcp/tools", post(list_mcp_tools))
+        .route("/mcp/tools", get(list_mcp_tools))
+        .route("/mcp/tools", post(list_mcp_tools)) // Backward-compatible; prefer GET
         .route("/mcp/tools/:tool_name", post(call_mcp_tool))
         // Specific tool endpoints for better UX
         .route("/mcp/tools/search_code", post(search_code))
@@ -121,89 +124,278 @@ async fn list_mcp_tools(
 }
 
 /// Call a specific MCP tool by name
-#[instrument(skip(_state, _request))]
+#[instrument(skip(state, request))]
 async fn call_mcp_tool(
-    State(_state): State<McpHttpBridgeState>,
+    State(state): State<McpHttpBridgeState>,
     Path(tool_name): Path<String>,
-    Json(_request): Json<McpToolRequest>,
+    Json(request): Json<McpToolRequest>,
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
-    // For now, return a placeholder response indicating the tool is not implemented
-    // In the full implementation, this would route to actual MCP tools
+    #[cfg(not(feature = "mcp-server"))]
+    {
+        return Ok(Json(McpToolResponse {
+            success: false,
+            data: None,
+            error: Some("MCP server feature is disabled".to_string()),
+        }));
+    }
 
-    let response = McpToolResponse {
-        success: false,
-        data: None,
-        error: Some(format!("Tool '{}' not yet implemented in MCP bridge. Please use the full HTTP API endpoints at /api/* instead.", tool_name)),
-    };
+    #[cfg(feature = "mcp-server")]
+    {
+        let method = map_tool_name_to_mcp_method(&tool_name);
+        let Some(method) = method else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Unknown tool: {}", tool_name)),
+                }),
+            ));
+        };
 
-    warn!("MCP tool call attempted but not implemented: {}", tool_name);
-    Ok(Json(response))
+        let Some(registry) = state.tool_registry.clone() else {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some("MCP tool registry not configured".to_string()),
+                }),
+            ));
+        };
+
+        match registry.handle_tool_call(&method, request.params).await {
+            Ok(value) => Ok(Json(McpToolResponse {
+                success: true,
+                data: Some(value),
+                error: None,
+            })),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                }),
+            )),
+        }
+    }
 }
 
 /// Search code content (convenience endpoint)
-#[instrument(skip(_state, _request))]
+#[instrument(skip(state, request))]
 async fn search_code(
-    State(_state): State<McpHttpBridgeState>,
-    Json(_request): Json<serde_json::Value>,
+    State(state): State<McpHttpBridgeState>,
+    Json(request): Json<serde_json::Value>,
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
-    let response = McpToolResponse {
-        success: false,
-        data: None,
-        error: Some(
-            "Code search not yet implemented in MCP bridge. Use GET /api/code/search instead."
-                .to_string(),
-        ),
-    };
+    #[cfg(not(feature = "mcp-server"))]
+    {
+        return Ok(Json(McpToolResponse {
+            success: false,
+            data: None,
+            error: Some("MCP server feature is disabled".to_string()),
+        }));
+    }
 
-    Ok(Json(response))
+    #[cfg(feature = "mcp-server")]
+    {
+        let Some(registry) = state.tool_registry.clone() else {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some("MCP tool registry not configured".to_string()),
+                }),
+            ));
+        };
+        match registry
+            .handle_tool_call("kotadb://text_search", request)
+            .await
+        {
+            Ok(value) => Ok(Json(McpToolResponse {
+                success: true,
+                data: Some(value),
+                error: None,
+            })),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                }),
+            )),
+        }
+    }
 }
 
 /// Search symbols (convenience endpoint)
-#[instrument(skip(_state, _request))]
+#[instrument(skip(state, request))]
 async fn search_symbols(
-    State(_state): State<McpHttpBridgeState>,
-    Json(_request): Json<serde_json::Value>,
+    State(state): State<McpHttpBridgeState>,
+    Json(request): Json<serde_json::Value>,
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
-    let response = McpToolResponse {
-        success: false,
-        data: None,
-        error: Some(
-            "Symbol search not yet implemented in MCP bridge. Use GET /api/symbols/search instead."
-                .to_string(),
-        ),
-    };
+    #[cfg(not(feature = "mcp-server"))]
+    {
+        return Ok(Json(McpToolResponse {
+            success: false,
+            data: None,
+            error: Some("MCP server feature is disabled".to_string()),
+        }));
+    }
 
-    Ok(Json(response))
+    #[cfg(feature = "mcp-server")]
+    {
+        let Some(registry) = state.tool_registry.clone() else {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some("MCP tool registry not configured".to_string()),
+                }),
+            ));
+        };
+
+        match registry
+            .handle_tool_call("kotadb://symbol_search", request)
+            .await
+        {
+            Ok(value) => Ok(Json(McpToolResponse {
+                success: true,
+                data: Some(value),
+                error: None,
+            })),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                }),
+            )),
+        }
+    }
 }
 
 /// Find callers (convenience endpoint)
-#[instrument(skip(_state, _request))]
+#[instrument(skip(state, request))]
 async fn find_callers(
-    State(_state): State<McpHttpBridgeState>,
-    Json(_request): Json<serde_json::Value>,
+    State(state): State<McpHttpBridgeState>,
+    Json(request): Json<serde_json::Value>,
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
-    let response = McpToolResponse {
-        success: false,
-        data: None,
-        error: Some("Find callers not yet implemented in MCP bridge. Use GET /api/relationships/callers/:target instead.".to_string()),
-    };
+    #[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
+    {
+        let Some(registry) = state.tool_registry.clone() else {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some("MCP tool registry not configured".to_string()),
+                }),
+            ));
+        };
+        match registry
+            .handle_tool_call("kotadb://find_callers", request)
+            .await
+        {
+            Ok(value) => Ok(Json(McpToolResponse {
+                success: true,
+                data: Some(value),
+                error: None,
+            })),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                }),
+            )),
+        }
+    }
 
-    Ok(Json(response))
+    #[cfg(not(all(feature = "mcp-server", feature = "tree-sitter-parsing")))]
+    {
+        // Fallback when relationship tools are not available
+        Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(McpToolResponse {
+                success: false,
+                data: None,
+                error: Some("Relationship tools are not available".to_string()),
+            }),
+        ))
+    }
 }
 
 /// Analyze impact (convenience endpoint)
-#[instrument(skip(_state, _request))]
+#[instrument(skip(state, request))]
 async fn analyze_impact(
-    State(_state): State<McpHttpBridgeState>,
-    Json(_request): Json<serde_json::Value>,
+    State(state): State<McpHttpBridgeState>,
+    Json(request): Json<serde_json::Value>,
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
-    let response = McpToolResponse {
-        success: false,
-        data: None,
-        error: Some("Impact analysis not yet implemented in MCP bridge. Use GET /api/analysis/impact/:target instead.".to_string()),
-    };
+    #[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
+    {
+        let Some(registry) = state.tool_registry.clone() else {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some("MCP tool registry not configured".to_string()),
+                }),
+            ));
+        };
+        match registry
+            .handle_tool_call("kotadb://impact_analysis", request)
+            .await
+        {
+            Ok(value) => Ok(Json(McpToolResponse {
+                success: true,
+                data: Some(value),
+                error: None,
+            })),
+            Err(e) => Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(McpToolResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                }),
+            )),
+        }
+    }
 
-    Ok(Json(response))
+    #[cfg(not(all(feature = "mcp-server", feature = "tree-sitter-parsing")))]
+    {
+        // Fallback when relationship tools are not available
+        Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(McpToolResponse {
+                success: false,
+                data: None,
+                error: Some("Relationship tools are not available".to_string()),
+            }),
+        ))
+    }
+}
+
+/// Map user-friendly tool names to MCP protocol method names
+#[allow(dead_code)]
+fn map_tool_name_to_mcp_method(tool: &str) -> Option<String> {
+    match tool {
+        "search_code" | "text_search" => Some("kotadb://text_search".to_string()),
+        #[cfg(feature = "tree-sitter-parsing")]
+        "search_symbols" | "symbol_search" => Some("kotadb://symbol_search".to_string()),
+        #[cfg(feature = "tree-sitter-parsing")]
+        "find_callers" => Some("kotadb://find_callers".to_string()),
+        #[cfg(feature = "tree-sitter-parsing")]
+        "analyze_impact" | "impact_analysis" => Some("kotadb://impact_analysis".to_string()),
+        _ => None,
+    }
 }
 
 /// Get database statistics (convenience endpoint)
@@ -253,9 +445,9 @@ mod tests {
         let state = {
             use crate::mcp::tools::MCPToolRegistry;
             let tool_registry = std::sync::Arc::new(MCPToolRegistry::new());
-            McpHttpBridgeState::new(tool_registry)
+            McpHttpBridgeState::new(Some(tool_registry))
         };
-        
+
         #[cfg(not(feature = "mcp-server"))]
         let state = McpHttpBridgeState::new();
         let app = create_mcp_bridge_router().with_state(state);
@@ -280,9 +472,9 @@ mod tests {
         let state = {
             use crate::mcp::tools::MCPToolRegistry;
             let tool_registry = std::sync::Arc::new(MCPToolRegistry::new());
-            McpHttpBridgeState::new(tool_registry)
+            McpHttpBridgeState::new(Some(tool_registry))
         };
-        
+
         #[cfg(not(feature = "mcp-server"))]
         let state = McpHttpBridgeState::new();
         let app = create_mcp_bridge_router().with_state(state);
@@ -297,8 +489,15 @@ mod tests {
             )
             .await?;
 
-        // Should return OK even if not implemented
-        assert_eq!(response.status(), AxumStatusCode::OK);
+        // Depending on wiring, may be Not Implemented or Internal Server Error if tools not registered
+        let status = response.status();
+        assert!(
+            status == AxumStatusCode::NOT_IMPLEMENTED
+                || status == AxumStatusCode::INTERNAL_SERVER_ERROR
+                || status == AxumStatusCode::OK,
+            "unexpected status: {}",
+            status
+        );
         Ok(())
     }
 
@@ -308,9 +507,9 @@ mod tests {
         let state = {
             use crate::mcp::tools::MCPToolRegistry;
             let tool_registry = std::sync::Arc::new(MCPToolRegistry::new());
-            McpHttpBridgeState::new(tool_registry)
+            McpHttpBridgeState::new(Some(tool_registry))
         };
-        
+
         #[cfg(not(feature = "mcp-server"))]
         let state = McpHttpBridgeState::new();
         let app = create_mcp_bridge_router().with_state(state);

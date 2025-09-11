@@ -195,7 +195,7 @@ KotaDB achieves sub-10ms query latency through:
 - **Memory Efficiency**: <2.5x memory overhead vs raw data
 - **Concurrent Access**: Lock-free read operations
 
-See [performance benchmarks](docs/completion-reports/performance_report.md) for detailed analysis.
+See the architecture notes on performance in docs/architecture/technical_architecture.md for detailed analysis.
 
 ## Documentation
 

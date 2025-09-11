@@ -21,6 +21,12 @@ use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info, warn};
 
+#[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
+use crate::mcp::tools::symbol_tools::SymbolTools;
+#[cfg(feature = "mcp-server")]
+use crate::mcp::tools::MCPToolRegistry;
+#[cfg(feature = "mcp-server")]
+use crate::mcp_http_bridge::{create_mcp_bridge_router, McpHttpBridgeState};
 use crate::{
     database::Database,
     services::{
@@ -303,14 +309,14 @@ pub fn create_services_server(
     db_path: PathBuf,
 ) -> Router {
     let state = ServicesAppState {
-        storage,
-        primary_index,
-        trigram_index,
-        db_path,
+        storage: storage.clone(),
+        primary_index: primary_index.clone(),
+        trigram_index: trigram_index.clone(),
+        db_path: db_path.clone(),
         api_key_service: None, // No authentication for basic services server
     };
 
-    Router::new()
+    let base_router = Router::new()
         // Health endpoint
         .route("/health", get(health_check))
         // Statistics Service endpoints
@@ -334,7 +340,37 @@ pub fn create_services_server(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
-        )
+        );
+
+    // Optionally mount MCP bridge without auth for local development
+    // Available by default when compiled with mcp-server feature
+    #[cfg(feature = "mcp-server")]
+    let base_router = {
+        let mut registry = MCPToolRegistry::new();
+        // Register lightweight text search
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+        let mcp_state = McpHttpBridgeState::new(Some(Arc::new(registry)));
+        let mcp_router = create_mcp_bridge_router().with_state(mcp_state);
+        base_router.merge(mcp_router)
+    };
+
+    base_router
 }
 
 /// Start the services-only HTTP server

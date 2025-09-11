@@ -488,12 +488,12 @@ pub async fn create_saas_server(
     let codebase_state = CodebaseIntelligenceState {
         relationship_engine: Arc::new(relationship_engine),
         trigram_index,
-        db_path,
+        db_path: db_path.clone(),
         storage: Some(storage.clone()),
     };
 
     let state = AppState {
-        storage,
+        storage: storage.clone(),
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
         api_key_service: Some(api_key_service.clone()),
@@ -615,12 +615,12 @@ pub async fn create_saas_server_with_mcp(
     let codebase_state = CodebaseIntelligenceState {
         relationship_engine: Arc::new(relationship_engine),
         trigram_index,
-        db_path,
+        db_path: db_path.clone(),
         storage: Some(storage.clone()),
     };
 
     let state = AppState {
-        storage,
+        storage: storage.clone(),
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
         api_key_service: Some(api_key_service.clone()),
@@ -629,9 +629,51 @@ pub async fn create_saas_server_with_mcp(
     // Create MCP bridge with tool registry (if MCP feature is enabled)
     #[cfg(feature = "mcp-server")]
     let mcp_bridge_state = {
+        use crate::contracts::Index;
+        #[cfg(feature = "tree-sitter-parsing")]
+        use crate::mcp::tools::symbol_tools::SymbolTools;
         use crate::mcp::tools::MCPToolRegistry;
-        let tool_registry = Arc::new(MCPToolRegistry::new());
-        McpHttpBridgeState::new(tool_registry)
+        use crate::{create_primary_index, create_trigram_index};
+
+        // Create indices for MCP tools
+        let primary_index_path = db_path.clone().join("primary_index");
+        std::fs::create_dir_all(&primary_index_path)?;
+        let trigram_index_path = db_path.clone().join("trigram_index");
+        std::fs::create_dir_all(&trigram_index_path)?;
+
+        let primary_index_path_str = primary_index_path.to_string_lossy().to_string();
+        let trigram_index_path_str = trigram_index_path.to_string_lossy().to_string();
+
+        let primary_index = create_primary_index(&primary_index_path_str, None).await?;
+        let trigram_index = create_trigram_index(&trigram_index_path_str, None).await?;
+
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+        let mut registry = MCPToolRegistry::new();
+        // Register lightweight text search tools
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+
+        // Register symbol tools (available by default with tree-sitter parsing)
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+
+        let tool_registry = Arc::new(registry);
+        McpHttpBridgeState::new(Some(tool_registry))
     };
 
     #[cfg(not(feature = "mcp-server"))]
@@ -731,7 +773,7 @@ pub async fn start_saas_server_with_mcp(
     info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
     info!("  - GET /api/code/search - Full-text code search");
     info!("MCP bridge endpoints (requires API key):");
-    info!("  - POST /mcp/tools - List available MCP tools");
+    info!("  - GET /mcp/tools - List available MCP tools (POST also supported, deprecated)");
     info!("  - POST /mcp/tools/:tool_name - Call specific MCP tool");
     info!("  - POST /mcp/tools/search_code - Search code content");
     info!("  - POST /mcp/tools/search_symbols - Search symbols");

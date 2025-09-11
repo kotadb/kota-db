@@ -20,6 +20,8 @@ pub mod http_types;
 pub mod hybrid_storage;
 pub mod intent_mcp_server;
 pub mod llm_search;
+#[cfg(feature = "mcp-server")]
+pub mod mcp_api_mapper;
 pub mod mcp_http_bridge;
 pub mod memory;
 pub mod metrics;

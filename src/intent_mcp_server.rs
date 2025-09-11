@@ -323,77 +323,85 @@ impl IntentParser {
     pub fn new() -> Self {
         let search_patterns = vec![
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*function").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*function")
+                    .expect("valid regex pattern"),
                 SearchScope::Functions,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*class").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*class")
+                    .expect("valid regex pattern"),
                 SearchScope::Classes,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*variable").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*variable")
+                    .expect("valid regex pattern"),
                 SearchScope::Variables,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*symbol").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*symbol")
+                    .expect("valid regex pattern"),
                 SearchScope::Symbols,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*file").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*file")
+                    .expect("valid regex pattern"),
                 SearchScope::Files,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*code").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)\s+.*code")
+                    .expect("valid regex pattern"),
                 SearchScope::Code,
             ),
             (
-                Regex::new(r"(?i)\b(find|search|look\s+for|locate)").unwrap(),
+                Regex::new(r"(?i)\b(find|search|look\s+for|locate)").expect("valid regex pattern"),
                 SearchScope::All,
             ),
         ];
 
         let analysis_patterns = vec![
             (
-                Regex::new(r"(?i)\b(impact|affect|change|break)").unwrap(),
+                Regex::new(r"(?i)\b(impact|affect|change|break)").expect("valid regex pattern"),
                 AnalysisType::Impact,
             ),
             (
-                Regex::new(r"(?i)\b(who\s+calls|what\s+calls|callers)").unwrap(),
+                Regex::new(r"(?i)\b(who\s+calls|what\s+calls|callers)")
+                    .expect("valid regex pattern"),
                 AnalysisType::Callers,
             ),
             (
-                Regex::new(r"(?i)\b(calls\s+what|what.*calls|callees)").unwrap(),
+                Regex::new(r"(?i)\b(calls\s+what|what.*calls|callees)")
+                    .expect("valid regex pattern"),
                 AnalysisType::Callees,
             ),
             (
-                Regex::new(r"(?i)\b(depend|dependenc)").unwrap(),
+                Regex::new(r"(?i)\b(depend|dependenc)").expect("valid regex pattern"),
                 AnalysisType::Dependencies,
             ),
             (
-                Regex::new(r"(?i)\b(usage|used|how.*used)").unwrap(),
+                Regex::new(r"(?i)\b(usage|used|how.*used)").expect("valid regex pattern"),
                 AnalysisType::Usage,
             ),
             (
-                Regex::new(r"(?i)\b(relation|connect|link)").unwrap(),
+                Regex::new(r"(?i)\b(relation|connect|link)").expect("valid regex pattern"),
                 AnalysisType::Relationships,
             ),
         ];
 
         let navigation_patterns = vec![
             (
-                Regex::new(r"(?i)\b(show.*implement|implementation)").unwrap(),
+                Regex::new(r"(?i)\b(show.*implement|implementation)").expect("valid regex pattern"),
                 NavigationContext::Implementation,
             ),
             (
-                Regex::new(r"(?i)\b(definition|define|declared)").unwrap(),
+                Regex::new(r"(?i)\b(definition|define|declared)").expect("valid regex pattern"),
                 NavigationContext::Definition,
             ),
             (
-                Regex::new(r"(?i)\b(usage|used|example)").unwrap(),
+                Regex::new(r"(?i)\b(usage|used|example)").expect("valid regex pattern"),
                 NavigationContext::Usage,
             ),
             (
-                Regex::new(r"(?i)\b(related|similar|connect)").unwrap(),
+                Regex::new(r"(?i)\b(related|similar|connect)").expect("valid regex pattern"),
                 NavigationContext::Related,
             ),
         ];
@@ -495,7 +503,7 @@ impl IntentParser {
     fn extract_search_query(&self, query: &str) -> String {
         // Remove common search prefixes and extract the actual search term
         let cleaned = Regex::new(r"(?i)^(find|search|look\s+for|locate)\s+")
-            .unwrap()
+            .expect("valid regex pattern")
             .replace(query, "");
 
         cleaned.trim().to_string()

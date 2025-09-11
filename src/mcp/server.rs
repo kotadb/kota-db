@@ -120,8 +120,14 @@ impl MCPServer {
             tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
-        // Search tools removed - semantic search eliminated from MCP server
-        // Use trigram search via other KotaDB interfaces (CLI, HTTP API)
+        // Register lightweight text search tools for MCP
+        if config.mcp.enable_search_tools {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            tool_registry = tool_registry.with_text_tools(text_tools);
+        }
 
         #[cfg(feature = "tree-sitter-parsing")]
         if config.mcp.enable_relationship_tools {
@@ -148,6 +154,21 @@ impl MCPServer {
             let db_path = PathBuf::from(&config.database.data_dir);
             let relationship_tools = Arc::new(RelationshipTools::new(database_access, db_path));
             tool_registry = tool_registry.with_relationship_tools(relationship_tools);
+        }
+
+        // Symbol tools - enable when tree-sitter parsing and symbols are available
+        #[cfg(feature = "tree-sitter-parsing")]
+        if config.mcp.enable_relationship_tools {
+            use crate::mcp::tools::symbol_tools::SymbolTools;
+            use std::path::PathBuf;
+
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                PathBuf::from(&config.database.data_dir),
+            ));
+            tool_registry = tool_registry.with_symbol_tools(symbol_tools);
         }
 
         Ok(Self {

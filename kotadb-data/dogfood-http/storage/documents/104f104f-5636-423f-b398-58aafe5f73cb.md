@@ -1,0 +1,70 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "name": "kotadb-client",
+  "version": "0.5.0",
+  "description": "TypeScript/JavaScript client for KotaDB - PostgreSQL-level ease of use for document database",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "jest --testPathIgnorePatterns=integration",
+    "test:unit": "jest --testPathIgnorePatterns=integration",
+    "test:integration": "jest --testPathPattern=integration",
+    "test:all": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "database",
+    "document-store",
+    "search",
+    "semantic-search",
+    "kotadb",
+    "typescript",
+    "javascript"
+  ],
+  "author": "KotaDB Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jayminwest/kota-db.git",
+    "directory": "clients/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/jayminwest/kota-db/issues"
+  },
+  "homepage": "https://github.com/jayminwest/kota-db#readme",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "tar": "^6.2.0",
+    "unzipper": "^0.10.14"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/tar": "^6.1.0",
+    "@types/unzipper": "^0.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.50.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

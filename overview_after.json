@@ -1,0 +1,57 @@
+{
+  "code_files": 243,
+  "connected_symbols": 33698,
+  "entry_points": [],
+  "file_organization": {
+    "documentation_files": 0,
+    "source_files": 147,
+    "test_files": 96
+  },
+  "symbols_by_language": {
+    "JavaScript": 205,
+    "Python": 2236,
+    "Rust": 27137,
+    "TypeScript": 4120
+  },
+  "symbols_by_type": {
+    "class": 448,
+    "comment": 12558,
+    "constant": 117,
+    "enum": 75,
+    "export": 102,
+    "function": 2150,
+    "import": 1876,
+    "interface": 66,
+    "method": 2082,
+    "module": 213,
+    "struct": 545,
+    "variable": 13466
+  },
+  "test_to_code_ratio": "0.65",
+  "top_referenced_symbols": [
+    {
+      "references": 3200,
+      "symbol": "tests/test_data/sample_code.rs::new"
+    },
+    {
+      "references": 656,
+      "symbol": "src/pure/connection_pool.rs::len"
+    },
+    {
+      "references": 545,
+      "symbol": "tests/complexity_comparison_test.rs::insert"
+    },
+    {
+      "references": 537,
+      "symbol": "tests/test_symbol_index_performance.rs::path"
+    },
+    {
+      "references": 508,
+      "symbol": "src/types.rs::ValidatedDocumentId"
+    }
+  ],
+  "total_files": 2545,
+  "total_relationships": 22392,
+  "total_size_bytes": 6446513,
+  "total_symbols": 33698
+}
