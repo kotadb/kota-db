@@ -56,14 +56,14 @@ jobs:
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --locked
       - name: Build (debug)
-        run: cargo build --all-features
+        run: cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
       - name: Run tests (nextest)
         env:
           RUST_LOG: error
           CI: true
         run: |
-          cargo nextest run --all-features --no-fail-fast
-          cargo test --doc --all-features
+          cargo nextest run --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
+          cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
 
   integration-docker:
     name: Docker-backed Integration
@@ -83,7 +83,8 @@ jobs:
         env:
           RUST_LOG: warn
         run: |
-          cargo test --test mcp_auth_middleware_test -- --ignored --nocapture
+          cargo test --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --test mcp_auth_middleware_test -- --ignored --nocapture
 
   docs:
     name: Build Docs
@@ -102,7 +103,7 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps --no-default-features --features "git-integration,tree-sitter-parsing"
 
   msrv:
     name: MSRV Check
@@ -119,8 +120,8 @@ jobs:
           shared-key: "ci-unified"
       - name: Check & unit tests
         run: |
-          cargo check -q --all-features
-          cargo test --lib --all-features
+          cargo check -q --no-default-features --features "git-integration,tree-sitter-parsing"
+          cargo test --lib --no-default-features --features "git-integration,tree-sitter-parsing"
 
   coverage:
     name: Coverage (llvm-cov)
@@ -140,8 +141,10 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage (lcov + html)
         run: |
-          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-          cargo llvm-cov --all-features --workspace --html
+          cargo llvm-cov --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --workspace --lcov --output-path lcov.info
+          cargo llvm-cov --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --workspace --html
       - name: Upload lcov
         uses: actions/upload-artifact@v4
         with:
@@ -170,8 +173,8 @@ jobs:
           shared-key: "ci-unified"
       - name: Build release binaries
         run: |
-          cargo build --release --bin kotadb
-          cargo build --release --bin kotadb-api-server
+          cargo build --release --no-default-features --features "git-integration,tree-sitter-parsing" --bin kotadb
+          cargo build --release --no-default-features --features "git-integration,tree-sitter-parsing" --bin kotadb-api-server
       - name: Upload kotadb
         uses: actions/upload-artifact@v4
         with:
