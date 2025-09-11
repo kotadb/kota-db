@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_md
+---
+# Machine Learning for Database Query Optimization
+
+**Authors**: Chen, L., Williams, K., Davis, R.  
+**Conference**: SIGMOD 2024  
+**Year**: 2024  
+**DOI**: 10.1145/3654321.3678901  
+**Citations**: 23  
+
+## Abstract
+We present a machine learning approach to database query optimization that learns from past query execution patterns to predict optimal execution plans. Our method achieves 15-30% performance improvements over traditional cost-based optimizers.
+
+## Key Findings
+1. Neural networks can effectively predict query execution costs
+2. Historical execution data provides valuable optimization signals
+3. Adaptive learning improves performance over time
+4. Works particularly well for complex analytical queries
+
+## Technical Approach
+- **Model**: Deep neural network with attention mechanism
+- **Features**: Query structure, table statistics, index information
+- **Training**: Online learning from query execution feedback
+- **Integration**: Replaces cost model in PostgreSQL optimizer
+
+## Experimental Results
+- **Datasets**: TPC-H, TPC-DS, real production workloads
+- **Improvement**: 15-30% reduction in query execution time
+- **Overhead**: <5% optimization time increase
+- **Adaptability**: Continues improving with more data
+
+## Personal Notes
+- Highly relevant to my thesis on adaptive database systems
+- Could apply similar techniques to index selection
+- Need to understand attention mechanism details
+- Potential collaboration opportunity with database systems lab
+
+## Questions for Authors
+- How does the model handle novel query patterns?
+- What happens when underlying data distribution changes?
+- Can this approach work for transactional workloads?
+
+## Related Work
+- References foundational work on learned index structures
+- Builds on classical query optimization literature
+- Connects to broader ML for systems research area

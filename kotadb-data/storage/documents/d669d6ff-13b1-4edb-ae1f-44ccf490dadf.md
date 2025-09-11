@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "id": "a60c9b6a-8e9f-4d31-bbf7-e757bc2d1b28",
+  "file_path": "./examples-data/research-manager/documents/a60c9b6a-8e9f-4d31-bbf7-e757bc2d1b28.md",
+  "original_path": "/notes/consensus-algorithms-comparison.md",
+  "title": "Consensus Algorithms Comparison Matrix",
+  "size": 1942,
+  "created": 1754607793,
+  "updated": 1754607793,
+  "hash": [
+    130,
+    111,
+    92,
+    99,
+    226,
+    216,
+    16,
+    91,
+    128,
+    219,
+    119,
+    22,
+    31,
+    59,
+    18,
+    63,
+    28,
+    230,
+    211,
+    28,
+    211,
+    164,
+    243,
+    63,
+    51,
+    143,
+    57,
+    42,
+    236,
+    175,
+    196,
+    201
+  ],
+  "embedding": null
+}

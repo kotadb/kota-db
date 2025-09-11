@@ -1,0 +1,50 @@
+---
+tags:
+- file
+- kota-db
+- ext_json
+---
+{
+  "id": "ea5d8684-a60e-46a4-b0d4-5abe5a3b5d0d",
+  "file_path": "./examples-data/personal-kb/documents/ea5d8684-a60e-46a4-b0d4-5abe5a3b5d0d.md",
+  "original_path": "/technical/performance-optimization.md",
+  "title": "Performance Optimization Techniques",
+  "size": 1383,
+  "created": 1754606938,
+  "updated": 1754606938,
+  "hash": [
+    16,
+    65,
+    182,
+    178,
+    141,
+    10,
+    24,
+    64,
+    18,
+    221,
+    11,
+    96,
+    73,
+    163,
+    109,
+    216,
+    44,
+    131,
+    75,
+    105,
+    87,
+    220,
+    139,
+    63,
+    32,
+    63,
+    132,
+    204,
+    164,
+    243,
+    21,
+    25
+  ],
+  "embedding": null
+}

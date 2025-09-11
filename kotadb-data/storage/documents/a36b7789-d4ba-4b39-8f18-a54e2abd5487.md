@@ -1,0 +1,31 @@
+---
+tags:
+- file
+- kota-db
+- ext_md
+---
+# Distributed Systems Fundamentals
+
+Understanding how to build reliable systems across multiple machines.
+
+## CAP Theorem
+You can only guarantee 2 out of 3:
+- **Consistency**: All nodes see the same data simultaneously
+- **Availability**: System remains operational
+- **Partition Tolerance**: System continues despite network failures
+
+## Consensus Algorithms
+- **Raft**: Leader-based consensus with log replication
+- **PBFT**: Byzantine fault tolerant consensus
+- **Paxos**: Classical consensus (complex but foundational)
+
+## Patterns
+- **Event Sourcing**: Store events, not state
+- **CQRS**: Separate read and write models
+- **Saga Pattern**: Distributed transactions
+- **Circuit Breaker**: Fail fast pattern
+
+## Real-World Examples
+- Cassandra: AP system (eventually consistent)
+- PostgreSQL: CP system (strong consistency)
+- DNS: AP system (availability over consistency)

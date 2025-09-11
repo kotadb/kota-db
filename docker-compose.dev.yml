@@ -34,11 +34,16 @@ services:
       # HTTP server configuration
       - KOTADB_HTTP_PORT=${KOTADB_HTTP_PORT:-8080}
       - KOTADB_HTTP_HOST=${KOTADB_HTTP_HOST:-0.0.0.0}
+      # Database URL for local dev inside container (points to postgres-dev)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://kotadb:development@postgres-dev:5432/kotadb_test}
     stdin_open: true
     tty: true
     command: /bin/bash
     networks:
       - kotadb-dev
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
 
   # Documentation server for live preview
   docs-server:
@@ -81,6 +86,11 @@ services:
       - ./scripts/sql:/docker-entrypoint-initdb.d
     networks:
       - kotadb-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kotadb -d kotadb_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   cargo-cache:

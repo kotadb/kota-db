@@ -151,6 +151,13 @@ db-bench:
   @echo "Running resource usage and concurrent operation benchmarks"
   cargo bench --features bench --bench resource_usage_bench
 
+# Dogfood the HTTP API end-to-end against this repo
+dogfood:
+  @echo "🍽️  Dogfooding KotaDB via HTTP API"
+  @echo "   - Starts server, indexes current repo, runs queries"
+  @echo "   - Override with: PORT=18080 KOTADB_DATA_DIR=./kotadb-data/dogfood-http"
+  bash ./scripts/dogfood.sh
+
 # === Container Development ===
 
 # Start development containers
@@ -165,12 +172,32 @@ docker-down:
 docker-shell:
   ./scripts/dev/docker-dev.sh shell
 
+# Run tests inside dev container (all quick tests)
+docker-test:
+  docker-compose -f docker-compose.dev.yml exec kotadb-dev cargo nextest run --all --no-fail-fast
+
+# Run Docker-backed (ignored) tests that require services like Postgres
+docker-test-ignored:
+  docker-compose -f docker-compose.dev.yml exec kotadb-dev cargo test -- --ignored
+
 # === CI/CD ===
 
-# Run the same checks as CI (FAST - uses cargo-nextest)
-ci: 
-  CI=true just fmt-check clippy test audit
-  @echo "🚀 CI checks completed successfully!"
+# Install common CI/dev tools locally
+install-ci-tools:
+  @echo "📦 Installing CI/dev tools (may already be installed)..."
+  cargo install cargo-nextest --locked || true
+  cargo install cargo-audit --locked || true
+  cargo install cargo-deny --locked || true
+  cargo install cargo-llvm-cov || true
+  @echo "✅ Tools ready: cargo-nextest, cargo-audit, cargo-deny, cargo-llvm-cov"
+
+# Fast local CI (format, clippy, unit tests, audit)
+ci-fast: fmt-check clippy test audit
+  @echo "🚀 Fast CI checks completed successfully!"
+
+# Full local CI mirroring GitHub pipeline
+ci:
+  bash ./scripts/ci/local_ci.sh
 
 # Build release binaries
 build-release:

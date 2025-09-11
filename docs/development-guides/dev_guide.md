@@ -156,9 +156,23 @@ docker-compose -f docker-compose.dev.yml up -d
 docker-compose -f docker-compose.dev.yml exec kotadb-dev bash
 
 # Inside container
-./dev.sh watch    # Start development mode
-./dev.sh mcp      # Start MCP server
+just watch        # Start dev loop (fmt/clippy/tests)
+just mcp          # Start MCP server
+
+# Run fast tests inside container (nextest)
+just docker-test
+
+# Run Docker-backed tests (require Postgres, marked #[ignore])
+just docker-test-ignored
 ```
+
+### Environment Variables
+- `DATABASE_URL` is auto-wired in the dev container to `postgresql://kotadb:development@postgres-dev:5432/kotadb_test`.
+- Locally, use `.env.example` to set `DATABASE_URL=postgresql://kotadb:development@localhost:5432/kotadb_test`.
+
+### Devcontainer (VS Code/Codespaces)
+- Open the repo in a devcontainer to auto-start `docker-compose.dev.yml` and mount the workspace.
+- Post-create, run `just install-ci-tools` if not already present.
 
 ## 🔍 Debugging
 

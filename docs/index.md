@@ -2,22 +2,20 @@
 
 ## A Codebase Intelligence Platform for Understanding Code Relationships
 
-Welcome to the KotaDB documentation! KotaDB is a high-performance codebase intelligence platform built entirely in Rust, designed to transform your codebase into a queryable knowledge graph for instant symbol lookup, dependency analysis, and impact assessment.
+Welcome to the KotaDB documentation! KotaDB is a high-performance codebase intelligence platform built in Rust, designed to transform your codebase into a queryable knowledge graph for instant symbol lookup, dependency analysis, and impact assessment.
 
 ## Quick Installation
 
-### Python Client (with Type Safety)
+### Python Client
 [![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
 ```bash
 pip install kotadb-client
 ```
 
-### TypeScript/JavaScript Client (with Type Safety)
+### TypeScript/JavaScript Client
 [![npm version](https://img.shields.io/npm/v/kotadb-client.svg)](https://www.npmjs.com/package/kotadb-client)
 ```bash
 npm install kotadb-client
-# or
-yarn add kotadb-client
 ```
 
 ### Server (Docker)
@@ -65,57 +63,57 @@ docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
 ## Key Features
 
 ### 🧠 Codebase Intelligence
-- **Symbol extraction** with 17,128+ symbols from KotaDB itself
-- **Dependency tracking** of function calls and usage patterns
-- **Impact analysis** to understand what breaks when code changes
-- **Git integration** for full repository ingestion
+- **Symbol extraction** from source code (functions, classes, variables)
+- **Dependency tracking** of function calls and usage patterns  
+- **Impact analysis** to understand change effects
+- **Cross-reference detection** for comprehensive code understanding
 
 ### 🚀 Performance
-- **<3ms trigram search** - 210x performance improvement
-- **Sub-microsecond B+ tree lookups** for path-based queries
-- **10x faster bulk operations** compared to traditional databases
+- **<3ms trigram search** with optimized indexing
+- **Sub-millisecond B+ tree lookups** for path-based queries
+- **Efficient bulk operations** for large-scale indexing
 - **Memory-efficient** dual storage architecture
 
-### 🛡️ Reliability
-- **99% success rate** through 6-stage risk reduction methodology
+### 🛡️ Reliability  
+- **Comprehensive testing** with 271+ passing unit tests
 - **Write-Ahead Logging (WAL)** for data durability
 - **Crash recovery** with automatic rollback
 - **Zero external dependencies** - pure Rust implementation
 
-### 🔍 Advanced Search & Analysis
-- **Full-text search** with optimized trigram indexing
-- **Vector search** for semantic queries (HNSW algorithm)
-- **Graph traversal** for code relationship queries
-- **Wildcard pattern matching** for flexible path searches
+### 🔍 Search & Analysis
+- **Full-text search** with trigram indexing
+- **Symbol-based search** with pattern matching
+- **Path queries** with wildcard support
+- **Relationship tracking** for code dependencies
 
 ### 🏗️ Architecture
-- **Dual storage** - Separates documents and graph data
+- **Dual storage** separating documents and relationships
 - **Page-based storage** with 4KB pages and checksums
-- **Multiple index types** - B+ tree, trigram, vector, graph
+- **Multiple index types** - B+ tree, trigram, vector support
 - **Component library** with safety wrappers
 
 ### 🔧 Developer Experience
-- **100% LLM-developed** with comprehensive documentation
-- **Type-safe APIs** with compile-time validation
-- **Extensive testing** - 243+ tests with property-based testing
-- **Observable** with distributed tracing and metrics
+- **Type-safe APIs** for Python, TypeScript, and Rust
+- **CLI interface** for command-line operations
+- **REST API** for HTTP integration
+- **MCP server** for AI assistant integration
 
 ## System Requirements
 
-- **Rust**: 1.75.0 or later
+- **Rust**: 1.70.0 or later (for building from source)
 - **Operating System**: Linux, macOS, or Windows
-- **Memory**: 512MB minimum, 2GB recommended
-- **Disk Space**: 100MB for installation + data storage
+- **Memory**: 512MB minimum, 2GB recommended for large codebases
+- **Disk Space**: 100MB for installation + storage for your data
 
 ## Use Cases
 
-KotaDB is designed for applications that require:
+KotaDB is designed for:
 
-- **Human-AI collaboration** with shared cognitive spaces
-- **High-performance document storage** with full-text search
-- **Semantic search** capabilities with vector embeddings
-- **Graph-based relationships** between documents
-- **Real-time indexing** with sub-second query response
+- **Code analysis** and understanding large codebases
+- **AI assistant integration** for code intelligence
+- **Developer tools** requiring fast code search
+- **Documentation systems** with code relationship tracking
+- **Refactoring assistance** with impact analysis
 
 ## Getting Help
 
@@ -147,16 +145,9 @@ KotaDB is designed for applications that require:
 
 </div>
 
-## Latest Updates
+## Current Status
 
-!!! success "Version 0.3.0 Released - Production-Ready Type Safety"
-    **Major release** with comprehensive TypeScript and Python client type safety! Features validated types, builder patterns, and security protection against path injection attacks. **164 TypeScript tests** and **84 Python tests** ensure production reliability.
-
-!!! tip "TypeScript Client - Complete Type Safety"
-    Full runtime validation with `ValidatedPath`, `ValidatedDocumentId`, builder patterns (`DocumentBuilder`, `QueryBuilder`), and comprehensive security validation. Zero breaking changes with backward compatibility.
-
-!!! info "Python Client - Enhanced with Builders"
-    Advanced builder patterns and validated types bring the Python client to feature parity with Rust. Includes `UpdateBuilder`, comprehensive error handling, and 79.54% test coverage.
+KotaDB v0.6.0 provides core codebase intelligence features with ongoing development for enhanced functionality. The platform is actively developed with regular updates and improvements.
 
 ## License
 

@@ -1,0 +1,1 @@
+{"output":"🔍 SearchService (src/services/search_service.rs:103)\n   Type: 4\n\nTotal symbols found: 1/33698"}

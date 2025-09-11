@@ -3,8 +3,6 @@ name: Security
 on:
   push:
     branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
   schedule:
     # Run security checks daily at 2 AM UTC
     - cron: '0 2 * * *'
