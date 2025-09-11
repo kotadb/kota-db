@@ -172,6 +172,14 @@ docker-down:
 docker-shell:
   ./scripts/dev/docker-dev.sh shell
 
+# Run tests inside dev container (all quick tests)
+docker-test:
+  docker-compose -f docker-compose.dev.yml exec kotadb-dev cargo nextest run --all --no-fail-fast
+
+# Run Docker-backed (ignored) tests that require services like Postgres
+docker-test-ignored:
+  docker-compose -f docker-compose.dev.yml exec kotadb-dev cargo test -- --ignored
+
 # === CI/CD ===
 
 # Install common CI/dev tools locally
