@@ -294,7 +294,7 @@ impl PathNormalizer {
 
     /// Optimized path normalization that avoids allocations when possible
     ///
-    /// Returns a Cow<str> that borrows when no changes are needed
+    /// Returns a `Cow<str>` that borrows when no changes are needed
     pub fn normalize_cow<'a>(&self, path: &'a str) -> Result<Cow<'a, str>> {
         // Quick check if normalization is needed
         if !path.contains("..")
