@@ -24,24 +24,41 @@ Enables Claude Code integration without requiring local Rust compilation by prov
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /mcp/tools` | List available MCP tools (POST supported, deprecated) |
-| `POST /mcp/tools/:tool_name` | Execute specific MCP tool |
+| `GET /mcp/tools` | List available MCP tools (POST also supported for compatibility) |
+| `POST /mcp/tools/:tool_name` | Execute specific MCP tool by name |
 | `POST /mcp/tools/search_code` | Search code content |
 | `POST /mcp/tools/search_symbols` | Search symbols |
 | `POST /mcp/tools/find_callers` | Find function callers |
 | `POST /mcp/tools/analyze_impact` | Analyze change impact |
+| `GET /mcp/tools/stats` | Bridge help and discovery for stats (POST also supported) |
 
 ### Usage
 ```bash
 # Start HTTP server with MCP bridge
 cargo run --bin kotadb-api-server --features mcp-server
 
-# Example API call
-curl -X GET http://localhost:8080/mcp/tools \
+# List tools (preferred)
+curl -sS http://localhost:8080/mcp/tools \
+  -H "Authorization: Bearer $API_KEY"
+
+# Call a tool (example: text search)
+curl -sS -X POST http://localhost:8080/mcp/tools/search_code \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d ''
+  -d '{"query": "storage", "limit": 10}'
+
+# Bridge stats/discovery
+curl -sS http://localhost:8080/mcp/tools/stats \
+  -H "Authorization: Bearer $API_KEY"
 ```
+
+### Error Codes
+
+Bridge errors use a stable schema `{ success: false, error: { code, message } }`:
+- `feature_disabled` – MCP feature or relationship tools not enabled
+- `tool_not_found` – unknown tool name
+- `registry_unavailable` – bridge is enabled but no tool registry configured
+- `internal_error` – unexpected runtime error when invoking a tool
 
 ### Implementation Files
 - `src/mcp_http_bridge.rs` - Core bridge implementation
@@ -165,8 +182,11 @@ Both implementations respect the `mcp-server` feature flag:
 # Enable full MCP functionality
 cargo run --features mcp-server
 
-# Basic HTTP bridge (no MCP tools)
-cargo run  # Uses stub implementations
+# Basic HTTP server without MCP bridge/tools
+cargo run
+
+# When `mcp-server` is disabled, /mcp/* endpoints return 501 with
+# error.code = "feature_disabled".
 ```
 
 ### Extension Points

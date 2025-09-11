@@ -199,6 +199,28 @@ See the architecture notes on performance in docs/architecture/technical_archite
 
 ## Documentation
 
+### HTTP API & MCP Bridge
+
+When built with the `mcp-server` feature, the server also exposes MCP-over-HTTP endpoints under `/mcp/*` for AI assistants:
+
+```bash
+# List tools (GET preferred; POST supported)
+curl -sS -H "Authorization: Bearer $API_KEY" http://localhost:8080/mcp/tools
+
+# Run text search tool
+curl -sS -X POST -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"storage","limit":10}' \
+  http://localhost:8080/mcp/tools/search_code
+
+# Bridge stats/discovery
+curl -sS -H "Authorization: Bearer $API_KEY" \
+  http://localhost:8080/mcp/tools/stats
+```
+
+Bridge errors use a stable schema `{ success: false, error: { code, message } }`. Common codes:
+`feature_disabled`, `tool_not_found`, `registry_unavailable`, `internal_error`.
+
 - **[Getting Started](docs/getting-started/)** - Installation and first steps
 - **[API Reference](docs/api/)** - Complete API documentation  
 - **[Architecture](docs/architecture/)** - Technical design details

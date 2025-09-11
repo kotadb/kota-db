@@ -151,11 +151,12 @@ async fn list_mcp_tools(
 }
 
 fn categorize_tool(name: &str) -> String {
-    if name.contains("symbol") || name.contains("search") {
+    let lname = name.to_lowercase();
+    if lname.contains("symbol") || lname.contains("search") {
         "search".into()
-    } else if name.contains("caller") || name.contains("relationship") {
+    } else if lname.contains("caller") || lname.contains("relationship") {
         "relationships".into()
-    } else if name.contains("impact") || name.contains("analysis") {
+    } else if lname.contains("impact") || lname.contains("analysis") {
         "analysis".into()
     } else {
         "general".into()
@@ -708,7 +709,7 @@ mod tests {
 
         #[cfg(not(feature = "mcp-server"))]
         let state = McpHttpBridgeState::new();
-        let app = create_mcp_bridge_router().with_state(state);
+        let app = create_mcp_bridge_router().with_state(state.clone());
 
         let response = app
             .oneshot(
@@ -721,6 +722,19 @@ mod tests {
             .await?;
 
         assert_eq!(response.status(), AxumStatusCode::OK);
+
+        // Also verify GET works
+        let app_get = create_mcp_bridge_router().with_state(state);
+        let response_get = app_get
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/mcp/tools/stats")
+                    .header("content-type", "application/json")
+                    .body(Body::from(""))?,
+            )
+            .await?;
+        assert_eq!(response_get.status(), AxumStatusCode::OK);
         Ok(())
     }
 }
