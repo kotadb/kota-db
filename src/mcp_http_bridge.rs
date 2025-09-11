@@ -171,14 +171,17 @@ async fn call_mcp_tool(
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
     #[cfg(not(feature = "mcp-server"))]
     {
-        return Ok(Json(McpToolResponse {
-            success: false,
-            data: None,
-            error: Some(McpErrorPayload {
-                code: "feature_disabled".to_string(),
-                message: "MCP server feature is disabled".to_string(),
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(McpToolResponse {
+                success: false,
+                data: None,
+                error: Some(McpErrorPayload {
+                    code: "feature_disabled".to_string(),
+                    message: "MCP server feature is disabled".to_string(),
+                }),
             }),
-        }));
+        ));
     }
 
     #[cfg(feature = "mcp-server")]
@@ -241,14 +244,17 @@ async fn search_code(
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
     #[cfg(not(feature = "mcp-server"))]
     {
-        return Ok(Json(McpToolResponse {
-            success: false,
-            data: None,
-            error: Some(McpErrorPayload {
-                code: "feature_disabled".to_string(),
-                message: "MCP server feature is disabled".to_string(),
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(McpToolResponse {
+                success: false,
+                data: None,
+                error: Some(McpErrorPayload {
+                    code: "feature_disabled".to_string(),
+                    message: "MCP server feature is disabled".to_string(),
+                }),
             }),
-        }));
+        ));
     }
 
     #[cfg(feature = "mcp-server")]
@@ -298,14 +304,17 @@ async fn search_symbols(
 ) -> Result<Json<McpToolResponse>, (StatusCode, Json<McpToolResponse>)> {
     #[cfg(not(feature = "mcp-server"))]
     {
-        return Ok(Json(McpToolResponse {
-            success: false,
-            data: None,
-            error: Some(McpErrorPayload {
-                code: "feature_disabled".to_string(),
-                message: "MCP server feature is disabled".to_string(),
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(McpToolResponse {
+                success: false,
+                data: None,
+                error: Some(McpErrorPayload {
+                    code: "feature_disabled".to_string(),
+                    message: "MCP server feature is disabled".to_string(),
+                }),
             }),
-        }));
+        ));
     }
 
     #[cfg(feature = "mcp-server")]
@@ -525,6 +534,7 @@ async fn get_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
     use axum::body::Body;
     use axum::http::{Request, StatusCode as AxumStatusCode};
     use tower::util::ServiceExt;
@@ -566,6 +576,89 @@ mod tests {
             )
             .await?;
         assert_eq!(response_get.status(), AxumStatusCode::OK);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unknown_tool_returns_404() -> Result<()> {
+        #[cfg(feature = "mcp-server")]
+        let state = {
+            use crate::mcp::tools::MCPToolRegistry;
+            // Empty registry is fine; unknown tool is rejected before registry usage
+            let tool_registry = std::sync::Arc::new(MCPToolRegistry::new());
+            McpHttpBridgeState::new(Some(tool_registry))
+        };
+
+        #[cfg(feature = "mcp-server")]
+        {
+            use axum::body::Body;
+            use axum::http::Request;
+            let app = create_mcp_bridge_router().with_state(state);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/mcp/tools/not_a_real_tool")
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))?,
+                )
+                .await?;
+            assert_eq!(resp.status(), AxumStatusCode::NOT_FOUND);
+            let bytes = to_bytes(resp.into_body(), 1024 * 1024).await?;
+            let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(v["error"]["code"], "tool_not_found");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_feature_disabled_returns_501() -> Result<()> {
+        #[cfg(not(feature = "mcp-server"))]
+        {
+            use axum::body::Body;
+            use axum::http::Request;
+            let state = McpHttpBridgeState::new();
+            let app = create_mcp_bridge_router().with_state(state);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/mcp/tools/search_code")
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))?,
+                )
+                .await?;
+            assert_eq!(resp.status(), AxumStatusCode::NOT_IMPLEMENTED);
+            let bytes = to_bytes(resp.into_body(), 1024 * 1024).await?;
+            let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(v["error"]["code"], "feature_disabled");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_registry_missing_returns_501() -> Result<()> {
+        #[cfg(feature = "mcp-server")]
+        {
+            use axum::body::Body;
+            use axum::http::Request;
+            // State without a registry
+            let state = McpHttpBridgeState::new(None);
+            let app = create_mcp_bridge_router().with_state(state);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/mcp/tools/search_symbols")
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))?,
+                )
+                .await?;
+            assert_eq!(resp.status(), AxumStatusCode::NOT_IMPLEMENTED);
+            let bytes = to_bytes(resp.into_body(), 1024 * 1024).await?;
+            let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(v["error"]["code"], "registry_unavailable");
+        }
         Ok(())
     }
 
