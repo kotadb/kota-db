@@ -480,6 +480,16 @@ fn calculate() -> i32 {
             .current_dir(&repo_dir)
             .output()?;
 
+        // Configure local git identity for CI environments before committing
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_dir)
+            .output()?;
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_dir)
+            .output()?;
+
         // Create a file that might cause parsing issues
         std::fs::write(repo_dir.join("main.rs"), "invalid rust syntax $$$ {{{")?;
 
