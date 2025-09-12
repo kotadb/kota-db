@@ -127,10 +127,14 @@ jobs:
   coverage:
     name: Coverage (llvm-cov)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     needs: tests
     steps:
       - uses: actions/checkout@v4
+      - name: Configure git identity (for tests)
+        run: |
+          git config --global user.email "ci@kotadb.dev"
+          git config --global user.name "KotaDB CI"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
