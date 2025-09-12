@@ -104,11 +104,19 @@ impl Config {
         let repo_dir = temp_dir.path().join("test_repo");
         std::fs::create_dir_all(&repo_dir)?;
 
-        // Initialize git repo
+        // Initialize git repo and configure identity for commits
         std::process::Command::new("git")
             .arg("init")
             .current_dir(&repo_dir)
-            .output()?;
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_dir)
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_dir)
+            .status()?;
 
         // Create some source files
         let main_rs = r#"
@@ -337,11 +345,19 @@ fn internal_function() {
         let repo_dir = temp_dir.path().join("test_repo");
         std::fs::create_dir_all(&repo_dir)?;
 
-        // Initialize git repo
+        // Initialize git repo and configure identity for commits
         std::process::Command::new("git")
             .arg("init")
             .current_dir(&repo_dir)
-            .output()?;
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_dir)
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_dir)
+            .status()?;
 
         // Create source files with clear dependencies
         let main_rs = r#"
