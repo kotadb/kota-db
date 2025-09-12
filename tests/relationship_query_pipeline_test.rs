@@ -105,6 +105,16 @@ edition = "2021"
         .current_dir(base_path)
         .output()?;
 
+    // Configure local git identity for CI before committing
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(base_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(base_path)
+        .output()?;
+
     std::process::Command::new("git")
         .args(["add", "."])
         .current_dir(base_path)
