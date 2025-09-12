@@ -62,6 +62,7 @@ run_ci() {
   local cmd="$*"
   echo "[local-ci] >>> $cmd"
   docker run --rm \
+    --platform "$PLATFORM" \
     -v "$ROOT_DIR":/workspace \
     -w /workspace \
     -e RUST_LOG=error \
@@ -75,7 +76,7 @@ run_ci() {
 }
 
 echo "[local-ci] Running Lint (fmt, clippy)"
-run_ci "rustup show && cargo fmt --all -- --check"
+run_ci "command -v rustup >/dev/null 2>&1 && rustup show || true; cargo fmt --all -- --check"
 run_ci "cargo clippy --all-targets --all-features -- -D warnings"
 
 echo "[local-ci] Running Unit & Doc Tests"
@@ -86,6 +87,7 @@ run_ci "RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --no-default-features --f
 
 echo "[local-ci] Running Docker-backed Integration (requires Docker socket)"
 docker run --rm \
+  --platform "$PLATFORM" \
   -v "$ROOT_DIR":/workspace \
   -w /workspace \
   -e RUST_LOG=warn \

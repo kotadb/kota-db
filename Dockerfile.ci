@@ -14,10 +14,12 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure clippy/rustfmt components are available like CI
+RUN rustup component add rustfmt clippy
+
 # Pre-install commonly used cargo tools to speed up runs
-RUN cargo install --locked \
-    cargo-nextest \
-    cargo-llvm-cov || true
+RUN cargo install --locked cargo-nextest --version 0.9.100 || true
+RUN cargo install --locked cargo-llvm-cov || true
 
 ENV CARGO_TERM_COLOR=always \
     RUST_BACKTRACE=1 \
@@ -31,4 +33,3 @@ WORKDIR /workspace
 # No source code is copied at build time; it is mounted at runtime.
 
 CMD ["bash"]
-
