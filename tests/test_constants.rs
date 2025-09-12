@@ -59,9 +59,18 @@ pub mod concurrency {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    // Serialize tests that mutate CI-related environment variables to avoid
+    // cross-test interference on parallel runners.
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn test_is_ci_detection_with_ci_env() {
+        let _g = env_guard();
         // Set CI environment variable and test detection
         env::set_var("CI", "true");
         assert!(
@@ -85,6 +94,7 @@ mod tests {
 
     #[test]
     fn test_is_ci_detection_without_env() {
+        let _g = env_guard();
         // Store original values to restore later
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");
@@ -111,6 +121,7 @@ mod tests {
 
     #[test]
     fn test_get_concurrent_operations_ci_vs_local() {
+        let _g = env_guard();
         // Test CI environment returns reduced concurrency
         env::set_var("CI", "true");
         let ci_ops = concurrency::get_concurrent_operations();
@@ -136,6 +147,7 @@ mod tests {
 
     #[test]
     fn test_get_operations_per_task_ci_vs_local() {
+        let _g = env_guard();
         // Store original environment
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");
@@ -175,6 +187,7 @@ mod tests {
 
     #[test]
     fn test_get_pool_capacity_ci_vs_local() {
+        let _g = env_guard();
         // Store original environment
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");

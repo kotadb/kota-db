@@ -54,6 +54,17 @@ fn create_test_repository(base_path: &std::path::Path) -> Result<PathBuf> {
         .current_dir(&repo_path)
         .output()?;
 
+    // Ensure local git identity is configured for CI environments
+    // Some runners do not have global git config; set per-repo values.
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&repo_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&repo_path)
+        .output()?;
+
     // Create some test files with different languages
     fs::write(
         repo_path.join("README.md"),

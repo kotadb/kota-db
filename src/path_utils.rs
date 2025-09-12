@@ -98,7 +98,9 @@ impl PathNormalizer {
     /// let normalizer = PathNormalizer::new();
     /// let repo_root = Path::new("/home/user/project");
     /// let absolute_path = Path::new("/home/user/project/src/main.rs");
-    /// let relative = normalizer.normalize_relative(absolute_path, repo_root)?;
+    /// let relative = normalizer
+    ///     .normalize_relative(absolute_path, repo_root)
+    ///     .unwrap();
     /// assert_eq!(relative, "src/main.rs");
     /// ```
     pub fn normalize_relative(&self, path: &Path, repo_root: &Path) -> Result<String> {
@@ -294,7 +296,7 @@ impl PathNormalizer {
 
     /// Optimized path normalization that avoids allocations when possible
     ///
-    /// Returns a Cow<str> that borrows when no changes are needed
+    /// Returns a `Cow<str>` that borrows when no changes are needed
     pub fn normalize_cow<'a>(&self, path: &'a str) -> Result<Cow<'a, str>> {
         // Quick check if normalization is needed
         if !path.contains("..")

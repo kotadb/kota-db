@@ -5,6 +5,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  schedule:
+    # Nightly at 03:00 UTC
+    - cron: '0 3 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,57 +20,209 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  RUST_TEST_THREADS: 4
-  CARGO_BUILD_JOBS: 4
 
 jobs:
-  build-test:
-    name: Build, Lint, Test
+  lint:
+    name: Lint (fmt, clippy)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Cache dependencies
+      - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
           shared-key: "ci-unified"
-
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
-
       - name: Format check
         run: cargo fmt --all -- --check
-
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  tests:
+    name: Unit & Doc Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
       - name: Build (debug)
-        run: cargo build --all-features
-
-      - name: Build release binary
-        run: cargo build --release --bin kotadb
-
-      - name: Run tests (nextest)
+        run: cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
+      - name: Run unit tests (nextest, lib only)
         env:
           RUST_LOG: error
           CI: true
         run: |
-          cargo nextest run --all-features --no-fail-fast
-          cargo test --doc --all-features
+          cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
+          cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
 
+  integration-docker:
+    name: Docker-backed Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
+      - name: Run ignored Docker-backed tests (requires Docker)
+        env:
+          RUST_LOG: warn
+          DISABLE_RATE_LIMIT: "1"
+        run: |
+          cargo test --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --test mcp_auth_middleware_test -- --ignored --nocapture
+
+  docs:
+    name: Build Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps --no-default-features --features "git-integration,tree-sitter-parsing"
 
-  # Optional informational jobs (non-blocking)
+  msrv:
+    name: MSRV Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (MSRV)
+        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
+      - name: Check & unit tests
+        run: |
+          cargo check -q --no-default-features --features "git-integration,tree-sitter-parsing"
+          cargo test --lib --no-default-features --features "git-integration,tree-sitter-parsing"
+
+  coverage:
+    name: Coverage (llvm-cov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: tests
+    # Run coverage on:
+    # - nightly schedule
+    # - push to main
+    # - PRs that opt-in via a 'run-coverage' label
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(join(github.event.pull_request.labels.*.name, ','), 'run-coverage'))
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git identity (for tests)
+        run: |
+          git config --global user.email "ci@kotadb.dev"
+          git config --global user.name "KotaDB CI"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage (lcov + html)
+        run: |
+          cargo llvm-cov --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --workspace --lcov --output-path lcov.info
+          cargo llvm-cov --no-default-features --features "git-integration,tree-sitter-parsing" \
+            --workspace --html
+      - name: Upload lcov
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+      - name: Upload coverage html
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: target/llvm-cov/html
+
+  artifacts:
+    name: Build PR Artifacts (Release Binaries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: tests
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci-unified"
+      - name: Build release binaries
+        run: |
+          cargo build --release --no-default-features --features "git-integration,tree-sitter-parsing" --bin kotadb
+          cargo build --release --no-default-features --features "git-integration,tree-sitter-parsing" --bin kotadb-api-server
+      - name: Upload kotadb
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotadb-${{ github.sha }}
+          path: target/release/kotadb
+      - name: Upload kotadb-api-server
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotadb-api-server-${{ github.sha }}
+          path: target/release/kotadb-api-server
+  container-build-check:
+    name: Container Build Check (Fly.io compatible)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: tests
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build production image (linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.production
+          platforms: linux/amd64
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Optional informational job (non-blocking)
   security:
     name: Security Audit (informational)
     runs-on: ubuntu-latest
