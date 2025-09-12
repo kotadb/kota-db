@@ -57,12 +57,12 @@ jobs:
         run: cargo install cargo-nextest --locked
       - name: Build (debug)
         run: cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
-      - name: Run tests (nextest)
+      - name: Run unit tests (nextest, lib only)
         env:
           RUST_LOG: error
           CI: true
         run: |
-          cargo nextest run --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
+          cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
           cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
 
   integration-docker:
