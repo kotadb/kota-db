@@ -5,6 +5,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  schedule:
+    # Nightly at 03:00 UTC
+    - cron: '0 3 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -129,6 +132,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     needs: tests
+    # Run coverage on:
+    # - nightly schedule
+    # - push to main
+    # - PRs that opt-in via a 'run-coverage' label
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(join(github.event.pull_request.labels.*.name, ','), 'run-coverage'))
     steps:
       - uses: actions/checkout@v4
       - name: Configure git identity (for tests)
