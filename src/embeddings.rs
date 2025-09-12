@@ -811,6 +811,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg(feature = "embeddings-onnx")]
     #[tokio::test]
     async fn test_local_embedding_provider() -> Result<()> {
         // Test that the provider correctly initializes with a configuration
