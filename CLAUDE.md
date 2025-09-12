@@ -144,9 +144,12 @@ just dev                     # Uses cargo watch for auto-reload
 
 ### Testing (FAST - 3-5x Speed Improvement)
 ```bash
-# FAST: Run all tests with cargo-nextest (3-5x faster than standard cargo test)
+# FAST: CI-equivalent gating set (quick pre-push)
+just test-fast                             # nextest lib + doctests with CI features
+
+# Broader: run all tests with cargo-nextest (3-5x faster than cargo test)
 cargo nextest run --all
-just test                                  # Now uses cargo-nextest by default
+just test                                  # nextest across the workspace
 
 # FAST: Run specific test types  
 cargo nextest run --lib                    # Unit tests only (FAST)
@@ -157,7 +160,7 @@ just test-integration                      # Integration tests (FAST)
 # Legacy commands (for compatibility/fallback)
 cargo test --all                           # Legacy - slower
 just test-legacy                           # Legacy - slower
-just test-fast                             # Explicit fast testing
+just test-fast                             # Fast gating set (CI flags)
 
 # Performance and stress tests (still use cargo test for benchmarking)
 cargo test --release --features bench performance_regression_test

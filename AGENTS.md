@@ -9,6 +9,7 @@
 ## Build, Test, and Development Commands
 - `just dev` — run MCP server with auto-reload for local dev.
 - `just test` — run all tests fast via `cargo nextest`.
+- `just test-fast` — mirrors CI gating: nextest lib + doctests with `--no-default-features --features "git-integration,tree-sitter-parsing"`.
 - `just fmt` / `just clippy` — format and lint; CI fails on warnings.
 - `just coverage` — HTML coverage at `target/llvm-cov/html/index.html`.
 - `just ci-fast` — format, clippy, unit tests, audit.
@@ -36,4 +37,3 @@
 - Never commit secrets; use `.env.dev`/`.env.example` as references.
 - Local data directory via `KOTADB_DATA_DIR`; sample configs: `kotadb-dev.toml`.
 - Optional features: `mcp-server`, `advanced-search`, `embeddings-onnx`, `tree-sitter-parsing` — enable explicitly when needed.
-

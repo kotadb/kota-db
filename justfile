@@ -31,9 +31,11 @@ watch:
 test:
   cargo nextest run --all --no-fail-fast
 
-# Fast test execution using cargo-nextest (recommended)
+# Fast test execution mirroring gating CI (recommended pre-push)
+# Runs lib tests with required feature flags via nextest, then doctests.
 test-fast:
-  cargo nextest run --all
+  cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
+  cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
 
 # Run only unit tests (FAST)
 test-unit:

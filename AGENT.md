@@ -174,6 +174,7 @@ See `docs/BRANCHING_STRATEGY.md` for complete details.
 # Primary development workflow
 just dev              # Start development server with auto-reload
 just test              # Run all tests (REQUIRED before commits)
+just test-fast         # Fast gating set: nextest lib + doctests with CI features
 just check             # Run all quality checks (formatting, linting, tests)
 just ci                # Run full CI pipeline locally
 
@@ -182,6 +183,12 @@ just test-unit         # Unit tests only
 just test-integration  # Integration tests only
 just test-perf         # Performance regression tests
 just coverage          # Generate test coverage report
+
+Notes:
+- Use `just test-fast` for quick pre-push validation — it mirrors the CI gating set:
+  - Runs `cargo nextest run --lib` and `cargo test --doc` with `--no-default-features --features "git-integration,tree-sitter-parsing"`.
+  - Excludes heavy integration/stress suites for faster feedback.
+- Use `just test` for broader validation across the workspace (nextest, all tests).
 
 # Code quality (REQUIRED)
 just fmt               # Format code (run before every commit)
