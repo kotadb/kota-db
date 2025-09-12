@@ -82,6 +82,7 @@ jobs:
       - name: Run ignored Docker-backed tests (requires Docker)
         env:
           RUST_LOG: warn
+          DISABLE_RATE_LIMIT: "1"
         run: |
           cargo test --no-default-features --features "git-integration,tree-sitter-parsing" \
             --test mcp_auth_middleware_test -- --ignored --nocapture
