@@ -1,5 +1,4 @@
 # Fly.io staging deployment configuration for KotaDB SaaS API
-# Generated from Railway migration - Issue #510
 
 app = "kotadb-api-staging"
 primary_region = "iad"  # IAD (Ashburn, Virginia) - US East Coast
