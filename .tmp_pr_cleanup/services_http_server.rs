@@ -22,6 +22,12 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+#[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
+use crate::mcp::tools::symbol_tools::SymbolTools;
+#[cfg(feature = "mcp-server")]
+use crate::mcp::tools::MCPToolRegistry;
+#[cfg(feature = "mcp-server")]
+use crate::mcp_http_bridge::{create_mcp_bridge_router, McpHttpBridgeState};
 use crate::{
     database::Database,
     services::{
@@ -371,7 +377,7 @@ pub fn create_services_server(
         repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
     };
 
-    Router::new()
+    let base_router = Router::new()
         // Health endpoint
         .route("/health", get(health_check))
         // Versioned v1 endpoints
@@ -406,7 +412,37 @@ pub fn create_services_server(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
-        )
+        );
+
+    // Optionally mount MCP bridge without auth for local development
+    // Available by default when compiled with mcp-server feature
+    #[cfg(feature = "mcp-server")]
+    let base_router = {
+        let mut registry = MCPToolRegistry::new();
+        // Register lightweight text search
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+        let mcp_state = McpHttpBridgeState::new(Some(Arc::new(registry)));
+        let mcp_router = create_mcp_bridge_router().with_state(mcp_state);
+        base_router.merge(mcp_router)
+    };
+
+    base_router
 }
 
 /// Start the services-only HTTP server
@@ -1971,7 +2007,11 @@ fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
 async fn create_api_key_handler(
     State(state): State<ServicesAppState>,
     Json(request): Json<crate::api_keys::CreateApiKeyRequest>,
-) -> Result<Json<crate::api_keys::CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<
+    Json<crate::api_keys::CreateApiKeyResponse>,
+    (StatusCode, Json<crate::http_types::ErrorResponse>),
+> {
+    use crate::http_types::ErrorResponse;
     use crate::observability::with_trace_id;
 
     // Extract API key service from state
@@ -1980,10 +2020,9 @@ async fn create_api_key_handler(
         None => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "internal_server_error".to_string(),
-                    message: "API key service not configured".to_string(),
-                }),
+                Json(ErrorResponse::internal_server_error(
+                    "API key service not configured",
+                )),
             ));
         }
     };
@@ -1999,10 +2038,7 @@ async fn create_api_key_handler(
             warn!("Failed to create API key: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "internal_server_error".to_string(),
-                    message: e.to_string(),
-                }),
+                Json(ErrorResponse::internal_server_error(e.to_string())),
             ))
         }
     }
