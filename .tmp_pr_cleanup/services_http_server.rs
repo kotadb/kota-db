@@ -2007,7 +2007,11 @@ fn extract_simple_impact_results(json_val: &serde_json::Value) -> Vec<String> {
 async fn create_api_key_handler(
     State(state): State<ServicesAppState>,
     Json(request): Json<crate::api_keys::CreateApiKeyRequest>,
-) -> Result<Json<crate::api_keys::CreateApiKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<
+    Json<crate::api_keys::CreateApiKeyResponse>,
+    (StatusCode, Json<crate::http_types::ErrorResponse>),
+> {
+    use crate::http_types::ErrorResponse;
     use crate::observability::with_trace_id;
 
     // Extract API key service from state
@@ -2016,10 +2020,9 @@ async fn create_api_key_handler(
         None => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "internal_server_error".to_string(),
-                    message: "API key service not configured".to_string(),
-                }),
+                Json(ErrorResponse::internal_server_error(
+                    "API key service not configured",
+                )),
             ));
         }
     };
@@ -2035,10 +2038,7 @@ async fn create_api_key_handler(
             warn!("Failed to create API key: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "internal_server_error".to_string(),
-                    message: e.to_string(),
-                }),
+                Json(ErrorResponse::internal_server_error(e.to_string())),
             ))
         }
     }

@@ -165,8 +165,3 @@ code-analysis-bench-results/
 test-db/
 # Exclude dogfood testing data directories - should never be committed
 dogfood-test/
-
-# Prevent committing local data
-kotadb-data/**
-index_body.json
-index_result.json
