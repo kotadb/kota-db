@@ -19,7 +19,7 @@ use std::{collections::HashMap, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
@@ -149,6 +149,14 @@ pub struct RegisterRepositoryRequest {
     pub path: Option<String>,
     pub git_url: Option<String>,
     pub branch: Option<String>,
+    // Optional indexing overrides
+    pub include_files: Option<bool>,
+    pub include_commits: Option<bool>,
+    pub max_file_size_mb: Option<usize>,
+    pub max_memory_mb: Option<u64>,
+    pub max_parallel_files: Option<usize>,
+    pub enable_chunking: Option<bool>,
+    pub extract_symbols: Option<bool>,
 }
 
 /// v1 repository registration response
@@ -360,6 +368,27 @@ fn handle_validation_error(
     )
 }
 
+/// Standardized not-found error handling with helpful messages
+fn handle_not_found_error(
+    field_name: &str,
+    message: &str,
+    endpoint: &str,
+) -> (StatusCode, Json<StandardApiError>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(StandardApiError {
+            error_type: "not_found".to_string(),
+            message: format!("{}: {}", field_name, message),
+            details: Some(format!("Endpoint: {}", endpoint)),
+            suggestions: vec![
+                "Verify the identifier and try again".to_string(),
+                "List available resources to find valid IDs".to_string(),
+            ],
+            error_code: Some(404),
+        }),
+    )
+}
+
 /// Create clean services-only HTTP server
 pub fn create_services_server(
     storage: Arc<tokio::sync::Mutex<dyn Storage>>,
@@ -482,23 +511,22 @@ pub async fn start_services_server(
         }
     };
 
-    info!("🚀 KotaDB Services HTTP Server starting on port {}", port);
-    info!("🎯 Clean services-only architecture - no legacy endpoints");
-    info!("📄 Available endpoints:");
-    info!("   GET    /health                    - Server health check");
-    info!("   GET    /api/stats                 - Database statistics (StatsService)");
-    info!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
-    info!("   POST   /api/validate              - Database validation (ValidationService)");
-    info!("   GET    /api/health-check          - Detailed health check (ValidationService)");
-    info!("   POST   /api/index-codebase        - Index repository (IndexingService)");
-    info!("   GET    /api/search-code           - Search code content (SearchService)");
-    info!("   GET    /api/search-symbols        - Search symbols (SearchService)");
-    info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
-    info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
-    info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
-    info!("");
-    info!("🟢 Server ready at http://localhost:{}", port);
-    info!("   Health check: curl http://localhost:{}/health", port);
+    info!("KotaDB Services HTTP Server listening on port {}", port);
+    debug!("Clean services-only architecture - no legacy endpoints");
+    debug!("Available endpoints:");
+    debug!("   GET    /health                    - Server health check");
+    debug!("   GET    /api/stats                 - Database statistics (StatsService)");
+    debug!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
+    debug!("   POST   /api/validate              - Database validation (ValidationService)");
+    debug!("   GET    /api/health-check          - Detailed health check (ValidationService)");
+    debug!("   POST   /api/index-codebase        - Index repository (IndexingService)");
+    debug!("   GET    /api/search-code           - Search code content (SearchService)");
+    debug!("   GET    /api/search-symbols        - Search symbols (SearchService)");
+    debug!("   POST   /api/find-callers          - Find callers (AnalysisService)");
+    debug!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
+    debug!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    debug!("Server ready at http://localhost:{}", port);
+    debug!("Health check: curl http://localhost:{}/health", port);
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -517,6 +545,7 @@ pub async fn create_services_saas_server(
     // Initialize API key service
     let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
 
+    let repos_init = load_repositories_from_disk_async(db_path.as_path()).await;
     let state = ServicesAppState {
         storage,
         primary_index,
@@ -524,7 +553,7 @@ pub async fn create_services_saas_server(
         db_path: db_path.clone(),
         api_key_service: Some(api_key_service.clone()),
         jobs: Arc::new(RwLock::new(HashMap::new())),
-        repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
+        repositories: Arc::new(RwLock::new(repos_init)),
     };
 
     // Create authenticated routes (require API key)
@@ -637,29 +666,28 @@ pub async fn start_services_saas_server(
         }
     };
 
-    info!("🚀 KotaDB Services SaaS Server starting on port {}", port);
-    info!("🔐 API key authentication enabled");
-    info!("🎯 Clean services architecture with SaaS capabilities");
-    info!("📄 Available endpoints:");
-    info!("   GET    /health                    - Server health check (public)");
-    info!("   GET    /api/health-check          - Detailed health check (public)");
-    info!("   🔐 Authenticated endpoints (require API key):");
-    info!("   GET    /api/stats                 - Database statistics (StatsService)");
-    info!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
-    info!("   POST   /api/validate              - Database validation (ValidationService)");
-    info!("   POST   /api/index-codebase        - Index repository (IndexingService)");
-    info!("   GET    /api/search-code           - Search code content (SearchService)");
-    info!("   GET    /api/search-symbols        - Search symbols (SearchService)");
-    info!("   POST   /api/find-callers          - Find callers (AnalysisService)");
-    info!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
-    info!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
-    info!("   🔒 Internal endpoints (require internal API key):");
-    info!("   POST   /internal/create-api-key   - Create new API key");
-    info!("");
-    info!("🟢 SaaS Server ready at http://localhost:{}", port);
-    info!("   Health check: curl http://localhost:{}/health", port);
-    info!(
-        "   Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats",
+    info!("KotaDB Services SaaS Server listening on port {}", port);
+    debug!("API key authentication enabled");
+    debug!("Clean services architecture with SaaS capabilities");
+    debug!("Available endpoints:");
+    debug!("   GET    /health                    - Server health check (public)");
+    debug!("   GET    /api/health-check          - Detailed health check (public)");
+    debug!("   🔐 Authenticated endpoints (require API key):");
+    debug!("   GET    /api/stats                 - Database statistics (StatsService)");
+    debug!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
+    debug!("   POST   /api/validate              - Database validation (ValidationService)");
+    debug!("   POST   /api/index-codebase        - Index repository (IndexingService)");
+    debug!("   GET    /api/search-code           - Search code content (SearchService)");
+    debug!("   GET    /api/search-symbols        - Search symbols (SearchService)");
+    debug!("   POST   /api/find-callers          - Find callers (AnalysisService)");
+    debug!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
+    debug!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    debug!("   🔒 Internal endpoints (require internal API key):");
+    debug!("   POST   /internal/create-api-key   - Create new API key");
+    debug!("SaaS Server ready at http://localhost:{}", port);
+    debug!("Health check: curl http://localhost:{}/health", port);
+    debug!(
+        "Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats",
         port
     );
 
@@ -851,37 +879,8 @@ async fn search_code_v1_post(
     match result {
         Ok(search_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-            let response_value = match format.as_str() {
-                "simple" => {
-                    let file_paths: Vec<String> =
-                        if let Some(ref llm_response) = search_result.llm_response {
-                            llm_response
-                                .results
-                                .iter()
-                                .map(|doc| doc.path.clone())
-                                .collect()
-                        } else {
-                            search_result
-                                .documents
-                                .iter()
-                                .map(|doc| doc.path.to_string())
-                                .collect()
-                        };
-                    serde_json::to_value(SimpleSearchResponse {
-                        results: file_paths,
-                        total_count: search_result.total_count,
-                        query_time_ms: 0,
-                    })
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                }
-                "cli" => {
-                    let cli_output = format_search_as_cli(&search_result);
-                    serde_json::to_value(CliFormatResponse { output: cli_output })
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                }
-                _ => serde_json::to_value(search_result)
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?,
-            };
+            let response_value = render_search_code_response(&search_result, &format)
+                .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?;
             Ok(Json(response_value))
         }
         Err(e) => Err(handle_service_error(e, "search_code")),
@@ -931,27 +930,8 @@ async fn search_symbols_v1_post(
     match result {
         Ok(symbol_result) => {
             let format = body.format.unwrap_or_else(|| "rich".to_string());
-            let response_value = match format.as_str() {
-                "simple" => {
-                    let names: Vec<String> = symbol_result
-                        .matches
-                        .iter()
-                        .map(|m| m.name.clone())
-                        .collect();
-                    serde_json::to_value(SimpleSymbolResponse {
-                        symbols: names,
-                        total_count: symbol_result.total_symbols,
-                    })
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                }
-                "cli" => {
-                    let cli_output = format_symbols_as_cli(&symbol_result);
-                    serde_json::to_value(CliFormatResponse { output: cli_output })
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                }
-                _ => serde_json::to_value(symbol_result)
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?,
-            };
+            let response_value = render_symbol_search_response(&symbol_result, &format)
+                .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?;
             Ok(Json(response_value))
         }
         Err(e) => Err(handle_service_error(e, "symbol_search")),
@@ -962,7 +942,7 @@ async fn search_symbols_v1_post(
 async fn find_callers_v1_get(
     State(state): State<ServicesAppState>,
     axum::extract::Path(symbol): axum::extract::Path<String>,
-    AxumQuery(q): AxumQuery<CallersRequest>,
+    AxumQuery(q): AxumQuery<CallersQuery>,
 ) -> ApiResult<serde_json::Value> {
     if symbol.trim().is_empty() {
         return Err(handle_validation_error(
@@ -1003,7 +983,7 @@ async fn find_callers_v1_get(
 async fn analyze_impact_v1_get(
     State(state): State<ServicesAppState>,
     axum::extract::Path(symbol): axum::extract::Path<String>,
-    AxumQuery(q): AxumQuery<ImpactAnalysisRequest>,
+    AxumQuery(q): AxumQuery<ImpactQuery>,
 ) -> ApiResult<serde_json::Value> {
     if symbol.trim().is_empty() {
         return Err(handle_validation_error(
@@ -1048,6 +1028,16 @@ struct ListSymbolsQuery {
     symbol_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CallersQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImpactQuery {
+    limit: Option<usize>,
+}
+
 async fn list_symbols_v1(
     State(state): State<ServicesAppState>,
     AxumQuery(q): AxumQuery<ListSymbolsQuery>,
@@ -1085,18 +1075,14 @@ async fn file_symbols_v1(
     match crate::binary_symbols::BinarySymbolReader::open(&symbol_db_path) {
         Ok(reader) => {
             let mut entries = Vec::new();
-            for s in reader.iter_symbols() {
-                if let Ok(file_path) = reader.get_symbol_file_path(&s) {
-                    if file_path == path {
-                        let name = reader.get_symbol_name(&s).unwrap_or_default();
-                        entries.push(serde_json::json!({
-                            "name": name,
-                            "kind": format!("{:?}", s.kind),
-                            "start_line": s.start_line,
-                            "end_line": s.end_line,
-                        }));
-                    }
-                }
+            for s in reader.read_symbols_for_file(&path) {
+                let name = reader.get_symbol_name(&s).unwrap_or_default();
+                entries.push(serde_json::json!({
+                    "name": name,
+                    "kind": format!("{:?}", s.kind),
+                    "start_line": s.start_line,
+                    "end_line": s.end_line,
+                }));
             }
             Ok(Json(serde_json::json!({"file": path, "symbols": entries})))
         }
@@ -1132,7 +1118,38 @@ async fn register_repository_v1(
 
     // For now, support local path; git clone can be added later
     let repo_path = match (&body.path, &body.git_url) {
-        (Some(p), _) => PathBuf::from(p.clone()),
+        (Some(p), _) => {
+            let pb = PathBuf::from(p);
+            if !pb.exists() {
+                return Err(handle_validation_error(
+                    "path",
+                    "path does not exist",
+                    "repositories",
+                ));
+            }
+            if !pb.is_dir() {
+                return Err(handle_validation_error(
+                    "path",
+                    "path must be a directory",
+                    "repositories",
+                ));
+            }
+            match std::fs::canonicalize(&pb) {
+                Ok(canon) => canon,
+                Err(e) => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(StandardApiError {
+                            error_type: "path_canonicalization_failed".into(),
+                            message: e.to_string(),
+                            details: Some("Failed to canonicalize repository path".into()),
+                            suggestions: vec!["Ensure the path is accessible".into()],
+                            error_code: Some(400),
+                        }),
+                    ));
+                }
+            }
+        }
         (None, Some(_git)) => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -1153,7 +1170,7 @@ async fn register_repository_v1(
         .and_then(|s| s.to_str())
         .unwrap_or("repo")
         .to_string();
-    let repository_id = format!("repo_{}", repo_name);
+    let repository_id = stable_repository_id(&repo_path);
     let job_id = Uuid::new_v4().to_string();
     let job_id_out = job_id.clone();
     let repository_id_out = repository_id.clone();
@@ -1172,6 +1189,7 @@ async fn register_repository_v1(
             error: None,
         },
     );
+    prune_jobs_in_place(&mut jobs, 100, 3600);
     drop(jobs);
 
     // Persist repository record if not present
@@ -1206,19 +1224,32 @@ async fn register_repository_v1(
             path_cache: Arc::new(RwLock::new(HashMap::new())),
         };
         let indexing = IndexingService::new(&database, state_clone.db_path.clone());
-        let options = IndexCodebaseOptions {
+        let mut options = IndexCodebaseOptions {
             repo_path: repo_path.clone(),
-            prefix: "repos".into(),
-            include_files: true,
-            include_commits: true,
-            max_file_size_mb: 10,
-            max_memory_mb: None,
-            max_parallel_files: None,
-            enable_chunking: true,
-            extract_symbols: Some(true),
-            no_symbols: false,
-            quiet: false,
+            ..IndexCodebaseOptions::default()
         };
+        if let Some(v) = body.include_files {
+            options.include_files = v;
+        }
+        if let Some(v) = body.include_commits {
+            options.include_commits = v;
+        }
+        if let Some(v) = body.max_file_size_mb {
+            options.max_file_size_mb = v;
+        }
+        if let Some(v) = body.max_memory_mb {
+            options.max_memory_mb = Some(v);
+        }
+        if let Some(v) = body.max_parallel_files {
+            options.max_parallel_files = Some(v);
+        }
+        if let Some(v) = body.enable_chunking {
+            options.enable_chunking = v;
+        }
+        if let Some(v) = body.extract_symbols {
+            options.extract_symbols = Some(v);
+        }
+        options.quiet = false;
         match indexing.index_codebase(options).await {
             Ok(_res) => {
                 update_job_status(&state_clone, &job_id, |j| {
@@ -1232,6 +1263,11 @@ async fn register_repository_v1(
                     r.last_indexed = Some(now_rfc3339());
                 }
                 save_repositories_to_disk(&state_clone, &repos).await;
+                // Prune jobs after completion
+                {
+                    let mut jobs = state_clone.jobs.write().await;
+                    prune_jobs_in_place(&mut jobs, 100, 3600);
+                }
             }
             Err(e) => {
                 update_job_status(&state_clone, &job_id, |j| {
@@ -1240,6 +1276,11 @@ async fn register_repository_v1(
                     j.updated_at = Some(now_rfc3339());
                 })
                 .await;
+                // Prune jobs after failure update
+                {
+                    let mut jobs = state_clone.jobs.write().await;
+                    prune_jobs_in_place(&mut jobs, 100, 3600);
+                }
             }
         }
     });
@@ -1272,19 +1313,22 @@ async fn index_status_v1(
     AxumQuery(q): AxumQuery<IndexStatusQuery>,
 ) -> ApiResult<IndexStatusResponse> {
     let jobs = state.jobs.read().await;
-    let job = jobs.get(&q.job_id).cloned();
-    Ok(Json(IndexStatusResponse { job }))
+    match jobs.get(&q.job_id) {
+        Some(job) => Ok(Json(IndexStatusResponse {
+            job: Some(job.clone()),
+        })),
+        None => Err(handle_not_found_error(
+            "job_id",
+            "unknown job id",
+            "index/status",
+        )),
+    }
 }
 
 // Helpers ----------------------------------------------------------------------------------------
 
 fn now_rfc3339() -> String {
-    // Use std time to avoid heavy deps; best-effort formatting
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}", now.as_secs())
+    chrono::Utc::now().to_rfc3339()
 }
 
 async fn update_job_status<F: FnOnce(&mut JobStatus)>(
@@ -1298,19 +1342,129 @@ async fn update_job_status<F: FnOnce(&mut JobStatus)>(
     }
 }
 
-fn load_repositories_from_disk(db_path: &std::path::Path) -> Vec<RepositoryRecord> {
-    let path = db_path.join("repositories.json");
-    match std::fs::read_to_string(path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => Vec::new(),
+fn stable_repository_id(path: &std::path::Path) -> String {
+    use xxhash_rust::xxh3::xxh3_64;
+    let s = path.to_string_lossy();
+    let h = xxh3_64(s.as_bytes());
+    format!("repo_{:016x}", h)
+}
+
+fn prune_jobs_in_place(map: &mut HashMap<String, JobStatus>, max_jobs: usize, ttl_secs: u64) {
+    use chrono::{DateTime, Utc};
+    let now = Utc::now();
+    let ttl = chrono::Duration::seconds(ttl_secs as i64);
+
+    // Remove completed/failed jobs older than TTL
+    let keys_to_remove: Vec<String> = map
+        .iter()
+        .filter_map(|(k, v)| {
+            if v.status == "completed" || v.status == "failed" {
+                if let Some(ref ts) = v.updated_at {
+                    if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
+                        if now.signed_duration_since(dt.with_timezone(&Utc)) > ttl {
+                            return Some(k.clone());
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+    for k in keys_to_remove {
+        map.remove(&k);
+    }
+
+    // If still above capacity, remove oldest completed/failed
+    if map.len() > max_jobs {
+        let mut entries: Vec<(String, chrono::DateTime<Utc>)> = map
+            .iter()
+            .filter_map(|(k, v)| {
+                if v.status == "completed" || v.status == "failed" {
+                    if let Some(ref ts) = v.updated_at {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                            return Some((k.clone(), dt.with_timezone(&Utc)));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        entries.sort_by_key(|(_, dt)| *dt);
+        let mut to_remove = map.len().saturating_sub(max_jobs);
+        for (k, _) in entries {
+            if to_remove == 0 {
+                break;
+            }
+            if map.remove(&k).is_some() {
+                to_remove -= 1;
+            }
+        }
     }
 }
 
-async fn save_repositories_to_disk(state: &ServicesAppState, repos: &Vec<RepositoryRecord>) {
+fn load_repositories_from_disk(db_path: &std::path::Path) -> Vec<RepositoryRecord> {
+    let path = db_path.join("repositories.json");
+    match std::fs::read_to_string(path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Failed to parse repositories.json: {} — starting with empty registry",
+                    e
+                );
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!(
+                    "Failed to read repositories.json: {} — starting with empty registry",
+                    e
+                );
+            }
+            Vec::new()
+        }
+    }
+}
+
+async fn save_repositories_to_disk(state: &ServicesAppState, repos: &[RepositoryRecord]) {
     let path = state.repo_registry_path();
+    let tmp_path = path.with_extension("tmp");
     if let Ok(s) = serde_json::to_string_pretty(repos) {
-        if let Err(e) = tokio::fs::write(path, s).await {
-            warn!("Failed to persist repositories.json: {}", e);
+        // Write to temp file then atomically rename
+        if let Err(e) = tokio::fs::write(&tmp_path, s).await {
+            warn!("Failed to write temp repositories file: {}", e);
+            return;
+        }
+        if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+            warn!("Failed to atomically persist repositories.json: {}", e);
+            // Try cleanup temp
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+        }
+    }
+}
+
+async fn load_repositories_from_disk_async(db_path: &std::path::Path) -> Vec<RepositoryRecord> {
+    let path = db_path.join("repositories.json");
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => match serde_json::from_slice::<Vec<RepositoryRecord>>(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Failed to parse repositories.json: {} — starting with empty registry",
+                    e
+                );
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!(
+                    "Failed to read repositories.json: {} — starting with empty registry",
+                    e
+                );
+            }
+            Vec::new()
         }
     }
 }
@@ -1581,46 +1735,8 @@ async fn search_code_enhanced(
     match result {
         Ok(search_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-
-            // Convert to appropriate format based on request
-            let response_value = match format.as_str() {
-                "simple" => {
-                    let file_paths: Vec<String> =
-                        if let Some(ref llm_response) = search_result.llm_response {
-                            // Extract file paths from LLM response
-                            llm_response
-                                .results
-                                .iter()
-                                .map(|doc| doc.path.clone())
-                                .collect()
-                        } else {
-                            // Extract file paths from regular documents
-                            search_result
-                                .documents
-                                .iter()
-                                .map(|doc| doc.path.to_string())
-                                .collect()
-                        };
-
-                    serde_json::to_value(SimpleSearchResponse {
-                        results: file_paths,
-                        total_count: search_result.total_count,
-                        query_time_ms: 0, // TODO: Add timing
-                    })
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                }
-                "cli" => {
-                    let cli_output = format_search_as_cli(&search_result);
-                    serde_json::to_value(CliFormatResponse { output: cli_output })
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                }
-                _ => {
-                    // "rich" format (default)
-                    serde_json::to_value(search_result)
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?
-                }
-            };
-
+            let response_value = render_search_code_response(&search_result, &format)
+                .map_err(|e| handle_service_error(anyhow::anyhow!(e), "search_code"))?;
             Ok(Json(response_value))
         }
         Err(e) => {
@@ -1669,34 +1785,8 @@ async fn search_symbols_enhanced(
     match result {
         Ok(symbol_result) => {
             let format = request.format.unwrap_or_else(|| "rich".to_string());
-
-            // Convert to appropriate format based on request
-            let response_value = match format.as_str() {
-                "simple" => {
-                    let symbol_names: Vec<String> = symbol_result
-                        .matches
-                        .iter()
-                        .map(|m| m.name.clone())
-                        .collect();
-
-                    serde_json::to_value(SimpleSymbolResponse {
-                        symbols: symbol_names,
-                        total_count: symbol_result.total_symbols,
-                    })
-                    .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                }
-                "cli" => {
-                    let cli_output = format_symbols_as_cli(&symbol_result);
-                    serde_json::to_value(CliFormatResponse { output: cli_output })
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                }
-                _ => {
-                    // "rich" format (default)
-                    serde_json::to_value(symbol_result)
-                        .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?
-                }
-            };
-
+            let response_value = render_symbol_search_response(&symbol_result, &format)
+                .map_err(|e| handle_service_error(anyhow::anyhow!(e), "symbol_search"))?;
             Ok(Json(response_value))
         }
         Err(e) => {
@@ -1876,6 +1966,64 @@ async fn analyze_impact_enhanced(
 // ================================================================================================
 // FORMAT CONVERSION HELPERS - CLI and Simple Format Support
 // ================================================================================================
+
+fn render_search_code_response(
+    search_result: &crate::services::search_service::SearchResult,
+    format: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
+    match format {
+        "simple" => {
+            let file_paths: Vec<String> = if let Some(ref llm_response) = search_result.llm_response
+            {
+                llm_response
+                    .results
+                    .iter()
+                    .map(|doc| doc.path.clone())
+                    .collect()
+            } else {
+                search_result
+                    .documents
+                    .iter()
+                    .map(|doc| doc.path.to_string())
+                    .collect()
+            };
+            serde_json::to_value(SimpleSearchResponse {
+                results: file_paths,
+                total_count: search_result.total_count,
+                query_time_ms: 0,
+            })
+        }
+        "cli" => {
+            let cli_output = format_search_as_cli(search_result);
+            serde_json::to_value(CliFormatResponse { output: cli_output })
+        }
+        _ => serde_json::to_value(search_result),
+    }
+}
+
+fn render_symbol_search_response(
+    symbol_result: &crate::services::search_service::SymbolResult,
+    format: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
+    match format {
+        "simple" => {
+            let symbol_names: Vec<String> = symbol_result
+                .matches
+                .iter()
+                .map(|m| m.name.clone())
+                .collect();
+            serde_json::to_value(SimpleSymbolResponse {
+                symbols: symbol_names,
+                total_count: symbol_result.total_symbols,
+            })
+        }
+        "cli" => {
+            let cli_output = format_symbols_as_cli(symbol_result);
+            serde_json::to_value(CliFormatResponse { output: cli_output })
+        }
+        _ => serde_json::to_value(symbol_result),
+    }
+}
 
 /// Format search results as CLI-style output
 fn format_search_as_cli(search_result: &crate::services::search_service::SearchResult) -> String {

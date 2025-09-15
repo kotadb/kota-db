@@ -13,6 +13,15 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::{sync::Mutex, time::Duration};
 
+fn git_available() -> bool {
+    use std::process::Command;
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Start Services HTTP server on a random available port for testing
 async fn start_services_test_server() -> (String, TempDir, tokio::task::JoinHandle<Result<()>>) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -132,6 +141,10 @@ pub fn hello_world() {
 
 #[tokio::test]
 async fn v1_stats_health_path() -> Result<()> {
+    if !git_available() {
+        eprintln!("git not available; skipping test");
+        return Ok(());
+    }
     let (base, _tmp, server) = start_services_test_server().await;
     let client = Client::new();
 
@@ -150,6 +163,10 @@ async fn v1_stats_health_path() -> Result<()> {
 
 #[tokio::test]
 async fn v1_repositories_index_and_search_code() -> Result<()> {
+    if !git_available() {
+        eprintln!("git not available; skipping test");
+        return Ok(());
+    }
     let (base, temp_dir, server) = start_services_test_server().await;
     let client = Client::new();
 
@@ -211,6 +228,10 @@ async fn v1_repositories_index_and_search_code() -> Result<()> {
 
 #[tokio::test]
 async fn v1_symbol_routes_behave_without_symbols_db() -> Result<()> {
+    if !git_available() {
+        eprintln!("git not available; skipping test");
+        return Ok(());
+    }
     let (base, temp_dir, server) = start_services_test_server().await;
     let client = Client::new();
 
@@ -255,6 +276,170 @@ async fn v1_symbol_routes_behave_without_symbols_db() -> Result<()> {
         .send()
         .await?;
     assert_eq!(impact.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_index_status_unknown_job_is_404() -> Result<()> {
+    let (base, _tmp, server) = start_services_test_server().await;
+    let client = Client::new();
+
+    let resp = client
+        .get(format!(
+            "{}/api/v1/index/status?job_id=does_not_exist",
+            base
+        ))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_symbol_search_formats_simple_and_cli() -> Result<()> {
+    if !git_available() {
+        eprintln!("git not available; skipping test");
+        return Ok(());
+    }
+    let (base, temp_dir, server) = start_services_test_server().await;
+    let client = Client::new();
+
+    // Set up and index test repo
+    let repo_dir = init_test_git_repo(temp_dir.path())?;
+    let register_resp = client
+        .post(format!("{}/api/v1/repositories", base))
+        .json(&serde_json::json!({"path": repo_dir.to_string_lossy()}))
+        .send()
+        .await?;
+    assert_eq!(register_resp.status(), StatusCode::OK);
+    let reg: Value = register_resp.json().await?;
+    let job_id = reg["job_id"].as_str().unwrap().to_string();
+
+    // Wait for completion or timeout
+    let start = std::time::Instant::now();
+    loop {
+        let status_resp = client
+            .get(format!("{}/api/v1/index/status?job_id={}", base, job_id))
+            .send()
+            .await?;
+        if status_resp.status() == StatusCode::NOT_FOUND {
+            break;
+        }
+        assert_eq!(status_resp.status(), StatusCode::OK);
+        let body: Value = status_resp.json().await?;
+        if let Some(status) = body["job"]["status"].as_str() {
+            if status == "completed" {
+                break;
+            }
+            if status == "failed" {
+                panic!("index job failed: {:?}", body);
+            }
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            panic!("indexing timeout");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Exercise format=simple
+    let simple_resp = client
+        .post(format!("{}/api/v1/search/symbols", base))
+        .json(&serde_json::json!({"pattern": "*", "limit": 5, "format": "simple"}))
+        .send()
+        .await?;
+    assert_eq!(simple_resp.status(), StatusCode::OK);
+    let simple_json: Value = simple_resp.json().await?;
+    assert!(simple_json.get("symbols").is_some());
+
+    // Exercise format=cli
+    let cli_resp = client
+        .post(format!("{}/api/v1/search/symbols", base))
+        .json(&serde_json::json!({"pattern": "*", "limit": 5, "format": "cli"}))
+        .send()
+        .await?;
+    assert_eq!(cli_resp.status(), StatusCode::OK);
+    let cli_json: Value = cli_resp.json().await?;
+    assert!(cli_json.get("output").is_some());
+
+    server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_callers_and_impact_happy_path_when_symbols_present() -> Result<()> {
+    if !git_available() {
+        eprintln!("git not available; skipping test");
+        return Ok(());
+    }
+    let (base, temp_dir, server) = start_services_test_server().await;
+    let client = Client::new();
+
+    // Initialize repo and register
+    let repo_dir = init_test_git_repo(temp_dir.path())?;
+    let register_resp = client
+        .post(format!("{}/api/v1/repositories", base))
+        .json(&serde_json::json!({"path": repo_dir.to_string_lossy()}))
+        .send()
+        .await?;
+    assert_eq!(register_resp.status(), StatusCode::OK);
+    let reg: Value = register_resp.json().await?;
+    let job_id = reg["job_id"].as_str().unwrap().to_string();
+
+    // Wait for completion
+    let start = std::time::Instant::now();
+    loop {
+        let status_resp = client
+            .get(format!("{}/api/v1/index/status?job_id={}", base, job_id))
+            .send()
+            .await?;
+        if status_resp.status() == StatusCode::NOT_FOUND {
+            break;
+        }
+        assert_eq!(status_resp.status(), StatusCode::OK);
+        let body: Value = status_resp.json().await?;
+        if let Some(status) = body["job"]["status"].as_str() {
+            if status == "completed" {
+                break;
+            }
+            if status == "failed" {
+                panic!("index job failed: {:?}", body);
+            }
+        }
+        if start.elapsed() > Duration::from_secs(15) {
+            panic!("indexing timeout");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // If symbols DB exists, assert happy path 200; otherwise skip
+    let symbols_db = temp_dir.path().join("symbols.kota");
+    if std::fs::metadata(&symbols_db).is_ok() {
+        // Test callers endpoint
+        let callers = client
+            .get(format!(
+                "{}/api/v1/symbols/{}/callers?limit=10",
+                base, "hello_world"
+            ))
+            .send()
+            .await?;
+        assert_eq!(callers.status(), StatusCode::OK);
+
+        // Test impact endpoint
+        let impact = client
+            .get(format!(
+                "{}/api/v1/symbols/{}/impact?limit=10",
+                base, "hello_world"
+            ))
+            .send()
+            .await?;
+        assert_eq!(impact.status(), StatusCode::OK);
+    } else {
+        eprintln!("symbols.kota not present; skipping happy-path callers/impact checks");
+    }
 
     server.abort();
     Ok(())
