@@ -218,6 +218,13 @@ curl -sS -H "Authorization: Bearer $API_KEY" \
   http://localhost:8080/mcp/tools/stats
 ```
 
+### Search Sanitization & Thresholds
+
+See `docs/search_sanitization_and_thresholds.md` for details on:
+- Differences between `sanitize_search_query` and `sanitize_path_aware_query`.
+- Optional `strict-sanitization` feature for high-threat environments.
+- Trigram matching thresholds and how they balance precision vs recall.
+
 Bridge errors use a stable schema `{ success: false, error: { code, message } }`. Common codes:
 `feature_disabled`, `tool_not_found`, `registry_unavailable`, `internal_error`.
 

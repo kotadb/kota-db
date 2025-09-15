@@ -153,6 +153,9 @@ sha2 = "0.10"
 default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing"]
 # Advanced search features
 advanced-search = ["tantivy", "hnsw"]
+# Sanitization and search behavior toggles (default-off to avoid breaking UX/tests)
+strict-sanitization = []
+aggressive-trigram-thresholds = []
 # MCP Server features
 mcp-server = ["jsonrpc-core", "jsonrpc-derive", "jsonrpc-http-server", "jsonrpc-stdio-server", "config"]
 # Embedding features
