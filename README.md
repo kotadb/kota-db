@@ -225,6 +225,10 @@ See `docs/search_sanitization_and_thresholds.md` for details on:
 - Optional `strict-sanitization` feature for high-threat environments.
 - Trigram matching thresholds and how they balance precision vs recall.
 
+### CI-Aware Test Thresholds
+
+Stress/performance tests support CI-aware, env-overridable thresholds. See `docs/ci_aware_test_thresholds.md` for variables, defaults, and examples.
+
 Bridge errors use a stable schema `{ success: false, error: { code, message } }`. Common codes:
 `feature_disabled`, `tool_not_found`, `registry_unavailable`, `internal_error`.
 

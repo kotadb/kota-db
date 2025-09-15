@@ -16,7 +16,9 @@ mod test_constants;
 use test_constants::concurrency::{
     get_concurrent_operations, get_operations_per_task, get_pool_capacity,
 };
-use test_constants::performance::SLOW_OPERATION_THRESHOLD;
+use test_constants::performance::{
+    lock_efficiency_min, lock_read_avg_ms, lock_write_avg_ms, SLOW_OPERATION_THRESHOLD,
+};
 
 // Minimum conflict resolution rate for valid tests
 const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
@@ -455,23 +457,29 @@ async fn test_lock_contention_analysis() -> Result<()> {
         analysis.lock_efficiency * 100.0
     );
 
-    // Performance requirements for lock contention
+    // Performance requirements for lock contention (CI-aware)
+    let read_ms = lock_read_avg_ms();
+    let write_ms = lock_write_avg_ms();
+    let eff_min = lock_efficiency_min();
     assert!(
-        analysis.avg_read_lock_time < Duration::from_millis(10),
-        "Average read lock time too high: {:?}",
-        analysis.avg_read_lock_time
+        analysis.avg_read_lock_time < Duration::from_millis(read_ms),
+        "Average read lock time too high: {:?} (threshold {}ms)",
+        analysis.avg_read_lock_time,
+        read_ms
     );
 
     assert!(
-        analysis.avg_write_lock_time < Duration::from_millis(50),
-        "Average write lock time too high: {:?}",
-        analysis.avg_write_lock_time
+        analysis.avg_write_lock_time < Duration::from_millis(write_ms),
+        "Average write lock time too high: {:?} (threshold {}ms)",
+        analysis.avg_write_lock_time,
+        write_ms
     );
 
     assert!(
-        analysis.lock_efficiency > 0.7,
-        "Lock efficiency too low: {:.2}%",
-        analysis.lock_efficiency * 100.0
+        analysis.lock_efficiency > eff_min,
+        "Lock efficiency too low: {:.2}% (min {:.0}%)",
+        analysis.lock_efficiency * 100.0,
+        eff_min * 100.0
     );
 
     Ok(())
