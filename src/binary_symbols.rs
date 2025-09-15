@@ -231,6 +231,8 @@ pub struct BinarySymbolReader {
     /// For 20k symbols = ~480KB overhead. Alternative: lazy-load from mmap with O(log n) binary search.
     /// Current design prioritizes sub-microsecond lookups over memory efficiency.
     uuid_index: std::collections::HashMap<uuid::Uuid, usize>,
+    /// Lazily-built file path -> symbol indices index for fast file-scoped queries
+    file_index: once_cell::sync::OnceCell<std::collections::HashMap<String, Vec<usize>>>,
 }
 
 impl BinarySymbolReader {
@@ -305,6 +307,7 @@ impl BinarySymbolReader {
             mmap,
             header,
             uuid_index,
+            file_index: once_cell::sync::OnceCell::new(),
         })
     }
 
@@ -374,6 +377,39 @@ impl BinarySymbolReader {
             }
             None
         })
+    }
+
+    /// Build or retrieve a cached map from file path -> symbol indices
+    fn get_or_build_file_index(&self) -> &std::collections::HashMap<String, Vec<usize>> {
+        self.file_index.get_or_init(|| {
+            let mut map: std::collections::HashMap<String, Vec<usize>> =
+                std::collections::HashMap::new();
+            let count = self.symbol_count();
+            for i in 0..count {
+                if let Some(sym) = self.get_symbol(i) {
+                    if let Ok(path) = self.get_symbol_file_path(&sym) {
+                        map.entry(path).or_default().push(i);
+                    }
+                }
+            }
+            map
+        })
+    }
+
+    /// Read all symbols for a given file path efficiently using the cached index
+    pub fn read_symbols_for_file(&self, file_path: &str) -> Vec<PackedSymbol> {
+        let idx = self.get_or_build_file_index();
+        if let Some(indices) = idx.get(file_path) {
+            let mut out = Vec::with_capacity(indices.len());
+            for &i in indices {
+                if let Some(sym) = self.get_symbol(i) {
+                    out.push(sym);
+                }
+            }
+            out
+        } else {
+            Vec::new()
+        }
     }
 }
 
