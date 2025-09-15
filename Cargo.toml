@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 # Core dependencies
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 
 # Async runtime
