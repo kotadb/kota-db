@@ -68,7 +68,7 @@ sha2 = "0.10"
 md5 = "0.7"
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
 
 # Encoding
 base64 = "0.21"
