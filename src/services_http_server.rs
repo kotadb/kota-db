@@ -409,7 +409,7 @@ pub fn create_services_server(
     let base_router = Router::new()
         // Health endpoint
         .route("/health", get(health_check))
-        // Versioned v1 endpoints
+        // Versioned v1 endpoints (canonical)
         .route("/api/v1/analysis/stats", get(get_stats))
         .route("/api/v1/search/code", post(search_code_v1_post))
         .route("/api/v1/search/symbols", post(search_symbols_v1_post))
@@ -420,22 +420,17 @@ pub fn create_services_server(
         .route("/api/v1/repositories", post(register_repository_v1))
         .route("/api/v1/repositories", get(list_repositories_v1))
         .route("/api/v1/index/status", get(index_status_v1))
-        // Statistics Service endpoints
-        .route("/api/stats", get(get_stats))
-        // Benchmark Service endpoints
-        .route("/api/benchmark", post(run_benchmark))
-        // Validation Service endpoints
-        .route("/api/validate", post(validate_database))
-        .route("/api/health-check", get(health_check_detailed))
-        // Indexing Service endpoints
-        .route("/api/index-codebase", post(index_codebase))
-        // Search Service endpoints - Enhanced implementations with multi-format support
-        .route("/api/search-code", get(search_code_enhanced))
-        .route("/api/search-symbols", get(search_symbols_enhanced))
-        // Analysis Service endpoints - Enhanced implementations with improved UX
-        .route("/api/find-callers", post(find_callers_enhanced))
-        .route("/api/analyze-impact", post(analyze_impact_enhanced))
-        .route("/api/codebase-overview", get(codebase_overview))
+        // Normalized v1 routes for remaining services
+        .route("/api/v1/benchmark", post(run_benchmark))
+        .route("/api/v1/validate", post(validate_database))
+        .route("/api/v1/health-check", get(health_check_detailed))
+        .route("/api/v1/index-codebase", post(index_codebase))
+        // Also support GET variants for search in v1 for compatibility
+        .route("/api/v1/search/code", get(search_code_enhanced))
+        .route("/api/v1/search/symbols", get(search_symbols_enhanced))
+        .route("/api/v1/find-callers", post(find_callers_enhanced))
+        .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
+        .route("/api/v1/codebase-overview", get(codebase_overview))
         .with_state(state)
         .layer(
             ServiceBuilder::new()
@@ -558,7 +553,7 @@ pub async fn create_services_saas_server(
 
     // Create authenticated routes (require API key)
     let authenticated_routes = Router::new()
-        // v1 endpoints
+        // v1 endpoints (canonical)
         .route("/api/v1/analysis/stats", get(get_stats))
         .route("/api/v1/search/code", post(search_code_v1_post))
         .route("/api/v1/search/symbols", post(search_symbols_v1_post))
@@ -569,21 +564,16 @@ pub async fn create_services_saas_server(
         .route("/api/v1/repositories", post(register_repository_v1))
         .route("/api/v1/repositories", get(list_repositories_v1))
         .route("/api/v1/index/status", get(index_status_v1))
-        // Statistics Service endpoints
-        .route("/api/stats", get(get_stats))
-        // Benchmark Service endpoints
-        .route("/api/benchmark", post(run_benchmark))
-        // Validation Service endpoints
-        .route("/api/validate", post(validate_database))
-        // Indexing Service endpoints
-        .route("/api/index-codebase", post(index_codebase))
-        // Search Service endpoints - Enhanced implementations with multi-format support
-        .route("/api/search-code", get(search_code_enhanced))
-        .route("/api/search-symbols", get(search_symbols_enhanced))
-        // Analysis Service endpoints - Enhanced implementations with improved UX
-        .route("/api/find-callers", post(find_callers_enhanced))
-        .route("/api/analyze-impact", post(analyze_impact_enhanced))
-        .route("/api/codebase-overview", get(codebase_overview))
+        // Normalized v1 routes for remaining services
+        .route("/api/v1/benchmark", post(run_benchmark))
+        .route("/api/v1/validate", post(validate_database))
+        .route("/api/v1/index-codebase", post(index_codebase))
+        // Also support GET variants for search in v1 for compatibility
+        .route("/api/v1/search/code", get(search_code_enhanced))
+        .route("/api/v1/search/symbols", get(search_symbols_enhanced))
+        .route("/api/v1/find-callers", post(find_callers_enhanced))
+        .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
+        .route("/api/v1/codebase-overview", get(codebase_overview))
         .layer(axum::middleware::from_fn_with_state(
             api_key_service.clone(),
             auth_middleware,
@@ -600,7 +590,7 @@ pub async fn create_services_saas_server(
     Ok(Router::new()
         // Public endpoints (no authentication required)
         .route("/health", get(health_check))
-        .route("/api/health-check", get(health_check_detailed))
+        .route("/api/v1/health-check", get(health_check_detailed))
         // Merge authenticated routes
         .merge(authenticated_routes)
         // Merge internal routes
@@ -671,23 +661,23 @@ pub async fn start_services_saas_server(
     debug!("Clean services architecture with SaaS capabilities");
     debug!("Available endpoints:");
     debug!("   GET    /health                    - Server health check (public)");
-    debug!("   GET    /api/health-check          - Detailed health check (public)");
+    debug!("   GET    /api/v1/health-check       - Detailed health check (public)");
     debug!("   🔐 Authenticated endpoints (require API key):");
-    debug!("   GET    /api/stats                 - Database statistics (StatsService)");
-    debug!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
-    debug!("   POST   /api/validate              - Database validation (ValidationService)");
-    debug!("   POST   /api/index-codebase        - Index repository (IndexingService)");
-    debug!("   GET    /api/search-code           - Search code content (SearchService)");
-    debug!("   GET    /api/search-symbols        - Search symbols (SearchService)");
-    debug!("   POST   /api/find-callers          - Find callers (AnalysisService)");
-    debug!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
-    debug!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    debug!("   GET    /api/v1/analysis/stats     - Database statistics (StatsService)");
+    debug!("   POST   /api/v1/benchmark          - Performance benchmarks (BenchmarkService)");
+    debug!("   POST   /api/v1/validate           - Database validation (ValidationService)");
+    debug!("   POST   /api/v1/index-codebase     - Index repository (IndexingService)");
+    debug!("   GET    /api/v1/search/code        - Search code content (SearchService)");
+    debug!("   GET    /api/v1/search/symbols     - Search symbols (SearchService)");
+    debug!("   POST   /api/v1/find-callers       - Find callers (AnalysisService)");
+    debug!("   POST   /api/v1/analyze-impact     - Impact analysis (AnalysisService)");
+    debug!("   GET    /api/v1/codebase-overview  - Codebase overview (AnalysisService)");
     debug!("   🔒 Internal endpoints (require internal API key):");
     debug!("   POST   /internal/create-api-key   - Create new API key");
     debug!("SaaS Server ready at http://localhost:{}", port);
     debug!("Health check: curl http://localhost:{}/health", port);
     debug!(
-        "Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/stats",
+        "Authenticated example: curl -H 'X-API-Key: your-key' http://localhost:{}/api/v1/analysis/stats",
         port
     );
 
