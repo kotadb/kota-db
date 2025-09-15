@@ -71,7 +71,7 @@ md5 = "0.7"
 sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
 
 # Encoding
-base64 = "0.21"
+base64 = "0.22"
 
 # Regular expressions
 regex = "1.10"
