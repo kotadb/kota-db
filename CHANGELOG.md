@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New versioned HTTP API under `/api/v1/*` providing code intelligence endpoints:
+  - `POST /api/v1/search/code` – Code search with `format` support: rich, simple, cli
+  - `POST /api/v1/search/symbols` – Symbol search with `format` support: rich, simple, cli
+  - `GET  /api/v1/symbols/:symbol/callers` – Callers lookup
+  - `GET  /api/v1/symbols/:symbol/impact` – Impact analysis
+  - `GET  /api/v1/symbols` – Basic listing
+  - `GET  /api/v1/files/symbols/*path` – Symbols in file (optimized)
+  - `POST /api/v1/repositories` – Register/local index job (local path only)
+  - `GET  /api/v1/repositories` – List registered repositories
+  - `GET  /api/v1/index/status` – Poll index job status
+- SaaS-mode server integrates API-key middleware; local/dev server exposes the same v1 endpoints for single-tenant/local usage.
+- Repo registry persisted to `repositories.json` with atomic writes; JSON parse errors now logged.
+
+### Changed
+- Unknown index job IDs now return `404 Not Found` with structured `StandardApiError` instead of `{ job: null }`.
+- Timestamps now use real RFC3339 (`chrono::Utc::now().to_rfc3339()`).
+- Repository IDs are stable and derived from the canonicalized path hash to avoid collisions.
+- `POST /api/v1/repositories` validates that `path` exists and is a directory; fails fast with `400` if invalid.
+- Repository registration allows optional indexing overrides (include_commits, max_file_size_mb, extract_symbols, etc.).
+- Job tracking now prunes completed/failed jobs (TTL=1h, cap=100) to prevent unbounded growth.
+- Startup banners and verbose endpoint listings moved to `debug` level to reduce noise at `info`.
+
+### Notes
+- `git_url` in `POST /api/v1/repositories` is not yet supported. The API returns `git_url_not_supported` with a 400 error; clone locally and use `path`.
+- v1 endpoints use `StandardApiError` as the error contract; legacy endpoints may return a different shape.
+
+
 ## [0.6.0] - 2025-09-08
 
 ### Added
