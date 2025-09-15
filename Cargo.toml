@@ -87,7 +87,7 @@ chrono = { version = "0.4", features = ["serde"] }
 num_cpus = "1.16"
 
 # Git repository parsing
-git2 = { version = "0.18", optional = true }
+git2 = { version = "0.20", optional = true }
 
 # Tree-sitter for multi-language code parsing - using compatible newer versions
 tree-sitter = { version = "0.25", optional = true }
