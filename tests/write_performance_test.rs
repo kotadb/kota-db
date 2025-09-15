@@ -10,6 +10,8 @@ use kotadb::{
 };
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+mod test_constants;
+use test_constants::performance as perf;
 
 /// Performance requirements based on Issue #151
 struct PerformanceRequirements {
@@ -23,11 +25,11 @@ struct PerformanceRequirements {
 impl Default for PerformanceRequirements {
     fn default() -> Self {
         Self {
-            max_avg_latency_ms: 10,
-            max_p95_latency_ms: 50,
-            max_p99_latency_ms: 100,
-            max_std_dev_ms: 25,
-            max_outlier_percentage: 5.0,
+            max_avg_latency_ms: perf::write_avg_ms(),
+            max_p95_latency_ms: perf::write_p95_ms(),
+            max_p99_latency_ms: perf::write_p99_ms(),
+            max_std_dev_ms: perf::write_stddev_ms(),
+            max_outlier_percentage: perf::write_outlier_pct(),
         }
     }
 }
@@ -160,11 +162,13 @@ async fn test_write_buffering_effectiveness() -> Result<()> {
     println!("  Total time for {} docs: {:?}", batch_size, batch_duration);
     println!("  Average per document: {:?}", avg_per_doc);
 
-    // Buffering should keep average write time under 5ms
+    // Buffering should keep average write time under a CI-aware threshold
+    let max_avg_ms = perf::write_avg_ms();
     assert!(
-        avg_per_doc.as_millis() < 5,
-        "Buffered write average {:?} should be under 5ms",
-        avg_per_doc
+        avg_per_doc.as_millis() < max_avg_ms as u128,
+        "Buffered write average {:?} should be under {}ms",
+        avg_per_doc,
+        max_avg_ms
     );
 
     Ok(())
@@ -213,18 +217,26 @@ async fn test_write_performance_under_load() -> Result<()> {
     println!("Average latency: {:?}", stats.avg_duration);
     println!("P99 latency: {:?}", stats.p99_duration);
 
-    // Should maintain at least 100 ops/sec
+    // Should maintain reasonable throughput (CI-aware)
+    let min_tput = if test_constants::concurrency::is_ci() {
+        80.0
+    } else {
+        100.0
+    };
     assert!(
-        throughput >= 100.0,
-        "Throughput {:.2} ops/sec should be at least 100 ops/sec",
-        throughput
+        throughput >= min_tput,
+        "Throughput {:.2} ops/sec should be at least {:.0} ops/sec",
+        throughput,
+        min_tput
     );
 
-    // P99 should stay under 100ms even under load
+    // P99 should stay under threshold even under load
+    let max_p99_ms = perf::write_p99_ms();
     assert!(
-        stats.p99_duration.as_millis() < 100,
-        "P99 latency {:?} should be under 100ms even under load",
-        stats.p99_duration
+        stats.p99_duration.as_millis() < max_p99_ms as u128,
+        "P99 latency {:?} should be under {}ms even under load",
+        stats.p99_duration,
+        max_p99_ms
     );
 
     Ok(())

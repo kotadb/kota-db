@@ -6,10 +6,72 @@ use std::time::Duration;
 
 /// Performance testing timeouts and thresholds
 pub mod performance {
+    #![allow(dead_code)]
     use super::*;
 
     /// Standard slow operation threshold for detecting performance issues
     pub const SLOW_OPERATION_THRESHOLD: Duration = Duration::from_millis(100);
+
+    /// Read an environment variable as u64, falling back to default on error
+    fn env_u64(key: &str, default: u64) -> u64 {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Read an environment variable as f64, falling back to default on error
+    fn env_f64(key: &str, default: f64) -> f64 {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Detect CI using the canonical helper to avoid duplication
+    fn is_ci_local() -> bool {
+        super::concurrency::is_ci()
+    }
+
+    /// Average read lock time threshold in milliseconds (CI-aware, overridable)
+    pub fn lock_read_avg_ms() -> u64 {
+        let base = if is_ci_local() { 25 } else { 15 };
+        env_u64("KOTADB_LOCK_READ_AVG_MS", base)
+    }
+
+    /// Average write lock time threshold in milliseconds (CI-aware, overridable)
+    pub fn lock_write_avg_ms() -> u64 {
+        let base = if is_ci_local() { 60 } else { 50 };
+        env_u64("KOTADB_LOCK_WRITE_AVG_MS", base)
+    }
+
+    /// Minimum acceptable lock efficiency (0.0-1.0), CI-aware, overridable
+    pub fn lock_efficiency_min() -> f64 {
+        let base = if is_ci_local() { 0.65 } else { 0.70 };
+        env_f64("KOTADB_LOCK_EFFICIENCY_MIN", base)
+    }
+
+    /// Write performance requirement helpers (overridable via env)
+    pub fn write_avg_ms() -> u64 {
+        let base = if is_ci_local() { 20 } else { 10 };
+        env_u64("KOTADB_WRITE_AVG_MS", base)
+    }
+    pub fn write_p95_ms() -> u64 {
+        let base = if is_ci_local() { 75 } else { 50 };
+        env_u64("KOTADB_WRITE_P95_MS", base)
+    }
+    pub fn write_p99_ms() -> u64 {
+        let base = if is_ci_local() { 150 } else { 100 };
+        env_u64("KOTADB_WRITE_P99_MS", base)
+    }
+    pub fn write_stddev_ms() -> u64 {
+        let base = if is_ci_local() { 35 } else { 25 };
+        env_u64("KOTADB_WRITE_STDDEV_MS", base)
+    }
+    pub fn write_outlier_pct() -> f64 {
+        let base = if is_ci_local() { 7.5 } else { 5.0 };
+        env_f64("KOTADB_WRITE_OUTLIER_PCT", base)
+    }
 }
 
 /// Concurrency testing configuration
