@@ -124,7 +124,7 @@ rand = "0.8"
 fastrand = "2.3"
 
 # Progress indication
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Optional dependencies for advanced features
 tantivy = { version = "0.25", optional = true }  # Full-text search
