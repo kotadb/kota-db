@@ -479,13 +479,43 @@ impl Index for BinaryTrigramIndex {
             return Ok(Vec::new());
         }
 
+        // Use unique trigram set to avoid duplicate inflation
+        let query_trigram_set: std::collections::HashSet<String> =
+            all_query_trigrams.into_iter().collect();
+        let query_trigram_count = query_trigram_set.len();
+
+        // Compute minimum-match threshold (tiered policy)
+        let base_min_match_threshold: usize = if query_trigram_count <= 3 {
+            query_trigram_count
+        } else if query_trigram_count <= 6 {
+            std::cmp::max(
+                (query_trigram_count * 8) / 10,
+                query_trigram_count.saturating_sub(1),
+            )
+        } else {
+            std::cmp::max(5, (query_trigram_count * 7) / 10)
+        };
+
+        // Heuristic: single long/digit token → stricter threshold
+        let mut min_match_threshold = base_min_match_threshold;
+        if query.search_terms.len() == 1 {
+            let term = query.search_terms[0].as_str();
+            let has_digits = term.chars().any(|c| c.is_ascii_digit());
+            if has_digits || term.chars().count() >= 12 {
+                let eighty_pct = (query_trigram_count * 8) / 10;
+                let absolute_floor = std::cmp::min(query_trigram_count, 12);
+                let stricter = std::cmp::max(eighty_pct, absolute_floor);
+                min_match_threshold = std::cmp::max(min_match_threshold, stricter);
+            }
+        }
+
         // Use hot cache first, then fall back to mmap
         let mut doc_scores: HashMap<ValidatedDocumentId, f64> = HashMap::new();
 
         // Check hot cache first
         {
             let cache = self.hot_cache.read().await;
-            for trigram in &all_query_trigrams {
+            for trigram in &query_trigram_set {
                 if let Some(doc_ids) = cache.get(trigram) {
                     for doc_id in doc_ids {
                         *doc_scores.entry(*doc_id).or_insert(0.0) += 1.0;
@@ -497,7 +527,7 @@ impl Index for BinaryTrigramIndex {
         // If no results in hot cache, check mmap data
         if doc_scores.is_empty() {
             if let Some(trigram_mmap) = self.trigram_mmap.read().await.as_ref() {
-                for trigram in &all_query_trigrams {
+                for trigram in &query_trigram_set {
                     if let Some((offset, size)) = trigram_mmap.offset_table.get(trigram) {
                         // Read document IDs from mmap
                         let mmap_data = &trigram_mmap.mmap[*offset..*offset + *size];
@@ -514,8 +544,12 @@ impl Index for BinaryTrigramIndex {
             }
         }
 
+        // Apply minimum-match threshold to reduce false positives
+        let mut results: Vec<_> = doc_scores
+            .into_iter()
+            .filter(|(_id, score)| *score >= min_match_threshold as f64)
+            .collect();
         // Sort by relevance score (handle NaN safely)
-        let mut results: Vec<_> = doc_scores.into_iter().collect();
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Apply limit

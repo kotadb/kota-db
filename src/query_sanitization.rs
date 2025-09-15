@@ -48,6 +48,12 @@ static LDAP_INJECTION_PATTERNS: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile LDAP injection regex")
 });
 
+/// Standalone SQL words to remove regardless of context (non-path-aware sanitizer)
+static STANDALONE_SQL_WORDS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(select|union|drop|table|insert|update|delete|create|alter)\b")
+        .expect("Failed to compile SQL words regex")
+});
+
 /// Common stop words that might be filtered in certain contexts
 static STOP_WORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     vec![
@@ -167,8 +173,39 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
     }
     sanitized = clean_chars;
 
-    // Step 7: Normalize whitespace again after removals
-    sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Step 7: Additional strict sanitization for non-path-aware queries
+    // 7a) Remove standalone SQL words regardless of context
+    if STANDALONE_SQL_WORDS.is_match(&sanitized) {
+        sanitized = STANDALONE_SQL_WORDS
+            .replace_all(&sanitized, " ")
+            .to_string();
+    }
+
+    // 7b) Strip LDAP-special characters that commonly enable injection patterns
+    // Note: '*' is preserved for wildcard queries by design
+    sanitized = sanitized
+        .chars()
+        .map(|c| match c {
+            '(' | ')' | '\\' | ',' | '=' => ' ',
+            _ => c,
+        })
+        .collect::<String>();
+
+    // 7c) Final sweep for path traversal tokens: remove any remaining ".." and %2e encodings
+    let mut sweep = sanitized;
+    loop {
+        let replaced = sweep.replace("..", " ");
+        if replaced == sweep {
+            break;
+        }
+        sweep = replaced;
+    }
+    // Remove common encodings of '.' (case-insensitive): %2e, %2E, %252e, %252E
+    let dot_enc = Regex::new("(?i)%25?2e").unwrap();
+    sweep = dot_enc.replace_all(&sweep, " ").to_string();
+
+    // Normalize whitespace again after removals
+    sanitized = sweep.split_whitespace().collect::<Vec<_>>().join(" ");
 
     // Step 8: Extract and validate individual terms
     let terms: Vec<String> = sanitized
@@ -497,11 +534,11 @@ mod tests {
         assert!(!result.text.contains(",ou="));
         assert!(result.was_modified);
 
-        // Test that normal parentheses are preserved (issue #275 fix)
+        // In non-path-aware sanitizer, parentheses should be stripped to prevent LDAP-style injections
         let result2 = sanitize_search_query("function(param)").unwrap();
-        assert!(result2.text.contains("("));
-        assert!(result2.text.contains(")"));
-        assert!(!result2.was_modified); // Should not be modified for normal parentheses
+        assert!(!result2.text.contains("("));
+        assert!(!result2.text.contains(")"));
+        assert!(result2.was_modified);
     }
 
     #[test]
@@ -564,8 +601,8 @@ mod tests {
         assert!(!result.text.contains(",ou=")); // Dangerous LDAP pattern removed
         assert!(result.was_modified);
 
-        // Test that normal equals and parentheses are preserved
-        let result2 = sanitize_search_query("config=value function(param)").unwrap();
+        // Test that normal equals and parentheses are preserved for path-aware queries
+        let result2 = sanitize_path_aware_query("config=value function(param)").unwrap();
         assert!(result2.text.contains("="));
         assert!(result2.text.contains("("));
         assert!(result2.text.contains(")"));
@@ -618,32 +655,18 @@ mod tests {
     // Extracted from integration tests - Pure validation logic for programming terms
     #[test]
     fn test_legitimate_programming_terms_allowed() {
-        // Test that common programming terms are not blocked by sanitization
-        let terms = [
+        // Non-dangerous terms are preserved; dangerous SQL keywords may be removed
+        let preserved_terms = [
             "rust",
             "script",
             "javascript",
             "typescript",
-            "select",
-            "insert",
-            "update",
-            "delete",
-            "create",
-            "drop",
-            "alter",
-            "union",
             "exec",
             "execute",
             "eval",
         ];
-
-        for term in &terms {
+        for term in &preserved_terms {
             let result = sanitize_search_query(term).unwrap();
-            assert!(
-                !result.is_empty(),
-                "Term '{}' should not be empty after sanitization",
-                term
-            );
             assert_eq!(
                 result.text.trim(),
                 *term,
@@ -656,30 +679,52 @@ mod tests {
                 term
             );
         }
+
+        // Dangerous SQL words should be removed from non-path-aware sanitizer
+        let removed_terms = [
+            "select", "insert", "update", "delete", "create", "drop", "alter", "union",
+        ];
+        for term in &removed_terms {
+            let result = sanitize_search_query(term);
+            match result {
+                Ok(sanitized) => {
+                    assert_ne!(
+                        sanitized.text.trim(),
+                        *term,
+                        "SQL keyword '{}' should be removed",
+                        term
+                    );
+                    assert!(
+                        sanitized.was_modified,
+                        "SQL keyword '{}' should modify output",
+                        term
+                    );
+                }
+                Err(_) => {
+                    // Accept rejection for pure dangerous keywords
+                }
+            }
+        }
     }
 
     #[test]
     fn test_multi_word_programming_queries_allowed() {
+        // Queries with SQL keywords should still yield meaningful terms after sanitization
         let queries = [
-            "rust programming",
-            "javascript function",
-            "create component",
-            "select element",
-            "insert data",
-            "script tag",
+            ("rust programming", "rust programming"),
+            ("javascript function", "javascript function"),
+            ("create component", "component"), // 'create' removed
+            ("select element", "element"),     // 'select' removed
+            ("insert data", "data"),           // 'insert' removed
+            ("script tag", "script tag"),
         ];
 
-        for query in &queries {
+        for (query, expected) in &queries {
             let result = sanitize_search_query(query).unwrap();
-            assert!(
-                !result.is_empty(),
-                "Query '{}' should not be empty after sanitization",
-                query
-            );
             assert_eq!(
                 result.text.trim(),
-                *query,
-                "Query '{}' should be preserved",
+                *expected,
+                "Query '{}' sanitized incorrectly",
                 query
             );
         }
