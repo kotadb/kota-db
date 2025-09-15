@@ -54,6 +54,10 @@ static STANDALONE_SQL_WORDS: Lazy<Regex> = Lazy::new(|| {
         .expect("Failed to compile SQL words regex")
 });
 
+/// Case-insensitive matcher for common encodings of '.' in traversal tokens
+static DOT_ENCODED_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new("(?i)%25?2e").expect("Failed to compile DOT_ENCODED_RE regex"));
+
 /// Common stop words that might be filtered in certain contexts
 static STOP_WORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     vec![
@@ -173,23 +177,28 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
     }
     sanitized = clean_chars;
 
-    // Step 7: Additional strict sanitization for non-path-aware queries
-    // 7a) Remove standalone SQL words regardless of context
-    if STANDALONE_SQL_WORDS.is_match(&sanitized) {
-        sanitized = STANDALONE_SQL_WORDS
-            .replace_all(&sanitized, " ")
-            .to_string();
-    }
+    // Step 7: Optional strict sanitization for non-path-aware queries (feature-gated)
+    // When the `strict-sanitization` feature is enabled, we remove standalone SQL words and
+    // strip certain characters aggressively. Default behavior preserves developer-friendly terms
+    // and characters to avoid breaking common code searches.
+    if cfg!(feature = "strict-sanitization") {
+        // 7a) Remove standalone SQL words regardless of context
+        if STANDALONE_SQL_WORDS.is_match(&sanitized) {
+            sanitized = STANDALONE_SQL_WORDS
+                .replace_all(&sanitized, " ")
+                .to_string();
+        }
 
-    // 7b) Strip LDAP-special characters that commonly enable injection patterns
-    // Note: '*' is preserved for wildcard queries by design
-    sanitized = sanitized
-        .chars()
-        .map(|c| match c {
-            '(' | ')' | '\\' | ',' | '=' => ' ',
-            _ => c,
-        })
-        .collect::<String>();
+        // 7b) Strip LDAP-special characters that commonly enable injection patterns
+        // Note: '*' is preserved for wildcard queries by design
+        sanitized = sanitized
+            .chars()
+            .map(|c| match c {
+                '(' | ')' | '\\' | ',' | '=' => ' ',
+                _ => c,
+            })
+            .collect::<String>();
+    }
 
     // 7c) Final sweep for path traversal tokens: remove any remaining ".." and %2e encodings
     let mut sweep = sanitized;
@@ -201,8 +210,7 @@ pub fn sanitize_search_query(query: &str) -> Result<SanitizedQuery> {
         sweep = replaced;
     }
     // Remove common encodings of '.' (case-insensitive): %2e, %2E, %252e, %252E
-    let dot_enc = Regex::new("(?i)%25?2e").unwrap();
-    sweep = dot_enc.replace_all(&sweep, " ").to_string();
+    sweep = DOT_ENCODED_RE.replace_all(&sweep, " ").to_string();
 
     // Normalize whitespace again after removals
     sanitized = sweep.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -534,11 +542,18 @@ mod tests {
         assert!(!result.text.contains(",ou="));
         assert!(result.was_modified);
 
-        // In non-path-aware sanitizer, parentheses should be stripped to prevent LDAP-style injections
+        // Parentheses handling differs by feature flag:
+        // - strict-sanitization: stripped in non-path-aware sanitizer
+        // - default: preserved to avoid breaking code queries
         let result2 = sanitize_search_query("function(param)").unwrap();
-        assert!(!result2.text.contains("("));
-        assert!(!result2.text.contains(")"));
-        assert!(result2.was_modified);
+        if cfg!(feature = "strict-sanitization") {
+            assert!(!result2.text.contains("("));
+            assert!(!result2.text.contains(")"));
+            assert!(result2.was_modified);
+        } else {
+            assert!(result2.text.contains("("));
+            assert!(result2.text.contains(")"));
+        }
     }
 
     #[test]
@@ -680,29 +695,27 @@ mod tests {
             );
         }
 
-        // Dangerous SQL words should be removed from non-path-aware sanitizer
-        let removed_terms = [
+        // SQL keywords handling depends on strict feature
+        let sql_terms = [
             "select", "insert", "update", "delete", "create", "drop", "alter", "union",
         ];
-        for term in &removed_terms {
-            let result = sanitize_search_query(term);
-            match result {
-                Ok(sanitized) => {
-                    assert_ne!(
-                        sanitized.text.trim(),
-                        *term,
-                        "SQL keyword '{}' should be removed",
-                        term
-                    );
-                    assert!(
-                        sanitized.was_modified,
-                        "SQL keyword '{}' should modify output",
-                        term
-                    );
-                }
-                Err(_) => {
-                    // Accept rejection for pure dangerous keywords
-                }
+        for term in &sql_terms {
+            let result = sanitize_search_query(term).unwrap();
+            if cfg!(feature = "strict-sanitization") {
+                assert_ne!(
+                    result.text.trim(),
+                    *term,
+                    "SQL keyword '{}' should be removed in strict mode",
+                    term
+                );
+                assert!(result.was_modified);
+            } else {
+                assert_eq!(
+                    result.text.trim(),
+                    *term,
+                    "SQL keyword '{}' should be preserved by default",
+                    term
+                );
             }
         }
     }
@@ -710,14 +723,25 @@ mod tests {
     #[test]
     fn test_multi_word_programming_queries_allowed() {
         // Queries with SQL keywords should still yield meaningful terms after sanitization
-        let queries = [
-            ("rust programming", "rust programming"),
-            ("javascript function", "javascript function"),
-            ("create component", "component"), // 'create' removed
-            ("select element", "element"),     // 'select' removed
-            ("insert data", "data"),           // 'insert' removed
-            ("script tag", "script tag"),
-        ];
+        let queries = if cfg!(feature = "strict-sanitization") {
+            vec![
+                ("rust programming", "rust programming"),
+                ("javascript function", "javascript function"),
+                ("create component", "component"), // 'create' removed
+                ("select element", "element"),     // 'select' removed
+                ("insert data", "data"),           // 'insert' removed
+                ("script tag", "script tag"),
+            ]
+        } else {
+            vec![
+                ("rust programming", "rust programming"),
+                ("javascript function", "javascript function"),
+                ("create component", "create component"),
+                ("select element", "select element"),
+                ("insert data", "insert data"),
+                ("script tag", "script tag"),
+            ]
+        };
 
         for (query, expected) in &queries {
             let result = sanitize_search_query(query).unwrap();
