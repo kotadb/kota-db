@@ -140,7 +140,7 @@ jobs:
       uses: taiki-e/install-action@nextest
     
     - name: Download nextest archive
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: nextest-archive-${{ needs.build-and-archive.outputs.cache-key }}
     
@@ -182,7 +182,7 @@ jobs:
       uses: taiki-e/install-action@nextest
     
     - name: Download nextest archive
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: nextest-archive-${{ needs.build-and-archive.outputs.cache-key }}
     
@@ -223,7 +223,7 @@ jobs:
   #     uses: taiki-e/install-action@nextest
   #   
   #   - name: Download nextest archive
-  #     uses: actions/download-artifact@v4
+  #     uses: actions/download-artifact@v5
   #     with:
   #       name: nextest-archive-${{ needs.build-and-archive.outputs.cache-key }}
   #   
@@ -270,12 +270,12 @@ jobs:
       uses: taiki-e/install-action@nextest
     
     - name: Download nextest archive
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: nextest-archive-${{ needs.build-and-archive.outputs.cache-key }}
     
     - name: Download release binary
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: release-binary-${{ needs.build-and-archive.outputs.cache-key }}
         path: target/release
@@ -312,12 +312,12 @@ jobs:
       uses: taiki-e/install-action@nextest
     
     - name: Download nextest archive
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: nextest-archive-${{ needs.build-and-archive.outputs.cache-key }}
     
     - name: Download release binary
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: release-binary-${{ needs.build-and-archive.outputs.cache-key }}
         path: target/release
