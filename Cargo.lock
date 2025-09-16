@@ -2211,6 +2211,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tokenizers",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "toml 0.8.23",
  "tower 0.4.13",
@@ -4830,6 +4831,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util 0.7.16",
 ]
 
 [[package]]

@@ -24,6 +24,7 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 tokio = { version = "1.40", features = ["full"] }
 futures = "0.3"
 rayon = "1.7"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # HTTP Server
 axum = "0.7"
@@ -150,7 +151,7 @@ testcontainers-modules = { version = "0.5", features = ["postgres"] }
 sha2 = "0.10"
 
 [features]
-default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing"]
+default = ["embeddings-onnx", "git-integration", "tree-sitter-parsing", "mcp-server"]
 # Advanced search features
 advanced-search = ["tantivy", "hnsw"]
 # Sanitization and search behavior toggles (default-off to avoid breaking UX/tests)

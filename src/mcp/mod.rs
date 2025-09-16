@@ -8,6 +8,7 @@ pub mod server;
 pub mod services_tools;
 pub mod tools;
 pub mod types;
+pub mod streamable_http;
 
 pub use config::MCPConfig;
 pub use server::MCPServer;

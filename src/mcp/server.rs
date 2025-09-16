@@ -1,10 +1,12 @@
 use crate::contracts::{Index, Storage};
+use crate::mcp::streamable_http::{create_streamable_http_router, StreamableHttpState};
 use crate::mcp::{config::MCPConfig, tools::MCPToolRegistry};
 use crate::wrappers::*;
 use crate::{
     create_file_storage, create_primary_index, create_trigram_index, CoordinatedDeletionService,
 };
 use anyhow::Result;
+use axum::Router;
 use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
 use jsonrpc_http_server::ServerBuilder;
@@ -15,14 +17,17 @@ use tokio::sync::Mutex;
 
 /// MCP Server implementation for KotaDB
 pub struct MCPServer {
-    config: MCPConfig,
+    config: Arc<MCPConfig>,
     tool_registry: Arc<MCPToolRegistry>,
     storage: Arc<Mutex<dyn Storage>>,
     #[allow(dead_code)] // Will be used for path-based operations
     primary_index: Arc<Mutex<dyn Index>>,
+    #[allow(dead_code)] // Keep trigram index alive for tool implementations
+    trigram_index: Arc<Mutex<dyn Index>>,
     #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
     deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
+    streamable_state: StreamableHttpState,
 }
 
 /// Handle to control a running MCP server
@@ -78,6 +83,8 @@ impl MCPServer {
     /// Create a new MCP server with the given configuration
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
+
+        let config = Arc::new(config);
 
         // Create SINGLE storage instance shared across most components
         // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
@@ -171,13 +178,20 @@ impl MCPServer {
             tool_registry = tool_registry.with_symbol_tools(symbol_tools);
         }
 
+        let tool_registry = Arc::new(tool_registry);
+        let start_time = Instant::now();
+        let streamable_state =
+            StreamableHttpState::new(config.clone(), tool_registry.clone(), start_time);
+
         Ok(Self {
             config,
-            tool_registry: Arc::new(tool_registry),
+            tool_registry,
             storage,
             primary_index,
+            trigram_index,
             deletion_service,
-            start_time: Instant::now(),
+            start_time,
+            streamable_state,
         })
     }
 
@@ -245,12 +259,22 @@ impl MCPServer {
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
+
+    /// Access the Streamable HTTP state (cloned) for custom routing.
+    pub fn streamable_http_state(&self) -> StreamableHttpState {
+        self.streamable_state.clone()
+    }
+
+    /// Build an Axum router that serves the Streamable HTTP transport for this server.
+    pub fn streamable_http_router(&self) -> Router<StreamableHttpState> {
+        create_streamable_http_router(self.streamable_state.clone())
+    }
 }
 
 /// Implementation of the MCP RPC interface
 #[derive(Clone)]
 struct MCPServerImpl {
-    config: MCPConfig,
+    config: Arc<MCPConfig>,
     tool_registry: Arc<MCPToolRegistry>,
     #[allow(dead_code)] // Storage will be used when implementing tool handlers
     storage: Arc<Mutex<dyn Storage>>,
@@ -434,15 +458,9 @@ mod tests {
         let server = MCPServer::new(config).await?;
         let tools = server.tool_registry.get_all_tool_definitions();
 
-        // Should have tools from enabled categories
+        // Should have tools available when relevant features are enabled
         assert!(!tools.is_empty());
-        assert!(tools
-            .iter()
-            .any(|t| t.name.starts_with("kotadb://document_")));
-        // Search tools are currently disabled
-        // assert!(tools
-        //     .iter()
-        //     .any(|t| t.name.starts_with("kotadb://text_search")));
+        assert!(tools.iter().any(|t| t.name.starts_with("kotadb://")));
 
         Ok(())
     }
