@@ -7,18 +7,20 @@ use crate::{
 };
 use anyhow::Result;
 use axum::Router;
-use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
+use jsonrpc_core::{Error as RpcError, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
-use jsonrpc_http_server::ServerBuilder;
-use jsonrpc_http_server::{DomainsValidation, Server};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::net::TcpListener;
+use tokio::runtime::Builder as RuntimeBuilder;
+use tokio::sync::{oneshot, Mutex};
 
 /// MCP Server implementation for KotaDB
 pub struct MCPServer {
     config: Arc<MCPConfig>,
+    #[allow(dead_code)]
     tool_registry: Arc<MCPToolRegistry>,
+    #[allow(dead_code)]
     storage: Arc<Mutex<dyn Storage>>,
     #[allow(dead_code)] // Will be used for path-based operations
     primary_index: Arc<Mutex<dyn Index>>,
@@ -32,18 +34,26 @@ pub struct MCPServer {
 
 /// Handle to control a running MCP server
 pub struct MCPServerHandle {
-    server: Server,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MCPServerHandle {
-    /// Wait for the server to finish running
-    pub fn wait(self) {
-        self.server.wait();
+    /// Wait for the server thread to finish running
+    pub fn wait(mut self) {
+        if let Some(thread) = self.thread.take() {
+            if let Err(err) = thread.join() {
+                tracing::error!("MCP server thread panicked: {:?}", err);
+            }
+        }
     }
 
-    /// Close the server gracefully
-    pub fn close(self) {
-        self.server.close();
+    /// Close the server gracefully and wait for shutdown
+    pub fn close(mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        self.wait();
     }
 }
 
@@ -195,64 +205,54 @@ impl MCPServer {
         })
     }
 
-    /// Start the MCP server and return a handle to control it
-    pub async fn start(self) -> Result<MCPServerHandle> {
-        let mut io = IoHandler::new();
-        let server_impl = MCPServerImpl {
-            config: self.config.clone(),
-            tool_registry: self.tool_registry.clone(),
-            storage: self.storage.clone(),
-            start_time: self.start_time,
-        };
-
-        io.extend_with(server_impl.to_delegate());
-
-        let server = ServerBuilder::new(io)
-            .cors(DomainsValidation::AllowOnly(vec![
-                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
-            ]))
-            .start_http(
-                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
-
-        tracing::info!(
-            "MCP server started on {}:{}",
-            self.config.server.host,
-            self.config.server.port
-        );
-
-        Ok(MCPServerHandle { server })
-    }
-
-    /// Start the MCP server synchronously outside of async context to avoid runtime conflicts
+    /// Start the MCP HTTP endpoint synchronously outside of any existing runtime.
     pub fn start_sync(self) -> Result<MCPServerHandle> {
-        let mut io = IoHandler::new();
-        let server_impl = MCPServerImpl {
-            config: self.config.clone(),
-            tool_registry: self.tool_registry.clone(),
-            storage: self.storage.clone(),
-            start_time: self.start_time,
-        };
+        let addr: std::net::SocketAddr =
+            format!("{}:{}", self.config.server.host, self.config.server.port).parse()?;
+        let make_service = self
+            .streamable_http_router()
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        io.extend_with(server_impl.to_delegate());
+        let thread = std::thread::Builder::new()
+            .name("kotadb-mcp-http".into())
+            .spawn(move || {
+                let runtime = RuntimeBuilder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build Tokio runtime for MCP server");
 
-        let server = ServerBuilder::new(io)
-            .cors(DomainsValidation::AllowOnly(vec![
-                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
-            ]))
-            .start_http(
-                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
+                runtime.block_on(async move {
+                    match TcpListener::bind(addr).await {
+                        Ok(listener) => {
+                            if let Ok(local_addr) = listener.local_addr() {
+                                tracing::info!(
+                                    "Streamable MCP HTTP endpoint listening on {}",
+                                    local_addr
+                                );
+                            }
 
-        tracing::info!(
-            "MCP server started on {}:{}",
-            self.config.server.host,
-            self.config.server.port
-        );
+                            let server = axum::serve(listener, make_service)
+                                .with_graceful_shutdown(async {
+                                    let _ = shutdown_rx.await;
+                                });
 
-        Ok(MCPServerHandle { server })
+                            if let Err(err) = server.await {
+                                tracing::error!("MCP HTTP server error: {}", err);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to bind MCP HTTP endpoint: {}", err);
+                        }
+                    }
+                });
+            })
+            .map_err(|err| anyhow::anyhow!("Failed to spawn MCP server thread: {}", err))?;
+
+        Ok(MCPServerHandle {
+            shutdown_tx: Some(shutdown_tx),
+            thread: Some(thread),
+        })
     }
 
     /// Get the uptime in seconds
@@ -266,13 +266,14 @@ impl MCPServer {
     }
 
     /// Build an Axum router that serves the Streamable HTTP transport for this server.
-    pub fn streamable_http_router(&self) -> Router<StreamableHttpState> {
+    pub fn streamable_http_router(&self) -> Router {
         create_streamable_http_router(self.streamable_state.clone())
     }
 }
 
 /// Implementation of the MCP RPC interface
 #[derive(Clone)]
+#[allow(dead_code)]
 struct MCPServerImpl {
     config: Arc<MCPConfig>,
     tool_registry: Arc<MCPToolRegistry>,

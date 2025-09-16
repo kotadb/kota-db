@@ -15,7 +15,8 @@ KotaDB provides two MCP implementations to support different integration pattern
 Enables Claude Code integration without requiring local Rust compilation by providing HTTP endpoints that translate to MCP protocol calls.
 
 ### Architecture
-- HTTP POST endpoints at `/mcp/*`
+- Spec-compliant Streamable HTTP endpoint at `/mcp` (POST for client messages, GET for SSE streams)
+- Legacy bridge routes under `/mcp/tools/*` retained for compatibility
 - API key authentication using existing system
 - Protocol translation layer (HTTP → MCP JSON-RPC)
 - Feature-gated for compatibility
@@ -24,6 +25,8 @@ Enables Claude Code integration without requiring local Rust compilation by prov
 
 | Endpoint | Description |
 |----------|-------------|
+| `POST /mcp` | Streamable HTTP endpoint for JSON-RPC requests (Accept: `application/json, text/event-stream`) |
+| `GET /mcp` | SSE channel for server-initiated messages (Accept: `text/event-stream`) |
 | `GET /mcp/tools` | List available MCP tools (POST also supported for compatibility) |
 | `POST /mcp/tools/:tool_name` | Execute specific MCP tool by name |
 | `POST /mcp/tools/search_code` | Search code content |
@@ -37,7 +40,14 @@ Enables Claude Code integration without requiring local Rust compilation by prov
 # Start HTTP server with MCP bridge
 cargo run --bin kotadb-api-server --features mcp-server
 
-# List tools (preferred)
+# Streamable initialize handshake (returns MCP session header)
+curl -sS http://localhost:8080/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2025-06-18" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+
+# List tools (legacy bridge, still available for compatibility)
 curl -sS http://localhost:8080/mcp/tools \
   -H "Authorization: Bearer $API_KEY"
 
@@ -61,7 +71,8 @@ Bridge errors use a stable schema `{ success: false, error: { code, message } }`
 - `internal_error` – unexpected runtime error when invoking a tool
 
 ### Implementation Files
-- `src/mcp_http_bridge.rs` - Core bridge implementation
+- `src/mcp/streamable_http.rs` - Spec-compliant Streamable HTTP transport
+- `src/mcp_http_bridge.rs` - Legacy bridge routes
 - `src/http_server.rs` - Integration with HTTP server
 
 ## Intent-Based MCP Server

@@ -37,7 +37,7 @@ use crate::mcp::tools::MCPToolRegistry;
 use crate::mcp::types::ToolDefinition;
 
 /// Router builder for the Streamable HTTP transport.
-pub fn create_streamable_http_router(state: StreamableHttpState) -> Router<StreamableHttpState> {
+pub fn create_streamable_http_router(state: StreamableHttpState) -> Router {
     Router::new()
         .route(
             "/mcp",
