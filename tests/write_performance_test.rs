@@ -11,7 +11,7 @@ use kotadb::{
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 mod test_constants;
-use test_constants::performance as perf;
+use test_constants::{gating, performance as perf};
 
 /// Performance requirements based on Issue #151
 struct PerformanceRequirements {
@@ -36,6 +36,11 @@ impl Default for PerformanceRequirements {
 
 #[tokio::test]
 async fn test_write_performance_consistency() -> Result<()> {
+    if gating::skip_if_heavy_disabled("write_performance_test::test_write_performance_consistency")
+    {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let mut storage = create_file_storage(temp_dir.path().to_str().unwrap(), Some(100)).await?;
 

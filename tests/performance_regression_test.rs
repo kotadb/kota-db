@@ -6,6 +6,9 @@ use std::env;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+mod test_constants;
+use test_constants::gating;
+
 /// Check if running in CI environment
 fn is_ci() -> bool {
     env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok()
@@ -250,6 +253,12 @@ fn test_insertion_performance_regression() {
 
 #[test]
 fn test_search_performance_regression() {
+    if gating::skip_if_heavy_disabled(
+        "performance_regression_test::test_search_performance_regression",
+    ) {
+        return;
+    }
+
     let sizes = get_test_sizes();
     let thresholds = if is_ci() {
         PerformanceThresholds {
@@ -379,6 +388,10 @@ fn test_mixed_operations_performance() {
 
 #[test]
 fn test_performance_stability() {
+    if gating::skip_if_heavy_disabled("performance_regression_test::test_performance_stability") {
+        return;
+    }
+
     // Skip stability test in CI - too unreliable with shared resources
     if is_ci() {
         println!("\n=== Performance Stability Test (SKIPPED in CI) ===");

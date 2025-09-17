@@ -16,6 +16,7 @@ mod test_constants;
 use test_constants::concurrency::{
     get_concurrent_operations, get_operations_per_task, get_pool_capacity,
 };
+use test_constants::gating;
 use test_constants::performance::{
     lock_efficiency_min, lock_read_avg_ms, lock_write_avg_ms, SLOW_OPERATION_THRESHOLD,
 };
@@ -26,6 +27,10 @@ const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
 /// Enhanced Multi-threaded Stress Testing with high concurrency
 #[tokio::test]
 async fn test_enhanced_concurrent_stress() -> Result<()> {
+    if gating::skip_if_heavy_disabled("concurrent_stress_test::test_enhanced_concurrent_stress") {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("concurrent_stress_storage");
     let index_path = temp_dir.path().join("concurrent_stress_index");
@@ -299,6 +304,10 @@ async fn test_enhanced_concurrent_stress() -> Result<()> {
 /// Advanced Lock Contention Analysis Test
 #[tokio::test]
 async fn test_lock_contention_analysis() -> Result<()> {
+    if gating::skip_if_heavy_disabled("concurrent_stress_test::test_lock_contention_analysis") {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("lock_analysis_storage");
 

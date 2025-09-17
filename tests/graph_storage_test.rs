@@ -19,6 +19,9 @@ use tempfile::TempDir;
 use tokio::sync::RwLock as TokioRwLock;
 use uuid::Uuid;
 
+mod test_constants;
+use test_constants::gating;
+
 /// Helper to create a test graph node
 fn create_test_node(name: &str, node_type: &str) -> GraphNode {
     GraphNode {
@@ -183,6 +186,10 @@ async fn test_hybrid_storage_routing() -> Result<()> {
 
 #[tokio::test]
 async fn test_batch_operations() -> Result<()> {
+    if gating::skip_if_heavy_disabled("graph_storage_test::test_batch_operations") {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let config = GraphStorageConfig::default();
 

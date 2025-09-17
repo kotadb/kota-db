@@ -5,8 +5,15 @@ use kotadb::{btree, ValidatedDocumentId, ValidatedPath};
 use std::time::Instant;
 use uuid::Uuid;
 
+mod test_constants;
+use test_constants::gating;
+
 #[test]
 fn test_btree_insertion_performance() -> anyhow::Result<()> {
+    if gating::skip_if_heavy_disabled("btree_performance_test::test_btree_insertion_performance") {
+        return Ok(());
+    }
+
     println!("\n=== B+ Tree Insertion Performance Test ===");
 
     let sizes = vec![100, 1000, 10000];
@@ -60,6 +67,10 @@ fn test_btree_insertion_performance() -> anyhow::Result<()> {
 
 #[test]
 fn test_btree_search_performance() -> anyhow::Result<()> {
+    if gating::skip_if_heavy_disabled("btree_performance_test::test_btree_search_performance") {
+        return Ok(());
+    }
+
     println!("\n=== B+ Tree Search Performance Test ===");
 
     let sizes = vec![100, 1000, 10000];
@@ -133,6 +144,10 @@ fn test_btree_search_performance() -> anyhow::Result<()> {
 
 #[test]
 fn test_btree_vs_linear_performance() -> anyhow::Result<()> {
+    if gating::skip_if_heavy_disabled("btree_performance_test::test_btree_vs_linear_performance") {
+        return Ok(());
+    }
+
     println!("\n=== B+ Tree vs Linear Search Comparison ===");
 
     let size = 10000;

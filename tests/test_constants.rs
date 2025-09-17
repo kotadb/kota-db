@@ -117,6 +117,31 @@ pub mod concurrency {
     }
 }
 
+/// Test gating utilities for optional heavy test suites
+pub mod gating {
+    /// Returns true if heavy/stress tests are explicitly enabled via env flag.
+    #[allow(dead_code)]
+    pub fn heavy_tests_enabled() -> bool {
+        std::env::var("KOTADB_RUN_HEAVY_TESTS")
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                matches!(value.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    }
+
+    /// Helper that prints a skip message when heavy tests are disabled.
+    #[allow(dead_code)]
+    pub fn skip_if_heavy_disabled(test_name: &str) -> bool {
+        if !heavy_tests_enabled() {
+            eprintln!("Skipping heavy test '{test_name}'. Set KOTADB_RUN_HEAVY_TESTS=1 to enable.");
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

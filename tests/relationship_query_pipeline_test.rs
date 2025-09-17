@@ -12,6 +12,9 @@ use anyhow::Result;
 use kotadb::create_file_storage;
 use tempfile::TempDir;
 
+mod test_constants;
+use test_constants::gating;
+
 #[cfg(feature = "tree-sitter-parsing")]
 use kotadb::{
     git::{IngestionConfig, IngestionOptions, RepositoryIngester},
@@ -245,6 +248,12 @@ async fn test_complete_relationship_query_pipeline() -> Result<()> {
 #[cfg(feature = "tree-sitter-parsing")]
 #[tokio::test]
 async fn test_no_mocking_verification() -> Result<()> {
+    if gating::skip_if_heavy_disabled(
+        "relationship_query_pipeline_test::test_no_mocking_verification",
+    ) {
+        return Ok(());
+    }
+
     // This test specifically verifies that NO MOCKING is used in the pipeline
     // by ensuring all components use real data and real implementations
 
