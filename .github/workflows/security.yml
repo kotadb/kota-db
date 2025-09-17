@@ -3,6 +3,8 @@ name: Security
 on:
   push:
     branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
   schedule:
     # Run security checks daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -14,6 +16,7 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     steps:
     - uses: actions/checkout@v4
     
@@ -58,6 +61,7 @@ jobs:
   secrets-scan:
     name: Secrets Scan
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
     - uses: actions/checkout@v4
       with:
@@ -75,6 +79,7 @@ jobs:
   codeql-analysis:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     permissions:
       actions: read
       contents: read
@@ -109,6 +114,7 @@ jobs:
   supply-chain-security:
     name: Supply Chain Security
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     steps:
     - uses: actions/checkout@v4
     
@@ -124,6 +130,7 @@ jobs:
   sbom-generation:
     name: Generate SBOM
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     steps:
     - uses: actions/checkout@v4
     

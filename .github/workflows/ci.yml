@@ -59,14 +59,24 @@ jobs:
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --locked
       - name: Build (debug)
-        run: cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
-      - name: Run unit tests (nextest, lib only)
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.base_ref }}" == "main" ]]; then
+            cargo build --all-features
+          else
+            cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
+          fi
+      - name: Run tests
         env:
           RUST_LOG: error
           CI: true
         run: |
-          cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
-          cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
+          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.base_ref }}" == "main" ]]; then
+            cargo nextest run --all --all-features --no-fail-fast
+            cargo test --doc --all-features
+          else
+            cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
+            cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
+          fi
 
   integration-docker:
     name: Docker-backed Integration

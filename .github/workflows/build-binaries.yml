@@ -4,11 +4,9 @@ name: Build Binaries
 # This enables quick testing without waiting for releases
 on:
   push:
-    branches: [ develop, main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
+    tags:
+      - 'v*'
+      - 'release/**'
   workflow_dispatch:
     inputs:
       platforms:
