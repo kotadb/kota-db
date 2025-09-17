@@ -15,7 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -530,7 +530,11 @@ pub async fn start_services_server(
     debug!("Server ready at http://localhost:{}", port);
     debug!("Health check: curl http://localhost:{}/health", port);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -691,7 +695,11 @@ pub async fn start_services_saas_server(
         port
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
