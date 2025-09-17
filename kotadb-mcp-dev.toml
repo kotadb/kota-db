@@ -15,7 +15,7 @@ max_blocking_threads = 16
 [mcp]
 protocol_version = "2025-06-18"
 server_name = "kotadb"
-server_version = "0.6.0-dev"
+server_version = "0.6.2-dev"
 enable_document_tools = false
 enable_search_tools = true
 enable_relationship_tools = true

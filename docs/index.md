@@ -147,7 +147,7 @@ KotaDB is designed for:
 
 ## Current Status
 
-KotaDB v0.6.0 provides core codebase intelligence features with ongoing development for enhanced functionality. The platform is actively developed with regular updates and improvements.
+KotaDB v0.6.2 provides core codebase intelligence features with ongoing development for enhanced functionality. The platform is actively developed with regular updates and improvements.
 
 ## License
 

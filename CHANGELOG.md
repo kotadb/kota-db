@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-09-17
+
 ### Added
 - New versioned HTTP API under `/api/v1/*` providing code intelligence endpoints:
   - `POST /api/v1/search/code` – Code search with `format` support: rich, simple, cli

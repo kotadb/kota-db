@@ -24,7 +24,7 @@ KotaDB aims to become the premier database for distributed human-AI cognition, e
 - ✅ Docker support
 - ✅ Basic REST API with search endpoints
 
-### 🚧 v0.6.0 - Documentation & API Improvements (Current)
+### 🚧 v0.6.2 - Documentation & API Improvements (Current)
 **Status**: In Progress | **Target**: September 2025
 
 #### Goals
