@@ -48,7 +48,7 @@ fn main() -> Result<()> {
                 .long("port")
                 .value_name("PORT")
                 .help("Server port")
-                .default_value("3000"),
+                .default_value("8484"),
         )
         .arg(
             Arg::new("health-check")

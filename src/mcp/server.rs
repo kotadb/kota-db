@@ -5,11 +5,11 @@ use crate::wrappers::*;
 use crate::{
     create_file_storage, create_primary_index, create_trigram_index, CoordinatedDeletionService,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axum::Router;
 use jsonrpc_core::{Error as RpcError, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -213,6 +213,8 @@ impl MCPServer {
             .streamable_http_router()
             .into_make_service_with_connect_info::<std::net::SocketAddr>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (startup_tx, startup_rx) =
+            mpsc::channel::<std::result::Result<std::net::SocketAddr, String>>();
 
         let thread = std::thread::Builder::new()
             .name("kotadb-mcp-http".into())
@@ -225,15 +227,34 @@ impl MCPServer {
                 runtime.block_on(async move {
                     match TcpListener::bind(addr).await {
                         Ok(listener) => {
-                            if let Ok(local_addr) = listener.local_addr() {
-                                tracing::info!(
-                                    "Streamable MCP HTTP endpoint listening on {}",
-                                    local_addr
+                            let local_addr = match listener.local_addr() {
+                                Ok(local_addr) => local_addr,
+                                Err(err) => {
+                                    tracing::error!(
+                                        "Failed to determine MCP HTTP endpoint address: {}",
+                                        err
+                                    );
+                                    let _ = startup_tx.send(Err(format!(
+                                        "Failed to determine MCP HTTP endpoint address: {}",
+                                        err
+                                    )));
+                                    return;
+                                }
+                            };
+
+                            tracing::info!(
+                                "Streamable MCP HTTP endpoint listening on {}",
+                                local_addr
+                            );
+
+                            if startup_tx.send(Ok(local_addr)).is_err() {
+                                tracing::warn!(
+                                    "MCP startup listener dropped before receiving bind success"
                                 );
                             }
 
                             let server = axum::serve(listener, make_service)
-                                .with_graceful_shutdown(async {
+                                .with_graceful_shutdown(async move {
                                     let _ = shutdown_rx.await;
                                 });
 
@@ -243,16 +264,30 @@ impl MCPServer {
                         }
                         Err(err) => {
                             tracing::error!("Failed to bind MCP HTTP endpoint: {}", err);
+                            let _ = startup_tx
+                                .send(Err(format!("Failed to bind MCP HTTP endpoint: {}", err)));
                         }
                     }
                 });
             })
-            .map_err(|err| anyhow::anyhow!("Failed to spawn MCP server thread: {}", err))?;
+            .map_err(|err| anyhow!("Failed to spawn MCP server thread: {}", err))?;
 
-        Ok(MCPServerHandle {
-            shutdown_tx: Some(shutdown_tx),
-            thread: Some(thread),
-        })
+        match startup_rx.recv() {
+            Ok(Ok(_addr)) => Ok(MCPServerHandle {
+                shutdown_tx: Some(shutdown_tx),
+                thread: Some(thread),
+            }),
+            Ok(Err(message)) => {
+                let _ = thread.join();
+                Err(anyhow!(message))
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(anyhow!(
+                    "MCP server thread terminated before reporting startup status"
+                ))
+            }
+        }
     }
 
     /// Get the uptime in seconds

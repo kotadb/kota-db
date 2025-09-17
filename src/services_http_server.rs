@@ -411,8 +411,14 @@ pub fn create_services_server(
         .route("/health", get(health_check))
         // Versioned v1 endpoints (canonical)
         .route("/api/v1/analysis/stats", get(get_stats))
-        .route("/api/v1/search/code", post(search_code_v1_post))
-        .route("/api/v1/search/symbols", post(search_symbols_v1_post))
+        .route(
+            "/api/v1/search/code",
+            post(search_code_v1_post).get(search_code_enhanced),
+        )
+        .route(
+            "/api/v1/search/symbols",
+            post(search_symbols_v1_post).get(search_symbols_enhanced),
+        )
         .route("/api/v1/symbols/:symbol/callers", get(find_callers_v1_get))
         .route("/api/v1/symbols/:symbol/impact", get(analyze_impact_v1_get))
         .route("/api/v1/symbols", get(list_symbols_v1))
@@ -425,9 +431,6 @@ pub fn create_services_server(
         .route("/api/v1/validate", post(validate_database))
         .route("/api/v1/health-check", get(health_check_detailed))
         .route("/api/v1/index-codebase", post(index_codebase))
-        // Also support GET variants for search in v1 for compatibility
-        .route("/api/v1/search/code", get(search_code_enhanced))
-        .route("/api/v1/search/symbols", get(search_symbols_enhanced))
         .route("/api/v1/find-callers", post(find_callers_enhanced))
         .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
         .route("/api/v1/codebase-overview", get(codebase_overview))
@@ -509,17 +512,21 @@ pub async fn start_services_server(
     info!("KotaDB Services HTTP Server listening on port {}", port);
     debug!("Clean services-only architecture - no legacy endpoints");
     debug!("Available endpoints:");
-    debug!("   GET    /health                    - Server health check");
-    debug!("   GET    /api/stats                 - Database statistics (StatsService)");
-    debug!("   POST   /api/benchmark             - Performance benchmarks (BenchmarkService)");
-    debug!("   POST   /api/validate              - Database validation (ValidationService)");
-    debug!("   GET    /api/health-check          - Detailed health check (ValidationService)");
-    debug!("   POST   /api/index-codebase        - Index repository (IndexingService)");
-    debug!("   GET    /api/search-code           - Search code content (SearchService)");
-    debug!("   GET    /api/search-symbols        - Search symbols (SearchService)");
-    debug!("   POST   /api/find-callers          - Find callers (AnalysisService)");
-    debug!("   POST   /api/analyze-impact        - Impact analysis (AnalysisService)");
-    debug!("   GET    /api/codebase-overview     - Codebase overview (AnalysisService)");
+    debug!("   GET    /health                          - Server health check");
+    debug!("   GET    /api/v1/analysis/stats           - Database statistics (StatsService)");
+    debug!(
+        "   POST   /api/v1/benchmark                - Performance benchmarks (BenchmarkService)"
+    );
+    debug!("   POST   /api/v1/validate                 - Database validation (ValidationService)");
+    debug!(
+        "   GET    /api/v1/health-check             - Detailed health check (ValidationService)"
+    );
+    debug!("   POST   /api/v1/index-codebase           - Index repository (IndexingService)");
+    debug!("   GET    /api/v1/search/code              - Search code content (SearchService)");
+    debug!("   GET    /api/v1/search/symbols           - Search symbols (SearchService)");
+    debug!("   POST   /api/v1/find-callers             - Find callers (AnalysisService)");
+    debug!("   POST   /api/v1/analyze-impact           - Impact analysis (AnalysisService)");
+    debug!("   GET    /api/v1/codebase-overview        - Codebase overview (AnalysisService)");
     debug!("Server ready at http://localhost:{}", port);
     debug!("Health check: curl http://localhost:{}/health", port);
 
@@ -555,8 +562,14 @@ pub async fn create_services_saas_server(
     let authenticated_routes = Router::new()
         // v1 endpoints (canonical)
         .route("/api/v1/analysis/stats", get(get_stats))
-        .route("/api/v1/search/code", post(search_code_v1_post))
-        .route("/api/v1/search/symbols", post(search_symbols_v1_post))
+        .route(
+            "/api/v1/search/code",
+            post(search_code_v1_post).get(search_code_enhanced),
+        )
+        .route(
+            "/api/v1/search/symbols",
+            post(search_symbols_v1_post).get(search_symbols_enhanced),
+        )
         .route("/api/v1/symbols/:symbol/callers", get(find_callers_v1_get))
         .route("/api/v1/symbols/:symbol/impact", get(analyze_impact_v1_get))
         .route("/api/v1/symbols", get(list_symbols_v1))
@@ -568,9 +581,6 @@ pub async fn create_services_saas_server(
         .route("/api/v1/benchmark", post(run_benchmark))
         .route("/api/v1/validate", post(validate_database))
         .route("/api/v1/index-codebase", post(index_codebase))
-        // Also support GET variants for search in v1 for compatibility
-        .route("/api/v1/search/code", get(search_code_enhanced))
-        .route("/api/v1/search/symbols", get(search_symbols_enhanced))
         .route("/api/v1/find-callers", post(find_callers_enhanced))
         .route("/api/v1/analyze-impact", post(analyze_impact_enhanced))
         .route("/api/v1/codebase-overview", get(codebase_overview))

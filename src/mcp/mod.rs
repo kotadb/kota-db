@@ -6,9 +6,9 @@ pub mod config;
 pub mod resources;
 pub mod server;
 pub mod services_tools;
+pub mod streamable_http;
 pub mod tools;
 pub mod types;
-pub mod streamable_http;
 
 pub use config::MCPConfig;
 pub use server::MCPServer;
