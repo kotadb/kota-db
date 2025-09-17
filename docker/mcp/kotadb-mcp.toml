@@ -21,7 +21,7 @@ server_name = "kotadb"
 server_version = "0.2.0"
 
 # Tool Categories
-enable_document_tools = true
+enable_document_tools = false
 enable_search_tools = true
 enable_relationship_tools = true
 

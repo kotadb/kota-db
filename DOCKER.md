@@ -22,20 +22,31 @@ docker run -d \
 ### Using Docker Compose
 
 ```bash
-# Start production setup
-docker-compose -f docker-compose.prod.yml up -d
+# Start production setup (API + MCP servers)
+docker compose -f docker-compose.prod.yml up -d
 
 # Stop the service
-docker-compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml down
+
+
+### Streamable MCP server only
+
+```bash
+# Launch just the MCP endpoint (Streamable HTTP on port 8484)
+docker compose -f docker-compose.prod.yml up -d kotadb-mcp
+
+# Tail MCP logs
+docker compose -f docker-compose.prod.yml logs -f kotadb-mcp
+```
 ```
 
 ## Container Features
 
-- **Multi-stage build** for optimal size (20.5MB runtime image)
+- **Multi-stage build** for a compact runtime layer (no ONNX runtime)
 - **Non-root user** for security (kotadb:kotadb, uid:gid 1001:1001)
-- **Health checks** built into container
-- **Data persistence** via Docker volumes
-- **Production-optimized** build flags and binary stripping
+- **Bundled binaries** for CLI server, SaaS API server, and MCP HTTP server
+- **Data persistence** via Docker volumes or bind mounts
+- **Ready for docker-compose.prod.yml** (runs API + MCP, optional quickstart demos)
 
 ## Environment Variables
 
@@ -84,14 +95,18 @@ docker run -d \
 
 ## Health Checks
 
-The container includes built-in health checks that test the `/health` endpoint every 30 seconds.
+`docker-compose.prod.yml` defines health checks for both the HTTP API (`/health`) and the MCP server (Streamable HTTP `initialize`). If you run the container directly you can probe those endpoints manually:
 
 ```bash
-# Check container health
-docker ps
+# API server health
+curl -fsS http://localhost:8080/health
 
-# View health check logs
-docker inspect kotadb --format='{{json .State.Health}}'
+# MCP server health (Streamable HTTP handshake)
+curl -fsS -X POST http://localhost:8484/mcp \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 ```
 
 ## Data Persistence

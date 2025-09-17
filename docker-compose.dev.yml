@@ -1,5 +1,9 @@
 version: '3.8'
 
+x-kotadb-build: &kotadb-build
+  context: .
+  dockerfile: Dockerfile.prod
+
 services:
   # Main development environment
   kotadb-dev:
@@ -44,6 +48,39 @@ services:
     depends_on:
       postgres-dev:
         condition: service_healthy
+
+  kotadb-mcp:
+    build: *kotadb-build
+    container_name: kotadb-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8484}:8484"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=1
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8484
+      - KOTADB_DATA_DIR=/app/data
+    volumes:
+      - ${KOTADB_DATA_DIR_HOST:-./kotadb-data}:/app/data
+      - ${KOTADB_MCP_CONFIG_HOST:-./docker/mcp/kotadb-mcp.toml}:/app/config/kotadb-mcp.toml:ro
+    command: ["kotadb-mcp", "--config", "/app/config/kotadb-mcp.toml", "--data-dir", "/app/data"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          curl -sS -X POST http://127.0.0.1:8484/mcp \
+            -H "Accept: application/json, text/event-stream" \
+            -H "Content-Type: application/json" \
+            -H "MCP-Protocol-Version: 2025-06-18" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            >/dev/null || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kotadb-dev
 
   # Documentation server for live preview
   docs-server:
