@@ -26,7 +26,6 @@ COPY benches/ benches/
 RUN mkdir -p docs/api \
     && echo "# KotaDB API\n\nStub file for Docker build (docs excluded by .dockerignore)." > docs/api/api.md
 COPY test_minimal_cli.rs test_minimal_cli.rs
-COPY test_debug_helper.rs test_debug_helper.rs
 
 # Build the binaries needed at runtime. Avoid default features to skip ONNX runtime.
 RUN cargo build --release \

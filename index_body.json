@@ -1,7 +1,0 @@
-{
-  "repo_path": ".",
-  "prefix": "self",
-  "include_files": true,
-  "include_commits": false,
-  "extract_symbols": true
-}
