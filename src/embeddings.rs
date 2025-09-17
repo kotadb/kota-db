@@ -809,6 +809,7 @@ pub mod models {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "embeddings-onnx")]
     use tempfile::TempDir;
 
     #[cfg(feature = "embeddings-onnx")]
