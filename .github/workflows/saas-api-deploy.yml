@@ -23,6 +23,10 @@ on:
         options:
           - staging
           - production
+      rollback:
+        description: 'Perform rollback instead of deploy'
+        required: false
+        default: 'false'
 
 env:
   FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -165,7 +169,7 @@ jobs:
   rollback:
     name: Rollback Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true'
     environment:
       name: ${{ github.event.inputs.environment }}
     steps:
