@@ -189,8 +189,7 @@ main() {
     
     run_test "Docker available" "command -v docker"
     run_test "Docker Compose available" "command -v docker-compose"
-    run_test "Development Dockerfile exists" "[ -f Dockerfile.dev ]"
-    run_test "Production Dockerfile exists" "[ -f Dockerfile ]"
+    run_test "Dockerfile.prod exists" "[ -f Dockerfile.prod ]"
     run_test_with_validation "Docker Compose configuration valid" "docker-compose -f docker-compose.dev.yml config" validate_docker_compose
     
     # 8. CI/CD Infrastructure Tests

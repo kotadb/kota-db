@@ -21,7 +21,7 @@ echo "Using DATABASE_URL: $DATABASE_URL"
 # Build the Docker image
 echo ""
 echo "Building Docker image..."
-docker build -f Dockerfile.production -t kotadb-api-server:local . || {
+docker build -f Dockerfile.prod -t kotadb-api-server:local . || {
     echo "❌ Docker build failed"
     exit 1
 }

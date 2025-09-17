@@ -186,7 +186,7 @@ just coverage          # Generate test coverage report
 
 Notes:
 - Use `just test-fast` for quick pre-push validation — it mirrors the CI gating set:
-  - Runs `cargo nextest run --lib` and `cargo test --doc` with `--no-default-features --features "git-integration,tree-sitter-parsing"`.
+  - Runs `cargo nextest run --lib` and `cargo test --doc` with `--no-default-features --features "git-integration,tree-sitter-parsing,mcp-server"`.
   - Excludes heavy integration/stress suites for faster feedback.
 - Use `just test` for broader validation across the workspace (nextest, all tests).
 
@@ -247,7 +247,7 @@ cargo run --release -- benchmark --operations 1000  # Compare against benchmarks
 ### Future Testing Methods (Once Available)
 ```bash
 # MCP server dogfooding (coming soon)
-cargo run --bin mcp_server --features="mcp-server" --config kotadb-mcp-dev.toml &
+cargo run --bin mcp_server --config kotadb-mcp-dev.toml &
 # Then connect Claude Code to test:
 # - Document search via MCP
 # - Symbol navigation

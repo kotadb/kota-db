@@ -9,7 +9,7 @@ services:
   kotadb-dev:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.prod
     container_name: kotadb-dev
     working_dir: /workspace
     volumes:

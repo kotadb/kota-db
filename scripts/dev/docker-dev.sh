@@ -115,7 +115,7 @@ case "$1" in
     
     "ports")
         print_status "Development environment ports:"
-        echo "  8080  - MCP Server"
+        echo "  8484  - MCP Server"
         echo "  8000  - Live documentation"
         echo "  8001  - Documentation server"
         echo "  9090  - Metrics/monitoring"

@@ -125,7 +125,7 @@ nonblocking_step "Build docs" bash -lc "RUSTDOCFLAGS='-D warnings' cargo doc --n
 
 # Container build (optional)
 if command -v docker >/dev/null 2>&1; then
-  nonblocking_step "Docker build (test)" bash -lc "docker build -t kotadb:ci-test -f Dockerfile ."
+  nonblocking_step "Docker build (test)" bash -lc "docker build -t kotadb:ci-test -f Dockerfile.prod ."
 else
   warn "Docker not found; skipping container build"
 fi
@@ -169,4 +169,3 @@ fi
 
 success "All critical CI steps passed locally."
 exit 0
-
