@@ -3,7 +3,7 @@
 
 [server]
 host = "0.0.0.0"
-port = 3000
+port = 8484
 max_connections = 100
 request_timeout = "30s"
 enable_cors = true
@@ -16,7 +16,7 @@ worker_threads = 4
 max_blocking_threads = 16
 
 [mcp]
-protocol_version = "2024-11-05"
+protocol_version = "2025-06-18"
 server_name = "kotadb"
 server_version = "0.5.0"
 enable_document_tools = false  # Disabled per issue #401 - pure codebase intelligence

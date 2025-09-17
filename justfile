@@ -19,6 +19,10 @@ dev:
 mcp:
   RUST_LOG=debug cargo run --bin mcp_server --features mcp-server -- --config kotadb-dev.toml
 
+# Start MCP server via docker compose (uses Streamable HTTP endpoint)
+mcp-docker:
+  docker compose up kotadb-mcp
+
 # Watch for changes and run tests (fast)
 watch:
   @echo "📝 Note: cargo-watch may not be available on all systems"
@@ -34,8 +38,8 @@ test:
 # Fast test execution mirroring gating CI (recommended pre-push)
 # Runs lib tests with required feature flags via nextest, then doctests.
 test-fast:
-  cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
-  cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
+  cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing,mcp-server" --no-fail-fast
+  cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing,mcp-server"
 
 # Run only unit tests (FAST)
 test-unit:

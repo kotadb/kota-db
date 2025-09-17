@@ -1608,18 +1608,18 @@ async fn main() -> Result<()> {
                 use kotadb::services_http_server::start_services_server;
                 println!("🚀 Starting KotaDB Services HTTP Server on port {port}");
                 println!("🎯 Clean services-only architecture - complete interface parity");
-                println!("📄 Services API endpoints:");
-                println!("   GET    /health                    - Server health check");
-                println!("   GET    /api/stats                 - Database statistics");
-                println!("   POST   /api/benchmark             - Performance benchmarks");
-                println!("   POST   /api/validate              - Database validation");
-                println!("   GET    /api/health-check          - Detailed health check");
-                println!("   POST   /api/index-codebase        - Index repository");
-                println!("   GET    /api/search-code           - Search code content");
-                println!("   GET    /api/search-symbols        - Search symbols");
-                println!("   POST   /api/find-callers          - Find callers");
-                println!("   POST   /api/analyze-impact        - Impact analysis");
-                println!("   GET    /api/codebase-overview     - Codebase overview");
+                println!("📄 Services API endpoints (v1):");
+                println!("   GET    /health                          - Server health check");
+                println!("   GET    /api/v1/analysis/stats           - Database statistics");
+                println!("   POST   /api/v1/benchmark                - Performance benchmarks");
+                println!("   POST   /api/v1/validate                 - Database validation");
+                println!("   GET    /api/v1/health-check             - Detailed health check");
+                println!("   POST   /api/v1/index-codebase           - Index repository");
+                println!("   GET    /api/v1/search/code              - Search code content");
+                println!("   GET    /api/v1/search/symbols           - Search symbols");
+                println!("   POST   /api/v1/find-callers             - Find callers");
+                println!("   POST   /api/v1/analyze-impact           - Impact analysis");
+                println!("   GET    /api/v1/codebase-overview        - Codebase overview");
                 println!();
 
                 start_services_server(
