@@ -12,7 +12,8 @@ Highlights
 
 Security
 - The non-SaaS server (`create_services_server`) exposes repository registration and indexing for arbitrary local paths. It is intended for local/dev, single-tenant usage. Do not expose it publicly in multi-tenant environments.
-- The SaaS server (`create_services_saas_server`) puts v1 routes behind API key auth.
+- The SaaS server (`create_services_saas_server`) puts v1 routes behind API key auth and expects every `/internal/*` request to include the secret `INTERNAL_API_KEY` header value.
+- Managed deployments can disable filesystem path ingestion by setting `ALLOW_LOCAL_PATH_INDEXING=0`/`false`. Until git-based ingestion ships (#692), the default remains enabled so tenants can onboard repositories.
 
 Error Contract
 `StandardApiError` (JSON):
@@ -62,7 +63,8 @@ Endpoints
             "max_file_size_mb?": number, "max_memory_mb?": number,
             "max_parallel_files?": number, "enable_chunking?": bool,
             "extract_symbols?": bool }
-  - Note: `git_url` is not supported yet. Return: `git_url_not_supported` (400). Clone locally and use `path`.
+  - Note: `git_url` is not supported yet. Return: `git_url_not_supported` (400).
+  - In SaaS mode with `ALLOW_LOCAL_PATH_INDEXING=0`, requests providing `path` return `local_path_indexing_disabled` (403); clone locally or wait for managed Git ingestion.
   - 400: when neither `path` nor `git_url` provided; when `path` does not exist or is not a directory
   - 200: { job_id, repository_id, status: "accepted" }
   - Details: repository_id is stable (hash of canonical path).
@@ -78,4 +80,3 @@ Operational Notes
 - Job tracking uses pruning to prevent unbounded growth (TTL=1h, cap=100 completed/failed jobs).
 - Timestamps are RFC3339.
 - Server startup banners and endpoint listings are logged at `debug` level to avoid noisy `info` logs; use `RUST_LOG=debug` or `--verbose` to see them.
-

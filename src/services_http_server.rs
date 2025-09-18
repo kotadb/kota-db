@@ -47,6 +47,8 @@ pub struct ServicesAppState {
     pub db_path: PathBuf,
     /// Optional API key service for SaaS functionality
     pub api_key_service: Option<Arc<crate::ApiKeyService>>,
+    /// Whether this server is running in managed SaaS mode
+    pub saas_mode: bool,
     /// Background job registry for indexing tasks
     pub jobs: Arc<RwLock<HashMap<String, JobStatus>>>,
     /// Simple repository registry persisted under db_path/repositories.json
@@ -64,11 +66,59 @@ impl ServicesAppState {
 
     /// Check if this state is configured for SaaS mode
     pub fn is_saas_mode(&self) -> bool {
-        self.api_key_service.is_some()
+        self.saas_mode
+    }
+
+    pub fn allow_local_path_ingestion(&self) -> bool {
+        if !self.is_saas_mode() {
+            return true;
+        }
+
+        match std::env::var("ALLOW_LOCAL_PATH_INDEXING") {
+            Ok(flag) => parse_local_path_ingestion_flag(Some(flag)),
+            Err(_) => {
+                // TODO(#692): default to false once SaaS git ingestion lands.
+                true
+            }
+        }
     }
 
     fn repo_registry_path(&self) -> PathBuf {
         self.db_path.join("repositories.json")
+    }
+}
+
+fn parse_local_path_ingestion_flag(raw: Option<String>) -> bool {
+    match raw {
+        Some(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod allow_local_path_tests {
+    use super::parse_local_path_ingestion_flag;
+
+    #[test]
+    fn defaults_to_true_when_missing() {
+        assert!(parse_local_path_ingestion_flag(None));
+    }
+
+    #[test]
+    fn returns_true_for_truthy_strings() {
+        for value in ["1", "true", "yes", "on", " arbitrary "] {
+            assert!(parse_local_path_ingestion_flag(Some(value.to_string())));
+        }
+    }
+
+    #[test]
+    fn returns_false_for_falsey_strings() {
+        for value in ["0", "false", "no", "off", " FALSE "] {
+            assert!(!parse_local_path_ingestion_flag(Some(value.to_string())));
+        }
     }
 }
 
@@ -402,6 +452,7 @@ pub fn create_services_server(
         trigram_index: trigram_index.clone(),
         db_path: db_path.clone(),
         api_key_service: None, // No authentication for basic services server
+        saas_mode: false,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
     };
@@ -546,7 +597,7 @@ pub async fn create_services_saas_server(
     db_path: PathBuf,
     api_key_config: crate::ApiKeyConfig,
 ) -> Result<Router> {
-    use crate::auth_middleware::auth_middleware;
+    use crate::auth_middleware::{auth_middleware, internal_auth_middleware};
 
     // Initialize API key service
     let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
@@ -558,6 +609,7 @@ pub async fn create_services_saas_server(
         trigram_index,
         db_path: db_path.clone(),
         api_key_service: Some(api_key_service.clone()),
+        saas_mode: true,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(repos_init)),
     };
@@ -596,10 +648,7 @@ pub async fn create_services_saas_server(
     // Create internal routes (require internal API key)
     let internal_routes = Router::new()
         .route("/internal/create-api-key", post(create_api_key_handler))
-        .layer(axum::middleware::from_fn_with_state(
-            api_key_service.clone(),
-            auth_middleware, // Will check for internal key
-        ));
+        .layer(axum::middleware::from_fn(internal_auth_middleware));
 
     Ok(Router::new()
         // Public endpoints (no authentication required)
@@ -1116,6 +1165,23 @@ async fn register_repository_v1(
     >,
 ) -> ApiResult<RegisterRepositoryResponse> {
     let Json(body) = request_result.map_err(|e| handle_json_parsing_error(e, "repositories"))?;
+
+    if !state.allow_local_path_ingestion() && body.path.is_some() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(StandardApiError {
+                error_type: "local_path_indexing_disabled".into(),
+                message: "Local path indexing is disabled for managed KotaDB deployments".into(),
+                details: Some("Provide a git_url when using the managed service".into()),
+                suggestions: vec![
+                    "Use Git repository ingestion when available".into(),
+                    "Run KotaDB locally to index arbitrary directories".into(),
+                ],
+                error_code: Some(403),
+            }),
+        ));
+    }
+
     if body.path.is_none() && body.git_url.is_none() {
         return Err(handle_validation_error(
             "path|git_url",
@@ -1591,6 +1657,17 @@ async fn index_codebase(
     State(state): State<ServicesAppState>,
     Json(request): Json<IndexCodebaseRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    if !state.allow_local_path_ingestion() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "local_path_indexing_disabled".to_string(),
+                message: "Local path indexing is disabled for managed KotaDB deployments"
+                    .to_string(),
+            }),
+        ));
+    }
+
     let result = with_trace_id("api_index_codebase", async move {
         // Create Database instance to implement DatabaseAccess
         let database = Database {
