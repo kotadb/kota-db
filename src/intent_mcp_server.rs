@@ -137,6 +137,7 @@ pub struct IntentParser {
 pub struct QueryOrchestrator {
     base_url: Url,
     client: Client,
+    api_key: Option<String>,
 }
 
 /// Manages conversation context and state
@@ -181,7 +182,7 @@ impl IntentMcpServer {
 
         Ok(Self {
             intent_parser: IntentParser::new()?,
-            orchestrator: QueryOrchestrator::new(base_url, http_client.clone()),
+            orchestrator: QueryOrchestrator::new(base_url, http_client.clone(), config.api_key.clone()),
             context_manager: ContextManager::new(),
             http_client,
             config,
@@ -589,8 +590,43 @@ impl IntentParser {
 }
 
 impl QueryOrchestrator {
-    pub fn new(base_url: Url, client: Client) -> Self {
-        Self { base_url, client }
+    pub fn new(base_url: Url, client: Client, api_key: Option<String>) -> Self {
+        Self {
+            base_url,
+            client,
+            api_key,
+        }
+    }
+
+    fn with_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(key) = &self.api_key {
+            request
+                .header("X-API-Key", key)
+                .header("Authorization", format!("Bearer {}", key))
+        } else {
+            request
+        }
+    }
+
+    fn encode_segment(segment: &str) -> String {
+        url::form_urlencoded::byte_serialize(segment.as_bytes()).collect()
+    }
+
+    fn analysis_endpoint(&self, target: &str, analysis_type: &AnalysisType) -> Result<Url> {
+        let encoded_target = Self::encode_segment(target);
+        let path = match analysis_type {
+            AnalysisType::Impact => format!("/api/analysis/impact/{}", encoded_target),
+            AnalysisType::Callers => format!("/api/relationships/callers/{}", encoded_target),
+            AnalysisType::Dependencies
+            | AnalysisType::Callees
+            | AnalysisType::Usage
+            | AnalysisType::Relationships => {
+                // Fallback to impact analysis until dedicated endpoints are exposed.
+                format!("/api/analysis/impact/{}", encoded_target)
+            }
+        };
+
+        Ok(self.base_url.join(&path)?)
     }
 
     /// Execute an intent by making appropriate API calls
@@ -639,7 +675,10 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join(endpoint)?;
         url.query_pairs_mut().append_pair("q", query);
 
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .with_auth(self.client.get(url))
+            .send()
+            .await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -650,15 +689,11 @@ impl QueryOrchestrator {
         target: &str,
         analysis_type: &AnalysisType,
     ) -> Result<serde_json::Value> {
-        let endpoint = match analysis_type {
-            AnalysisType::Impact => format!("/api/analysis/impact/{}", target),
-            AnalysisType::Callers => format!("/api/relationships/callers/{}", target),
-            AnalysisType::Dependencies => format!("/api/analysis/dependencies/{}", target),
-            _ => format!("/api/relationships/callers/{}", target), // Default to callers
-        };
-
-        let url = self.base_url.join(&endpoint)?;
-        let response = self.client.get(url).send().await?;
+        let url = self.analysis_endpoint(target, analysis_type)?;
+        let response = self
+            .with_auth(self.client.get(url))
+            .send()
+            .await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -673,7 +708,10 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join("/api/symbols/search")?;
         url.query_pairs_mut().append_pair("q", path);
 
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .with_auth(self.client.get(url))
+            .send()
+            .await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -686,7 +724,10 @@ impl QueryOrchestrator {
     ) -> Result<serde_json::Value> {
         // Get overall codebase statistics and structure
         let url = self.base_url.join("/stats")?;
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .with_auth(self.client.get(url))
+            .send()
+            .await?;
         let mut result: serde_json::Value = response.json().await?;
 
         // If focus is specified, add focused search results
@@ -694,7 +735,11 @@ impl QueryOrchestrator {
             let mut search_url = self.base_url.join("/api/code/search")?;
             search_url.query_pairs_mut().append_pair("q", focus_term);
 
-            if let Ok(search_response) = self.client.get(search_url).send().await {
+            if let Ok(search_response) = self
+                .with_auth(self.client.get(search_url))
+                .send()
+                .await
+            {
                 if let Ok(search_result) = search_response.json::<serde_json::Value>().await {
                     result["focused_results"] = search_result;
                 }
@@ -719,7 +764,10 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join("/api/code/search")?;
         url.query_pairs_mut().append_pair("q", &search_query);
 
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .with_auth(self.client.get(url))
+            .send()
+            .await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(serde_json::json!({
@@ -862,5 +910,77 @@ mod tests {
         let config = IntentMcpConfig::default();
         assert_eq!(config.api_base_url, "http://localhost:8080");
         assert_eq!(config.max_results, 20);
+    }
+
+    #[test]
+    fn with_auth_adds_headers_when_api_key_present() {
+        let client = Client::builder().build().unwrap();
+        let orchestrator = QueryOrchestrator::new(
+            Url::parse("http://localhost:8080/").unwrap(),
+            client,
+            Some("secret_key".to_string()),
+        );
+
+        let request = orchestrator
+            .with_auth(orchestrator.client.get(orchestrator.base_url.clone()))
+            .build()
+            .unwrap();
+
+        assert_eq!(request.headers()["X-API-Key"], "secret_key");
+        assert_eq!(request.headers()["Authorization"], "Bearer secret_key");
+    }
+
+    #[test]
+    fn with_auth_leaves_headers_untouched_when_key_absent() {
+        let client = Client::builder().build().unwrap();
+        let orchestrator = QueryOrchestrator::new(
+            Url::parse("http://localhost:8080/").unwrap(),
+            client,
+            None,
+        );
+
+        let request = orchestrator
+            .with_auth(orchestrator.client.get(orchestrator.base_url.clone()))
+            .build()
+            .unwrap();
+
+        assert!(request.headers().get("X-API-Key").is_none());
+        assert!(request.headers().get("Authorization").is_none());
+    }
+
+    #[test]
+    fn analysis_endpoint_percent_encodes_target() {
+        let client = Client::builder().build().unwrap();
+        let orchestrator = QueryOrchestrator::new(
+            Url::parse("http://localhost:8080/").unwrap(),
+            client,
+            None,
+        );
+
+        let url = orchestrator
+            .analysis_endpoint("Foo::bar/baz?", &AnalysisType::Impact)
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://localhost:8080/api/analysis/impact/Foo%3A%3Abar%2Fbaz%3F"
+        );
+    }
+
+    #[test]
+    fn dependencies_intent_falls_back_to_impact_endpoint() {
+        let client = Client::builder().build().unwrap();
+        let orchestrator = QueryOrchestrator::new(
+            Url::parse("http://localhost:8080/").unwrap(),
+            client,
+            None,
+        );
+
+        let url = orchestrator
+            .analysis_endpoint("my_symbol", &AnalysisType::Dependencies)
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://localhost:8080/api/analysis/impact/my_symbol"
+        );
     }
 }
