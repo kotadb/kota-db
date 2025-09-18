@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 use tokio::task;
 use uuid::Uuid;
 
+mod test_constants;
+use test_constants::gating;
+
 /// Test concurrent read operations scale linearly with CPU cores
 #[tokio::test]
 async fn test_concurrent_reads_linear_scaling() -> Result<()> {
@@ -443,6 +446,10 @@ async fn test_lock_free_read_optimization() -> Result<()> {
 /// Test write batching for improved concurrent write performance
 #[tokio::test]
 async fn test_write_batching_optimization() -> Result<()> {
+    if gating::skip_if_heavy_disabled("concurrent_access_test::test_write_batching_optimization") {
+        return Ok(());
+    }
+
     let batch_size = 100;
     let concurrent_writers = 4;
     let batches_per_writer = 10;

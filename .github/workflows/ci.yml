@@ -60,8 +60,9 @@ jobs:
         run: cargo install cargo-nextest --locked
       - name: Build (debug)
         run: |
+          FEATURES="embeddings-onnx,git-integration,tree-sitter-parsing,mcp-server,strict-sanitization,aggressive-trigram-thresholds"
           if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.base_ref }}" == "main" ]]; then
-            cargo build --all-features
+            cargo build --no-default-features --features "$FEATURES"
           else
             cargo build --no-default-features --features "git-integration,tree-sitter-parsing"
           fi
@@ -70,9 +71,10 @@ jobs:
           RUST_LOG: error
           CI: true
         run: |
+          FEATURES="embeddings-onnx,git-integration,tree-sitter-parsing,mcp-server,strict-sanitization,aggressive-trigram-thresholds"
           if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.base_ref }}" == "main" ]]; then
-            cargo nextest run --all --all-features --no-fail-fast
-            cargo test --doc --all-features
+            cargo nextest run --all --no-default-features --features "$FEATURES" --no-fail-fast
+            cargo test --doc --no-default-features --features "$FEATURES"
           else
             cargo nextest run --lib --no-default-features --features "git-integration,tree-sitter-parsing" --no-fail-fast
             cargo test --doc --no-default-features --features "git-integration,tree-sitter-parsing"
@@ -97,7 +99,7 @@ jobs:
           RUST_LOG: warn
           DISABLE_RATE_LIMIT: "1"
         run: |
-          cargo test --no-default-features --features "git-integration,tree-sitter-parsing" \
+          cargo test --no-default-features --features "git-integration,tree-sitter-parsing,mcp-server,docker-tests" \
             --test mcp_auth_middleware_test -- --ignored --nocapture
 
   docs:

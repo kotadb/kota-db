@@ -700,23 +700,23 @@ mod tests {
             "select", "insert", "update", "delete", "create", "drop", "alter", "union",
         ];
         for term in &sql_terms {
-            let result = sanitize_search_query(term).unwrap();
+            let result = sanitize_search_query(term);
             if cfg!(feature = "strict-sanitization") {
-                assert_ne!(
-                    result.text.trim(),
-                    *term,
-                    "SQL keyword '{}' should be removed in strict mode",
+                assert!(
+                    result.is_err(),
+                    "SQL keyword '{}' should be rejected in strict mode",
                     term
                 );
-                assert!(result.was_modified);
-            } else {
-                assert_eq!(
-                    result.text.trim(),
-                    *term,
-                    "SQL keyword '{}' should be preserved by default",
-                    term
-                );
+                continue;
             }
+
+            let result = result.unwrap();
+            assert_eq!(
+                result.text.trim(),
+                *term,
+                "SQL keyword '{}' should be preserved by default",
+                term
+            );
         }
     }
 

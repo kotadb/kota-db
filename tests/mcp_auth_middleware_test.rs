@@ -1,3 +1,5 @@
+#![cfg(feature = "docker-tests")]
+
 //! Integration tests for auth middleware on /mcp/* endpoints using ephemeral Postgres.
 
 use anyhow::Result;

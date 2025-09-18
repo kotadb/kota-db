@@ -3,12 +3,12 @@
 // Following anti-mock philosophy - uses real server and real HTTP calls
 
 use anyhow::Result;
-use kotadb::{create_file_storage, create_wrapped_storage, start_server};
+use kotadb::{create_file_storage, create_server, create_wrapped_storage};
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::{sync::Mutex, time::Duration};
+use tokio::{sync::oneshot, sync::Mutex, task::JoinHandle, time::Duration};
 use uuid::Uuid;
 
 /// Helper to create a test storage instance
@@ -22,28 +22,82 @@ async fn create_test_storage() -> (Arc<Mutex<dyn kotadb::Storage>>, TempDir) {
 }
 
 /// Start HTTP server on a random available port for testing
-async fn start_test_server() -> (u16, TempDir, tokio::task::JoinHandle<Result<()>>) {
+struct TestServerHandle {
+    shutdown: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
+impl TestServerHandle {
+    async fn shutdown(mut self) -> Result<()> {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(handle) = self.task.take() {
+            match handle.await {
+                Ok(result) => result,
+                Err(join_err) => Err(anyhow::anyhow!(join_err)),
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for TestServerHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(handle) = self.task.take() {
+            handle.abort();
+        }
+    }
+}
+
+async fn start_test_server() -> Result<(u16, TempDir, TestServerHandle)> {
     let (storage, temp_dir) = create_test_storage().await;
 
-    // Use port 0 to get an available port automatically
+    let app = create_server(storage.clone());
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("Failed to bind to port");
     let port = listener.local_addr().unwrap().port();
-    drop(listener); // Close the listener so the server can bind to it
 
-    let storage_clone = storage.clone();
-    let server_handle = tokio::spawn(async move { start_server(storage_clone, port).await });
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-    // Give the server a moment to start
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = shutdown_rx.await;
+    });
+
+    let task = tokio::spawn(async move {
+        match server.await {
+            Ok(()) => Ok(()),
+            Err(err) => Err(anyhow::anyhow!(err)),
+        }
+    });
+
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    (port, temp_dir, server_handle)
+    Ok((
+        port,
+        temp_dir,
+        TestServerHandle {
+            shutdown: Some(shutdown_tx),
+            task: Some(task),
+        },
+    ))
 }
 
 #[tokio::test]
 async fn test_health_check_endpoint() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
 
     let response = client
@@ -57,13 +111,13 @@ async fn test_health_check_endpoint() -> Result<()> {
     assert_eq!(body["status"], "healthy");
     assert!(body["version"].is_string());
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_document_lifecycle() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -163,13 +217,13 @@ async fn test_document_lifecycle() -> Result<()> {
 
     assert_eq!(get_deleted_response.status(), StatusCode::NOT_FOUND);
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_error_handling() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -221,13 +275,13 @@ async fn test_error_handling() -> Result<()> {
         StatusCode::UNPROCESSABLE_ENTITY
     );
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_search_functionality() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -304,13 +358,13 @@ async fn test_search_functionality() -> Result<()> {
     let all_results: Value = all_search.json().await?;
     assert!(all_results["total_count"].as_u64().unwrap() >= 3);
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_concurrent_operations() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -360,13 +414,13 @@ async fn test_concurrent_operations() -> Result<()> {
     let search_results: Value = search_response.json().await?;
     assert!(search_results["total_count"].as_u64().unwrap() >= 10);
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_performance_response_times() -> Result<()> {
-    let (port, _temp_dir, server_handle) = start_test_server().await;
+    let (port, _temp_dir, server) = start_test_server().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -417,6 +471,6 @@ async fn test_performance_response_times() -> Result<()> {
         );
     }
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }

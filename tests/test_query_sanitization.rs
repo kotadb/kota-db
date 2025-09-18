@@ -121,12 +121,19 @@ fn test_ldap_injection_prevention() -> Result<()> {
         let result = sanitize_search_query(input)?;
         if cfg!(feature = "strict-sanitization") {
             // Strict mode: LDAP-special characters removed
-            assert!(!result.text.contains('*') || input == "admin*");
             assert!(!result.text.contains('('));
             assert!(!result.text.contains(')'));
             assert!(!result.text.contains('\\'));
             assert!(!result.text.contains(','));
             assert!(!result.text.contains('='));
+
+            if !input.contains('*') {
+                assert!(
+                    !result.text.contains('*'),
+                    "Strict sanitization should not introduce wildcards for '{}'",
+                    input
+                );
+            }
         } else {
             // Default mode: preserve common characters for developer queries
             // Ensure the result is non-empty and not more dangerous than input

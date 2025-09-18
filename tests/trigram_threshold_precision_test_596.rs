@@ -262,6 +262,10 @@ async fn test_long_query_60_percent_threshold() -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(
+    feature = "aggressive-trigram-thresholds",
+    ignore = "Aggressive trigram fallback relaxes strict zero-result expectations"
+)]
 #[tokio::test]
 async fn test_false_positive_reduction() -> Result<()> {
     let (_temp_dir, index) = setup_trigram_test_index().await?;

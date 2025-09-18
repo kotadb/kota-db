@@ -1,0 +1,6 @@
+# Ensure heavy integration/performance suites do not run in parallel with other binaries.
+# These suites spawn many tasks and aggressive timing thresholds that flake when they
+# share CPU with the broader test run.
+[[profile.default.overrides]]
+filter = 'binary(#code_analysis_integration_test) + binary(#concurrent_stress_test) + binary(#graph_storage_test) + binary(#performance_regression_test) + binary(#query_routing_stress) + binary(#test_bidirectional_relationships) + binary(#write_performance_test)'
+threads-required = "num-test-threads"

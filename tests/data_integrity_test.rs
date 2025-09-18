@@ -1,7 +1,7 @@
 // Data Integrity Integration Tests - Stage 1: TDD for Phase 3 Production Readiness
 // Tests ACID properties, data consistency, corruption detection, and data validation
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use kotadb::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -446,6 +446,20 @@ async fn test_acid_isolation() -> Result<()> {
         all_successful_ids.len(),
         "Final document count doesn't match successful operations"
     );
+
+    drop(final_storage);
+
+    let storage_mutex = Arc::try_unwrap(storage)
+        .map_err(|_| anyhow!("storage Arc still has outstanding references"))?;
+    let storage_instance = storage_mutex.into_inner();
+    storage_instance.close().await?;
+
+    let index_mutex = Arc::try_unwrap(index)
+        .map_err(|_| anyhow!("index Arc still has outstanding references"))?;
+    let index_instance = index_mutex.into_inner();
+    index_instance.close().await?;
+
+    drop(temp_dir);
 
     Ok(())
 }

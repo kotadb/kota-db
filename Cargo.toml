@@ -134,6 +134,9 @@ hnsw = { version = "0.11", optional = true }     # Vector search
 ort = { version = "2.0.0-rc.10", features = ["ndarray"], optional = true }  # ONNX Runtime
 tokenizers = { version = "0.20", optional = true }                          # Tokenization
 ndarray = { version = "0.15", optional = true }                             # N-dimensional arrays
+# Docker-based integration testing (optional)
+testcontainers = { version = "0.17", optional = true }
+testcontainers-modules = { version = "0.5", features = ["postgres"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -144,8 +147,6 @@ rand = "0.8"
 tokio-test = "0.4"
 tempfile = "3.22.0"
 reqwest = { version = "0.11", features = ["json"] }
-testcontainers = "0.17"
-testcontainers-modules = { version = "0.5", features = ["postgres"] }
 sha2 = "0.10"
 
 [features]
@@ -155,6 +156,7 @@ advanced-search = ["tantivy", "hnsw"]
 # Sanitization and search behavior toggles (default-off to avoid breaking UX/tests)
 strict-sanitization = []
 aggressive-trigram-thresholds = []
+docker-tests = ["testcontainers", "testcontainers-modules"]
 # MCP Server features
 mcp-server = ["jsonrpc-core", "jsonrpc-derive", "config"]
 # Embedding features
@@ -173,6 +175,10 @@ tree-sitter-parsing = [
 bench = ["criterion", "proptest"]
 # Development features
 dev = ["bench", "embeddings-onnx", "git-integration", "tree-sitter-parsing"]
+
+[patch.crates-io]
+dirs-sys = { path = "patches/dirs-sys" }
+
 
 [profile.release]
 opt-level = 3
