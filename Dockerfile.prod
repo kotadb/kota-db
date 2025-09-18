@@ -23,6 +23,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src/ src/
 COPY tests/ tests/
 COPY benches/ benches/
+COPY patches/ patches/
 RUN mkdir -p docs/api \
     && echo "# KotaDB API\n\nStub file for Docker build (docs excluded by .dockerignore)." > docs/api/api.md
 COPY test_minimal_cli.rs test_minimal_cli.rs
