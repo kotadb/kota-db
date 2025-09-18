@@ -75,16 +75,50 @@ impl ServicesAppState {
         }
 
         match std::env::var("ALLOW_LOCAL_PATH_INDEXING") {
-            Ok(flag) => {
-                let normalized = flag.trim().to_ascii_lowercase();
-                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            Ok(flag) => parse_local_path_ingestion_flag(Some(flag)),
+            Err(_) => {
+                // TODO(#692): default to false once SaaS git ingestion lands.
+                true
             }
-            Err(_) => false,
         }
     }
 
     fn repo_registry_path(&self) -> PathBuf {
         self.db_path.join("repositories.json")
+    }
+}
+
+fn parse_local_path_ingestion_flag(raw: Option<String>) -> bool {
+    match raw {
+        Some(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod allow_local_path_tests {
+    use super::parse_local_path_ingestion_flag;
+
+    #[test]
+    fn defaults_to_true_when_missing() {
+        assert!(parse_local_path_ingestion_flag(None));
+    }
+
+    #[test]
+    fn returns_true_for_truthy_strings() {
+        for value in ["1", "true", "yes", "on", " arbitrary "] {
+            assert!(parse_local_path_ingestion_flag(Some(value.to_string())));
+        }
+    }
+
+    #[test]
+    fn returns_false_for_falsey_strings() {
+        for value in ["0", "false", "no", "off", " FALSE "] {
+            assert!(!parse_local_path_ingestion_flag(Some(value.to_string())));
+        }
     }
 }
 

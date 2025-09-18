@@ -13,7 +13,7 @@ Highlights
 Security
 - The non-SaaS server (`create_services_server`) exposes repository registration and indexing for arbitrary local paths. It is intended for local/dev, single-tenant usage. Do not expose it publicly in multi-tenant environments.
 - The SaaS server (`create_services_saas_server`) puts v1 routes behind API key auth and expects every `/internal/*` request to include the secret `INTERNAL_API_KEY` header value.
-- Managed deployments reject filesystem path ingestion by default. Set `ALLOW_LOCAL_PATH_INDEXING=1` only in trusted, single-tenant environments; otherwise require Git-based ingestion.
+- Managed deployments can disable filesystem path ingestion by setting `ALLOW_LOCAL_PATH_INDEXING=0`/`false`. Until git-based ingestion ships (#692), the default remains enabled so tenants can onboard repositories.
 
 Error Contract
 `StandardApiError` (JSON):
@@ -64,7 +64,7 @@ Endpoints
             "max_parallel_files?": number, "enable_chunking?": bool,
             "extract_symbols?": bool }
   - Note: `git_url` is not supported yet. Return: `git_url_not_supported` (400).
-  - In SaaS mode, requests providing `path` return `local_path_indexing_disabled` (403); clone locally or wait for managed Git ingestion.
+  - In SaaS mode with `ALLOW_LOCAL_PATH_INDEXING=0`, requests providing `path` return `local_path_indexing_disabled` (403); clone locally or wait for managed Git ingestion.
   - 400: when neither `path` nor `git_url` provided; when `path` does not exist or is not a directory
   - 200: { job_id, repository_id, status: "accepted" }
   - Details: repository_id is stable (hash of canonical path).
