@@ -252,6 +252,12 @@ sequenceDiagram
 - **Audit Trails**: All changes tracked in database
 - **Separation of Concerns**: API server can't access other users' data
 
+## Storage Strategy
+
+- **Source of Truth**: Persist all relational state—API keys, quotas, usage metrics, documents—in Supabase Postgres. This keeps data co-located with the frontend, enforces RLS once, and lets both the SaaS site and Fly API share a single schema.
+- **Fly.io Volumes as Cache**: Mount a small volume per environment so the API server's on-disk indexes (`/data/storage`, `/data/primary`, `/data/trigram`) survive restarts. Treat these as rebuildable caches; Supabase still owns the canonical records.
+- **Object Storage (Optional)**: Reach for Supabase Storage buckets only when you need to persist large binary artifacts across deploys. Today's flow sticks to the volume-backed cache, so buckets remain opt-in.
+
 ## Migration Checklist
 
 - [ ] Set up Supabase project

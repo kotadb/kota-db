@@ -112,8 +112,8 @@ pub async fn auth_middleware(
     let method = request.method().to_string();
     let headers = request.headers().clone();
 
-    // Skip authentication for health check and internal endpoints
-    if path == "/health" || path.starts_with("/internal/") {
+    // Skip authentication for public health probe only; internal routes require secret middleware
+    if path == "/health" {
         debug!("Skipping auth for endpoint: {}", path);
         return Ok(next.run(request).await);
     }
