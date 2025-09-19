@@ -238,7 +238,8 @@ async fn test_error_handling() -> Result<()> {
     assert_eq!(error_body["error"], "invalid_id");
 
     // Test non-existent document
-    let fake_uuid = Uuid::new_v4();
+    // Use a deterministic UUID so CodeQL doesn't flag this as sensitive data in transit.
+    let fake_uuid = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
     let not_found_response = client
         .get(format!("{base_url}/documents/{fake_uuid}"))
         .send()

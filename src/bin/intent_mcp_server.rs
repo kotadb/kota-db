@@ -179,7 +179,7 @@ async fn run_interactive_mode(server: IntentMcpServer) -> Result<()> {
 }
 
 /// Run in MCP mode (JSON-RPC over stdio)
-async fn run_mcp_mode(server: IntentMcpServer) -> Result<()> {
+async fn run_mcp_mode(_server: IntentMcpServer) -> Result<()> {
     tracing::info!("Starting MCP protocol mode");
 
     // In a real implementation, this would:

@@ -182,7 +182,11 @@ impl IntentMcpServer {
 
         Ok(Self {
             intent_parser: IntentParser::new()?,
-            orchestrator: QueryOrchestrator::new(base_url, http_client.clone(), config.api_key.clone()),
+            orchestrator: QueryOrchestrator::new(
+                base_url,
+                http_client.clone(),
+                config.api_key.clone(),
+            ),
             context_manager: ContextManager::new(),
             http_client,
             config,
@@ -630,11 +634,11 @@ impl QueryOrchestrator {
     }
 
     /// Execute an intent by making appropriate API calls
-    #[instrument(skip(self, context))]
+    #[instrument(skip(self, _context))]
     pub async fn execute_intent(
         &self,
         intent: &Intent,
-        context: &Option<ConversationContext>,
+        _context: &Option<ConversationContext>,
     ) -> Result<serde_json::Value> {
         match intent {
             Intent::Search { query, scope, .. } => self.execute_search(query, scope).await,
@@ -675,10 +679,7 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join(endpoint)?;
         url.query_pairs_mut().append_pair("q", query);
 
-        let response = self
-            .with_auth(self.client.get(url))
-            .send()
-            .await?;
+        let response = self.with_auth(self.client.get(url)).send().await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -690,10 +691,7 @@ impl QueryOrchestrator {
         analysis_type: &AnalysisType,
     ) -> Result<serde_json::Value> {
         let url = self.analysis_endpoint(target, analysis_type)?;
-        let response = self
-            .with_auth(self.client.get(url))
-            .send()
-            .await?;
+        let response = self.with_auth(self.client.get(url)).send().await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -708,10 +706,7 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join("/api/symbols/search")?;
         url.query_pairs_mut().append_pair("q", path);
 
-        let response = self
-            .with_auth(self.client.get(url))
-            .send()
-            .await?;
+        let response = self.with_auth(self.client.get(url)).send().await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(result)
@@ -724,10 +719,7 @@ impl QueryOrchestrator {
     ) -> Result<serde_json::Value> {
         // Get overall codebase statistics and structure
         let url = self.base_url.join("/stats")?;
-        let response = self
-            .with_auth(self.client.get(url))
-            .send()
-            .await?;
+        let response = self.with_auth(self.client.get(url)).send().await?;
         let mut result: serde_json::Value = response.json().await?;
 
         // If focus is specified, add focused search results
@@ -735,11 +727,7 @@ impl QueryOrchestrator {
             let mut search_url = self.base_url.join("/api/code/search")?;
             search_url.query_pairs_mut().append_pair("q", focus_term);
 
-            if let Ok(search_response) = self
-                .with_auth(self.client.get(search_url))
-                .send()
-                .await
-            {
+            if let Ok(search_response) = self.with_auth(self.client.get(search_url)).send().await {
                 if let Ok(search_result) = search_response.json::<serde_json::Value>().await {
                     result["focused_results"] = search_result;
                 }
@@ -764,10 +752,7 @@ impl QueryOrchestrator {
         let mut url = self.base_url.join("/api/code/search")?;
         url.query_pairs_mut().append_pair("q", &search_query);
 
-        let response = self
-            .with_auth(self.client.get(url))
-            .send()
-            .await?;
+        let response = self.with_auth(self.client.get(url)).send().await?;
         let result: serde_json::Value = response.json().await?;
 
         Ok(serde_json::json!({
@@ -933,11 +918,8 @@ mod tests {
     #[test]
     fn with_auth_leaves_headers_untouched_when_key_absent() {
         let client = Client::builder().build().unwrap();
-        let orchestrator = QueryOrchestrator::new(
-            Url::parse("http://localhost:8080/").unwrap(),
-            client,
-            None,
-        );
+        let orchestrator =
+            QueryOrchestrator::new(Url::parse("http://localhost:8080/").unwrap(), client, None);
 
         let request = orchestrator
             .with_auth(orchestrator.client.get(orchestrator.base_url.clone()))
@@ -951,11 +933,8 @@ mod tests {
     #[test]
     fn analysis_endpoint_percent_encodes_target() {
         let client = Client::builder().build().unwrap();
-        let orchestrator = QueryOrchestrator::new(
-            Url::parse("http://localhost:8080/").unwrap(),
-            client,
-            None,
-        );
+        let orchestrator =
+            QueryOrchestrator::new(Url::parse("http://localhost:8080/").unwrap(), client, None);
 
         let url = orchestrator
             .analysis_endpoint("Foo::bar/baz?", &AnalysisType::Impact)
@@ -969,11 +948,8 @@ mod tests {
     #[test]
     fn dependencies_intent_falls_back_to_impact_endpoint() {
         let client = Client::builder().build().unwrap();
-        let orchestrator = QueryOrchestrator::new(
-            Url::parse("http://localhost:8080/").unwrap(),
-            client,
-            None,
-        );
+        let orchestrator =
+            QueryOrchestrator::new(Url::parse("http://localhost:8080/").unwrap(), client, None);
 
         let url = orchestrator
             .analysis_endpoint("my_symbol", &AnalysisType::Dependencies)

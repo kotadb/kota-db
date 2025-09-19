@@ -182,7 +182,7 @@ mod primary_index_adversarial_tests {
                 for j in 0..100 {
                     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
                     let doc_path =
-                        ValidatedPath::new(format!("adversarial/writer_{i}_{j}.md")).unwrap();
+                        ValidatedPath::new(format!("adversarial/writer_{}_{}.md", i, j)).unwrap();
 
                     let mut index_guard = index_clone.lock().await;
                     index_guard.insert(doc_id, doc_path).await.unwrap();

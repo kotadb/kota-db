@@ -378,7 +378,7 @@ async fn test_acid_isolation() -> Result<()> {
                                     batch_results.push((doc.id, true, insert_start.elapsed()));
                                 }
                                 Err(e) => {
-                                    println!("      - Batch {batch_id} index failure: {e}");
+                                    println!("      - Batch {} index failure: {}", batch_id, e);
                                     // In a real implementation, would rollback storage insert
                                     storage_guard.delete(&doc.id).await.ok();
                                     batch_results.push((doc.id, false, insert_start.elapsed()));
@@ -386,7 +386,7 @@ async fn test_acid_isolation() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            println!("      - Batch {batch_id} storage failure: {e}");
+                            println!("      - Batch {} storage failure: {}", batch_id, e);
                             batch_results.push((doc.id, false, insert_start.elapsed()));
                         }
                     }

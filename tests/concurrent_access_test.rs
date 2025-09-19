@@ -25,7 +25,7 @@ async fn test_concurrent_reads_linear_scaling() -> Result<()> {
 
     for i in 0..tree_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("concurrent/read_test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("concurrent/read_test_{}.md", i))?;
         tree = btree::insert_into_tree(tree, id, path)?;
         test_keys.push(id);
     }
@@ -93,8 +93,8 @@ async fn test_concurrent_writes_isolation() -> Result<()> {
 
             for i in 0..writes_per_writer {
                 let id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let path =
-                    ValidatedPath::new(format!("concurrent/writer_{writer_id}_{i}.md")).unwrap();
+                let path = ValidatedPath::new(format!("concurrent/writer_{}_{}.md", writer_id, i))
+                    .unwrap();
 
                 // Acquire write lock and insert
                 {
@@ -168,7 +168,7 @@ async fn test_mixed_read_write_workload() -> Result<()> {
 
     for i in 0..initial_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("mixed/initial_{i}.md"))?;
+        let path = ValidatedPath::new(format!("mixed/initial_{}.md", i))?;
         tree = btree::insert_into_tree(tree, id, path)?;
         initial_keys.push(id);
     }
@@ -227,7 +227,8 @@ async fn test_mixed_read_write_workload() -> Result<()> {
 
             for i in 0..operations_per_thread {
                 let id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let path = ValidatedPath::new(format!("mixed/writer_{writer_id}_{i}.md")).unwrap();
+                let path =
+                    ValidatedPath::new(format!("mixed/writer_{}_{}.md", writer_id, i)).unwrap();
 
                 // Write operation
                 {
@@ -306,10 +307,10 @@ async fn test_deadlock_prevention() -> Result<()> {
             for i in 0..operations_per_thread {
                 let id1 = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
                 let id2 = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
-                let path1 =
-                    ValidatedPath::new(format!("deadlock/t{thread_id}_op{i}_tree1.md")).unwrap();
-                let path2 =
-                    ValidatedPath::new(format!("deadlock/t{thread_id}_op{i}_tree2.md")).unwrap();
+                let path1 = ValidatedPath::new(format!("deadlock/t{}_op{}_tree1.md", thread_id, i))
+                    .unwrap();
+                let path2 = ValidatedPath::new(format!("deadlock/t{}_op{}_tree2.md", thread_id, i))
+                    .unwrap();
 
                 // Alternate lock acquisition order to test deadlock prevention
                 if thread_id % 2 == 0 {
@@ -378,7 +379,7 @@ async fn test_lock_free_read_optimization() -> Result<()> {
 
     for i in 0..tree_size {
         let id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-        let path = ValidatedPath::new(format!("lockfree/test_{i}.md"))?;
+        let path = ValidatedPath::new(format!("lockfree/test_{}.md", i))?;
         tree = btree::insert_into_tree(tree, id, path)?;
         keys.push(id);
     }
@@ -469,7 +470,7 @@ async fn test_write_batching_optimization() -> Result<()> {
                 for i in 0..batch_size {
                     let id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
                     let path =
-                        ValidatedPath::new(format!("batch/w{writer_id}_b{batch_id}_i{i}.md"))
+                        ValidatedPath::new(format!("batch/w{}_b{}_i{}.md", writer_id, batch_id, i))
                             .unwrap();
                     batch_pairs.push((id, path));
                 }
