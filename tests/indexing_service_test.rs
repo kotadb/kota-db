@@ -54,6 +54,17 @@ fn create_test_repository(base_path: &std::path::Path) -> Result<PathBuf> {
         .current_dir(&repo_path)
         .output()?;
 
+    // Ensure local git identity is configured for CI environments
+    // Some runners do not have global git config; set per-repo values.
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&repo_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&repo_path)
+        .output()?;
+
     // Create some test files with different languages
     fs::write(
         repo_path.join("README.md"),
@@ -103,6 +114,17 @@ pub fn utility_function(input: &str) -> String {
 "#,
     )?;
 
+    // Add and commit files to git repository (required for symbol extraction)
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&repo_path)
+        .output()?;
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial test commit"])
+        .current_dir(&repo_path)
+        .output()?;
+
     Ok(repo_path)
 }
 
@@ -111,7 +133,10 @@ async fn test_index_codebase_basic_functionality() -> Result<()> {
     let (database, temp_dir) = create_test_database().await?;
     let repo_path = create_test_repository(temp_dir.path())?;
 
-    let indexing_service = IndexingService::new(&database, temp_dir.path().to_path_buf());
+    // Ensure the database path exists and is writable
+    let db_path = temp_dir.path().to_path_buf();
+    std::fs::create_dir_all(&db_path)?;
+    let indexing_service = IndexingService::new(&database, db_path);
 
     let options = IndexCodebaseOptions {
         repo_path: repo_path.clone(),

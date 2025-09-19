@@ -5,22 +5,22 @@
 ## One-Command Start
 
 ```bash
-# Start KotaDB with demo data
-docker-compose -f docker-compose.quickstart.yml up -d
+# Start KotaDB with demo data (defaults to http://localhost:18080)
+docker compose -f docker-compose.prod.yml --profile quickstart up -d quickstart-server
 
 # Wait for server to be ready (10-15 seconds)
-docker-compose -f docker-compose.quickstart.yml logs -f kotadb-server
+docker compose -f docker-compose.prod.yml --profile quickstart logs -f quickstart-server
 
 # Run Python demo (shows all core features)
-docker-compose -f docker-compose.quickstart.yml --profile demo up python-demo
+docker compose -f docker-compose.prod.yml --profile quickstart up python-demo
 
 # Or run TypeScript demo
-docker-compose -f docker-compose.quickstart.yml --profile demo up typescript-demo
+docker compose -f docker-compose.prod.yml --profile quickstart up typescript-demo
 ```
 
 ## What You Get
 
-- ✅ KotaDB server running on http://localhost:8080
+- ✅ KotaDB server running on http://localhost:18080 (override with `KOTADB_QUICKSTART_PORT`)
 - ✅ Pre-loaded sample data (notes, documents, code examples)
 - ✅ Working Python and TypeScript client examples
 - ✅ All core features demonstrated: CRUD, search, indexing
@@ -30,13 +30,13 @@ docker-compose -f docker-compose.quickstart.yml --profile demo up typescript-dem
 
 ```bash
 # Check server health
-curl http://localhost:8080/health
+curl http://localhost:18080/health
 
 # Search documents
-curl "http://localhost:8080/search?q=rust&limit=5"
+curl "http://localhost:18080/search?q=rust&limit=5"
 
 # Get database stats
-curl http://localhost:8080/stats
+curl http://localhost:18080/stats
 ```
 
 ## What's Demonstrated
@@ -74,7 +74,7 @@ curl http://localhost:8080/stats
 
 ```bash
 # Stop everything
-docker-compose -f docker-compose.quickstart.yml down -v
+docker compose -f docker-compose.prod.yml --profile quickstart down -v
 
 # Remove demo data
 rm -rf quickstart-data/

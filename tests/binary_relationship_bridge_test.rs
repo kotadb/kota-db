@@ -104,11 +104,31 @@ impl Config {
         let repo_dir = temp_dir.path().join("test_repo");
         std::fs::create_dir_all(&repo_dir)?;
 
-        // Initialize git repo
-        std::process::Command::new("git")
-            .arg("init")
-            .current_dir(&repo_dir)
-            .output()?;
+        // Initialize git repo and configure identity for commits (assert success)
+        assert!(
+            std::process::Command::new("git")
+                .arg("init")
+                .current_dir(&repo_dir)
+                .status()?
+                .success(),
+            "git init failed"
+        );
+        assert!(
+            std::process::Command::new("git")
+                .args(["config", "user.email", "test@example.com"])
+                .current_dir(&repo_dir)
+                .status()?
+                .success(),
+            "git config user.email failed"
+        );
+        assert!(
+            std::process::Command::new("git")
+                .args(["config", "user.name", "Test User"])
+                .current_dir(&repo_dir)
+                .status()?
+                .success(),
+            "git config user.name failed"
+        );
 
         // Create some source files
         let main_rs = r#"
@@ -337,11 +357,19 @@ fn internal_function() {
         let repo_dir = temp_dir.path().join("test_repo");
         std::fs::create_dir_all(&repo_dir)?;
 
-        // Initialize git repo
+        // Initialize git repo and configure identity for commits
         std::process::Command::new("git")
             .arg("init")
             .current_dir(&repo_dir)
-            .output()?;
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_dir)
+            .status()?;
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_dir)
+            .status()?;
 
         // Create source files with clear dependencies
         let main_rs = r#"
@@ -452,17 +480,35 @@ fn calculate() -> i32 {
             .current_dir(&repo_dir)
             .output()?;
 
+        // Configure local git identity for CI environments before committing
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_dir)
+            .output()?;
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_dir)
+            .output()?;
+
         // Create a file that might cause parsing issues
         std::fs::write(repo_dir.join("main.rs"), "invalid rust syntax $$$ {{{")?;
 
-        std::process::Command::new("git")
-            .args(["add", "."])
-            .current_dir(&repo_dir)
-            .output()?;
-        std::process::Command::new("git")
-            .args(["commit", "-m", "Invalid syntax commit"])
-            .current_dir(&repo_dir)
-            .output()?;
+        assert!(
+            std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(&repo_dir)
+                .status()?
+                .success(),
+            "git add failed"
+        );
+        assert!(
+            std::process::Command::new("git")
+                .args(["commit", "--allow-empty", "-m", "Invalid syntax commit"])
+                .current_dir(&repo_dir)
+                .status()?
+                .success(),
+            "git commit failed"
+        );
 
         let mut storage = create_file_storage(storage_path.to_str().unwrap(), Some(100)).await?;
 

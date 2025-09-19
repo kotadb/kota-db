@@ -7,25 +7,17 @@ use kotadb::query_sanitization::sanitize_search_query;
 #[test]
 fn test_legitimate_programming_terms_allowed() -> Result<()> {
     // Test that common programming terms are not blocked by sanitization
-    let terms = [
+    let programming_terms = [
         "rust",
         "script",
         "javascript",
         "typescript",
-        "select",
-        "insert",
-        "update",
-        "delete",
-        "create",
-        "drop",
-        "alter",
-        "union",
         "exec",
         "execute",
         "eval",
     ];
 
-    for term in &terms {
+    for term in &programming_terms {
         let result = sanitize_search_query(term)?;
         assert!(
             !result.is_empty(),
@@ -45,21 +37,66 @@ fn test_legitimate_programming_terms_allowed() -> Result<()> {
         );
     }
 
+    // SQL-flavored keywords are rejected when strict sanitization is enabled.
+    let sql_terms = [
+        "select", "insert", "update", "delete", "create", "drop", "alter", "union",
+    ];
+
+    for term in &sql_terms {
+        let result = sanitize_search_query(term);
+        if cfg!(feature = "strict-sanitization") {
+            assert!(
+                result.is_err(),
+                "Term '{}' should be rejected in strict sanitization mode",
+                term
+            );
+        } else {
+            let result = result?;
+            assert!(
+                !result.is_empty(),
+                "Term '{}' should not be empty after sanitization",
+                term
+            );
+            assert_eq!(
+                result.text.trim(),
+                *term,
+                "Term '{}' should be preserved",
+                term
+            );
+            assert!(
+                !result.was_modified,
+                "Term '{}' should not be modified",
+                term
+            );
+        }
+    }
+
     Ok(())
 }
 
 #[test]
 fn test_multi_word_programming_queries_allowed() -> Result<()> {
-    let queries = [
-        "rust programming",
-        "javascript function",
-        "create component",
-        "select element",
-        "insert data",
-        "script tag",
-    ];
+    let queries = if cfg!(feature = "strict-sanitization") {
+        vec![
+            ("rust programming", "rust programming"),
+            ("javascript function", "javascript function"),
+            ("create component", "component"),
+            ("select element", "element"),
+            ("insert data", "data"),
+            ("script tag", "script tag"),
+        ]
+    } else {
+        vec![
+            ("rust programming", "rust programming"),
+            ("javascript function", "javascript function"),
+            ("create component", "create component"),
+            ("select element", "select element"),
+            ("insert data", "insert data"),
+            ("script tag", "script tag"),
+        ]
+    };
 
-    for query in &queries {
+    for (query, expected) in &queries {
         let result = sanitize_search_query(query)?;
         assert!(
             !result.is_empty(),
@@ -68,8 +105,8 @@ fn test_multi_word_programming_queries_allowed() -> Result<()> {
         );
         assert_eq!(
             result.text.trim(),
-            *query,
-            "Query '{}' should be preserved",
+            *expected,
+            "Query '{}' should be preserved or safely reduced",
             query
         );
     }

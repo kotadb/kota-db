@@ -112,8 +112,8 @@ pub async fn auth_middleware(
     let method = request.method().to_string();
     let headers = request.headers().clone();
 
-    // Skip authentication for health check and internal endpoints
-    if path == "/health" || path.starts_with("/internal/") {
+    // Skip authentication for public health probe only; internal routes require secret middleware
+    if path == "/health" {
         debug!("Skipping auth for endpoint: {}", path);
         return Ok(next.run(request).await);
     }
@@ -166,33 +166,38 @@ pub async fn auth_middleware(
         });
     }
 
-    // Check rate limit
-    let rate_limit_ok = api_key_service
-        .check_rate_limit(validation.key_id, validation.rate_limit)
-        .await
-        .map_err(|e| {
-            let error_id = Uuid::new_v4();
-            warn!("Rate limit check error [{}]: {}", error_id, e);
-            AuthError {
-                error: "rate_limit_error".to_string(),
-                message: format!("Failed to check rate limit. Error ID: {}", error_id),
-                status_code: 500,
-            }
-        })?;
+    // Check rate limit unless explicitly disabled (e.g., in CI integration tests)
+    let disable_rl = std::env::var("DISABLE_RATE_LIMIT").unwrap_or_default() == "1";
+    if !disable_rl {
+        let rate_limit_ok = api_key_service
+            .check_rate_limit(validation.key_id, validation.rate_limit)
+            .await
+            .map_err(|e| {
+                let error_id = Uuid::new_v4();
+                warn!("Rate limit check error [{}]: {}", error_id, e);
+                AuthError {
+                    error: "rate_limit_error".to_string(),
+                    message: format!("Failed to check rate limit. Error ID: {}", error_id),
+                    status_code: 500,
+                }
+            })?;
 
-    if !rate_limit_ok {
-        warn!(
-            "Rate limit exceeded for key_id {} on {}",
-            validation.key_id, path
-        );
-        return Err(AuthError {
-            error: "rate_limit_exceeded".to_string(),
-            message: format!(
-                "Rate limit exceeded. Limit: {} requests per minute",
-                validation.rate_limit
-            ),
-            status_code: 429,
-        });
+        if !rate_limit_ok {
+            warn!(
+                "Rate limit exceeded for key_id {} on {}",
+                validation.key_id, path
+            );
+            return Err(AuthError {
+                error: "rate_limit_exceeded".to_string(),
+                message: format!(
+                    "Rate limit exceeded. Limit: {} requests per minute",
+                    validation.rate_limit
+                ),
+                status_code: 429,
+            });
+        }
+    } else {
+        debug!("Rate limit check disabled via DISABLE_RATE_LIMIT=1");
     }
 
     // Create auth context

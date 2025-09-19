@@ -1,26 +1,27 @@
 #!/bin/bash
 
-echo "🐳 Testing KotaDB Docker container locally with Railway environment..."
+echo "🐳 Testing KotaDB Docker container locally (Fly.io-compatible envs)..."
 
-# Export Railway environment variables locally
-echo "Fetching Railway environment variables..."
-eval $(railway variables --json | jq -r 'to_entries | .[] | "export \(.key)=\"\(.value)\""')
-
-# Override DATABASE_URL to use localhost if it's using internal Railway networking
-if [[ "$DATABASE_URL" == *"railway.internal"* ]]; then
-    echo "⚠️  DATABASE_URL uses Railway internal networking. You'll need to:"
-    echo "   1. Use 'railway run' to test with Railway's network"
-    echo "   2. Or set up a local PostgreSQL database"
-    echo ""
-    echo "For local testing, let's use a local PostgreSQL:"
-    export DATABASE_URL="postgresql://postgres:password@localhost:5432/kotadb_test"
-    echo "Using local DATABASE_URL: $DATABASE_URL"
+# Load environment variables from a local .env file when present, or fall back to sane defaults.
+# This avoids any dependency on Railway tooling. You can copy .env.example to .env and customize.
+if [[ -f .env ]]; then
+  echo "Loading environment from .env"
+  # shellcheck disable=SC2046
+  export $(grep -v '^#' .env | xargs -d '\n')
+else
+  echo "No .env found; using defaults for local testing."
 fi
+
+# Ensure a DATABASE_URL suitable for local testing exists
+if [[ -z "$DATABASE_URL" ]]; then
+  export DATABASE_URL="postgresql://postgres:password@localhost:5432/kotadb_test"
+fi
+echo "Using DATABASE_URL: $DATABASE_URL"
 
 # Build the Docker image
 echo ""
 echo "Building Docker image..."
-docker build -f Dockerfile.production -t kotadb-api-server:local . || {
+docker build -f Dockerfile.prod -t kotadb-api-server:local . || {
     echo "❌ Docker build failed"
     exit 1
 }
@@ -29,7 +30,7 @@ docker build -f Dockerfile.production -t kotadb-api-server:local . || {
 docker stop kotadb-test 2>/dev/null
 docker rm kotadb-test 2>/dev/null
 
-# Run the container with Railway environment variables
+# Run the container with configured environment variables
 echo ""
 echo "Running container..."
 docker run -d \

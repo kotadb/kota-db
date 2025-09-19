@@ -146,6 +146,7 @@ nav:
     - api/api_reference.md
     - api/api.md
     - api/quick_reference.md
+    - api/api_v1.md
   
   - Developer Guide:
     - development-guides/dev_guide.md

@@ -1,11 +1,15 @@
 version: '3.8'
 
+x-kotadb-build: &kotadb-build
+  context: .
+  dockerfile: Dockerfile.prod
+
 services:
   # Main development environment
   kotadb-dev:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.prod
     container_name: kotadb-dev
     working_dir: /workspace
     volumes:
@@ -34,9 +38,47 @@ services:
       # HTTP server configuration
       - KOTADB_HTTP_PORT=${KOTADB_HTTP_PORT:-8080}
       - KOTADB_HTTP_HOST=${KOTADB_HTTP_HOST:-0.0.0.0}
+      # Database URL for local dev inside container (points to postgres-dev)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://kotadb:development@postgres-dev:5432/kotadb_test}
     stdin_open: true
     tty: true
     command: /bin/bash
+    networks:
+      - kotadb-dev
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+
+  kotadb-mcp:
+    build: *kotadb-build
+    container_name: kotadb-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8484}:8484"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=1
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8484
+      - KOTADB_DATA_DIR=/app/data
+    volumes:
+      - ${KOTADB_DATA_DIR_HOST:-./kotadb-data}:/app/data
+      - ${KOTADB_MCP_CONFIG_HOST:-./docker/mcp/kotadb-mcp.toml}:/app/config/kotadb-mcp.toml:ro
+    command: ["kotadb-mcp", "--config", "/app/config/kotadb-mcp.toml", "--data-dir", "/app/data"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          curl -sS -X POST http://127.0.0.1:8484/mcp \
+            -H "Accept: application/json, text/event-stream" \
+            -H "Content-Type: application/json" \
+            -H "MCP-Protocol-Version: 2025-06-18" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            >/dev/null || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     networks:
       - kotadb-dev
 
@@ -81,6 +123,11 @@ services:
       - ./scripts/sql:/docker-entrypoint-initdb.d
     networks:
       - kotadb-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kotadb -d kotadb_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   cargo-cache:

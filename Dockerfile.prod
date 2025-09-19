@@ -1,85 +1,73 @@
-# Production-ready multi-stage build for KotaDB
+# KotaDB production image with MCP support
+# Builds the CLI server, SaaS API server, and MCP HTTP server binaries.
+
 FROM rust:1.89-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache musl-dev openssl-dev
+# Build dependencies for statically linked binaries (skip heavy ONNX deps)
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    zlib-dev \
+    zlib-static \
+    git \
+    g++
 
-# Set up workspace
-WORKDIR /usr/src/kotadb
+WORKDIR /build
 
-# Copy dependency files first for better caching
-COPY Cargo.toml Cargo.lock ./
+# Copy manifests first to maximize dependency caching
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 
-# Create dummy src to build dependencies
-RUN mkdir src benches && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "" > src/lib.rs && \
-    echo "fn main() {}" > benches/storage.rs && \
-    echo "fn main() {}" > benches/indices.rs && \
-    echo "fn main() {}" > benches/queries.rs
+# Bring in source tree (docs are ignored, so add a stub for include_str! usage)
+COPY src/ src/
+COPY tests/ tests/
+COPY benches/ benches/
+COPY patches/ patches/
+RUN mkdir -p docs/api \
+    && echo "# KotaDB API\n\nStub file for Docker build (docs excluded by .dockerignore)." > docs/api/api.md
+COPY test_minimal_cli.rs test_minimal_cli.rs
 
-# Build dependencies only (cached layer)
-RUN cargo build --release --bin kotadb && rm -rf src benches
+# Build the binaries needed at runtime. Avoid default features to skip ONNX runtime.
+RUN cargo build --release \
+    --no-default-features \
+    --features "git-integration,tree-sitter-parsing,mcp-server" \
+    --bin kotadb \
+    --bin kotadb-api-server \
+    --bin mcp_server
 
-# Copy actual source code
-COPY src ./src
-COPY tests ./tests
-COPY docs ./docs
-COPY examples ./examples
-COPY benches ./benches
+FROM alpine:3.19 AS runtime
 
-# Force rebuild of source code
-RUN touch src/main.rs src/lib.rs
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    tini \
+    curl
 
-# Build the actual application with production optimizations
-RUN cargo build --release --bin kotadb --locked
+RUN addgroup -g 1000 kotadb && \
+    adduser -D -s /bin/sh -u 1000 -G kotadb kotadb
 
-# Strip binary to reduce size
-RUN strip target/release/kotadb
+WORKDIR /app
 
-# ========================================
-# Runtime stage - minimal Alpine image
-# ========================================
-FROM alpine:3.18
+# Copy binaries from the builder stage
+COPY --from=builder /build/target/release/kotadb /usr/local/bin/kotadb
+COPY --from=builder /build/target/release/kotadb-api-server /usr/local/bin/kotadb-api-server
+COPY --from=builder /build/target/release/mcp_server /usr/local/bin/kotadb-mcp
 
-# Install runtime dependencies only
-RUN apk add --no-cache ca-certificates libgcc curl
+RUN chmod +x /usr/local/bin/kotadb /usr/local/bin/kotadb-api-server /usr/local/bin/kotadb-mcp
 
-# Create non-root user for security
-RUN addgroup -g 1001 kotadb && \
-    adduser -D -s /bin/sh -u 1001 -G kotadb kotadb
+# Prepare default runtime directories and config
+RUN mkdir -p /app/data /app/config /app/logs && \
+    chown -R kotadb:kotadb /app
+COPY docker/mcp/kotadb-mcp.toml /app/config/
 
-# Set up data and config directories with proper permissions
-RUN mkdir -p /data /config && \
-    chown -R kotadb:kotadb /data /config && \
-    chmod 755 /data /config
-
-# Copy binary from builder stage
-COPY --from=builder /usr/src/kotadb/target/release/kotadb /usr/local/bin/kotadb
-
-# Ensure binary is executable
-RUN chmod +x /usr/local/bin/kotadb
-
-# Switch to non-root user
 USER kotadb
 
-# Set up environment variables for production
-ENV KOTADB_PORT=8080
-ENV KOTADB_DATA_DIR=/data
-ENV KOTADB_LOG_LEVEL=info
-ENV RUST_LOG=info
-ENV RUST_BACKTRACE=0
+ENV KOTADB_DATA_DIR=/app/data \
+    RUST_LOG=info \
+    PORT=8080
 
-# Expose the default port
-EXPOSE 8080
+EXPOSE 8080 8484
 
-# Set up volumes for data persistence
-VOLUME ["/data"]
-
-# Health check that tests the actual server endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${KOTADB_PORT}/health || exit 1
-
-# Production entrypoint and command
-ENTRYPOINT ["kotadb"]
-CMD ["--db-path", "/data", "serve", "--port", "8080"]
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["kotadb", "serve", "--port", "8080"]

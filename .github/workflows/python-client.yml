@@ -6,11 +6,6 @@ on:
     paths:
       - 'clients/python/**'
       - '.github/workflows/python-client.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'clients/python/**'
-      - '.github/workflows/python-client.yml'
 
 defaults:
   run:

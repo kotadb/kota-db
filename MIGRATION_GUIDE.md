@@ -209,7 +209,7 @@ A: No. The project is committed to codebase intelligence. This focused approach 
 A: Export your documents using the legacy version before upgrading, or maintain a separate instance of the old version if needed.
 
 ### Q: Is this breaking change versioned?
-A: Yes, this is released as version 0.6.0 following semantic versioning. The 0.5.x series was the last to support document operations.
+A: Yes, this is released as version 0.6.2 following semantic versioning. The 0.5.x series was the last to support document operations.
 
 ## Getting Help
 

@@ -20,17 +20,69 @@ use crate::parsing::SymbolType;
 use crate::symbol_storage::{SymbolEntry, SymbolStorage};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 
-// Pre-compiled regex patterns for common searches
-static ERROR_HANDLING_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(try|catch|Result|Error|panic|unwrap|expect)").unwrap());
+// Pre-compiled regex patterns for common searches (no unwrap/expect in production)
+static ERROR_HANDLING_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    match Regex::new(r"(try|catch|Result|Error|panic|unwrap|expect)") {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to compile ERROR_HANDLING_PATTERN: {}", e);
+            // Fallback to a regex that matches nothing
+            match Regex::new("^$") {
+                Ok(fallback) => fallback,
+                Err(_) => Regex::new("^") // always succeeds
+                    .unwrap_or_else(|_| unreachable!()),
+            }
+        }
+    }
+});
 static ASYNC_AWAIT_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(async|await|tokio|futures|spawn)").unwrap());
+    Lazy::new(|| match Regex::new(r"(async|await|tokio|futures|spawn)") {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to compile ASYNC_AWAIT_PATTERN: {}", e);
+            match Regex::new("^$") {
+                Ok(fallback) => fallback,
+                Err(_) => Regex::new("^").unwrap_or_else(|_| unreachable!()),
+            }
+        }
+    });
 static TEST_CODE_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(#\[test\]|#\[cfg\(test\)]|assert|test_)").unwrap());
+    Lazy::new(
+        || match Regex::new(r"(#\[test\]|#\[cfg\(test\)]|assert|test_)") {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to compile TEST_CODE_PATTERN: {}", e);
+                match Regex::new("^$") {
+                    Ok(fallback) => fallback,
+                    Err(_) => Regex::new("^").unwrap_or_else(|_| unreachable!()),
+                }
+            }
+        },
+    );
 static TODO_COMMENTS_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(TODO|FIXME|HACK|XXX|NOTE)").unwrap());
+    Lazy::new(|| match Regex::new(r"(TODO|FIXME|HACK|XXX|NOTE)") {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to compile TODO_COMMENTS_PATTERN: {}", e);
+            match Regex::new("^$") {
+                Ok(fallback) => fallback,
+                Err(_) => Regex::new("^").unwrap_or_else(|_| unreachable!()),
+            }
+        }
+    });
 static SECURITY_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(password|secret|key|token|auth|credential)").unwrap());
+    Lazy::new(
+        || match Regex::new(r"(password|secret|key|token|auth|credential)") {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to compile SECURITY_PATTERN: {}", e);
+                match Regex::new("^$") {
+                    Ok(fallback) => fallback,
+                    Err(_) => Regex::new("^").unwrap_or_else(|_| unreachable!()),
+                }
+            }
+        },
+    );
 
 /// Code-specific query types for advanced searches
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,7 +508,12 @@ impl SymbolIndex {
         }
 
         // Sort by relevance
-        results.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+        use std::cmp::Ordering;
+        results.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(Ordering::Equal)
+        });
         results.truncate(self.config.max_results);
 
         Ok(results)

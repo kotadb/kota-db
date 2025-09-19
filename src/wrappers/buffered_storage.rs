@@ -82,7 +82,20 @@ impl<S: Storage> BufferedStorage<S> {
             || std::env::var("RUNNER_OS").is_ok()
             || std::env::var("GITHUB_WORKFLOW").is_ok();
 
-        let is_test_env = cfg!(test) || is_ci_env || std::env::var("RUST_TEST_THREADS").is_ok();
+        let nextest_env = std::env::var("NEXTEST_RUN_ID").is_ok();
+        let disable_tasks_flag = std::env::var("KOTADB_DISABLE_BUFFER_TASKS")
+            .ok()
+            .map(|v| {
+                let v = v.trim().to_ascii_lowercase();
+                matches!(v.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false);
+
+        let is_test_env = cfg!(test)
+            || is_ci_env
+            || std::env::var("RUST_TEST_THREADS").is_ok()
+            || nextest_env
+            || disable_tasks_flag;
 
         // Debug logging for CI troubleshooting
         if is_ci_env {

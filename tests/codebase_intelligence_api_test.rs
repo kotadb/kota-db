@@ -2,15 +2,51 @@
 // Following KotaDB's anti-mock philosophy - uses real server with minimal test data
 // Focuses on HTTP functionality and error handling rather than full codebase ingestion
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use kotadb::{create_file_storage, database::Database, Storage};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
-use tokio::time::Duration;
+use tokio::{sync::oneshot, task::JoinHandle, time::Duration};
+
+/// Async guard that ensures the spawned HTTP server shuts down cleanly between tests.
+struct TestServerHandle {
+    shutdown: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
+impl TestServerHandle {
+    async fn shutdown(mut self) -> Result<()> {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(handle) = self.task.take() {
+            match handle.await {
+                Ok(result) => result,
+                Err(join_err) => Err(anyhow!(join_err)),
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for TestServerHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(handle) = self.task.take() {
+            handle.abort();
+        }
+    }
+}
 
 /// Helper to create test environment with minimal setup
 /// Following anti-mock philosophy but with practical constraints for fast testing
@@ -48,32 +84,49 @@ async fn create_test_environment_with_minimal_data(
 
 /// Start HTTP server with codebase intelligence and minimal test data
 async fn start_test_server_with_real_intelligence(
-) -> Result<(u16, TempDir, Database, tokio::task::JoinHandle<Result<()>>)> {
+) -> Result<(u16, TempDir, Database, TestServerHandle)> {
     let (storage, temp_dir, db) = create_test_environment_with_minimal_data().await?;
     let db_path = PathBuf::from(temp_dir.path());
 
-    // Use port 0 to get an available port automatically
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("Failed to bind to port");
     let port = listener.local_addr().unwrap().port();
-    drop(listener); // Close the listener so the server can bind to it
 
-    let storage_clone = storage.clone();
-    let db_path_clone = db_path.clone();
-    let server_handle = tokio::spawn(async move {
-        kotadb::start_server_with_intelligence(storage_clone, db_path_clone, port).await
+    let app = kotadb::create_server_with_intelligence(storage.clone(), db_path.clone()).await?;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = shutdown_rx.await;
     });
 
-    // Give the server more time to start with real data
+    let task = tokio::spawn(async move {
+        match server.await {
+            Ok(()) => Ok(()),
+            Err(err) => Err(anyhow!(err)),
+        }
+    });
+
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    Ok((port, temp_dir, db, server_handle))
+    Ok((
+        port,
+        temp_dir,
+        db,
+        TestServerHandle {
+            shutdown: Some(shutdown_tx),
+            task: Some(task),
+        },
+    ))
 }
 
 #[tokio::test]
 async fn test_symbol_search_with_limited_data() -> Result<()> {
-    let (port, _temp_dir, _db, server_handle) = start_test_server_with_real_intelligence().await?;
+    let (port, _temp_dir, _db, server) = start_test_server_with_real_intelligence().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -99,13 +152,13 @@ async fn test_symbol_search_with_limited_data() -> Result<()> {
         assert!(body["query_time_ms"].is_number());
     }
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_find_callers_error_handling() -> Result<()> {
-    let (port, _temp_dir, _db, server_handle) = start_test_server_with_real_intelligence().await?;
+    let (port, _temp_dir, _db, server) = start_test_server_with_real_intelligence().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -123,13 +176,13 @@ async fn test_find_callers_error_handling() -> Result<()> {
             || response.status() == StatusCode::INTERNAL_SERVER_ERROR
     );
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_server_responds_to_basic_requests() -> Result<()> {
-    let (port, _temp_dir, _db, server_handle) = start_test_server_with_real_intelligence().await?;
+    let (port, _temp_dir, _db, server) = start_test_server_with_real_intelligence().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -155,7 +208,7 @@ async fn test_server_responds_to_basic_requests() -> Result<()> {
         );
     }
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
@@ -163,7 +216,7 @@ async fn test_server_responds_to_basic_requests() -> Result<()> {
 
 #[tokio::test]
 async fn test_malformed_query_handling() -> Result<()> {
-    let (port, _temp_dir, _db, server_handle) = start_test_server_with_real_intelligence().await?;
+    let (port, _temp_dir, _db, server) = start_test_server_with_real_intelligence().await?;
     let client = Client::new();
     let base_url = format!("http://127.0.0.1:{port}");
 
@@ -179,13 +232,13 @@ async fn test_malformed_query_handling() -> Result<()> {
             || response.status() == StatusCode::UNPROCESSABLE_ENTITY
     );
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_basic_server_functionality() -> Result<()> {
-    let (port, _temp_dir, _db, server_handle) = start_test_server_with_real_intelligence().await?;
+    let (port, _temp_dir, _db, server) = start_test_server_with_real_intelligence().await?;
 
     // Verify server is responding
     let client = Client::new();
@@ -204,6 +257,6 @@ async fn test_basic_server_functionality() -> Result<()> {
             || response.status().is_server_error()
     );
 
-    server_handle.abort();
+    server.shutdown().await?;
     Ok(())
 }

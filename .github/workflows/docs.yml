@@ -12,11 +12,6 @@ on:
       - 'CONTRIBUTING.md'
       - 'CLAUDE.md'
       - 'AGENT.md'
-  pull_request:
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 concurrency:
@@ -131,4 +126,3 @@ jobs:
         with:
           name: docs-preview
           path: ./site
-

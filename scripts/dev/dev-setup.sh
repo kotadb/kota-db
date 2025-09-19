@@ -81,12 +81,16 @@ rustup component add rustfmt clippy rust-src
 
 # Install development tools
 print_status "Installing Rust development tools..."
-cargo install --quiet \
-    cargo-watch \
-    cargo-edit \
-    cargo-audit \
-    cargo-llvm-cov \
-    bacon || print_warning "Some tools may already be installed"
+(
+  set +e
+  cargo install --quiet cargo-watch || true
+  cargo install --quiet cargo-edit || true
+  cargo install --quiet cargo-audit --locked || true
+  cargo install --quiet cargo-deny --locked || true
+  cargo install --quiet cargo-nextest --locked || true
+  cargo install --quiet cargo-llvm-cov || true
+  cargo install --quiet bacon || true
+) || print_warning "Some tools may already be installed"
 
 # Set up pre-commit hooks
 print_status "Setting up pre-commit hooks..."

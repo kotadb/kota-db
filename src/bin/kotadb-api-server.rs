@@ -3,12 +3,14 @@
 //! Production HTTP server with API key authentication,
 //! rate limiting, and codebase intelligence features.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
-use kotadb::{create_file_storage, start_saas_server, ApiKeyConfig};
+use kotadb::{
+    create_file_storage, create_primary_index, create_trigram_index, start_services_saas_server,
+    ApiKeyConfig,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -102,7 +104,26 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create storage: {}", e))?;
-    let storage = Arc::new(Mutex::new(storage));
+    let storage = Arc::new(tokio::sync::Mutex::new(storage));
+
+    info!("📊 Initializing indices...");
+    let primary_index_path = args.data_dir.join("primary");
+    let primary_index = create_primary_index(
+        primary_index_path.to_str().unwrap(),
+        Some(1000), // Cache capacity
+    )
+    .await
+    .context("Failed to create primary index for SaaS server")?;
+    let primary_index = Arc::new(tokio::sync::Mutex::new(primary_index));
+
+    let trigram_index_path = args.data_dir.join("trigram");
+    let trigram_index = create_trigram_index(
+        trigram_index_path.to_str().unwrap(),
+        Some(1000), // Cache capacity
+    )
+    .await
+    .context("Failed to create trigram index for SaaS server")?;
+    let trigram_index = Arc::new(tokio::sync::Mutex::new(trigram_index));
 
     info!("🔑 Configuring API key service...");
     let api_key_config = ApiKeyConfig {
@@ -130,8 +151,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("🚀 Starting server on port {}...", args.port);
-    match start_saas_server(storage, args.data_dir, api_key_config, args.port).await {
+    info!("🚀 Starting services SaaS server on port {}...", args.port);
+    match start_services_saas_server(
+        storage,
+        primary_index,
+        trigram_index,
+        args.data_dir,
+        api_key_config,
+        args.port,
+    )
+    .await
+    {
         Ok(_) => {
             info!("✅ Server started successfully");
             Ok(())

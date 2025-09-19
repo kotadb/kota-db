@@ -1,5 +1,4 @@
 # Fly.io staging deployment configuration for KotaDB SaaS API
-# Generated from Railway migration - Issue #510
 
 app = "kotadb-api-staging"
 primary_region = "iad"  # IAD (Ashburn, Virginia) - US East Coast
@@ -10,13 +9,13 @@ kill_timeout = "30s"
   auto_rollback = true
 
 [build]
-  dockerfile = "Dockerfile.production"
+  dockerfile = "Dockerfile.prod"
 
 [env]
   # Staging environment variables with increased logging
   PORT = "8080"
   RUST_LOG = "debug"
-  KOTADB_DATA_DIR = "/data"
+  KOTADB_DATA_DIR = "/app/data"
   DATABASE_MAX_CONNECTIONS = "10"
   DATABASE_CONNECT_TIMEOUT = "30"
   DEFAULT_RATE_LIMIT = "100"

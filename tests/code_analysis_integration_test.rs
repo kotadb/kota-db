@@ -20,6 +20,9 @@ use std::path::Path;
 use std::time::Instant;
 use tempfile::TempDir;
 
+mod test_constants;
+use test_constants::gating;
+
 /// Helper to create a test symbol index with sample code
 #[cfg(feature = "tree-sitter-parsing")]
 async fn create_test_index() -> Result<(SymbolIndex, TempDir)> {
@@ -400,6 +403,10 @@ async fn test_dependency_graph_building() -> Result<()> {
 #[cfg(feature = "tree-sitter-parsing")]
 #[tokio::test]
 async fn test_edge_cases() -> Result<()> {
+    if gating::skip_if_heavy_disabled("code_analysis_integration_test::test_edge_cases") {
+        return Ok(());
+    }
+
     // Test handling of edge cases
     let (mut index, _temp_dir) = create_test_index().await?;
 

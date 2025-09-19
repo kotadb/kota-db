@@ -561,9 +561,15 @@ impl SymbolStorage {
                 .context("Failed to store symbol in graph storage")?;
         } else {
             // Fallback to document storage if no graph storage available
+            let existing = self.storage.get(&entry.document_id).await?;
             #[allow(deprecated)]
-            let doc = self.serialize_symbol(&entry)?;
-            self.storage.insert(doc).await?;
+            let doc = self.serialize_symbol(&entry, existing.as_ref())?;
+
+            if existing.is_some() {
+                self.storage.update(doc).await?;
+            } else {
+                self.storage.insert(doc).await?;
+            }
         }
 
         // Index in memory
@@ -1017,7 +1023,11 @@ impl SymbolStorage {
     /// DEPRECATED: Use binary symbol format instead.
     /// See BinarySymbolWriter for the recommended approach.
     #[deprecated(note = "Use BinarySymbolWriter for better performance")]
-    fn serialize_symbol(&self, entry: &SymbolEntry) -> Result<Document> {
+    fn serialize_symbol(
+        &self,
+        entry: &SymbolEntry,
+        existing: Option<&Document>,
+    ) -> Result<Document> {
         let json = serde_json::to_string_pretty(&entry)?;
 
         let title = format!(
@@ -1053,15 +1063,27 @@ impl SymbolStorage {
             });
         let path = format!("symbols/{}/{}.json", sanitized_path, entry.id);
 
-        DocumentBuilder::new()
+        let mut builder = DocumentBuilder::new()
             .id(entry.document_id)
             .path(&path)?
             .title(&title)?
             .content(json.as_bytes())
             .tag("symbol")?
             .tag(&format!("symbol-type-{:?}", entry.symbol.symbol_type).to_lowercase())?
-            .tag(&format!("lang-{:?}", entry.language).to_lowercase())?
-            .build()
+            .tag(&format!("lang-{:?}", entry.language).to_lowercase())?;
+
+        if let Some(existing_doc) = existing {
+            let created_ts = existing_doc.created_at.timestamp();
+            let mut updated_ts = chrono::Utc::now().timestamp();
+            let previous_updated = existing_doc.updated_at.timestamp();
+            if updated_ts <= previous_updated {
+                updated_ts = previous_updated + 1;
+            }
+
+            builder = builder.timestamps(created_ts, updated_ts)?;
+        }
+
+        builder.build()
     }
 
     /// Deserialize a document to a symbol entry
@@ -1467,10 +1489,15 @@ impl SymbolStorage {
         if self.graph_storage.is_none() {
             // Only update document storage if we're not using graph storage
             for symbol in self.symbol_index.values() {
+                let existing = self.storage.get(&symbol.document_id).await?;
                 #[allow(deprecated)]
-                let mut doc = self.serialize_symbol(symbol)?;
-                doc.updated_at = chrono::Utc::now();
-                self.storage.update(doc).await?;
+                let doc = self.serialize_symbol(symbol, existing.as_ref())?;
+
+                if existing.is_some() {
+                    self.storage.update(doc).await?;
+                } else {
+                    self.storage.insert(doc).await?;
+                }
             }
         }
 

@@ -1,44 +1,59 @@
 use crate::contracts::{Index, Storage};
+use crate::mcp::streamable_http::{create_streamable_http_router, StreamableHttpState};
 use crate::mcp::{config::MCPConfig, tools::MCPToolRegistry};
 use crate::wrappers::*;
 use crate::{
     create_file_storage, create_primary_index, create_trigram_index, CoordinatedDeletionService,
 };
-use anyhow::Result;
-use jsonrpc_core::{Error as RpcError, IoHandler, Params, Result as RpcResult, Value};
+use anyhow::{anyhow, Result};
+use axum::Router;
+use jsonrpc_core::{Error as RpcError, Params, Result as RpcResult, Value};
 use jsonrpc_derive::rpc;
-use jsonrpc_http_server::ServerBuilder;
-use jsonrpc_http_server::{DomainsValidation, Server};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::net::TcpListener;
+use tokio::runtime::Builder as RuntimeBuilder;
+use tokio::sync::{oneshot, Mutex};
 
 /// MCP Server implementation for KotaDB
 pub struct MCPServer {
-    config: MCPConfig,
+    config: Arc<MCPConfig>,
+    #[allow(dead_code)]
     tool_registry: Arc<MCPToolRegistry>,
+    #[allow(dead_code)]
     storage: Arc<Mutex<dyn Storage>>,
     #[allow(dead_code)] // Will be used for path-based operations
     primary_index: Arc<Mutex<dyn Index>>,
+    #[allow(dead_code)] // Keep trigram index alive for tool implementations
+    trigram_index: Arc<Mutex<dyn Index>>,
     #[allow(dead_code)] // Used by CoordinatedDocumentTools for coordinated deletion
     deletion_service: Arc<CoordinatedDeletionService>,
     start_time: Instant,
+    streamable_state: StreamableHttpState,
 }
 
 /// Handle to control a running MCP server
 pub struct MCPServerHandle {
-    server: Server,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MCPServerHandle {
-    /// Wait for the server to finish running
-    pub fn wait(self) {
-        self.server.wait();
+    /// Wait for the server thread to finish running
+    pub fn wait(mut self) {
+        if let Some(thread) = self.thread.take() {
+            if let Err(err) = thread.join() {
+                tracing::error!("MCP server thread panicked: {:?}", err);
+            }
+        }
     }
 
-    /// Close the server gracefully
-    pub fn close(self) {
-        self.server.close();
+    /// Close the server gracefully and wait for shutdown
+    pub fn close(mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        self.wait();
     }
 }
 
@@ -78,6 +93,8 @@ impl MCPServer {
     /// Create a new MCP server with the given configuration
     pub async fn new(config: MCPConfig) -> Result<Self> {
         tracing::info!("Creating MCP server with config: {:?}", config.mcp);
+
+        let config = Arc::new(config);
 
         // Create SINGLE storage instance shared across most components
         // Note: SemanticSearchEngine will create an additional instance due to its Box<dyn> API
@@ -120,8 +137,14 @@ impl MCPServer {
             tracing::warn!("Document tools are disabled - KotaDB has transitioned to pure codebase intelligence (issue #401)");
         }
 
-        // Search tools removed - semantic search eliminated from MCP server
-        // Use trigram search via other KotaDB interfaces (CLI, HTTP API)
+        // Register lightweight text search tools for MCP
+        if config.mcp.enable_search_tools {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            tool_registry = tool_registry.with_text_tools(text_tools);
+        }
 
         #[cfg(feature = "tree-sitter-parsing")]
         if config.mcp.enable_relationship_tools {
@@ -150,86 +173,144 @@ impl MCPServer {
             tool_registry = tool_registry.with_relationship_tools(relationship_tools);
         }
 
+        // Symbol tools - enable when tree-sitter parsing and symbols are available
+        #[cfg(feature = "tree-sitter-parsing")]
+        if config.mcp.enable_relationship_tools {
+            use crate::mcp::tools::symbol_tools::SymbolTools;
+            use std::path::PathBuf;
+
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                PathBuf::from(&config.database.data_dir),
+            ));
+            tool_registry = tool_registry.with_symbol_tools(symbol_tools);
+        }
+
+        let tool_registry = Arc::new(tool_registry);
+        let start_time = Instant::now();
+        let streamable_state =
+            StreamableHttpState::new(config.clone(), tool_registry.clone(), start_time);
+
         Ok(Self {
             config,
-            tool_registry: Arc::new(tool_registry),
+            tool_registry,
             storage,
             primary_index,
+            trigram_index,
             deletion_service,
-            start_time: Instant::now(),
+            start_time,
+            streamable_state,
         })
     }
 
-    /// Start the MCP server and return a handle to control it
-    pub async fn start(self) -> Result<MCPServerHandle> {
-        let mut io = IoHandler::new();
-        let server_impl = MCPServerImpl {
-            config: self.config.clone(),
-            tool_registry: self.tool_registry.clone(),
-            storage: self.storage.clone(),
-            start_time: self.start_time,
-        };
-
-        io.extend_with(server_impl.to_delegate());
-
-        let server = ServerBuilder::new(io)
-            .cors(DomainsValidation::AllowOnly(vec![
-                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
-            ]))
-            .start_http(
-                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
-
-        tracing::info!(
-            "MCP server started on {}:{}",
-            self.config.server.host,
-            self.config.server.port
-        );
-
-        Ok(MCPServerHandle { server })
-    }
-
-    /// Start the MCP server synchronously outside of async context to avoid runtime conflicts
+    /// Start the MCP HTTP endpoint synchronously outside of any existing runtime.
     pub fn start_sync(self) -> Result<MCPServerHandle> {
-        let mut io = IoHandler::new();
-        let server_impl = MCPServerImpl {
-            config: self.config.clone(),
-            tool_registry: self.tool_registry.clone(),
-            storage: self.storage.clone(),
-            start_time: self.start_time,
-        };
+        let addr: std::net::SocketAddr =
+            format!("{}:{}", self.config.server.host, self.config.server.port).parse()?;
+        let make_service = self
+            .streamable_http_router()
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (startup_tx, startup_rx) =
+            mpsc::channel::<std::result::Result<std::net::SocketAddr, String>>();
 
-        io.extend_with(server_impl.to_delegate());
+        let thread = std::thread::Builder::new()
+            .name("kotadb-mcp-http".into())
+            .spawn(move || {
+                let runtime = RuntimeBuilder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build Tokio runtime for MCP server");
 
-        let server = ServerBuilder::new(io)
-            .cors(DomainsValidation::AllowOnly(vec![
-                jsonrpc_http_server::cors::AccessControlAllowOrigin::Any,
-            ]))
-            .start_http(
-                &format!("{}:{}", self.config.server.host, self.config.server.port).parse()?,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to start HTTP server: {}", e))?;
+                runtime.block_on(async move {
+                    match TcpListener::bind(addr).await {
+                        Ok(listener) => {
+                            let local_addr = match listener.local_addr() {
+                                Ok(local_addr) => local_addr,
+                                Err(err) => {
+                                    tracing::error!(
+                                        "Failed to determine MCP HTTP endpoint address: {}",
+                                        err
+                                    );
+                                    let _ = startup_tx.send(Err(format!(
+                                        "Failed to determine MCP HTTP endpoint address: {}",
+                                        err
+                                    )));
+                                    return;
+                                }
+                            };
 
-        tracing::info!(
-            "MCP server started on {}:{}",
-            self.config.server.host,
-            self.config.server.port
-        );
+                            tracing::info!(
+                                "Streamable MCP HTTP endpoint listening on {}",
+                                local_addr
+                            );
 
-        Ok(MCPServerHandle { server })
+                            if startup_tx.send(Ok(local_addr)).is_err() {
+                                tracing::warn!(
+                                    "MCP startup listener dropped before receiving bind success"
+                                );
+                            }
+
+                            let server = axum::serve(listener, make_service)
+                                .with_graceful_shutdown(async move {
+                                    let _ = shutdown_rx.await;
+                                });
+
+                            if let Err(err) = server.await {
+                                tracing::error!("MCP HTTP server error: {}", err);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to bind MCP HTTP endpoint: {}", err);
+                            let _ = startup_tx
+                                .send(Err(format!("Failed to bind MCP HTTP endpoint: {}", err)));
+                        }
+                    }
+                });
+            })
+            .map_err(|err| anyhow!("Failed to spawn MCP server thread: {}", err))?;
+
+        match startup_rx.recv() {
+            Ok(Ok(_addr)) => Ok(MCPServerHandle {
+                shutdown_tx: Some(shutdown_tx),
+                thread: Some(thread),
+            }),
+            Ok(Err(message)) => {
+                let _ = thread.join();
+                Err(anyhow!(message))
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(anyhow!(
+                    "MCP server thread terminated before reporting startup status"
+                ))
+            }
+        }
     }
 
     /// Get the uptime in seconds
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
+
+    /// Access the Streamable HTTP state (cloned) for custom routing.
+    pub fn streamable_http_state(&self) -> StreamableHttpState {
+        self.streamable_state.clone()
+    }
+
+    /// Build an Axum router that serves the Streamable HTTP transport for this server.
+    pub fn streamable_http_router(&self) -> Router {
+        create_streamable_http_router(self.streamable_state.clone())
+    }
 }
 
 /// Implementation of the MCP RPC interface
 #[derive(Clone)]
+#[allow(dead_code)]
 struct MCPServerImpl {
-    config: MCPConfig,
+    config: Arc<MCPConfig>,
     tool_registry: Arc<MCPToolRegistry>,
     #[allow(dead_code)] // Storage will be used when implementing tool handlers
     storage: Arc<Mutex<dyn Storage>>,
@@ -413,15 +494,9 @@ mod tests {
         let server = MCPServer::new(config).await?;
         let tools = server.tool_registry.get_all_tool_definitions();
 
-        // Should have tools from enabled categories
+        // Should have tools available when relevant features are enabled
         assert!(!tools.is_empty());
-        assert!(tools
-            .iter()
-            .any(|t| t.name.starts_with("kotadb://document_")));
-        // Search tools are currently disabled
-        // assert!(tools
-        //     .iter()
-        //     .any(|t| t.name.starts_with("kotadb://text_search")));
+        assert!(tools.iter().any(|t| t.name.starts_with("kotadb://")));
 
         Ok(())
     }

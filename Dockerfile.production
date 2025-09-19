@@ -1,72 +1,72 @@
-# Production Dockerfile for KotaDB SaaS API
-# Single-stage build for guaranteed compatibility and simplified maintenance
-# Optimized for reliability over build speed
+# KotaDB SaaS API production image built from the same multi-stage pipeline
+# used for local development. Produces the CLI binary as well for debugging.
 
-# Build and runtime stage - using latest Rust with GLIBC compatibility
-FROM rust:latest
+FROM rust:1.89-alpine AS builder
 
-# Install build dependencies including C++ compiler for native dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
+# Install build dependencies for static binaries
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    zlib-dev \
+    zlib-static \
     git \
-    build-essential \
-    clang \
-    lld \
-    ca-certificates \
-    curl \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+    g++
 
-# Create app directory
+WORKDIR /build
+
+# Copy manifests early to leverage Docker layer caching
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+
+# Bring in source tree; create stub docs required by include_str! macros
+COPY src/ src/
+COPY tests/ tests/
+COPY benches/ benches/
+RUN mkdir -p docs/api \
+    && echo "# KotaDB API\n\nStub file for Docker builds." > docs/api/api.md
+COPY test_minimal_cli.rs test_minimal_cli.rs
+
+# Compile required binaries (skip heavy optional features like ONNX)
+RUN cargo build --release \
+    --no-default-features \
+    --features "git-integration,tree-sitter-parsing,mcp-server" \
+    --bin kotadb \
+    --bin kotadb-api-server \
+    --bin mcp_server
+
+FROM alpine:3.19 AS runtime
+
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    tini \
+    curl
+
+RUN addgroup -g 1000 kotadb && \
+    adduser -D -s /bin/sh -u 1000 -G kotadb kotadb
+
 WORKDIR /app
 
-# Copy all source files (single-stage eliminates caching complexity)
-COPY . .
+# Copy binaries from builder
+COPY --from=builder /build/target/release/kotadb /usr/local/bin/kotadb
+COPY --from=builder /build/target/release/kotadb-api-server /usr/local/bin/kotadb-api-server
+COPY --from=builder /build/target/release/mcp_server /usr/local/bin/kotadb-mcp
+RUN chmod +x /usr/local/bin/kotadb /usr/local/bin/kotadb-api-server /usr/local/bin/kotadb-mcp
 
-# Build the application with all features
-RUN echo "Building kotadb-api-server..." && \
-    cargo build --release --features tree-sitter-parsing,git-integration --bin kotadb-api-server && \
-    echo "Binary size: $(ls -lh target/release/kotadb-api-server | awk '{print $5}')" && \
-    test -f target/release/kotadb-api-server || (echo "ERROR: Binary not built!" && exit 1) && \
-    echo "Binary dependencies:" && \
-    ldd target/release/kotadb-api-server | head -10
+# Prepare directories required at runtime
+RUN mkdir -p /app/data /app/config /app/logs && \
+    chown -R kotadb:kotadb /app
 
-# Create non-root user for security
-RUN useradd -m -u 1001 -s /bin/bash kotadb
+COPY docker/mcp/kotadb-mcp.toml /app/config/
 
-# Create data directory
-RUN mkdir -p /data && chown kotadb:kotadb /data
-
-# Copy binary to final location
-RUN cp target/release/kotadb-api-server /usr/local/bin/kotadb-api-server && \
-    chmod +x /usr/local/bin/kotadb-api-server
-
-# Clean up build artifacts to reduce image size
-RUN cargo clean && \
-    rm -rf /usr/local/cargo/registry && \
-    rm -rf target/release/build && \
-    rm -rf target/release/deps && \
-    apt-get autoremove -y build-essential pkg-config && \
-    apt-get clean
-
-# Switch to non-root user
 USER kotadb
 
-# Set working directory for runtime
-WORKDIR /data
+ENV KOTADB_DATA_DIR=/app/data \
+    RUST_LOG=info,kotadb=debug \
+    PORT=8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
+EXPOSE 8080 8484
 
-# Default environment variables
-ENV PORT=8080
-ENV KOTADB_DATA_DIR=/data
-ENV RUST_LOG=info
-
-# Expose port
-EXPOSE 8080
-
-# Run the application with required parameters using exec form with explicit env expansion
-ENTRYPOINT ["/bin/sh", "-c", "/usr/local/bin/kotadb-api-server --database-url \"${DATABASE_URL}\" --port \"${PORT}\" --data-dir \"${KOTADB_DATA_DIR}\""]
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["kotadb-api-server"]

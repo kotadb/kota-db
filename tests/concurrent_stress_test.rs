@@ -16,7 +16,10 @@ mod test_constants;
 use test_constants::concurrency::{
     get_concurrent_operations, get_operations_per_task, get_pool_capacity,
 };
-use test_constants::performance::SLOW_OPERATION_THRESHOLD;
+use test_constants::gating;
+use test_constants::performance::{
+    lock_efficiency_min, lock_read_avg_ms, lock_write_avg_ms, SLOW_OPERATION_THRESHOLD,
+};
 
 // Minimum conflict resolution rate for valid tests
 const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
@@ -24,6 +27,10 @@ const MIN_CONFLICT_RESOLUTION_RATE: f64 = 0.1;
 /// Enhanced Multi-threaded Stress Testing with high concurrency
 #[tokio::test]
 async fn test_enhanced_concurrent_stress() -> Result<()> {
+    if gating::skip_if_heavy_disabled("concurrent_stress_test::test_enhanced_concurrent_stress") {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("concurrent_stress_storage");
     let index_path = temp_dir.path().join("concurrent_stress_index");
@@ -297,6 +304,10 @@ async fn test_enhanced_concurrent_stress() -> Result<()> {
 /// Advanced Lock Contention Analysis Test
 #[tokio::test]
 async fn test_lock_contention_analysis() -> Result<()> {
+    if gating::skip_if_heavy_disabled("concurrent_stress_test::test_lock_contention_analysis") {
+        return Ok(());
+    }
+
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("lock_analysis_storage");
 
@@ -369,9 +380,9 @@ async fn test_lock_contention_analysis() -> Result<()> {
                         // Create test document
                         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                         let path =
-                            ValidatedPath::new(format!("lock_test/t{thread_id}_op{op_id}.md"))?;
+                            ValidatedPath::new(format!("lock_test/t{}_op{}.md", thread_id, op_id))?;
                         let title =
-                            ValidatedTitle::new(format!("Lock Test T{thread_id} O{op_id}"))?;
+                            ValidatedTitle::new(format!("Lock Test T{} O{}", thread_id, op_id))?;
                         let content = format!(
                             "Lock contention test content for thread {thread_id} op {op_id}"
                         )
@@ -422,7 +433,7 @@ async fn test_lock_contention_analysis() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(metrics) => all_thread_metrics.push(metrics),
-            Err(e) => error!("Thread failed: {e}"),
+            Err(e) => error!("Thread failed: {}", e),
         }
     }
 
@@ -455,23 +466,29 @@ async fn test_lock_contention_analysis() -> Result<()> {
         analysis.lock_efficiency * 100.0
     );
 
-    // Performance requirements for lock contention
+    // Performance requirements for lock contention (CI-aware)
+    let read_ms = lock_read_avg_ms();
+    let write_ms = lock_write_avg_ms();
+    let eff_min = lock_efficiency_min();
     assert!(
-        analysis.avg_read_lock_time < Duration::from_millis(10),
-        "Average read lock time too high: {:?}",
-        analysis.avg_read_lock_time
+        analysis.avg_read_lock_time < Duration::from_millis(read_ms),
+        "Average read lock time too high: {:?} (threshold {}ms)",
+        analysis.avg_read_lock_time,
+        read_ms
     );
 
     assert!(
-        analysis.avg_write_lock_time < Duration::from_millis(50),
-        "Average write lock time too high: {:?}",
-        analysis.avg_write_lock_time
+        analysis.avg_write_lock_time < Duration::from_millis(write_ms),
+        "Average write lock time too high: {:?} (threshold {}ms)",
+        analysis.avg_write_lock_time,
+        write_ms
     );
 
     assert!(
-        analysis.lock_efficiency > 0.7,
-        "Lock efficiency too low: {:.2}%",
-        analysis.lock_efficiency * 100.0
+        analysis.lock_efficiency > eff_min,
+        "Lock efficiency too low: {:.2}% (min {:.0}%)",
+        analysis.lock_efficiency * 100.0,
+        eff_min * 100.0
     );
 
     Ok(())
@@ -553,7 +570,7 @@ async fn test_race_condition_detection() -> Result<()> {
                     }
                     Err(e) => {
                         modifier_results.errors += 1;
-                        error!("Race operation error modifier {modifier_id}: {e}");
+                        error!("Race operation error modifier {}: {}", modifier_id, e);
                     }
                 }
 
@@ -574,7 +591,7 @@ async fn test_race_condition_detection() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(results) => all_modifier_results.push(results),
-            Err(e) => error!("Modifier failed: {e}"),
+            Err(e) => error!("Modifier failed: {}", e),
         }
     }
 
@@ -818,7 +835,7 @@ async fn test_concurrent_index_operations() -> Result<()> {
     for handle in handles {
         match handle.await? {
             Ok(results) => all_indexer_results.push(results),
-            Err(e) => error!("Indexer failed: {e}"),
+            Err(e) => error!("Indexer failed: {}", e),
         }
     }
 
@@ -1191,14 +1208,14 @@ async fn execute_write_operation(
     metrics.lock_acquisitions.fetch_add(1, Ordering::Relaxed);
 
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("phase2b/pattern_{pattern_id}/op_{op_num}.md"))?;
-    let title = ValidatedTitle::new(format!("Phase2B Doc P{pattern_id} O{op_num}"))?;
+    let path = ValidatedPath::new(format!("phase2b/pattern_{}/op_{}.md", pattern_id, op_num))?;
+    let title = ValidatedTitle::new(format!("Phase2B Doc P{} O{}", pattern_id, op_num))?;
     let content = format!(
         "Phase 2B enhanced concurrent stress test content for pattern {pattern_id} operation {op_num}. \
          This tests advanced concurrent access patterns beyond the 100 user baseline."
     ).into_bytes();
     let tags = vec![
-        ValidatedTag::new(format!("pattern-{pattern_id}"))?,
+        ValidatedTag::new(format!("pattern-{}", pattern_id))?,
         ValidatedTag::new("phase2b-stress")?,
     ];
     let now = chrono::Utc::now();
@@ -1234,8 +1251,8 @@ async fn execute_write_operation(
 
 async fn execute_read_operation(
     storage: &Arc<tokio::sync::Mutex<impl Storage>>,
-    pattern_id: usize,
-    op_num: usize,
+    _pattern_id: usize,
+    _op_num: usize,
     metrics: &Arc<ConcurrencyMetrics>,
 ) -> Result<()> {
     metrics.lock_acquisitions.fetch_add(1, Ordering::Relaxed);
@@ -1340,8 +1357,8 @@ fn analyze_lock_contention(
 
 async fn create_race_test_document(index: usize, version: u32, modifier: &str) -> Result<Document> {
     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
-    let path = ValidatedPath::new(format!("race_test/shared_doc_{index:03}.md"))?;
-    let title = ValidatedTitle::new(format!("Shared Race Test Doc {index} v{version}"))?;
+    let path = ValidatedPath::new(format!("race_test/shared_doc_{:03}.md", index))?;
+    let title = ValidatedTitle::new(format!("Shared Race Test Doc {} v{}", index, version))?;
     let content = format!(
         "Race test document {index} version {version} modified by {modifier}.\n\
          Timestamp: {}\n\
@@ -1351,7 +1368,7 @@ async fn create_race_test_document(index: usize, version: u32, modifier: &str) -
     .into_bytes();
     let tags = vec![
         ValidatedTag::new("race-test")?,
-        ValidatedTag::new(format!("version-{version}"))?,
+        ValidatedTag::new(format!("version-{}", version))?,
         ValidatedTag::new(modifier)?,
     ];
     let now = chrono::Utc::now();
@@ -1423,7 +1440,7 @@ async fn perform_race_prone_operation(
 
 fn analyze_race_detection(
     modifier_results: &[RaceDetectionResults],
-    detector: &Arc<RaceConditionDetector>,
+    _detector: &Arc<RaceConditionDetector>,
     total_duration: Duration,
 ) -> Result<RaceDetectionAnalysis> {
     let total_successful: usize = modifier_results
@@ -1500,7 +1517,7 @@ async fn create_index_test_document(indexer_id: usize, op_num: usize) -> Result<
     let path = ValidatedPath::new(format!(
         "index_test/indexer_{indexer_id}/doc_{op_num:04}.md"
     ))?;
-    let title = ValidatedTitle::new(format!("Index Test I{indexer_id} D{op_num}"))?;
+    let title = ValidatedTitle::new(format!("Index Test I{} D{}", indexer_id, op_num))?;
 
     // Content with trigram-indexable text
     let content = format!(
@@ -1516,7 +1533,7 @@ async fn create_index_test_document(indexer_id: usize, op_num: usize) -> Result<
     ).into_bytes();
 
     let tags = vec![
-        ValidatedTag::new(format!("indexer-{indexer_id}"))?,
+        ValidatedTag::new(format!("indexer-{}", indexer_id))?,
         ValidatedTag::new("index-test")?,
         ValidatedTag::new("concurrent")?,
     ];

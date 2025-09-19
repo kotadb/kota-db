@@ -59,6 +59,8 @@ pub struct SecurityConfig {
     pub max_request_size: String,
     pub rate_limit_requests_per_minute: u64,
     pub enable_request_validation: bool,
+    #[serde(default)]
+    pub allowed_origins: Option<Vec<String>>,
 }
 
 impl Default for MCPConfig {
@@ -79,7 +81,7 @@ impl Default for MCPConfig {
                 max_blocking_threads: 16,
             },
             mcp: MCPProtocolConfig {
-                protocol_version: "2024-11-05".to_string(),
+                protocol_version: "2025-06-18".to_string(),
                 server_name: "kotadb".to_string(),
                 server_version: "0.5.0".to_string(),
                 enable_document_tools: false, // Disabled per issue #401 - pure codebase intelligence
@@ -100,6 +102,7 @@ impl Default for MCPConfig {
                 max_request_size: "10MB".to_string(),
                 rate_limit_requests_per_minute: 1000,
                 enable_request_validation: true,
+                allowed_origins: None,
             },
         }
     }

@@ -1,7 +1,7 @@
 // Primary Index Edge Cases and Adversarial Tests - Stage 1: Test-Driven Development
 // These tests cover failure scenarios, edge cases, and adversarial conditions
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use kotadb::{Index, QueryBuilder, ValidatedDocumentId, ValidatedPath};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -12,11 +12,13 @@ use uuid::Uuid;
 mod primary_index_edge_cases {
     use super::*;
 
-    pub async fn create_test_index() -> Result<impl Index> {
+    pub async fn create_test_index() -> Result<(TempDir, impl Index)> {
         let temp_dir = TempDir::new()?;
         let index_path = temp_dir.path().join("edge_case_index");
 
-        kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await
+        let index = kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await?;
+
+        Ok((temp_dir, index))
     }
 
     #[tokio::test]
@@ -40,7 +42,7 @@ mod primary_index_edge_cases {
 
     #[tokio::test]
     async fn test_index_with_extremely_long_paths() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Create path near filesystem limits
         let long_component = "a".repeat(255); // Max filename length on most filesystems
@@ -59,12 +61,15 @@ mod primary_index_edge_cases {
             }
         }
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_with_unicode_paths() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Test various Unicode characters
         let unicode_paths = [
@@ -89,12 +94,15 @@ mod primary_index_edge_cases {
             }
         }
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_rapid_insert_delete_cycles() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let doc_path = ValidatedPath::new("edge/cycle_test.md")?;
@@ -115,12 +123,15 @@ mod primary_index_edge_cases {
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 1);
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_many_small_operations() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Test many small operations to stress internal data structures
         for i in 0..10000 {
@@ -146,6 +157,9 @@ mod primary_index_edge_cases {
             results.len()
         );
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 }
@@ -157,9 +171,8 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_concurrent_readers_writers() -> Result<()> {
-        let index = Arc::new(Mutex::new(
-            primary_index_edge_cases::create_test_index().await?,
-        ));
+        let (temp_dir, index_inner) = primary_index_edge_cases::create_test_index().await?;
+        let index = Arc::new(Mutex::new(index_inner));
         let mut handles = Vec::new();
 
         // Spawn writers
@@ -169,7 +182,7 @@ mod primary_index_adversarial_tests {
                 for j in 0..100 {
                     let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4()).unwrap();
                     let doc_path =
-                        ValidatedPath::new(format!("adversarial/writer_{i}_{j}.md")).unwrap();
+                        ValidatedPath::new(format!("adversarial/writer_{}_{}.md", i, j)).unwrap();
 
                     let mut index_guard = index_clone.lock().await;
                     index_guard.insert(doc_id, doc_path).await.unwrap();
@@ -210,13 +223,20 @@ mod primary_index_adversarial_tests {
         let query = QueryBuilder::new().with_limit(1000)?.build()?;
         let results = index_guard.search(&query).await?;
         assert_eq!(results.len(), 500); // 5 writers * 100 operations each
+        drop(index_guard);
+
+        let mutex = Arc::try_unwrap(index)
+            .map_err(|_| anyhow!("index Arc still has outstanding references"))?;
+        let index = mutex.into_inner();
+        index.close().await?;
+        drop(temp_dir);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_memory_pressure() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Insert many large documents to stress memory usage
         let mut doc_ids = Vec::new();
@@ -249,6 +269,9 @@ mod primary_index_adversarial_tests {
         let results = index.search(&query).await?;
         assert_eq!(results.len(), 500);
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 
@@ -257,7 +280,7 @@ mod primary_index_adversarial_tests {
         // This test would simulate disk space exhaustion
         // Implementation depends on the actual file format and error handling
 
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // In a real test, we'd create a small filesystem or use disk quotas
         // For now, we'll test the error handling interface
@@ -279,12 +302,15 @@ mod primary_index_adversarial_tests {
             }
         }
 
+        index.close().await?;
+        drop(temp_dir);
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_interrupted_operations() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Test that interrupted operations don't corrupt the index
         // This simulates power failure, process kill, etc.
@@ -302,13 +328,18 @@ mod primary_index_adversarial_tests {
         index.insert(doc_id, doc_path.clone()).await?;
 
         // Simulate recovery by creating new index instance
-        let recovered_index = primary_index_edge_cases::create_test_index().await?;
+        let (_recovery_dir, recovered_index) =
+            primary_index_edge_cases::create_test_index().await?;
 
         // Should be able to operate on recovered index
         let new_doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
         let new_doc_path = ValidatedPath::new("adversarial/post_recovery.md")?;
 
         // recovered_index.insert(new_doc_id, new_doc_path).await?;
+
+        recovered_index.close().await?;
+        index.close().await?;
+        drop(temp_dir);
 
         Ok(())
     }
@@ -331,11 +362,12 @@ mod primary_index_adversarial_tests {
         // 3. Skip malformed files and continue
 
         match kotadb::create_primary_index_for_tests(index_path.to_str().unwrap()).await {
-            Ok(_index) => {
+            Ok(index) => {
                 // If it opens successfully, basic operations should work
                 // let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
                 // let doc_path = ValidatedPath::new("adversarial/after_corruption.md"))?;
                 // index.insert(doc_id, doc_path).await?;
+                index.close().await?;
             }
             Err(e) => {
                 // If it fails to open, error should be descriptive
@@ -348,7 +380,7 @@ mod primary_index_adversarial_tests {
 
     #[tokio::test]
     async fn test_index_pathological_key_distribution() -> Result<()> {
-        let mut index = primary_index_edge_cases::create_test_index().await?;
+        let (temp_dir, mut index) = primary_index_edge_cases::create_test_index().await?;
 
         // Test with keys that might cause poor performance in tree structures
         // e.g., sequential UUIDs, all similar prefixes, etc.
@@ -380,6 +412,9 @@ mod primary_index_adversarial_tests {
             duration.as_millis() < 100,
             "Search too slow with pathological keys: {duration:?}"
         );
+
+        index.close().await?;
+        drop(temp_dir);
 
         Ok(())
     }

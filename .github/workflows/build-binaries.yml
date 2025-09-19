@@ -4,17 +4,9 @@ name: Build Binaries
 # This enables quick testing without waiting for releases
 on:
   push:
-    branches: [ develop, main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
-  pull_request:
-    branches: [ develop ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
+    tags:
+      - 'v*'
+      - 'release/**'
   workflow_dispatch:
     inputs:
       platforms:
@@ -38,7 +30,7 @@ jobs:
         id: set-matrix
         run: |
           # Define complete matrix with all fields as compact JSON
-          ALL_PLATFORMS='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","name":"kotadb-linux-x64","ext":"tar.gz"},{"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","name":"kotadb-linux-musl-x64","ext":"tar.gz"},{"target":"x86_64-apple-darwin","os":"macos-13","name":"kotadb-macos-x64","ext":"tar.gz"},{"target":"aarch64-apple-darwin","os":"macos-14","name":"kotadb-macos-arm64","ext":"tar.gz"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest","name":"kotadb-windows-x64","ext":"zip"}]}'
+          ALL_PLATFORMS='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","name":"kotadb-linux-x64","ext":"tar.gz"},{"target":"x86_64-apple-darwin","os":"macos-13","name":"kotadb-macos-x64","ext":"tar.gz"},{"target":"aarch64-apple-darwin","os":"macos-14","name":"kotadb-macos-arm64","ext":"tar.gz"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest","name":"kotadb-windows-x64","ext":"zip"}]}'
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.platforms }}" != "all" ]]; then
             # Manual trigger with specific platforms - filter the matrix
@@ -88,16 +80,8 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-build-${{ matrix.target }}-
     
-    - name: Install musl-tools (Linux musl)
-      if: matrix.target == 'x86_64-unknown-linux-musl'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y musl-tools
-        # Use vendored OpenSSL to avoid linking issues
-        echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-        echo "OPENSSL_DIR=/musl" >> $GITHUB_ENV
-    
     - name: Build binary
+      shell: bash
       run: |
         cargo build --release --target ${{ matrix.target }} --bin kotadb
         cargo build --release --target ${{ matrix.target }} --bin mcp_server --features mcp-server
@@ -172,12 +156,6 @@ jobs:
               "url": "kotadb-linux-x64.tar.gz",
               "sha256": "$(cat kotadb-linux-x64/kotadb-linux-x64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
               "platform": "linux",
-              "arch": "x64"
-            },
-            "linux-musl-x64": {
-              "url": "kotadb-linux-musl-x64.tar.gz",
-              "sha256": "$(cat kotadb-linux-musl-x64/kotadb-linux-musl-x64.tar.gz.sha256 2>/dev/null | cut -d' ' -f1 || echo 'pending')",
-              "platform": "linux-musl",
               "arch": "x64"
             },
             "macos-x64": {

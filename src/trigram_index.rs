@@ -792,9 +792,11 @@ impl Index for TrigramIndex {
             .map(|(doc_id, _)| *doc_id)
             .collect();
 
-        // Fallback mechanism: if strict thresholds eliminate all results,
-        // gradually relax thresholds to ensure users get some relevant results
-        if filtered_candidates.is_empty() && !candidate_docs.is_empty() {
+        // Optional fallback (feature-gated). Default: no fallback to avoid false positives.
+        if cfg!(feature = "aggressive-trigram-thresholds")
+            && filtered_candidates.is_empty()
+            && !candidate_docs.is_empty()
+        {
             tracing::debug!(
                 "Strict threshold {} eliminated all {} candidates, applying fallback for query with {} trigrams",
                 min_match_threshold, candidate_docs.len(), all_query_trigrams.len()

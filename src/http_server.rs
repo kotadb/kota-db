@@ -11,6 +11,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::{net::TcpListener, sync::Mutex};
@@ -28,6 +29,7 @@ use crate::{
     connection_pool::ConnectionPoolImpl,
     contracts::connection_pool::ConnectionPool,
     contracts::{Document, Storage},
+    mcp_http_bridge::{create_mcp_bridge_router, McpHttpBridgeState},
     observability::with_trace_id,
     relationship_query::RelationshipQueryConfig,
     types::{ValidatedDocumentId, ValidatedTitle},
@@ -424,7 +426,11 @@ pub async fn start_server(storage: Arc<Mutex<dyn Storage>>, port: u16) -> Result
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -452,7 +458,11 @@ pub async fn start_server_with_intelligence(
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -478,12 +488,12 @@ pub async fn create_saas_server(
     let codebase_state = CodebaseIntelligenceState {
         relationship_engine: Arc::new(relationship_engine),
         trigram_index,
-        db_path,
+        db_path: db_path.clone(),
         storage: Some(storage.clone()),
     };
 
     let state = AppState {
-        storage,
+        storage: storage.clone(),
         connection_pool: None,
         codebase_intelligence: Some(codebase_state.clone()),
         api_key_service: Some(api_key_service.clone()),
@@ -577,7 +587,210 @@ pub async fn start_saas_server(
         MAX_DOCUMENT_SIZE / (1024 * 1024)
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Create SaaS HTTP server with MCP bridge functionality
+pub async fn create_saas_server_with_mcp(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+) -> Result<Router> {
+    // Initialize API key service
+    let api_key_service = Arc::new(ApiKeyService::new(api_key_config).await?);
+
+    // Initialize the BinaryRelationshipEngine for codebase intelligence
+    let config = RelationshipQueryConfig::default();
+    let relationship_engine = AsyncBinaryRelationshipEngine::new(&db_path, config).await?;
+
+    // Initialize trigram index (optional, can be None initially)
+    let trigram_index = Arc::new(RwLock::new(None));
+
+    let codebase_state = CodebaseIntelligenceState {
+        relationship_engine: Arc::new(relationship_engine),
+        trigram_index,
+        db_path: db_path.clone(),
+        storage: Some(storage.clone()),
+    };
+
+    let state = AppState {
+        storage: storage.clone(),
+        connection_pool: None,
+        codebase_intelligence: Some(codebase_state.clone()),
+        api_key_service: Some(api_key_service.clone()),
+    };
+
+    // Create MCP bridge with tool registry (if MCP feature is enabled)
+    #[cfg(feature = "mcp-server")]
+    let mcp_bridge_state = {
+        use crate::contracts::Index;
+        #[cfg(feature = "tree-sitter-parsing")]
+        use crate::mcp::tools::symbol_tools::SymbolTools;
+        use crate::mcp::tools::MCPToolRegistry;
+        use crate::{create_primary_index, create_trigram_index};
+
+        // Create indices for MCP tools
+        let primary_index_path = db_path.clone().join("primary_index");
+        std::fs::create_dir_all(&primary_index_path)?;
+        let trigram_index_path = db_path.clone().join("trigram_index");
+        std::fs::create_dir_all(&trigram_index_path)?;
+
+        let primary_index_path_str = primary_index_path.to_string_lossy().to_string();
+        let trigram_index_path_str = trigram_index_path.to_string_lossy().to_string();
+
+        let primary_index = create_primary_index(&primary_index_path_str, None).await?;
+        let trigram_index = create_trigram_index(&trigram_index_path_str, None).await?;
+
+        let primary_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(primary_index));
+        let trigram_index: Arc<Mutex<dyn Index>> = Arc::new(Mutex::new(trigram_index));
+
+        let mut registry = MCPToolRegistry::new();
+        // Register lightweight text search tools
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+
+        // Register symbol tools (available by default with tree-sitter parsing)
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+
+        let tool_registry = Arc::new(registry);
+        McpHttpBridgeState::new(Some(tool_registry))
+    };
+
+    #[cfg(not(feature = "mcp-server"))]
+    let mcp_bridge_state = McpHttpBridgeState::new();
+
+    // Create the codebase intelligence router with authentication
+    let intelligence_router = Router::new()
+        .route(
+            "/api/index",
+            post(codebase_intelligence_api::index_repository),
+        )
+        .route(
+            "/api/symbols/search",
+            get(codebase_intelligence_api::search_symbols),
+        )
+        .route(
+            "/api/relationships/callers/:target",
+            get(codebase_intelligence_api::find_callers),
+        )
+        .route(
+            "/api/analysis/impact/:target",
+            get(codebase_intelligence_api::analyze_impact),
+        )
+        .route(
+            "/api/code/search",
+            get(codebase_intelligence_api::search_code),
+        )
+        .layer(middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ))
+        .with_state(codebase_state);
+
+    // Create MCP bridge router with authentication
+    let mcp_bridge_router = create_mcp_bridge_router()
+        .layer(middleware::from_fn_with_state(
+            api_key_service.clone(),
+            auth_middleware,
+        ))
+        .with_state(mcp_bridge_state);
+
+    // Create internal endpoints (protected by different auth)
+    let internal_router = Router::new()
+        .route("/internal/create-api-key", post(create_api_key_internal))
+        .layer(middleware::from_fn(internal_auth_middleware))
+        .with_state(api_key_service.clone());
+
+    // Create the main router with public endpoints
+    let main_router = Router::new()
+        .route("/health", get(health_check))
+        // Monitoring endpoints (no auth)
+        .route("/stats", get(get_aggregated_stats))
+        .route("/stats/connections", get(get_connection_stats))
+        .route("/stats/performance", get(get_performance_stats))
+        .route("/stats/resources", get(get_resource_stats))
+        // Validation endpoints (no auth)
+        .route("/validate/path", post(validate_path))
+        .route("/validate/document-id", post(validate_document_id))
+        .route("/validate/title", post(validate_title))
+        .route("/validate/tag", post(validate_tag))
+        .route("/validate/bulk", post(validate_bulk))
+        .with_state(state);
+
+    // Merge all routers
+    Ok(main_router
+        .merge(intelligence_router)
+        .merge(mcp_bridge_router)
+        .merge(internal_router)
+        .layer(
+            ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(MAX_DOCUMENT_SIZE))
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive()),
+        ))
+}
+
+/// Start SaaS HTTP server with MCP bridge functionality
+pub async fn start_saas_server_with_mcp(
+    storage: Arc<Mutex<dyn Storage>>,
+    db_path: PathBuf,
+    api_key_config: ApiKeyConfig,
+    port: u16,
+) -> Result<()> {
+    let app = create_saas_server_with_mcp(storage, db_path, api_key_config).await?;
+    let listener = TcpListener::bind(&format!("0.0.0.0:{port}")).await?;
+
+    info!(
+        "KotaDB SaaS HTTP server with MCP bridge starting on port {}",
+        port
+    );
+    info!("🔐 API key authentication enabled");
+    info!("🔗 MCP-over-HTTP bridge available at /mcp/*");
+    info!("API endpoints available (requires API key):");
+    info!("  - POST /api/index - Index a GitHub repository");
+    info!("  - GET /api/symbols/search - Search for code symbols");
+    info!("  - GET /api/relationships/callers/:target - Find callers of a function");
+    info!("  - GET /api/analysis/impact/:target - Analyze impact of changes");
+    info!("  - GET /api/code/search - Full-text code search");
+    info!("MCP bridge endpoints (requires API key):");
+    info!("  - GET /mcp/tools - List available MCP tools (POST also supported, deprecated)");
+    info!("  - POST /mcp/tools/:tool_name - Call specific MCP tool");
+    info!("  - POST /mcp/tools/search_code - Search code content");
+    info!("  - POST /mcp/tools/search_symbols - Search symbols");
+    info!("  - POST /mcp/tools/find_callers - Find function callers");
+    info!("  - POST /mcp/tools/analyze_impact - Analyze impact");
+    info!("Internal endpoints (requires internal key):");
+    info!("  - POST /internal/create-api-key - Create new API key");
+    info!(
+        "Maximum document size: {}MB",
+        MAX_DOCUMENT_SIZE / (1024 * 1024)
+    );
+
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -1173,7 +1386,7 @@ async fn get_resource_stats(
 
                 // Determine system health based on various factors
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                // Note: max_connections not exposed in current ConnectionStats implementation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)
@@ -1239,7 +1452,7 @@ async fn get_aggregated_stats(
                 // Resource stats
                 let memory_mb = stats.memory_usage_bytes as f64 / (1024.0 * 1024.0);
                 // Note: Using default capacity as actual capacity is not exposed in stats
-                // TODO: Consider adding max_connections to ConnectionStats for accurate calculation
+                // Note: max_connections not exposed in current ConnectionStats implementation
                 let system_healthy = stats.cpu_usage_percent < HEALTH_THRESHOLD_CPU
                     && memory_mb < HEALTH_THRESHOLD_MEMORY_MB
                     && (stats.active_connections as f64 / DEFAULT_CONNECTION_POOL_CAPACITY)

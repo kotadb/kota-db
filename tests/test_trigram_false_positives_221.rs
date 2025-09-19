@@ -8,6 +8,10 @@ use kotadb::{
 };
 use tempfile::TempDir;
 
+#[cfg_attr(
+    feature = "aggressive-trigram-thresholds",
+    ignore = "Aggressive trigram fallback relaxes strict zero-result expectations"
+)]
 #[tokio::test]
 async fn test_nonexistent_search_returns_empty() -> Result<()> {
     let temp_dir = TempDir::new()?;

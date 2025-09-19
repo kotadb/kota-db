@@ -350,58 +350,63 @@ fn build_balanced_tree_from_sorted(
         return Ok(create_empty_tree());
     }
 
-    const MAX_KEYS_PER_NODE: usize = 16; // B+ tree order
+    let max_keys_per_node = crate::pure::btree::MAX_KEYS;
 
-    // Step 1: Build leaf nodes
-    // Pre-allocate capacity based on number of leaf nodes needed
-    let num_leaf_nodes = pairs.len().div_ceil(MAX_KEYS_PER_NODE);
+    // Step 1: Build leaf nodes without cloning entire subtrees later
+    let num_leaf_nodes = pairs.len().div_ceil(max_keys_per_node);
     let mut current_level: Vec<Box<BTreeNode>> = Vec::with_capacity(num_leaf_nodes);
 
-    for chunk in pairs.chunks(MAX_KEYS_PER_NODE) {
+    for chunk in pairs.chunks(max_keys_per_node) {
         let keys: Vec<_> = chunk.iter().map(|(k, _)| *k).collect();
         let values: Vec<_> = chunk.iter().map(|(_, v)| v.clone()).collect();
 
-        let leaf_node = Box::new(BTreeNode::Leaf {
+        current_level.push(Box::new(BTreeNode::Leaf {
             keys,
             values,
             next_leaf: None,
-        });
-
-        current_level.push(leaf_node);
+        }));
     }
 
-    // Step 2: Build internal levels bottom-up
+    // Step 2: Build internal levels bottom-up, moving nodes instead of cloning
+    let mut height: u32 = 1;
     while current_level.len() > 1 {
-        // Pre-allocate capacity for the next level
-        let num_parent_nodes = current_level.len().div_ceil(MAX_KEYS_PER_NODE + 1);
-        let mut next_level: Vec<Box<BTreeNode>> = Vec::with_capacity(num_parent_nodes);
+        height += 1;
 
-        for chunk in current_level.chunks(MAX_KEYS_PER_NODE + 1) {
-            // Internal nodes can have one more child than keys
-            let children: Vec<_> = chunk.to_vec();
+        let mut next_level: Vec<Box<BTreeNode>> =
+            Vec::with_capacity(current_level.len().div_ceil(max_keys_per_node + 1));
+        let mut iter = current_level.into_iter();
 
-            // Extract separator keys from children
-            let mut keys = Vec::new();
-            for child in children.iter().skip(1) {
-                // Use the first key of each child (except the first) as separator
-                let separator_key = extract_first_key(child);
-                keys.push(separator_key);
+        loop {
+            let mut children: Vec<Box<BTreeNode>> = Vec::with_capacity(max_keys_per_node + 1);
+            match iter.next() {
+                Some(child) => children.push(child),
+                None => break,
             }
 
-            let internal_node = Box::new(BTreeNode::Internal { keys, children });
+            for _ in 0..max_keys_per_node {
+                if let Some(child) = iter.next() {
+                    children.push(child);
+                } else {
+                    break;
+                }
+            }
 
-            next_level.push(internal_node);
+            let mut keys = Vec::with_capacity(children.len().saturating_sub(1));
+            for child in children.iter().skip(1) {
+                keys.push(extract_first_key(child.as_ref()));
+            }
+
+            next_level.push(Box::new(BTreeNode::Internal { keys, children }));
         }
 
         current_level = next_level;
     }
 
-    // Step 3: Set root
     let root = current_level.into_iter().next();
 
     Ok(BTreeRoot {
         root,
-        height: 1, // Initial height for newly created tree
+        height,
         total_keys: pairs.len(),
     })
 }

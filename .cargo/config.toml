@@ -34,7 +34,9 @@ linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# Rely on the system default linker on macOS runners to avoid relying on lld.
+# macOS hosted agents do not include lld by default and we prefer portability.
+
 
 # Development profile optimizations
 [profile.dev]

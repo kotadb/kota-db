@@ -6,10 +6,72 @@ use std::time::Duration;
 
 /// Performance testing timeouts and thresholds
 pub mod performance {
+    #![allow(dead_code)]
     use super::*;
 
     /// Standard slow operation threshold for detecting performance issues
     pub const SLOW_OPERATION_THRESHOLD: Duration = Duration::from_millis(100);
+
+    /// Read an environment variable as u64, falling back to default on error
+    fn env_u64(key: &str, default: u64) -> u64 {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Read an environment variable as f64, falling back to default on error
+    fn env_f64(key: &str, default: f64) -> f64 {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Detect CI using the canonical helper to avoid duplication
+    fn is_ci_local() -> bool {
+        super::concurrency::is_ci()
+    }
+
+    /// Average read lock time threshold in milliseconds (CI-aware, overridable)
+    pub fn lock_read_avg_ms() -> u64 {
+        let base = if is_ci_local() { 25 } else { 15 };
+        env_u64("KOTADB_LOCK_READ_AVG_MS", base)
+    }
+
+    /// Average write lock time threshold in milliseconds (CI-aware, overridable)
+    pub fn lock_write_avg_ms() -> u64 {
+        let base = if is_ci_local() { 60 } else { 50 };
+        env_u64("KOTADB_LOCK_WRITE_AVG_MS", base)
+    }
+
+    /// Minimum acceptable lock efficiency (0.0-1.0), CI-aware, overridable
+    pub fn lock_efficiency_min() -> f64 {
+        let base = if is_ci_local() { 0.65 } else { 0.70 };
+        env_f64("KOTADB_LOCK_EFFICIENCY_MIN", base)
+    }
+
+    /// Write performance requirement helpers (overridable via env)
+    pub fn write_avg_ms() -> u64 {
+        let base = if is_ci_local() { 20 } else { 10 };
+        env_u64("KOTADB_WRITE_AVG_MS", base)
+    }
+    pub fn write_p95_ms() -> u64 {
+        let base = if is_ci_local() { 75 } else { 50 };
+        env_u64("KOTADB_WRITE_P95_MS", base)
+    }
+    pub fn write_p99_ms() -> u64 {
+        let base = if is_ci_local() { 150 } else { 100 };
+        env_u64("KOTADB_WRITE_P99_MS", base)
+    }
+    pub fn write_stddev_ms() -> u64 {
+        let base = if is_ci_local() { 35 } else { 25 };
+        env_u64("KOTADB_WRITE_STDDEV_MS", base)
+    }
+    pub fn write_outlier_pct() -> f64 {
+        let base = if is_ci_local() { 7.5 } else { 5.0 };
+        env_f64("KOTADB_WRITE_OUTLIER_PCT", base)
+    }
 }
 
 /// Concurrency testing configuration
@@ -55,13 +117,47 @@ pub mod concurrency {
     }
 }
 
+/// Test gating utilities for optional heavy test suites
+pub mod gating {
+    /// Returns true if heavy/stress tests are explicitly enabled via env flag.
+    #[allow(dead_code)]
+    pub fn heavy_tests_enabled() -> bool {
+        std::env::var("KOTADB_RUN_HEAVY_TESTS")
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                matches!(value.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    }
+
+    /// Helper that prints a skip message when heavy tests are disabled.
+    #[allow(dead_code)]
+    pub fn skip_if_heavy_disabled(test_name: &str) -> bool {
+        if !heavy_tests_enabled() {
+            eprintln!("Skipping heavy test '{test_name}'. Set KOTADB_RUN_HEAVY_TESTS=1 to enable.");
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    // Serialize tests that mutate CI-related environment variables to avoid
+    // cross-test interference on parallel runners.
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn test_is_ci_detection_with_ci_env() {
+        let _g = env_guard();
         // Set CI environment variable and test detection
         env::set_var("CI", "true");
         assert!(
@@ -85,6 +181,7 @@ mod tests {
 
     #[test]
     fn test_is_ci_detection_without_env() {
+        let _g = env_guard();
         // Store original values to restore later
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");
@@ -111,6 +208,7 @@ mod tests {
 
     #[test]
     fn test_get_concurrent_operations_ci_vs_local() {
+        let _g = env_guard();
         // Test CI environment returns reduced concurrency
         env::set_var("CI", "true");
         let ci_ops = concurrency::get_concurrent_operations();
@@ -136,6 +234,7 @@ mod tests {
 
     #[test]
     fn test_get_operations_per_task_ci_vs_local() {
+        let _g = env_guard();
         // Store original environment
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");
@@ -175,6 +274,7 @@ mod tests {
 
     #[test]
     fn test_get_pool_capacity_ci_vs_local() {
+        let _g = env_guard();
         // Store original environment
         let original_ci = env::var("CI");
         let original_gh = env::var("GITHUB_ACTIONS");

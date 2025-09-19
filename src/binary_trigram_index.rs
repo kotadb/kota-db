@@ -479,16 +479,53 @@ impl Index for BinaryTrigramIndex {
             return Ok(Vec::new());
         }
 
+        // Use unique trigram set to avoid duplicate inflation when counting matches
+        let query_trigram_set: std::collections::HashSet<String> =
+            all_query_trigrams.into_iter().collect();
+        let query_trigram_count = query_trigram_set.len();
+
+        // Compute minimum-match threshold (tiered policy)
+        // Align threshold policy with established trigram_index behavior by default.
+        // Optionally, an aggressive policy can be enabled via feature flag.
+        let base_min_match_threshold: usize = if query_trigram_count <= 3 {
+            // 100%
+            query_trigram_count
+        } else if query_trigram_count <= 6 {
+            // ~80%
+            std::cmp::max(
+                (query_trigram_count * 8).div_ceil(10), // ceil(0.8 * N)
+                query_trigram_count.saturating_sub(1),
+            )
+        } else {
+            // ~60%
+            let sixty = (query_trigram_count * 6).div_ceil(10); // ceil(0.6 * N)
+            std::cmp::max(3, sixty)
+        };
+
+        // Heuristic: single long/digit token → stricter threshold
+        let mut min_match_threshold = base_min_match_threshold;
+        if query.search_terms.len() == 1 {
+            let term = query.search_terms[0].as_str();
+            let has_digits = term.chars().any(|c| c.is_ascii_digit());
+            let long_token = term.chars().count() >= 12;
+            if has_digits || long_token {
+                // For numeric-heavy or very long single tokens, require ~90%
+                let ninety = (query_trigram_count * 9).div_ceil(10); // ceil(0.9*N)
+                min_match_threshold = std::cmp::max(min_match_threshold, ninety);
+            }
+        }
+
         // Use hot cache first, then fall back to mmap
-        let mut doc_scores: HashMap<ValidatedDocumentId, f64> = HashMap::new();
+        let mut doc_scores: HashMap<ValidatedDocumentId, u16> = HashMap::new();
 
         // Check hot cache first
         {
             let cache = self.hot_cache.read().await;
-            for trigram in &all_query_trigrams {
+            for trigram in &query_trigram_set {
                 if let Some(doc_ids) = cache.get(trigram) {
                     for doc_id in doc_ids {
-                        *doc_scores.entry(*doc_id).or_insert(0.0) += 1.0;
+                        let entry = doc_scores.entry(*doc_id).or_insert(0);
+                        *entry = entry.saturating_add(1);
                     }
                 }
             }
@@ -497,7 +534,7 @@ impl Index for BinaryTrigramIndex {
         // If no results in hot cache, check mmap data
         if doc_scores.is_empty() {
             if let Some(trigram_mmap) = self.trigram_mmap.read().await.as_ref() {
-                for trigram in &all_query_trigrams {
+                for trigram in &query_trigram_set {
                     if let Some((offset, size)) = trigram_mmap.offset_table.get(trigram) {
                         // Read document IDs from mmap
                         let mmap_data = &trigram_mmap.mmap[*offset..*offset + *size];
@@ -505,7 +542,8 @@ impl Index for BinaryTrigramIndex {
                             if let Ok(uuid_bytes) = <[u8; 16]>::try_from(chunk) {
                                 let uuid = uuid::Uuid::from_bytes(uuid_bytes);
                                 if let Ok(doc_id) = ValidatedDocumentId::from_uuid(uuid) {
-                                    *doc_scores.entry(doc_id).or_insert(0.0) += 1.0;
+                                    let entry = doc_scores.entry(doc_id).or_insert(0);
+                                    *entry = entry.saturating_add(1);
                                 }
                             }
                         }
@@ -514,9 +552,16 @@ impl Index for BinaryTrigramIndex {
             }
         }
 
-        // Sort by relevance score (handle NaN safely)
-        let mut results: Vec<_> = doc_scores.into_iter().collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Apply minimum-match threshold to reduce false positives
+        let mut results: Vec<_> = doc_scores
+            .into_iter()
+            .filter(|(_id, count)| *count as usize >= min_match_threshold)
+            .collect();
+        // Sort by match count descending, then by ID for stability
+        results.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.as_uuid().cmp(&b.0.as_uuid()))
+        });
 
         // Apply limit
         let limit = query.limit.get();

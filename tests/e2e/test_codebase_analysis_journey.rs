@@ -5,6 +5,10 @@
 use crate::e2e::{CommandRunner, TestEnvironment};
 use anyhow::Result;
 
+#[path = "../test_constants.rs"]
+mod test_constants;
+use test_constants::gating;
+
 /// Test the complete codebase analysis journey
 ///
 /// Journey Steps:
@@ -155,6 +159,12 @@ async fn test_large_codebase_analysis_performance() -> Result<()> {
 /// Validates graceful handling of error conditions
 #[tokio::test]
 async fn test_error_recovery_scenarios() -> Result<()> {
+    if gating::skip_if_heavy_disabled(
+        "e2e::test_codebase_analysis_journey::test_error_recovery_scenarios",
+    ) {
+        return Ok(());
+    }
+
     let env = TestEnvironment::new()?;
     env.ensure_binary_built().await?;
 

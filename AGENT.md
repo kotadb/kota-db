@@ -174,6 +174,7 @@ See `docs/BRANCHING_STRATEGY.md` for complete details.
 # Primary development workflow
 just dev              # Start development server with auto-reload
 just test              # Run all tests (REQUIRED before commits)
+just test-fast         # Fast gating set: nextest lib + doctests with CI features
 just check             # Run all quality checks (formatting, linting, tests)
 just ci                # Run full CI pipeline locally
 
@@ -182,6 +183,12 @@ just test-unit         # Unit tests only
 just test-integration  # Integration tests only
 just test-perf         # Performance regression tests
 just coverage          # Generate test coverage report
+
+Notes:
+- Use `just test-fast` for quick pre-push validation — it mirrors the CI gating set:
+  - Runs `cargo nextest run --lib` and `cargo test --doc` with `--no-default-features --features "git-integration,tree-sitter-parsing,mcp-server"`.
+  - Excludes heavy integration/stress suites for faster feedback.
+- Use `just test` for broader validation across the workspace (nextest, all tests).
 
 # Code quality (REQUIRED)
 just fmt               # Format code (run before every commit)
@@ -240,7 +247,7 @@ cargo run --release -- benchmark --operations 1000  # Compare against benchmarks
 ### Future Testing Methods (Once Available)
 ```bash
 # MCP server dogfooding (coming soon)
-cargo run --bin mcp_server --features="mcp-server" --config kotadb-mcp-dev.toml &
+cargo run --bin mcp_server --config kotadb-mcp-dev.toml &
 # Then connect Claude Code to test:
 # - Document search via MCP
 # - Symbol navigation
@@ -505,6 +512,11 @@ tests/
 ```
 
 ## 🚀 CI/CD Pipeline
+
+### Simplified PR Workflow
+- PRs run a single unified pipeline at `.github/workflows/ci.yml` (formatting, clippy, build, all tests via nextest, doc tests, docs build).
+- Other workflows (optimized CI variants, fast CI, production gates, client/docs builds) no longer trigger on PRs; they run on push or manual dispatch.
+- Local parity: run `just ci` to execute the same critical gates locally; use `just ci-fast` for a quick iteration loop.
 
 ### Automated Checks (DO NOT BREAK)
 Every PR triggers:

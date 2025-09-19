@@ -90,7 +90,7 @@ pub fn calculate_performance_stats(durations: &[Duration]) -> PerformanceStats {
     let mean = Duration::from_nanos(mean_nanos as u64);
 
     // Calculate median
-    let median = if count % 2 == 0 {
+    let median = if count.is_multiple_of(2) {
         let mid1 = sorted_durations[count / 2 - 1];
         let mid2 = sorted_durations[count / 2];
         Duration::from_nanos((mid1.as_nanos() + mid2.as_nanos()) as u64 / 2)
