@@ -27,8 +27,10 @@ ACTION=$2
 if [ "$ENVIRONMENT" = "production" ]; then
     APP_NAME="kotadb-api"
     echo -e "${YELLOW}⚠️  Production environment - be careful!${NC}"
+    DB_SECRET_KEY="SUPABASE_DB_URL_PRODUCTION"
 elif [ "$ENVIRONMENT" = "staging" ]; then
     APP_NAME="kotadb-api-staging"
+    DB_SECRET_KEY="SUPABASE_DB_URL_STAGING"
 else
     echo -e "${RED}Error: Invalid environment. Use 'staging' or 'production'${NC}"
     exit 1
@@ -49,9 +51,13 @@ case $ACTION in
     "set")
         echo -e "${GREEN}Setting secrets for $ENVIRONMENT...${NC}"
         echo -e "${YELLOW}Enter values for each secret (leave blank to skip):${NC}"
-        
+
         # Database URL
         read -p "DATABASE_URL: " -s DATABASE_URL
+        echo ""
+
+        # Direct Postgres URL for migrations
+        read -p "${DB_SECRET_KEY}: " -s DIRECT_DB_URL
         echo ""
         
         # API Keys
@@ -76,7 +82,11 @@ case $ACTION in
         if [ ! -z "$DATABASE_URL" ]; then
             SECRETS_CMD="$SECRETS_CMD DATABASE_URL='$DATABASE_URL'"
         fi
-        
+
+        if [ ! -z "$DIRECT_DB_URL" ]; then
+            SECRETS_CMD="$SECRETS_CMD ${DB_SECRET_KEY}='$DIRECT_DB_URL'"
+        fi
+
         if [ ! -z "$API_KEY" ]; then
             SECRETS_CMD="$SECRETS_CMD API_KEY='$API_KEY'"
         fi

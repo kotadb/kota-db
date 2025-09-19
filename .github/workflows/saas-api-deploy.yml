@@ -78,10 +78,23 @@ jobs:
       url: https://kotadb-api-staging.fly.dev
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+
+      - name: Apply Supabase migrations (staging)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_STAGING }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL_STAGING not set, skipping"
+          else
+            ./scripts/supabase-apply-remote.sh
+          fi
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
-      
+
       - name: Deploy to Staging
         run: |
           flyctl deploy \
@@ -116,7 +129,20 @@ jobs:
       url: https://kotadb-api.fly.dev
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+
+      - name: Apply Supabase migrations (production)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_PRODUCTION }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL_PRODUCTION not set, skipping"
+          else
+            ./scripts/supabase-apply-remote.sh
+          fi
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
       
