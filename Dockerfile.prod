@@ -1,7 +1,7 @@
 # KotaDB production image with MCP support
 # Builds the CLI server, SaaS API server, and MCP HTTP server binaries.
 
-FROM rust:1.89-alpine AS builder
+FROM rust:1.90-alpine AS builder
 
 # Build dependencies for statically linked binaries (skip heavy ONNX deps)
 RUN apk add --no-cache \
