@@ -8,4 +8,5 @@ if ! command -v supabase >/dev/null 2>&1; then
   exit 1
 fi
 
-supabase db reset --linked
+echo "Resetting local Supabase containers with project migrations"
+supabase db reset --local

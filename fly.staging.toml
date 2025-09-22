@@ -9,7 +9,7 @@ kill_timeout = "30s"
   auto_rollback = true
 
 [build]
-  dockerfile = "Dockerfile.prod"
+  dockerfile = "Dockerfile.production"
 
 [env]
   # Staging environment variables with increased logging

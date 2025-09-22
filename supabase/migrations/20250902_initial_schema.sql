@@ -1,11 +1,9 @@
 -- Supabase Setup Script for KotaDB
 -- Run this in your Supabase SQL editor to set up the required tables and policies
 
--- Enable UUID extension if not already enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Create API Keys table
 CREATE TABLE IF NOT EXISTS api_keys (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -21,7 +19,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create Documents table
 CREATE TABLE IF NOT EXISTS documents (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -37,7 +34,6 @@ CREATE TABLE IF NOT EXISTS documents (
     UNIQUE(user_id, path)
 );
 
--- Create Usage Metrics table
 CREATE TABLE IF NOT EXISTS usage_metrics (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     api_key_id UUID REFERENCES api_keys(id) ON DELETE CASCADE,
@@ -53,7 +49,6 @@ CREATE TABLE IF NOT EXISTS usage_metrics (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys(expires_at) WHERE expires_at IS NOT NULL;
@@ -63,7 +58,6 @@ CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)
 CREATE INDEX IF NOT EXISTS idx_usage_metrics_api_key ON usage_metrics(api_key_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_metrics_created_at ON usage_metrics(created_at DESC);
 
--- Create index for vector similarity search (if using embeddings)
 CREATE INDEX IF NOT EXISTS idx_documents_embedding ON documents USING ivfflat (embedding vector_cosine_ops);
 
 -- Enable Row Level Security
@@ -71,7 +65,6 @@ ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_metrics ENABLE ROW LEVEL SECURITY;
 
--- API Keys RLS Policies
 DROP POLICY IF EXISTS "Users can view their own API keys" ON api_keys;
 CREATE POLICY "Users can view their own API keys"
     ON api_keys FOR SELECT
@@ -93,7 +86,6 @@ CREATE POLICY "Users can delete their own API keys"
     ON api_keys FOR DELETE
     USING (auth.uid() = user_id);
 
--- Documents RLS Policies
 DROP POLICY IF EXISTS "Users can view their own documents" ON documents;
 CREATE POLICY "Users can view their own documents"
     ON documents FOR SELECT
@@ -115,7 +107,6 @@ CREATE POLICY "Users can delete their own documents"
     ON documents FOR DELETE
     USING (auth.uid() = user_id);
 
--- Usage Metrics RLS Policies (read-only for users)
 DROP POLICY IF EXISTS "Users can view metrics for their API keys" ON usage_metrics;
 CREATE POLICY "Users can view metrics for their API keys"
     ON usage_metrics FOR SELECT
@@ -125,7 +116,6 @@ CREATE POLICY "Users can view metrics for their API keys"
         )
     );
 
--- Service role can do everything (for backend API)
 DROP POLICY IF EXISTS "Service role has full access to api_keys" ON api_keys;
 CREATE POLICY "Service role has full access to api_keys"
     ON api_keys FOR ALL

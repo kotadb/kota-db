@@ -164,7 +164,7 @@ CACHE_TTL_SECONDS="300"
 
 ### Migration Workflow
 
-1. Spin up the local Supabase stack and recreate the database: `just supabase-reset`. This step applies everything under `supabase/migrations/` and the seed file.
+1. Spin up the local Supabase stack and recreate the database: `just supabase-reset`. This command targets only the Dockerised dev stack and reapplies everything under `supabase/migrations/` plus the seed file.
 2. Make schema changes through the Supabase SQL editor or the CLI, then capture them with `just supabase-generate <short_name>` so they land in version-controlled SQL.
 3. Commit the new migration file and run the reset command again to confirm it replays cleanly.
 4. Deployments call `scripts/supabase-apply-remote.sh` (via `just supabase-apply`) against staging/production URLs before shipping the Fly.io release to keep the database in lockstep with the application. The helper shells out to `supabase db push`, so the CLI-managed migration history (`supabase_migrations.schema_migrations`) remains authoritative and only new migrations execute remotely.

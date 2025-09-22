@@ -183,7 +183,7 @@ The Fly.io deployment is **stateless** and only processes requests. See `docs/SU
 ## Supabase Migrations
 
 - Generate new SQL from local changes with `just supabase-generate <short_name>`; this wraps `supabase db diff` and writes into `supabase/migrations/`.
-- Rebuild the local Supabase containers and apply migrations via `just supabase-reset` before sending a PR.
+- Rebuild the local Supabase containers and apply migrations via `just supabase-reset` before sending a PR. This helper only touches the Dockerised dev stack—it never talks to staging or production.
 - Apply the migrations to a remote database with `just supabase-apply <postgres_url>`; in CI the URL is supplied through secrets (see deployment workflow). The helper delegates to `supabase db push`, so the official migration tracking table (`supabase_migrations.schema_migrations`) stays fully compatible with the Supabase CLI.
 
 ### Using the Secrets Script
