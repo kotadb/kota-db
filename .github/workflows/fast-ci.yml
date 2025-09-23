@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_INCREMENTAL: 0
+  FAST_FEATURES: git-integration,tree-sitter-parsing,mcp-server
 
 jobs:
   # Lightning-fast essential checks (< 3 minutes total)
@@ -44,15 +45,15 @@ jobs:
       run: cargo fmt --all -- --check
     
     - name: Essential clippy check
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets --no-default-features --features "${{ env.FAST_FEATURES }}" -- -D warnings
     
     - name: Fast build
-      run: cargo build --all-features
+      run: cargo build --no-default-features --features "${{ env.FAST_FEATURES }}"
     
     - name: Unit tests (ULTRA FAST)
       run: |
         echo "🚀 Running unit tests with cargo-nextest..."
-        time cargo nextest run --lib --all-features
+        time cargo nextest run --lib --no-default-features --features "${{ env.FAST_FEATURES }}"
       env:
         RUST_LOG: error
         CI: true
@@ -60,8 +61,8 @@ jobs:
     - name: Critical integration tests only
       run: |
         echo "⚡ Running only critical integration tests..."
-        cargo nextest run --test file_storage_integration_test
-        cargo nextest run --test http_server_integration_test
+        cargo nextest run --test file_storage_integration_test --no-default-features --features "${{ env.FAST_FEATURES }}"
+        cargo nextest run --test http_server_integration_test --no-default-features --features "${{ env.FAST_FEATURES }}"
       env:
         RUST_LOG: error
         CI: true

@@ -180,6 +180,12 @@ KotaDB uses **Supabase for all persistent data storage**:
 
 The Fly.io deployment is **stateless** and only processes requests. See `docs/SUPABASE_ARCHITECTURE.md` for detailed architecture.
 
+## Supabase Migrations
+
+- Generate new SQL from local changes with `just supabase-generate <short_name>`; this wraps `supabase db diff` and writes into `supabase/migrations/`.
+- Rebuild the local Supabase containers and apply migrations via `just supabase-reset` before sending a PR. This helper only touches the Dockerised dev stack—it never talks to staging or production.
+- Apply the migrations to a remote database with `just supabase-apply <postgres_url>`; in CI the URL is supplied through secrets (see deployment workflow). The helper delegates to `supabase db push`, so the official migration tracking table (`supabase_migrations.schema_migrations`) stays fully compatible with the Supabase CLI.
+
 ### Using the Secrets Script
 
 ```bash
@@ -223,6 +229,8 @@ flyctl secrets unset API_KEY --app kotadb-api
 | SUPABASE_URL | Supabase project URL | Yes | `https://[ref].supabase.co` |
 | SUPABASE_ANON_KEY | Public anonymous key | Yes | Your project's anon key |
 | SUPABASE_SERVICE_KEY | Service role key (admin) | Yes | Your project's service key |
+| SUPABASE_DB_URL_STAGING | Direct Postgres URL for staging | Yes | Passed to deploy workflow for migrations |
+| SUPABASE_DB_URL_PRODUCTION | Direct Postgres URL for production | Yes | Only used in manual production deploys |
 | JWT_SECRET | Secret for JWT token validation | No | Auto-handled by Supabase |
 | REDIS_URL | Redis connection for caching | No | `redis://host:6379` |
 | SENTRY_DSN | Error tracking with Sentry | No | Sentry project DSN |
@@ -245,6 +253,8 @@ The deployment is automated via GitHub Actions (`.github/workflows/saas-api-depl
 
 3. **Required GitHub Secrets**:
    - `FLY_API_TOKEN`: Fly.io authentication token
+   - `SUPABASE_DB_URL_STAGING`: direct connection string used during staging deploys
+   - `SUPABASE_DB_URL_PRODUCTION`: direct connection string used during production deploys
    
    Get your token:
    ```bash
