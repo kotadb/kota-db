@@ -1,0 +1,4 @@
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa Marvin attack timing vuln via sqlx-mysql, no upstream fix
+]
