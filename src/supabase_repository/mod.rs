@@ -1,12 +1,17 @@
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD_NO_PAD as BASE64_NO_PAD, Engine as _};
 use chrono::{DateTime, Utc};
-use serde_json::Value as JsonValue;
+use hex::encode;
+use rand::{rngs::OsRng, RngCore};
+use serde_json::{json, Value as JsonValue};
+use sha2::{Digest, Sha256};
 use sqlx::{types::Json, PgPool};
-use tracing::instrument;
+use tracing::{instrument, warn};
 use uuid::Uuid;
 
 pub mod job_worker;
 pub mod task;
+use self::task::merge_settings;
 
 /// Row representing a repository in Supabase.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -21,6 +26,7 @@ pub struct RepositoryRow {
     pub default_branch: Option<String>,
     pub last_indexed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub metadata: JsonValue,
 }
 
 /// Row representing an indexing job with repository metadata.
@@ -45,6 +51,7 @@ pub struct SupabaseRepositoryStore {
 
 pub struct RepositoryRegistration<'a> {
     pub user_id: Uuid,
+    pub api_key_id: Option<Uuid>,
     pub name: &'a str,
     pub git_url: &'a str,
     pub provider: &'a str,
@@ -66,30 +73,63 @@ impl SupabaseRepositoryStore {
     pub async fn register_repository_and_enqueue_job(
         &self,
         registration: RepositoryRegistration<'_>,
-    ) -> Result<(RepositoryRow, Uuid)> {
+    ) -> Result<(RepositoryRow, Uuid, Option<String>)> {
+        #[derive(sqlx::FromRow)]
+        struct ExistingRepoRow {
+            settings: JsonValue,
+            metadata: JsonValue,
+        }
+
         let mut tx = self.pool.begin().await?;
+
+        let existing = sqlx::query_as::<_, ExistingRepoRow>(
+            r#"
+            SELECT settings, metadata
+            FROM repositories
+            WHERE user_id = $1 AND git_url = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(registration.user_id)
+        .bind(registration.git_url)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("failed to fetch existing repository metadata")?;
+
+        let (base_settings, mut metadata) = existing
+            .map(|row| (row.settings, row.metadata))
+            .unwrap_or_else(|| (json!({}), json!({})));
+        let (secret, secret_hash, secret_created) =
+            ensure_webhook_secret(&mut metadata, registration.provider);
+        let merged_settings = merge_settings(&base_settings, Some(registration.settings));
 
         let repository = sqlx::query_as::<_, RepositoryRow>(
             r#"
             INSERT INTO repositories (
                 user_id,
+                api_key_id,
                 name,
                 git_url,
                 provider,
                 default_branch,
                 status,
                 sync_state,
-                settings
+                settings,
+                metadata,
+                webhook_secret_hash
             )
-            VALUES ($1, $2, $3, $4, $5, 'queued', 'pending', $6)
+            VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'pending', $7, $8, $9)
             ON CONFLICT (user_id, git_url)
             DO UPDATE
                 SET updated_at = NOW(),
                     provider = EXCLUDED.provider,
                     default_branch = COALESCE(EXCLUDED.default_branch, repositories.default_branch),
-                    settings = repositories.settings || EXCLUDED.settings,
+                    api_key_id = COALESCE(EXCLUDED.api_key_id, repositories.api_key_id),
+                    settings = EXCLUDED.settings,
+                    metadata = repositories.metadata || EXCLUDED.metadata,
                     status = 'queued',
-                    sync_state = 'pending'
+                    sync_state = 'pending',
+                    webhook_secret_hash = COALESCE(repositories.webhook_secret_hash, EXCLUDED.webhook_secret_hash)
             RETURNING
                 id,
                 user_id,
@@ -100,15 +140,19 @@ impl SupabaseRepositoryStore {
                 sync_state,
                 default_branch,
                 last_indexed_at,
-                created_at
+                created_at,
+                metadata
             "#,
         )
         .bind(registration.user_id)
+        .bind(registration.api_key_id)
         .bind(registration.name)
         .bind(registration.git_url)
         .bind(registration.provider)
         .bind(registration.default_branch)
-        .bind(Json(registration.settings.clone()))
+        .bind(Json(merged_settings))
+        .bind(Json(metadata.clone()))
+        .bind(secret_hash)
         .fetch_one(&mut *tx)
         .await
         .context("failed to upsert repository record")?;
@@ -117,16 +161,18 @@ impl SupabaseRepositoryStore {
             r#"
             INSERT INTO indexing_jobs (
                 repository_id,
+                requested_by,
                 job_type,
                 payload,
                 priority,
                 status
             )
-            VALUES ($1, $2, $3, $4, 'queued')
+            VALUES ($1, $2, $3, $4, $5, 'queued')
             RETURNING id
             "#,
         )
         .bind(repository.id)
+        .bind(registration.api_key_id)
         .bind("full_index")
         .bind(Json(registration.job_payload.clone()))
         .bind(0_i32)
@@ -135,7 +181,11 @@ impl SupabaseRepositoryStore {
         .context("failed to create indexing job")?;
 
         tx.commit().await?;
-        Ok((repository, job_id))
+        Ok((
+            repository,
+            job_id,
+            if secret_created { Some(secret) } else { None },
+        ))
     }
 
     #[instrument(skip(self))]
@@ -152,7 +202,8 @@ impl SupabaseRepositoryStore {
                 sync_state,
                 default_branch,
                 last_indexed_at,
-                created_at
+                created_at,
+                metadata
             FROM repositories
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -224,12 +275,24 @@ impl SupabaseRepositoryStore {
         .await
         .context("failed to fetch job for worker")?;
 
+        if let Some(job) = &row {
+            if let Err(e) = self
+                .update_repository_state(job.repository_id, "syncing", "in_progress")
+                .await
+            {
+                warn!(
+                    "Failed to update repository {} state to syncing: {}",
+                    job.repository_id, e
+                );
+            }
+        }
+
         Ok(row)
     }
 
     #[instrument(skip(self, result))]
     pub async fn complete_job(&self, job_id: Uuid, result: Option<JsonValue>) -> Result<()> {
-        sqlx::query(
+        let repository_id = sqlx::query_scalar::<_, Uuid>(
             r#"
             UPDATE indexing_jobs
             SET status = 'completed',
@@ -237,20 +300,24 @@ impl SupabaseRepositoryStore {
                 result = $2,
                 updated_at = NOW()
             WHERE id = $1
+            RETURNING repository_id
             "#,
         )
         .bind(job_id)
         .bind(result.map(Json))
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .context("failed to mark job completed")?;
+
+        self.update_repository_state(repository_id, "ready", "synced")
+            .await?;
 
         Ok(())
     }
 
     #[instrument(skip(self, error_message))]
     pub async fn fail_job(&self, job_id: Uuid, error_message: &str) -> Result<()> {
-        sqlx::query(
+        let repository_id = sqlx::query_scalar::<_, Uuid>(
             r#"
             UPDATE indexing_jobs
             SET status = 'failed',
@@ -258,13 +325,17 @@ impl SupabaseRepositoryStore {
                 finished_at = NOW(),
                 updated_at = NOW()
             WHERE id = $1
+            RETURNING repository_id
             "#,
         )
         .bind(job_id)
         .bind(error_message)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .context("failed to mark job failed")?;
+
+        self.update_repository_state(repository_id, "error", "error")
+            .await?;
 
         Ok(())
     }
@@ -319,6 +390,217 @@ impl SupabaseRepositoryStore {
 
         Ok(())
     }
+
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self, payload, headers, signature, error_message))]
+    pub async fn record_webhook_delivery(
+        &self,
+        repository_id: Uuid,
+        provider: &str,
+        delivery_id: Option<&str>,
+        event_type: &str,
+        status: &str,
+        payload: &JsonValue,
+        headers: &JsonValue,
+        signature: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<i64> {
+        let record_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO webhook_deliveries (
+                repository_id,
+                provider,
+                delivery_id,
+                event_type,
+                status,
+                payload,
+                headers,
+                signature,
+                error_message
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id
+            "#,
+        )
+        .bind(repository_id)
+        .bind(provider)
+        .bind(delivery_id)
+        .bind(event_type)
+        .bind(status)
+        .bind(Json(payload.clone()))
+        .bind(Json(headers.clone()))
+        .bind(signature)
+        .bind(error_message)
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to record webhook delivery")?;
+
+        Ok(record_id)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn update_webhook_delivery_status(
+        &self,
+        record_id: i64,
+        status: &str,
+        processed: bool,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE webhook_deliveries
+            SET status = $2,
+                processed_at = CASE WHEN $3 THEN NOW() ELSE processed_at END,
+                error_message = $4
+            WHERE id = $1
+            "#,
+        )
+        .bind(record_id)
+        .bind(status)
+        .bind(processed)
+        .bind(error_message)
+        .execute(&self.pool)
+        .await
+        .context("failed to update webhook delivery")?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, payload))]
+    pub async fn enqueue_job(
+        &self,
+        repository_id: Uuid,
+        requested_by: Option<Uuid>,
+        job_type: &str,
+        payload: &JsonValue,
+        priority: i32,
+    ) -> Result<Uuid> {
+        let job_id = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            INSERT INTO indexing_jobs (
+                repository_id,
+                requested_by,
+                job_type,
+                payload,
+                priority,
+                status
+            )
+            VALUES ($1, $2, $3, $4, $5, 'queued')
+            RETURNING id
+            "#,
+        )
+        .bind(repository_id)
+        .bind(requested_by)
+        .bind(job_type)
+        .bind(Json(payload.clone()))
+        .bind(priority)
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to enqueue job")?;
+
+        self.update_repository_state(repository_id, "queued", "pending")
+            .await?;
+
+        Ok(job_id)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn lookup_primary_api_key(&self, user_id: Uuid) -> Result<Option<Uuid>> {
+        let api_key_id = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            SELECT id
+            FROM api_keys
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to lookup Supabase API key")?;
+
+        Ok(api_key_id)
+    }
+
+    async fn update_repository_state(
+        &self,
+        repository_id: Uuid,
+        status: &str,
+        sync_state: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE repositories
+            SET status = $2,
+                sync_state = $3,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(repository_id)
+        .bind(status)
+        .bind(sync_state)
+        .execute(&self.pool)
+        .await
+        .context("failed to update repository state")?;
+
+        Ok(())
+    }
+}
+
+fn ensure_webhook_secret(metadata: &mut JsonValue, provider: &str) -> (String, String, bool) {
+    use serde_json::Map;
+
+    if !metadata.is_object() {
+        *metadata = json!({});
+    }
+
+    let obj = metadata
+        .as_object_mut()
+        .expect("metadata coerced to object");
+    let webhook_entry = obj
+        .entry("webhook".to_string())
+        .or_insert_with(|| JsonValue::Object(Map::new()));
+
+    if !webhook_entry.is_object() {
+        *webhook_entry = JsonValue::Object(Map::new());
+    }
+
+    let webhook = webhook_entry
+        .as_object_mut()
+        .expect("webhook coerced to object");
+
+    let mut created = false;
+    let secret = webhook
+        .get("secret")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            created = true;
+            let secret = generate_webhook_secret();
+            webhook.insert("secret".into(), JsonValue::String(secret.clone()));
+            secret
+        });
+
+    webhook.insert("provider".into(), JsonValue::String(provider.to_string()));
+
+    let hash = hash_secret(&secret);
+    webhook.insert("secret_hash".into(), JsonValue::String(hash.clone()));
+
+    (secret, hash, created)
+}
+
+fn generate_webhook_secret() -> String {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    BASE64_NO_PAD.encode(bytes)
+}
+
+fn hash_secret(secret: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    encode(hasher.finalize())
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -337,6 +619,8 @@ pub struct RepositoryMetaRow {
     pub provider: String,
     pub default_branch: Option<String>,
     pub settings: JsonValue,
+    pub api_key_id: Option<Uuid>,
+    pub metadata: JsonValue,
 }
 
 impl SupabaseRepositoryStore {
@@ -349,7 +633,9 @@ impl SupabaseRepositoryStore {
                 git_url,
                 provider,
                 default_branch,
-                settings
+                settings,
+                api_key_id,
+                metadata
             FROM repositories
             WHERE id = $1
             "#,

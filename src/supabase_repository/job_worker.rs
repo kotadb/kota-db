@@ -12,7 +12,7 @@ use serde_json::{json, Value as JsonValue};
 #[cfg(feature = "git-integration")]
 use tokio::task;
 use tokio::time::sleep;
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::services::{DatabaseAccess, IndexCodebaseOptions, IndexingService};
@@ -31,6 +31,14 @@ where
     pub database: Arc<D>,
     pub db_path: PathBuf,
     pub poll_interval: Duration,
+}
+
+fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
+    match payload.get("webhook_delivery_id") {
+        Some(JsonValue::Number(num)) => num.as_i64(),
+        Some(JsonValue::String(value)) => value.parse().ok(),
+        _ => None,
+    }
 }
 
 impl<D> SupabaseJobWorker<D>
@@ -75,16 +83,29 @@ where
         };
 
         let job_id = job.id;
+        let job_clone = job.clone();
         self.store
             .record_job_event(job_id, "started", "Job picked up by worker", None)
             .await?;
 
         match self.process_job(job).await {
-            Ok(result) => {
+            Ok((result, webhook_delivery_id)) => {
                 self.store.complete_job(job_id, result).await?;
                 self.store
                     .record_job_event(job_id, "completed", "Job completed", None)
                     .await?;
+                if let Some(delivery_id) = webhook_delivery_id {
+                    if let Err(err) = self
+                        .store
+                        .update_webhook_delivery_status(delivery_id, "processed", true, None)
+                        .await
+                    {
+                        error!(
+                            "Failed to update webhook delivery {} for job {}: {}",
+                            delivery_id, job_id, err
+                        );
+                    }
+                }
                 Ok(true)
             }
             Err(e) => {
@@ -101,14 +122,33 @@ where
                         Some(json!({ "error": e.to_string() })),
                     )
                     .await?;
+                if let Some(delivery_id) = delivery_id_from_payload(&job_clone.payload) {
+                    if let Err(err) = self
+                        .store
+                        .update_webhook_delivery_status(
+                            delivery_id,
+                            "failed",
+                            true,
+                            Some(&e.to_string()),
+                        )
+                        .await
+                    {
+                        error!(
+                            "Failed to mark webhook delivery {} as failed for job {}: {}",
+                            delivery_id, job_id, err
+                        );
+                    }
+                }
                 Ok(true)
             }
         }
     }
 
-    async fn process_job(&self, job: JobForWorker) -> Result<Option<JsonValue>> {
+    async fn process_job(&self, job: JobForWorker) -> Result<(Option<JsonValue>, Option<i64>)> {
         match job.job_type.as_str() {
-            "full_index" => self.process_full_index(job).await,
+            "full_index" | "incremental_update" | "webhook_update" => {
+                self.process_indexing_job(job).await
+            }
             other => {
                 self.store
                     .record_job_event(
@@ -118,12 +158,15 @@ where
                         Some(json!({ "job_type": other })),
                     )
                     .await?;
-                Ok(None)
+                Ok((None, None))
             }
         }
     }
 
-    async fn process_full_index(&self, job: JobForWorker) -> Result<Option<JsonValue>> {
+    async fn process_indexing_job(
+        &self,
+        job: JobForWorker,
+    ) -> Result<(Option<JsonValue>, Option<i64>)> {
         let mut payload = SupabaseJobPayload::parse(job.payload.clone());
 
         let repo_meta = self
@@ -145,28 +188,76 @@ where
         let merged_settings = merge_settings(&repo_meta.settings, payload.settings.as_ref());
         payload.settings = Some(merged_settings);
 
+        if let Some(delivery_id) = payload.webhook_delivery_id {
+            if let Err(err) = self
+                .store
+                .update_webhook_delivery_status(delivery_id, "processing", false, None)
+                .await
+            {
+                error!(
+                    "Failed to mark webhook delivery {} as processing for job {}: {}",
+                    delivery_id, job.id, err
+                );
+            }
+        }
+
+        let event_type = payload.event_type.clone();
+        if job.job_type != "full_index" {
+            warn!(
+                job_id = %job.id,
+                job_type = %job.job_type,
+                "Incremental job falling back to full index"
+            );
+            let _ = self
+                .store
+                .record_job_event(
+                    job.id,
+                    "fallback_full_index",
+                    "Incremental job fallback to full indexing",
+                    Some(json!({
+                        "job_type": job.job_type,
+                        "event_type": event_type,
+                    })),
+                )
+                .await;
+        }
         info!(
             repository = %repo_meta.git_url,
             job_id = %job.id,
+            job_type = %job.job_type,
+            event = event_type.as_deref().unwrap_or("unknown"),
             "Processing Supabase indexing job"
         );
 
         let repo_path = self.prepare_repository(job.repository_id, &payload).await?;
         let index_result = self.index_repository(&repo_path, &payload).await?;
 
+        let now = Utc::now();
         self.store
             .update_repository_metadata(
                 job.repository_id,
-                Some(Utc::now()),
-                json!({ "last_success": Utc::now().to_rfc3339() }),
+                Some(now),
+                json!({
+                    "jobs": {
+                        "last": {
+                            "job_id": job.id,
+                            "job_type": job.job_type,
+                            "completed_at": now.to_rfc3339(),
+                            "event_type": event_type,
+                        }
+                    }
+                }),
             )
             .await?;
 
-        Ok(Some(json!({
-            "files_processed": index_result.files_processed,
-            "symbols_extracted": index_result.symbols_extracted,
-            "relationships_found": index_result.relationships_found,
-        })))
+        Ok((
+            Some(json!({
+                "files_processed": index_result.files_processed,
+                "symbols_extracted": index_result.symbols_extracted,
+                "relationships_found": index_result.relationships_found,
+            })),
+            payload.webhook_delivery_id,
+        ))
     }
 
     async fn prepare_repository(
@@ -232,6 +323,9 @@ where
             }
             if let Some(value) = option_usize(settings, "max_file_size_mb") {
                 options.max_file_size_mb = value;
+            }
+            if let Some(value) = option_usize(settings, "max_memory_mb") {
+                options.max_memory_mb = Some(value as u64);
             }
             if let Some(value) = option_usize(settings, "max_parallel_files") {
                 options.max_parallel_files = Some(value);
