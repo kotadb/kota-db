@@ -695,7 +695,7 @@ pub async fn create_services_saas_server(
     db_path: PathBuf,
     api_key_config: crate::ApiKeyConfig,
 ) -> Result<Router> {
-    validate_saas_environment()?;
+    validate_saas_environment(&api_key_config)?;
 
     use crate::auth_middleware::{auth_middleware, internal_auth_middleware};
 
@@ -1702,28 +1702,169 @@ async fn handle_github_webhook(
 
     let headers_json = headers_to_json(&headers);
 
-    let record_id = match store
-        .record_webhook_delivery(
-            repo_uuid,
-            &repo_meta.provider,
-            delivery_header.as_deref(),
-            &event_type,
-            "received",
-            &payload_json,
-            &headers_json,
-            Some(signature_header),
-            None,
-        )
-        .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            error!(
-                "Failed to record webhook delivery for repository {}: {}",
-                repo_uuid, e
-            );
-            return Err(internal_server_error("Failed to record webhook delivery"));
+    let mut record_id = None;
+    if let Some(delivery_value) = delivery_header.as_deref() {
+        match store
+            .find_webhook_delivery(repo_uuid, &repo_meta.provider, delivery_value)
+            .await
+        {
+            Ok(Some(existing)) => match existing.status.as_str() {
+                "processed" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh processed webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+                    return Ok((
+                        StatusCode::OK,
+                        Json(WebhookResponse {
+                            status: "processed".to_string(),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "queued" | "processing" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh in-flight webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+                    return Ok((
+                        StatusCode::ACCEPTED,
+                        Json(WebhookResponse {
+                            status: "duplicate".to_string(),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "ignored" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh ignored webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+
+                    return Ok((
+                        StatusCode::OK,
+                        Json(WebhookResponse {
+                            status: format!("ignored:{}", event_type),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "failed" => {
+                    store
+                        .reset_failed_webhook_delivery(
+                            existing.id,
+                            &event_type,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!(
+                                "Failed to reset failed webhook delivery {}: {}",
+                                existing.id, e
+                            );
+                            internal_server_error("Failed to reset webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+                "received" => {
+                    store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to refresh webhook delivery {}: {}", existing.id, e);
+                            internal_server_error("Failed to refresh webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+                _ => {
+                    store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to refresh webhook delivery {}: {}", existing.id, e);
+                            internal_server_error("Failed to refresh webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+            },
+            Ok(None) => {}
+            Err(e) => {
+                error!(
+                    "Failed to check existing webhook delivery for repository {}: {}",
+                    repo_uuid, e
+                );
+                return Err(internal_server_error("Failed to inspect webhook delivery"));
+            }
         }
+    }
+
+    let record_id = match record_id {
+        Some(id) => id,
+        None => match store
+            .record_webhook_delivery(
+                repo_uuid,
+                &repo_meta.provider,
+                delivery_header.as_deref(),
+                &event_type,
+                "received",
+                &payload_json,
+                &headers_json,
+                Some(signature_header),
+                None,
+            )
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                error!(
+                    "Failed to record webhook delivery for repository {}: {}",
+                    repo_uuid, e
+                );
+                return Err(internal_server_error("Failed to record webhook delivery"));
+            }
+        },
     };
 
     info!(
@@ -1736,7 +1877,7 @@ async fn handle_github_webhook(
 
     if event_type == "ping" {
         if let Err(err) = store
-            .update_webhook_delivery_status(record_id, "processed", true, None)
+            .update_webhook_delivery_status(record_id, "processed", true, None, None)
             .await
         {
             error!(
@@ -1762,7 +1903,7 @@ async fn handle_github_webhook(
 
     if job_type.is_none() {
         if let Err(err) = store
-            .update_webhook_delivery_status(record_id, "ignored", true, None)
+            .update_webhook_delivery_status(record_id, "ignored", true, None, None)
             .await
         {
             error!(
@@ -1848,6 +1989,7 @@ async fn handle_github_webhook(
                     "failed",
                     true,
                     Some(err_message.as_str()),
+                    None,
                 )
                 .await
                 .ok();
@@ -1875,7 +2017,7 @@ async fn handle_github_webhook(
     }
 
     if let Err(err) = store
-        .update_webhook_delivery_status(record_id, "queued", false, None)
+        .update_webhook_delivery_status(record_id, "queued", false, None, Some(job_id))
         .await
     {
         error!(
@@ -2058,12 +2200,8 @@ fn verify_github_signature(secret: &str, payload: &[u8], signature_header: &str)
     mac.verify_slice(&signature_bytes).is_ok()
 }
 
-const REQUIRED_SAAS_ENV_VARS: &[&str] = &[
-    "SUPABASE_URL",
-    "SUPABASE_ANON_KEY",
-    "SUPABASE_SERVICE_KEY",
-    "DATABASE_URL",
-];
+const IMPORTANT_SAAS_ENV_VARS: &[&str] =
+    &["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY"];
 
 const SUPABASE_DB_ENV_CHOICES: &[&str] = &[
     "SUPABASE_DB_URL",
@@ -2071,7 +2209,7 @@ const SUPABASE_DB_ENV_CHOICES: &[&str] = &[
     "SUPABASE_DB_URL_PRODUCTION",
 ];
 
-const REQUIRED_GITHUB_ENV_VARS: &[&str] = &["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
+const IMPORTANT_GITHUB_ENV_VARS: &[&str] = &["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
 
 fn env_present(key: &str) -> bool {
     env::var(key)
@@ -2083,40 +2221,44 @@ fn any_env_present(keys: &[&str]) -> bool {
     keys.iter().any(|key| env_present(key))
 }
 
-fn validate_saas_environment() -> Result<()> {
+fn validate_saas_environment(api_key_config: &crate::ApiKeyConfig) -> Result<()> {
     if env_present("DISABLE_SAAS_ENV_VALIDATION") {
         warn!("SaaS environment validation disabled via DISABLE_SAAS_ENV_VALIDATION");
         return Ok(());
     }
 
-    let mut missing = Vec::new();
+    let database_configured = !api_key_config.database_url.trim().is_empty()
+        || env_present("DATABASE_URL")
+        || any_env_present(SUPABASE_DB_ENV_CHOICES);
 
-    for key in REQUIRED_SAAS_ENV_VARS {
-        if !env_present(key) {
-            missing.push(key.to_string());
-        }
-    }
-
-    if !any_env_present(SUPABASE_DB_ENV_CHOICES) {
-        missing.push("SUPABASE_DB_URL".to_string());
-    }
-
-    for key in REQUIRED_GITHUB_ENV_VARS {
-        if !env_present(key) {
-            missing.push(key.to_string());
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        let message = format!(
-            "Missing required environment variables: {}",
-            missing.join(", ")
-        );
+    if !database_configured {
+        let message = "Database connection not configured. Provide ApiKeyConfig.database_url or set DATABASE_URL/SUPABASE_DB_URL";
         error!("{}", message);
-        Err(anyhow!(message))
+        return Err(anyhow!(message));
     }
+
+    let mut missing_optional = Vec::new();
+
+    for key in IMPORTANT_SAAS_ENV_VARS {
+        if !env_present(key) {
+            missing_optional.push(*key);
+        }
+    }
+
+    for key in IMPORTANT_GITHUB_ENV_VARS {
+        if !env_present(key) {
+            missing_optional.push(*key);
+        }
+    }
+
+    if !missing_optional.is_empty() {
+        warn!(
+            missing = ?missing_optional,
+            "Optional SaaS environment variables are not set. Functionality relying on them may be limited"
+        );
+    }
+
+    Ok(())
 }
 
 async fn fetch_saas_health(state: &ServicesAppState) -> SaasHealth {

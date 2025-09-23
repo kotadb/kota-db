@@ -33,6 +33,8 @@ where
     pub poll_interval: Duration,
 }
 
+const STALE_JOB_MAX_AGE: Duration = Duration::from_secs(15 * 60);
+
 fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
     match payload.get("webhook_delivery_id") {
         Some(JsonValue::Number(num)) => num.as_i64(),
@@ -78,6 +80,14 @@ where
 
     #[instrument(skip_all)]
     pub async fn tick(&self) -> Result<bool> {
+        let recovered = self.store.recover_stale_jobs(STALE_JOB_MAX_AGE).await?;
+        if !recovered.is_empty() {
+            warn!(
+                count = recovered.len(),
+                "Recovered stale Supabase jobs before polling"
+            );
+        }
+
         let Some(job) = self.store.fetch_job_for_worker().await? else {
             return Ok(false);
         };
@@ -97,7 +107,7 @@ where
                 if let Some(delivery_id) = webhook_delivery_id {
                     if let Err(err) = self
                         .store
-                        .update_webhook_delivery_status(delivery_id, "processed", true, None)
+                        .update_webhook_delivery_status(delivery_id, "processed", true, None, None)
                         .await
                     {
                         error!(
@@ -130,6 +140,7 @@ where
                             "failed",
                             true,
                             Some(&e.to_string()),
+                            None,
                         )
                         .await
                     {
@@ -191,7 +202,7 @@ where
         if let Some(delivery_id) = payload.webhook_delivery_id {
             if let Err(err) = self
                 .store
-                .update_webhook_delivery_status(delivery_id, "processing", false, None)
+                .update_webhook_delivery_status(delivery_id, "processing", false, None, None)
                 .await
             {
                 error!(

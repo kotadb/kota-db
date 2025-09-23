@@ -152,7 +152,9 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     payload JSONB,
     headers JSONB,
     signature TEXT,
-    error_message TEXT
+    error_message TEXT,
+    job_id UUID REFERENCES indexing_jobs(id) ON DELETE SET NULL,
+    CONSTRAINT webhook_deliveries_unique_delivery UNIQUE (provider, delivery_id)
 );
 
 ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;

@@ -6,6 +6,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use sqlx::{types::Json, PgPool};
+use std::time::Duration;
 use tracing::{instrument, warn};
 use uuid::Uuid;
 
@@ -42,6 +43,25 @@ pub struct JobStatusRow {
     pub error_message: Option<String>,
     pub git_url: String,
     pub name: String,
+}
+
+/// Row representing a webhook delivery entry for deduplication and status tracking.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WebhookDeliveryRow {
+    pub id: i64,
+    pub repository_id: Uuid,
+    pub provider: String,
+    pub delivery_id: Option<String>,
+    pub event_type: Option<String>,
+    pub status: String,
+    pub job_id: Option<Uuid>,
+    pub processed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct RecoveredJobRow {
+    id: Uuid,
+    repository_id: Uuid,
 }
 
 #[derive(Clone)]
@@ -246,6 +266,64 @@ impl SupabaseRepositoryStore {
         Ok(row)
     }
 
+    /// Requeue jobs that were marked `in_progress` but never completed.
+    #[instrument(skip(self))]
+    pub async fn recover_stale_jobs(&self, max_age: Duration) -> Result<Vec<(Uuid, Uuid)>> {
+        let max_age_secs = max_age.as_secs();
+        if max_age_secs == 0 {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, RecoveredJobRow>(
+            r#"
+            WITH updated AS (
+                UPDATE indexing_jobs
+                SET status = 'queued',
+                    started_at = NULL,
+                    updated_at = NOW()
+                WHERE status = 'in_progress'
+                    AND started_at IS NOT NULL
+                    AND started_at < NOW() - ($1 * INTERVAL '1 second')
+                RETURNING id, repository_id
+            )
+            SELECT id, repository_id FROM updated
+            "#,
+        )
+        .bind(max_age_secs as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to recover stale jobs")?;
+
+        for row in &rows {
+            if let Err(e) = self
+                .update_repository_state(row.repository_id, "queued", "pending")
+                .await
+            {
+                warn!(
+                    "Failed to update repository {} state during job recovery: {}",
+                    row.repository_id, e
+                );
+            }
+
+            if let Err(e) = self
+                .record_job_event(
+                    row.id,
+                    "requeued",
+                    "Recovered stale in-progress job",
+                    Some(json!({ "max_age_seconds": max_age_secs })),
+                )
+                .await
+            {
+                warn!("Failed to record recovery event for job {}: {}", row.id, e);
+            }
+        }
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.id, row.repository_id))
+            .collect())
+    }
+
     #[instrument(skip(self))]
     pub async fn fetch_job_for_worker(&self) -> Result<Option<JobForWorker>> {
         let row = sqlx::query_as::<_, JobForWorker>(
@@ -313,6 +391,103 @@ impl SupabaseRepositoryStore {
             .await?;
 
         Ok(())
+    }
+
+    #[instrument(skip(self, payload, headers, signature))]
+    pub async fn refresh_webhook_delivery(
+        &self,
+        record_id: i64,
+        payload: &JsonValue,
+        headers: &JsonValue,
+        signature: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE webhook_deliveries
+            SET payload = $2,
+                headers = $3,
+                signature = $4,
+                received_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(record_id)
+        .bind(Json(payload.clone()))
+        .bind(Json(headers.clone()))
+        .bind(signature)
+        .execute(&self.pool)
+        .await
+        .context("failed to refresh webhook delivery payload")?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, payload, headers, signature))]
+    pub async fn reset_failed_webhook_delivery(
+        &self,
+        record_id: i64,
+        event_type: &str,
+        payload: &JsonValue,
+        headers: &JsonValue,
+        signature: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE webhook_deliveries
+            SET status = 'received',
+                event_type = $2,
+                payload = $3,
+                headers = $4,
+                signature = $5,
+                error_message = NULL,
+                processed_at = NULL,
+                received_at = NOW(),
+                job_id = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(record_id)
+        .bind(event_type)
+        .bind(Json(payload.clone()))
+        .bind(Json(headers.clone()))
+        .bind(signature)
+        .execute(&self.pool)
+        .await
+        .context("failed to reset webhook delivery")?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn find_webhook_delivery(
+        &self,
+        repository_id: Uuid,
+        provider: &str,
+        delivery_id: &str,
+    ) -> Result<Option<WebhookDeliveryRow>> {
+        let row = sqlx::query_as::<_, WebhookDeliveryRow>(
+            r#"
+            SELECT
+                id,
+                repository_id,
+                provider,
+                delivery_id,
+                event_type,
+                status,
+                job_id,
+                processed_at
+            FROM webhook_deliveries
+            WHERE repository_id = $1 AND provider = $2 AND delivery_id = $3
+            "#,
+        )
+        .bind(repository_id)
+        .bind(provider)
+        .bind(delivery_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to query webhook delivery")?;
+
+        Ok(row)
     }
 
     #[instrument(skip(self, error_message))]
@@ -416,9 +591,10 @@ impl SupabaseRepositoryStore {
                 payload,
                 headers,
                 signature,
-                error_message
+                error_message,
+                job_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)
             RETURNING id
             "#,
         )
@@ -445,13 +621,15 @@ impl SupabaseRepositoryStore {
         status: &str,
         processed: bool,
         error_message: Option<&str>,
+        job_id: Option<Uuid>,
     ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE webhook_deliveries
             SET status = $2,
                 processed_at = CASE WHEN $3 THEN NOW() ELSE processed_at END,
-                error_message = $4
+                error_message = $4,
+                job_id = COALESCE($5, job_id)
             WHERE id = $1
             "#,
         )
@@ -459,6 +637,7 @@ impl SupabaseRepositoryStore {
         .bind(status)
         .bind(processed)
         .bind(error_message)
+        .bind(job_id)
         .execute(&self.pool)
         .await
         .context("failed to update webhook delivery")?;
