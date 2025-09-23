@@ -443,6 +443,14 @@ async fn track_usage(
 }
 ```
 
+### Webhook Orchestration
+
+- Repository provisioning generates a per-repository webhook secret. The plaintext is returned once so deployments can configure the GitHub webhook signature and the hashed value is persisted in Supabase.
+- GitHub events are delivered to `POST /webhooks/github/:repository_id`. The services layer verifies the `X-Hub-Signature-256` header, captures the payload in `webhook_deliveries`, and enqueues `incremental_update` jobs in the `indexing_jobs` table.
+- Push events aggregate commit diffs (`added`/`modified`/`removed`) into the job payload so downstream workers (and future incremental indexing) can scope their work without refetching the webhook body.
+- `SupabaseJobWorker` polls for queued jobs, clones the repository (respecting any branch overrides), runs the indexing pipeline, and marks the webhook delivery `queued → processing → processed/failed`.
+- Public `/health` responses now expose Supabase connectivity (`supabase_status`, latency) and job queue depth so Fly smoke tests can assert the pipeline is healthy after a deploy.
+
 ## Troubleshooting
 
 ### Connection Issues

@@ -18,6 +18,7 @@ WORKDIR /build
 
 # Copy manifests early to leverage Docker layer caching
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY patches/ patches/
 
 # Bring in source tree; create stub docs required by include_str! macros
 COPY src/ src/

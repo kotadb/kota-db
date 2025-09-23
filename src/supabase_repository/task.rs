@@ -9,6 +9,13 @@ pub struct SupabaseJobPayload {
     pub branch: Option<String>,
     pub requested_at: Option<DateTime<Utc>>,
     pub settings: Option<JsonValue>,
+    pub event_type: Option<String>,
+    pub delivery_id: Option<String>,
+    #[serde(rename = "ref")]
+    pub git_ref: Option<String>,
+    pub commits: Option<JsonValue>,
+    pub webhook_delivery_id: Option<i64>,
+    pub changes: Option<JsonValue>,
 }
 
 impl SupabaseJobPayload {
@@ -19,6 +26,12 @@ impl SupabaseJobPayload {
             branch: None,
             requested_at: None,
             settings: None,
+            event_type: None,
+            delivery_id: None,
+            git_ref: None,
+            commits: None,
+            webhook_delivery_id: None,
+            changes: None,
         })
     }
 }
