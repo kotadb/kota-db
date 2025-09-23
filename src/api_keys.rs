@@ -134,6 +134,11 @@ impl ApiKeyService {
         Ok(Self { pool, config })
     }
 
+    /// Clone the underlying PostgreSQL connection pool.
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
     /// Initialize database schema
     pub async fn init_schema(&self) -> Result<()> {
         sqlx::query(

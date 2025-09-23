@@ -6,6 +6,7 @@
 // No legacy code, no deprecated endpoints, no document CRUD - pure services architecture.
 
 use anyhow::{Context, Result};
+use axum::extract::Extension;
 use axum::{
     extract::{Query as AxumQuery, State},
     http::StatusCode,
@@ -13,13 +14,17 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
+use sqlx::PgPool;
 use std::sync::Arc;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
+use url::Url;
 use uuid::Uuid;
 
 #[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
@@ -28,6 +33,7 @@ use crate::mcp::tools::symbol_tools::SymbolTools;
 use crate::mcp::tools::MCPToolRegistry;
 #[cfg(feature = "mcp-server")]
 use crate::mcp_http_bridge::{create_mcp_bridge_router, McpHttpBridgeState};
+use crate::{auth_middleware::AuthContext, observability::with_trace_id, Index, Storage};
 use crate::{
     database::Database,
     services::{
@@ -35,8 +41,11 @@ use crate::{
         IndexCodebaseOptions, IndexingService, OverviewOptions, SearchOptions, SearchService,
         StatsOptions, StatsService, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
+    supabase_repository::{
+        job_worker::SupabaseJobWorker, JobStatusRow, RepositoryRegistration, RepositoryRow,
+        SupabaseRepositoryStore,
+    },
 };
-use crate::{observability::with_trace_id, Index, Storage};
 
 /// Application state for services-only HTTP server
 #[derive(Clone)]
@@ -47,6 +56,8 @@ pub struct ServicesAppState {
     pub db_path: PathBuf,
     /// Optional API key service for SaaS functionality
     pub api_key_service: Option<Arc<crate::ApiKeyService>>,
+    /// Optional Supabase connection pool for SaaS features
+    pub supabase_pool: Option<PgPool>,
     /// Whether this server is running in managed SaaS mode
     pub saas_mode: bool,
     /// Background job registry for indexing tasks
@@ -60,6 +71,9 @@ impl ServicesAppState {
     pub fn validate_saas_mode(&self) -> Result<(), String> {
         if self.api_key_service.is_none() {
             return Err("SaaS mode requires API key service to be configured".to_string());
+        }
+        if self.supabase_pool.is_none() {
+            return Err("SaaS mode requires Supabase connection to be configured".to_string());
         }
         Ok(())
     }
@@ -76,10 +90,7 @@ impl ServicesAppState {
 
         match std::env::var("ALLOW_LOCAL_PATH_INDEXING") {
             Ok(flag) => parse_local_path_ingestion_flag(Some(flag)),
-            Err(_) => {
-                // TODO(#692): default to false once SaaS git ingestion lands.
-                true
-            }
+            Err(_) => false,
         }
     }
 
@@ -418,6 +429,35 @@ fn handle_validation_error(
     )
 }
 
+fn internal_server_error(message: impl Into<String>) -> (StatusCode, Json<StandardApiError>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(StandardApiError {
+            error_type: "internal_server_error".into(),
+            message: message.into(),
+            details: None,
+            suggestions: vec![
+                "Try again later".into(),
+                "Contact support if the problem persists".into(),
+            ],
+            error_code: Some(500),
+        }),
+    )
+}
+
+fn unauthorized_error(message: impl Into<String>) -> (StatusCode, Json<StandardApiError>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(StandardApiError {
+            error_type: "unauthorized".into(),
+            message: message.into(),
+            details: None,
+            suggestions: vec!["Provide a valid API key".into()],
+            error_code: Some(401),
+        }),
+    )
+}
+
 /// Standardized not-found error handling with helpful messages
 fn handle_not_found_error(
     field_name: &str,
@@ -452,6 +492,7 @@ pub fn create_services_server(
         trigram_index: trigram_index.clone(),
         db_path: db_path.clone(),
         api_key_service: None, // No authentication for basic services server
+        supabase_pool: None,
         saas_mode: false,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
@@ -603,16 +644,35 @@ pub async fn create_services_saas_server(
     let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
 
     let repos_init = load_repositories_from_disk_async(db_path.as_path()).await;
+    let supabase_pool = api_key_service.pool();
     let state = ServicesAppState {
         storage,
         primary_index,
         trigram_index,
         db_path: db_path.clone(),
         api_key_service: Some(api_key_service.clone()),
+        supabase_pool: Some(supabase_pool.clone()),
         saas_mode: true,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(repos_init)),
     };
+
+    // Spawn Supabase-backed indexing worker for SaaS mode
+    {
+        let worker_store = SupabaseRepositoryStore::new(supabase_pool);
+        let worker_database = Arc::new(Database {
+            storage: state.storage.clone(),
+            primary_index: state.primary_index.clone(),
+            trigram_index: state.trigram_index.clone(),
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        });
+        let worker = SupabaseJobWorker::new(worker_store, worker_database, db_path.clone());
+        tokio::spawn(async move {
+            if let Err(e) = worker.run().await {
+                error!("Supabase job worker terminated: {}", e);
+            }
+        });
+    }
 
     // Create authenticated routes (require API key)
     let authenticated_routes = Router::new()
@@ -1159,6 +1219,7 @@ async fn file_symbols_v1(
 /// POST /api/v1/repositories -> start background indexing job
 async fn register_repository_v1(
     State(state): State<ServicesAppState>,
+    auth_context: Option<Extension<AuthContext>>,
     request_result: Result<
         Json<RegisterRepositoryRequest>,
         axum::extract::rejection::JsonRejection,
@@ -1166,6 +1227,17 @@ async fn register_repository_v1(
 ) -> ApiResult<RegisterRepositoryResponse> {
     let Json(body) = request_result.map_err(|e| handle_json_parsing_error(e, "repositories"))?;
 
+    if state.is_saas_mode() {
+        return register_repository_saas(&state, auth_context, body).await;
+    }
+
+    register_repository_local(state, body).await
+}
+
+async fn register_repository_local(
+    state: ServicesAppState,
+    body: RegisterRepositoryRequest,
+) -> ApiResult<RegisterRepositoryResponse> {
     if !state.allow_local_path_ingestion() && body.path.is_some() {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1190,7 +1262,7 @@ async fn register_repository_v1(
         ));
     }
 
-    // For now, support local path; git clone can be added later
+    // Local ingestion expects a valid filesystem path
     let repo_path = match (&body.path, &body.git_url) {
         (Some(p), _) => {
             let pb = PathBuf::from(p);
@@ -1224,7 +1296,7 @@ async fn register_repository_v1(
                 }
             }
         }
-        (None, Some(_git)) => {
+        (None, Some(_)) => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(StandardApiError {
@@ -1248,6 +1320,15 @@ async fn register_repository_v1(
     let job_id = Uuid::new_v4().to_string();
     let job_id_out = job_id.clone();
     let repository_id_out = repository_id.clone();
+
+    let git_url_opt = body.git_url.clone();
+    let include_files = body.include_files;
+    let include_commits = body.include_commits;
+    let max_file_size_mb = body.max_file_size_mb;
+    let max_memory_mb = body.max_memory_mb;
+    let max_parallel_files = body.max_parallel_files;
+    let enable_chunking = body.enable_chunking;
+    let extract_symbols = body.extract_symbols;
 
     // Create job status
     let mut jobs = state.jobs.write().await;
@@ -1274,7 +1355,7 @@ async fn register_repository_v1(
                 id: repository_id.clone(),
                 name: repo_name.clone(),
                 path: repo_path.to_string_lossy().into(),
-                url: body.git_url.clone(),
+                url: git_url_opt.clone(),
                 last_indexed: None,
             });
             save_repositories_to_disk(&state, &repos).await;
@@ -1290,7 +1371,6 @@ async fn register_repository_v1(
         })
         .await;
 
-        // Execute indexing
         let database = Database {
             storage: state_clone.storage.clone(),
             primary_index: state_clone.primary_index.clone(),
@@ -1302,46 +1382,42 @@ async fn register_repository_v1(
             repo_path: repo_path.clone(),
             ..IndexCodebaseOptions::default()
         };
-        if let Some(v) = body.include_files {
+        if let Some(v) = include_files {
             options.include_files = v;
         }
-        if let Some(v) = body.include_commits {
+        if let Some(v) = include_commits {
             options.include_commits = v;
         }
-        if let Some(v) = body.max_file_size_mb {
+        if let Some(v) = max_file_size_mb {
             options.max_file_size_mb = v;
         }
-        if let Some(v) = body.max_memory_mb {
+        if let Some(v) = max_memory_mb {
             options.max_memory_mb = Some(v);
         }
-        if let Some(v) = body.max_parallel_files {
+        if let Some(v) = max_parallel_files {
             options.max_parallel_files = Some(v);
         }
-        if let Some(v) = body.enable_chunking {
+        if let Some(v) = enable_chunking {
             options.enable_chunking = v;
         }
-        if let Some(v) = body.extract_symbols {
+        if let Some(v) = extract_symbols {
             options.extract_symbols = Some(v);
         }
         options.quiet = false;
         match indexing.index_codebase(options).await {
-            Ok(_res) => {
+            Ok(_) => {
                 update_job_status(&state_clone, &job_id, |j| {
                     j.status = "completed".into();
                     j.updated_at = Some(now_rfc3339());
                 })
                 .await;
-                // Update repository last_indexed
                 let mut repos = state_clone.repositories.write().await;
                 if let Some(r) = repos.iter_mut().find(|r| r.id == repository_id) {
                     r.last_indexed = Some(now_rfc3339());
                 }
                 save_repositories_to_disk(&state_clone, &repos).await;
-                // Prune jobs after completion
-                {
-                    let mut jobs = state_clone.jobs.write().await;
-                    prune_jobs_in_place(&mut jobs, 100, 3600);
-                }
+                let mut jobs = state_clone.jobs.write().await;
+                prune_jobs_in_place(&mut jobs, 100, 3600);
             }
             Err(e) => {
                 update_job_status(&state_clone, &job_id, |j| {
@@ -1350,11 +1426,8 @@ async fn register_repository_v1(
                     j.updated_at = Some(now_rfc3339());
                 })
                 .await;
-                // Prune jobs after failure update
-                {
-                    let mut jobs = state_clone.jobs.write().await;
-                    prune_jobs_in_place(&mut jobs, 100, 3600);
-                }
+                let mut jobs = state_clone.jobs.write().await;
+                prune_jobs_in_place(&mut jobs, 100, 3600);
             }
         }
     });
@@ -1366,14 +1439,237 @@ async fn register_repository_v1(
     }))
 }
 
+async fn register_repository_saas(
+    state: &ServicesAppState,
+    auth_context: Option<Extension<AuthContext>>,
+    body: RegisterRepositoryRequest,
+) -> ApiResult<RegisterRepositoryResponse> {
+    if body.path.is_some() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(StandardApiError {
+                error_type: "local_path_indexing_disabled".into(),
+                message: "Local path indexing is disabled for managed KotaDB deployments".into(),
+                details: Some("Provide a git_url when using the managed service".into()),
+                suggestions: vec![
+                    "Use Git repository ingestion".into(),
+                    "Run KotaDB locally to index arbitrary directories".into(),
+                ],
+                error_code: Some(403),
+            }),
+        ));
+    }
+
+    let git_url = match body.git_url.as_deref() {
+        Some(url) => url,
+        None => {
+            return Err(handle_validation_error(
+                "git_url",
+                "Provide git_url for SaaS repository registration",
+                "repositories",
+            ));
+        }
+    };
+
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to register repositories"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let provider = infer_repository_provider(git_url);
+    let repo_name = infer_repository_name(git_url).unwrap_or_else(|| "repository".to_string());
+    let settings = build_settings_from_request(&body);
+    let job_payload = build_job_payload(&body, git_url, &provider);
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let registration = RepositoryRegistration {
+        user_id: user_uuid,
+        name: &repo_name,
+        git_url,
+        provider: &provider,
+        default_branch: body.branch.as_deref(),
+        settings: &settings,
+        job_payload: &job_payload,
+    };
+
+    let (repository, job_id) = match store
+        .register_repository_and_enqueue_job(registration)
+        .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed to register repository in Supabase: {}", e);
+            return Err(internal_server_error("Failed to register repository"));
+        }
+    };
+
+    Ok(Json(RegisterRepositoryResponse {
+        job_id: job_id.to_string(),
+        repository_id: repository.id.to_string(),
+        status: "queued".into(),
+    }))
+}
+
+fn build_settings_from_request(body: &RegisterRepositoryRequest) -> JsonValue {
+    let mut root = JsonMap::new();
+
+    if let Some(branch) = &body.branch {
+        root.insert("branch".into(), json!(branch));
+    }
+
+    let mut options = JsonMap::new();
+    if let Some(v) = body.include_files {
+        options.insert("include_files".into(), json!(v));
+    }
+    if let Some(v) = body.include_commits {
+        options.insert("include_commits".into(), json!(v));
+    }
+    if let Some(v) = body.max_file_size_mb {
+        options.insert("max_file_size_mb".into(), json!(v));
+    }
+    if let Some(v) = body.max_memory_mb {
+        options.insert("max_memory_mb".into(), json!(v));
+    }
+    if let Some(v) = body.max_parallel_files {
+        options.insert("max_parallel_files".into(), json!(v));
+    }
+    if let Some(v) = body.enable_chunking {
+        options.insert("enable_chunking".into(), json!(v));
+    }
+    if let Some(v) = body.extract_symbols {
+        options.insert("extract_symbols".into(), json!(v));
+    }
+
+    if !options.is_empty() {
+        root.insert("options".into(), JsonValue::Object(options));
+    }
+
+    JsonValue::Object(root)
+}
+
+fn build_job_payload(body: &RegisterRepositoryRequest, git_url: &str, provider: &str) -> JsonValue {
+    let mut payload = JsonMap::new();
+    payload.insert("git_url".into(), json!(git_url));
+    payload.insert("provider".into(), json!(provider));
+    if let Some(branch) = &body.branch {
+        payload.insert("branch".into(), json!(branch));
+    }
+    payload.insert("requested_at".into(), json!(Utc::now().to_rfc3339()));
+    payload.insert("settings".into(), build_settings_from_request(body));
+
+    JsonValue::Object(payload)
+}
+
+fn infer_repository_provider(git_url: &str) -> String {
+    if let Ok(parsed) = Url::parse(git_url) {
+        if let Some(host) = parsed.host_str() {
+            if host.contains("github.com") {
+                return "github".to_string();
+            }
+            if host.contains("gitlab.com") {
+                return "gitlab".to_string();
+            }
+            if host.contains("bitbucket.org") {
+                return "bitbucket".to_string();
+            }
+        }
+    }
+    "git".to_string()
+}
+
+fn infer_repository_name(git_url: &str) -> Option<String> {
+    if let Ok(parsed) = Url::parse(git_url) {
+        let path = parsed.path().trim_matches('/');
+        if !path.is_empty() {
+            if let Some(last) = path.rsplit('/').next() {
+                return Some(last.trim_end_matches(".git").to_string());
+            }
+        }
+    }
+    None
+}
+
 /// GET /api/v1/repositories
 async fn list_repositories_v1(
     State(state): State<ServicesAppState>,
+    auth_context: Option<Extension<AuthContext>>,
 ) -> ApiResult<ListRepositoriesResponse> {
+    if state.is_saas_mode() {
+        return list_repositories_saas(&state, auth_context).await;
+    }
+
     let repos = state.repositories.read().await.clone();
     Ok(Json(ListRepositoriesResponse {
         repositories: repos,
     }))
+}
+
+async fn list_repositories_saas(
+    state: &ServicesAppState,
+    auth_context: Option<Extension<AuthContext>>,
+) -> ApiResult<ListRepositoriesResponse> {
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to list repositories"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let rows = match store.list_repositories(user_uuid).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            error!("Failed to list repositories from Supabase: {}", e);
+            return Err(internal_server_error("Failed to list repositories"));
+        }
+    };
+
+    let repositories = rows.into_iter().map(map_repository_row).collect();
+    Ok(Json(ListRepositoriesResponse { repositories }))
+}
+
+fn map_repository_row(row: RepositoryRow) -> RepositoryRecord {
+    RepositoryRecord {
+        id: row.id.to_string(),
+        name: row.name,
+        path: row.git_url.clone(),
+        url: Some(row.git_url),
+        last_indexed: row.last_indexed_at.map(|ts| ts.to_rfc3339()),
+    }
+}
+
+fn map_job_status_row(row: JobStatusRow) -> JobStatus {
+    let updated_at = row
+        .finished_at
+        .or(row.started_at)
+        .unwrap_or(row.queued_at)
+        .to_rfc3339();
+
+    JobStatus {
+        id: row.id.to_string(),
+        repo_path: row.git_url,
+        status: row.status,
+        progress: None,
+        started_at: row.started_at.map(|ts| ts.to_rfc3339()),
+        updated_at: Some(updated_at),
+        error: row.error_message,
+    }
 }
 
 /// GET /api/v1/index/status?job_id=...
@@ -1385,11 +1681,67 @@ struct IndexStatusQuery {
 async fn index_status_v1(
     State(state): State<ServicesAppState>,
     AxumQuery(q): AxumQuery<IndexStatusQuery>,
+    auth_context: Option<Extension<AuthContext>>,
 ) -> ApiResult<IndexStatusResponse> {
+    if state.is_saas_mode() {
+        return index_status_saas(&state, &q.job_id, auth_context).await;
+    }
+
     let jobs = state.jobs.read().await;
     match jobs.get(&q.job_id) {
         Some(job) => Ok(Json(IndexStatusResponse {
             job: Some(job.clone()),
+        })),
+        None => Err(handle_not_found_error(
+            "job_id",
+            "unknown job id",
+            "index/status",
+        )),
+    }
+}
+
+async fn index_status_saas(
+    state: &ServicesAppState,
+    job_id: &str,
+    auth_context: Option<Extension<AuthContext>>,
+) -> ApiResult<IndexStatusResponse> {
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to fetch job status"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let job_uuid = match Uuid::parse_str(job_id) {
+        Ok(uuid) => uuid,
+        Err(_) => {
+            return Err(handle_validation_error(
+                "job_id",
+                "Invalid job id format",
+                "index/status",
+            ));
+        }
+    };
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let row = match store.job_status(job_uuid, user_uuid).await {
+        Ok(row) => row,
+        Err(e) => {
+            error!("Failed to fetch job status from Supabase: {}", e);
+            return Err(internal_server_error("Failed to fetch job status"));
+        }
+    };
+
+    match row {
+        Some(job_row) => Ok(Json(IndexStatusResponse {
+            job: Some(map_job_status_row(job_row)),
         })),
         None => Err(handle_not_found_error(
             "job_id",
