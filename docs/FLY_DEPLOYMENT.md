@@ -226,7 +226,7 @@ flyctl secrets unset API_KEY --app kotadb-api
 
 | Secret | Description | Required | Example |
 |--------|-------------|----------|---------|
-| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres` |
+| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres?statement_cache_size=0` |
 | SUPABASE_URL | Supabase project URL | Yes | `https://[ref].supabase.co` |
 | SUPABASE_ANON_KEY | Public anonymous key | Yes | Your project's anon key |
 | SUPABASE_SERVICE_KEY | Service role key (admin) | Yes | Your project's service key |
@@ -234,11 +234,22 @@ flyctl secrets unset API_KEY --app kotadb-api
 | SUPABASE_DB_URL_PRODUCTION | Direct Postgres URL for production | Yes | Only used in manual production deploys |
 | GITHUB_CLIENT_ID | GitHub OAuth application client ID | Yes | `Iv1.abcdef1234567890` |
 | GITHUB_CLIENT_SECRET | GitHub OAuth application client secret | Yes | `gho_...` |
+| GITHUB_WEBHOOK_TOKEN | Token with repo admin scope used to provision webhooks | Yes | `ghp_...` |
+| KOTADB_WEBHOOK_BASE_URL | Public base URL for webhook callbacks | Yes | `https://kotadb-api-staging.fly.dev` |
 | SAAS_STAGING_API_KEY | API key used by CI smoke tests against staging | Yes | Generated via `/internal/create-api-key` |
 | SAAS_PRODUCTION_API_KEY | API key used by CI smoke tests against production | Yes | Scoped key for production tenants |
 | JWT_SECRET | Secret for JWT token validation | No | Auto-handled by Supabase |
 | REDIS_URL | Redis connection for caching | No | `redis://host:6379` |
 | SENTRY_DSN | Error tracking with Sentry | No | Sentry project DSN |
+
+After updating secrets, verify the pooler credentials locally:
+
+```
+cp .env.example .env  # only if you do not already keep a .env file
+SQLX_DISABLE_STATEMENT_CACHE=true scripts/check_pooler_connection.sh .env
+```
+
+The script sources `.env`, reads `DATABASE_URL`, and runs `psql SELECT 1` against the pooler endpoint (respecting `SQLX_DISABLE_STATEMENT_CACHE`). It exits non-zero when the URL or credentials are invalid. Once it passes locally, set the same values on Fly (`DATABASE_URL`, `SQLX_DISABLE_STATEMENT_CACHE=true`, `KOTADB_WEBHOOK_BASE_URL`, `GITHUB_WEBHOOK_TOKEN`) before deploying.
 
 ## CI/CD Pipeline
 
