@@ -96,15 +96,21 @@ impl SupabaseRepositoryStore {
     ) -> Result<(RepositoryRow, Uuid, Option<String>)> {
         #[derive(sqlx::FromRow)]
         struct ExistingRepoRow {
+            id: Uuid,
             settings: JsonValue,
             metadata: JsonValue,
+            webhook_secret_hash: Option<String>,
         }
 
         let mut tx = self.pool.begin().await?;
 
         let existing = sqlx::query_as::<_, ExistingRepoRow>(
             r#"
-            SELECT settings, metadata
+            SELECT
+                id,
+                settings,
+                metadata,
+                webhook_secret_hash
             FROM repositories
             WHERE user_id = $1 AND git_url = $2
             FOR UPDATE
@@ -116,12 +122,55 @@ impl SupabaseRepositoryStore {
         .await
         .context("failed to fetch existing repository metadata")?;
 
-        let (base_settings, mut metadata) = existing
-            .map(|row| (row.settings, row.metadata))
-            .unwrap_or_else(|| (json!({}), json!({})));
-        let (secret, secret_hash, secret_created) =
-            ensure_webhook_secret(&mut metadata, registration.provider);
+        let (existing_repo_id, base_settings, mut metadata, mut secret_hash) = existing
+            .map(|row| {
+                (
+                    Some(row.id),
+                    row.settings,
+                    row.metadata,
+                    row.webhook_secret_hash,
+                )
+            })
+            .unwrap_or_else(|| (None, json!({}), json!({}), None));
+
+        let has_secret = if let Some(repo_id) = existing_repo_id {
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT 1
+                FROM repository_secrets
+                WHERE repository_id = $1
+                LIMIT 1
+                "#,
+            )
+            .bind(repo_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("failed to check existing webhook secret")?
+            .is_some()
+        } else {
+            false
+        };
+
         let merged_settings = merge_settings(&base_settings, Some(registration.settings));
+
+        let mut secret_created = false;
+        let mut secret_value: Option<String> = None;
+
+        let needs_secret = !has_secret
+            || secret_hash
+                .as_deref()
+                .map(|hash| hash.is_empty())
+                .unwrap_or(true);
+
+        if needs_secret {
+            let secret = generate_webhook_secret();
+            let hash = hash_secret(&secret);
+            secret_hash = Some(hash);
+            secret_value = Some(secret);
+            secret_created = true;
+        }
+
+        ensure_webhook_metadata(&mut metadata, registration.provider, secret_hash.as_deref());
 
         let repository = sqlx::query_as::<_, RepositoryRow>(
             r#"
@@ -172,10 +221,38 @@ impl SupabaseRepositoryStore {
         .bind(registration.default_branch)
         .bind(Json(merged_settings))
         .bind(Json(metadata.clone()))
-        .bind(secret_hash)
+        .bind(secret_hash.clone())
         .fetch_one(&mut *tx)
         .await
         .context("failed to upsert repository record")?;
+
+        if secret_created {
+            let secret_hash_value = secret_hash
+                .as_deref()
+                .context("webhook secret hash missing during insertion")?;
+
+            let secret_plain = secret_value
+                .as_deref()
+                .context("webhook secret value missing during insertion")?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO repository_secrets (repository_id, secret, secret_hash)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (repository_id)
+                DO UPDATE
+                    SET secret = EXCLUDED.secret,
+                        secret_hash = EXCLUDED.secret_hash,
+                        updated_at = NOW()
+                "#,
+            )
+            .bind(repository.id)
+            .bind(secret_plain)
+            .bind(secret_hash_value)
+            .execute(&mut *tx)
+            .await
+            .context("failed to persist webhook secret")?;
+        }
 
         let job_id = sqlx::query_scalar::<_, Uuid>(
             r#"
@@ -204,7 +281,7 @@ impl SupabaseRepositoryStore {
         Ok((
             repository,
             job_id,
-            if secret_created { Some(secret) } else { None },
+            if secret_created { secret_value } else { None },
         ))
     }
 
@@ -728,7 +805,7 @@ impl SupabaseRepositoryStore {
     }
 }
 
-fn ensure_webhook_secret(metadata: &mut JsonValue, provider: &str) -> (String, String, bool) {
+fn ensure_webhook_metadata(metadata: &mut JsonValue, provider: &str, secret_hash: Option<&str>) {
     use serde_json::Map;
 
     if !metadata.is_object() {
@@ -750,24 +827,15 @@ fn ensure_webhook_secret(metadata: &mut JsonValue, provider: &str) -> (String, S
         .as_object_mut()
         .expect("webhook coerced to object");
 
-    let mut created = false;
-    let secret = webhook
-        .get("secret")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            created = true;
-            let secret = generate_webhook_secret();
-            webhook.insert("secret".into(), JsonValue::String(secret.clone()));
-            secret
-        });
-
     webhook.insert("provider".into(), JsonValue::String(provider.to_string()));
 
-    let hash = hash_secret(&secret);
-    webhook.insert("secret_hash".into(), JsonValue::String(hash.clone()));
+    webhook.remove("secret");
 
-    (secret, hash, created)
+    if let Some(hash) = secret_hash {
+        webhook.insert("secret_hash".into(), JsonValue::String(hash.to_string()));
+    } else {
+        webhook.remove("secret_hash");
+    }
 }
 
 fn generate_webhook_secret() -> String {
@@ -825,5 +893,22 @@ impl SupabaseRepositoryStore {
         .context("failed to fetch repository metadata")?;
 
         Ok(row)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn fetch_webhook_secret(&self, repository_id: Uuid) -> Result<Option<String>> {
+        let secret = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT secret
+            FROM repository_secrets
+            WHERE repository_id = $1
+            "#,
+        )
+        .bind(repository_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load webhook secret")?;
+
+        Ok(secret)
     }
 }

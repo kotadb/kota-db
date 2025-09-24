@@ -344,6 +344,8 @@ impl ServicesMCPTools {
             extract_symbols,
             no_symbols: false,
             quiet: true,
+            include_paths: None,
+            create_index: true,
         };
 
         let result = indexing_service.index_codebase(options).await?;
@@ -467,6 +469,8 @@ impl ServicesMCPTools {
                 extract_symbols,
                 no_symbols: false,
                 quiet: true,
+                include_paths: None,
+                create_index: true,
             };
             indexing_service.index_codebase(options).await?
         } else {
@@ -483,6 +487,8 @@ impl ServicesMCPTools {
                 extract_symbols,
                 no_symbols: false,
                 quiet: true,
+                include_paths: None,
+                create_index: true,
             };
             indexing_service.index_codebase(options).await?
         };

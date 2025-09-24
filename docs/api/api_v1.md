@@ -64,7 +64,9 @@ Endpoints
             "max_parallel_files?": number, "enable_chunking?": bool,
             "extract_symbols?": bool }
   - Managed (SaaS) deployments require `git_url` and ignore/forbid `path`. Self-hosted mode still supports local `path` ingestion.
-  - The response includes `webhook_secret` when a repository is provisioned for the first time so you can configure the GitHub webhook signature. Re-registering an existing repository omits the secret.
+- The response includes `webhook_secret` when a repository is provisioned for the first time so you can configure the GitHub webhook signature. Re-registering an existing repository omits the secret.
+- SaaS mode automatically provisions the GitHub webhook for public repositories using `GITHUB_WEBHOOK_TOKEN` and `KOTADB_WEBHOOK_BASE_URL`.
+- GitHub pushes queue a `webhook_update` job that re-ingests only the changed files and removes deleted paths. Manual triggers still schedule `full_index` jobs when a full rebuild is desired.
   - 400: when neither `path` nor `git_url` provided; when `path` does not exist or is not a directory
   - 200: { job_id, repository_id, status: "queued", webhook_secret? }
 
@@ -81,7 +83,7 @@ Endpoints
   - 202: { status: "queued", job_id? } when the push/pull request event enqueues an indexing job
   - 200: { status: "pong" } for `ping` events; ignored events report `{ status: "ignored:<event>" }`
   - Use the per-repository `webhook_secret` returned from registration to compute the HMAC signature GitHub expects.
-  - Push payloads aggregate commit `added`/`modified`/`removed` file paths into the queued job’s payload so the worker (and future incremental pipeline) can scope reindexing work.
+- Push payloads aggregate commit `added`/`modified`/`removed` file paths into the queued job’s payload so the worker (and future incremental pipeline) can scope reindexing work.
 
 Operational Notes
 - Job tracking uses pruning to prevent unbounded growth (TTL=1h, cap=100 completed/failed jobs).

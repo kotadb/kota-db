@@ -20,7 +20,7 @@ use hex;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use std::{
@@ -28,7 +28,7 @@ use std::{
     env,
     net::SocketAddr,
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
@@ -68,6 +68,8 @@ pub struct ServicesAppState {
     pub api_key_service: Option<Arc<crate::ApiKeyService>>,
     /// Optional Supabase connection pool for SaaS features
     pub supabase_pool: Option<PgPool>,
+    /// Base URL used when provisioning external webhooks
+    pub webhook_base_url: Option<Url>,
     /// Whether this server is running in managed SaaS mode
     pub saas_mode: bool,
     /// Background job registry for indexing tasks
@@ -550,6 +552,7 @@ pub fn create_services_server(
         db_path: db_path.clone(),
         api_key_service: None, // No authentication for basic services server
         supabase_pool: None,
+        webhook_base_url: None,
         saas_mode: false,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
@@ -704,13 +707,19 @@ pub async fn create_services_saas_server(
 
     let repos_init = load_repositories_from_disk_async(db_path.as_path()).await;
     let supabase_pool = api_key_service.pool();
+    let webhook_base_url = Url::parse(
+        &env::var("KOTADB_WEBHOOK_BASE_URL")
+            .context("KOTADB_WEBHOOK_BASE_URL must be set to the public SaaS base URL")?,
+    )
+    .context("Invalid KOTADB_WEBHOOK_BASE_URL value")?;
     let state = ServicesAppState {
-        storage,
-        primary_index,
-        trigram_index,
+        storage: storage.clone(),
+        primary_index: primary_index.clone(),
+        trigram_index: trigram_index.clone(),
         db_path: db_path.clone(),
         api_key_service: Some(api_key_service.clone()),
         supabase_pool: Some(supabase_pool.clone()),
+        webhook_base_url: Some(webhook_base_url.clone()),
         saas_mode: true,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(repos_init)),
@@ -764,12 +773,39 @@ pub async fn create_services_saas_server(
             auth_middleware,
         ));
 
+    #[cfg(feature = "mcp-server")]
+    let authenticated_mcp_routes = {
+        let mut registry = MCPToolRegistry::new();
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+
+        let mcp_state = McpHttpBridgeState::new(Some(Arc::new(registry)));
+        create_mcp_bridge_router().with_state(mcp_state).layer(
+            axum::middleware::from_fn_with_state(api_key_service.clone(), auth_middleware),
+        )
+    };
+
     // Create internal routes (require internal API key)
     let internal_routes = Router::new()
         .route("/internal/create-api-key", post(create_api_key_handler))
         .layer(axum::middleware::from_fn(internal_auth_middleware));
 
-    Ok(Router::new()
+    let mut router = Router::new()
         // Public endpoints (no authentication required)
         .route("/health", get(health_check))
         .route("/api/v1/health-check", get(health_check_detailed))
@@ -780,13 +816,18 @@ pub async fn create_services_saas_server(
         // Merge authenticated routes
         .merge(authenticated_routes)
         // Merge internal routes
-        .merge(internal_routes)
-        .with_state(state)
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive()),
-        ))
+        .merge(internal_routes);
+
+    #[cfg(feature = "mcp-server")]
+    {
+        router = router.merge(authenticated_mcp_routes);
+    }
+
+    Ok(router.with_state(state).layer(
+        ServiceBuilder::new()
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::permissive()),
+    ))
 }
 
 /// Start services server with SaaS capabilities (API key authentication)
@@ -1594,6 +1635,64 @@ async fn register_repository_saas(
         }
     };
 
+    if provider == "github" {
+        let base_url = match state.webhook_base_url.as_ref() {
+            Some(url) => url,
+            None => {
+                error!("KOTADB_WEBHOOK_BASE_URL missing in SaaS configuration");
+                return Err(internal_server_error("Webhook provisioning unavailable"));
+            }
+        };
+
+        let secret_value = if let Some(secret) = webhook_secret.clone() {
+            secret
+        } else {
+            match store.fetch_webhook_secret(repository.id).await {
+                Ok(Some(secret)) => secret,
+                Ok(None) => {
+                    error!("Webhook secret missing for repository {}", repository.id);
+                    return Err(internal_server_error("Webhook secret unavailable"));
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to load webhook secret for repository {}: {}",
+                        repository.id, err
+                    );
+                    return Err(internal_server_error("Webhook secret unavailable"));
+                }
+            }
+        };
+
+        let secret_hash = sha256_hex(&secret_value);
+
+        match ensure_github_webhook(&repository.git_url, repository.id, &secret_value, base_url)
+            .await
+        {
+            Ok(webhook_info) => {
+                if let Err(err) = store
+                    .update_repository_metadata(
+                        repository.id,
+                        None,
+                        build_webhook_metadata(&provider, &secret_hash, &webhook_info),
+                    )
+                    .await
+                {
+                    warn!(
+                        "Failed to update webhook metadata for repository {}: {}",
+                        repository.id, err
+                    );
+                }
+            }
+            Err(err) => {
+                error!(
+                    "Failed to provision GitHub webhook for {}: {}",
+                    repository.git_url, err
+                );
+                return Err(internal_server_error("Failed to provision GitHub webhook"));
+            }
+        }
+    }
+
     Ok(Json(RegisterRepositoryResponse {
         job_id: job_id.to_string(),
         repository_id: repository.id.to_string(),
@@ -1654,10 +1753,17 @@ async fn handle_github_webhook(
         }
     };
 
-    let secret = match extract_webhook_secret(&repo_meta.metadata) {
-        Some(secret) => secret,
-        None => {
+    let secret = match store.fetch_webhook_secret(repo_uuid).await {
+        Ok(Some(secret)) => secret,
+        Ok(None) => {
             error!("Webhook secret missing for repository {}", repo_uuid);
+            return Err(internal_server_error("Webhook secret not configured"));
+        }
+        Err(err) => {
+            error!(
+                "Failed to load webhook secret for repository {}: {}",
+                repo_uuid, err
+            );
             return Err(internal_server_error("Webhook secret not configured"));
         }
     };
@@ -1896,8 +2002,7 @@ async fn handle_github_webhook(
     }
 
     let job_type = match event_type.as_str() {
-        "push" => Some("incremental_update"),
-        "pull_request" | "workflow_run" => Some("webhook_update"),
+        "push" | "pull_request" | "workflow_run" => Some("webhook_update"),
         _ => None,
     };
 
@@ -2035,6 +2140,208 @@ async fn handle_github_webhook(
     ))
 }
 
+#[derive(Debug, Clone)]
+struct GitHubWebhookInfo {
+    id: i64,
+    url: String,
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn build_webhook_metadata(
+    provider: &str,
+    secret_hash: &str,
+    info: &GitHubWebhookInfo,
+) -> JsonValue {
+    json!({
+        "webhook": {
+            "provider": provider,
+            "secret_hash": secret_hash,
+            "id": info.id,
+            "url": info.url,
+            "provisioned_at": Utc::now().to_rfc3339(),
+        }
+    })
+}
+
+async fn ensure_github_webhook(
+    git_url: &str,
+    repository_id: Uuid,
+    secret: &str,
+    base_url: &Url,
+) -> Result<GitHubWebhookInfo> {
+    let token = env::var("GITHUB_WEBHOOK_TOKEN")
+        .context("GITHUB_WEBHOOK_TOKEN must be set to create GitHub webhooks")?;
+
+    let (owner, repo) = parse_github_owner_repo(git_url)
+        .context("git_url must reference a GitHub repository for webhook provisioning")?;
+
+    let callback_url = base_url
+        .join(&format!("/webhooks/github/{}", repository_id))
+        .context("failed to construct webhook callback URL")?;
+    let callback_url_str = callback_url.to_string();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(GITHUB_USER_AGENT)
+        .build()
+        .context("failed to build GitHub client")?;
+
+    let hook_endpoint = format!("{GITHUB_API_URL}/repos/{owner}/{repo}/hooks");
+
+    let request_body = json!({
+        "name": "web",
+        "config": {
+            "url": callback_url_str,
+            "content_type": "json",
+            "secret": secret,
+            "insecure_ssl": "0"
+        },
+        "events": GITHUB_WEBHOOK_EVENTS,
+        "active": true
+    });
+
+    let response = client
+        .post(&hook_endpoint)
+        .header("Authorization", format!("token {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .json(&request_body)
+        .send()
+        .await
+        .context("failed to contact GitHub API")?;
+
+    if response.status().is_success() {
+        let value: JsonValue = response
+            .json()
+            .await
+            .context("failed to parse GitHub webhook response")?;
+        let hook_id = value
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .context("GitHub webhook response missing id field")?;
+        return Ok(GitHubWebhookInfo {
+            id: hook_id,
+            url: callback_url_str,
+        });
+    }
+
+    if response.status().as_u16() == 422 {
+        let existing = client
+            .get(&hook_endpoint)
+            .header("Authorization", format!("token {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .context("failed to list existing GitHub webhooks")?;
+
+        let hooks: JsonValue = existing
+            .json()
+            .await
+            .context("failed to parse existing GitHub webhooks")?;
+
+        if let Some(hook) = hooks.as_array().and_then(|arr| {
+            arr.iter().find(|hook| {
+                hook.get("config")
+                    .and_then(|cfg| cfg.get("url"))
+                    .and_then(|url| url.as_str())
+                    == Some(callback_url_str.as_str())
+            })
+        }) {
+            if let Some(hook_id) = hook.get("id").and_then(|v| v.as_i64()) {
+                let patch_endpoint = format!("{hook_endpoint}/{hook_id}");
+                let patch_body = json!({
+                    "config": {
+                        "url": callback_url_str,
+                        "content_type": "json",
+                        "secret": secret,
+                        "insecure_ssl": "0"
+                    },
+                    "events": GITHUB_WEBHOOK_EVENTS,
+                    "active": true
+                });
+
+                let patch_response = client
+                    .patch(&patch_endpoint)
+                    .header("Authorization", format!("token {token}"))
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&patch_body)
+                    .send()
+                    .await
+                    .context("failed to update existing GitHub webhook")?;
+
+                if patch_response.status().is_success() {
+                    return Ok(GitHubWebhookInfo {
+                        id: hook_id,
+                        url: callback_url_str,
+                    });
+                }
+
+                let status = patch_response.status();
+                let err_text = patch_response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<empty>".to_string());
+                return Err(anyhow!(
+                    "GitHub webhook update failed (status {}): {}",
+                    status,
+                    err_text
+                ));
+            }
+        }
+
+        return Err(anyhow!(
+            "GitHub webhook already exists but could not be reconciled"
+        ));
+    }
+
+    let status = response.status();
+    let err_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "<empty>".to_string());
+    Err(anyhow!(
+        "GitHub webhook creation failed (status {}): {}",
+        status,
+        err_text
+    ))
+}
+
+fn parse_github_owner_repo(git_url: &str) -> Option<(String, String)> {
+    if let Ok(url) = Url::parse(git_url) {
+        let host = url.host_str()?;
+        if !host.contains("github.com") {
+            return None;
+        }
+        let mut segments = url.path().trim_matches('/').split('/');
+        let owner = segments.next()?.to_string();
+        let repo = segments
+            .next()
+            .map(|s| s.trim_end_matches(".git").to_string())?;
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
+        return Some((owner, repo));
+    }
+
+    if let Some(stripped) = git_url.strip_prefix("git@github.com:") {
+        let mut segments = stripped.split('/');
+        let owner = segments.next()?.to_string();
+        let repo = segments
+            .next()
+            .map(|s| s.trim_end_matches(".git").to_string())?;
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
+        return Some((owner, repo));
+    }
+
+    None
+}
+
 fn build_settings_from_request(body: &RegisterRepositoryRequest) -> JsonValue {
     let mut root = JsonMap::new();
 
@@ -2116,14 +2423,6 @@ fn infer_repository_name(git_url: &str) -> Option<String> {
 
 type HmacSha256 = Hmac<Sha256>;
 
-fn extract_webhook_secret(metadata: &JsonValue) -> Option<String> {
-    metadata
-        .get("webhook")
-        .and_then(|webhook| webhook.get("secret"))
-        .and_then(|value| value.as_str())
-        .map(|value| value.to_string())
-}
-
 fn headers_to_json(headers: &HeaderMap) -> JsonValue {
     let mut map = JsonMap::new();
     for (name, value) in headers.iter() {
@@ -2200,8 +2499,12 @@ fn verify_github_signature(secret: &str, payload: &[u8], signature_header: &str)
     mac.verify_slice(&signature_bytes).is_ok()
 }
 
-const IMPORTANT_SAAS_ENV_VARS: &[&str] =
-    &["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY"];
+const IMPORTANT_SAAS_ENV_VARS: &[&str] = &[
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_KEY",
+    "KOTADB_WEBHOOK_BASE_URL",
+];
 
 const SUPABASE_DB_ENV_CHOICES: &[&str] = &[
     "SUPABASE_DB_URL",
@@ -2209,7 +2512,15 @@ const SUPABASE_DB_ENV_CHOICES: &[&str] = &[
     "SUPABASE_DB_URL_PRODUCTION",
 ];
 
-const IMPORTANT_GITHUB_ENV_VARS: &[&str] = &["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
+const IMPORTANT_GITHUB_ENV_VARS: &[&str] = &[
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+    "GITHUB_WEBHOOK_TOKEN",
+];
+
+const GITHUB_API_URL: &str = "https://api.github.com";
+const GITHUB_WEBHOOK_EVENTS: &[&str] = &["push", "pull_request"];
+const GITHUB_USER_AGENT: &str = "kotadb-saas-webhooks/1.0";
 
 fn env_present(key: &str) -> bool {
     env::var(key)
@@ -2768,6 +3079,8 @@ async fn index_codebase(
             extract_symbols: request.extract_symbols,
             no_symbols: false,
             quiet: false,
+            include_paths: None,
+            create_index: true,
         };
 
         indexing_service.index_codebase(options).await
@@ -3353,3 +3666,4 @@ async fn create_api_key_handler(
         }
     }
 }
+use reqwest::Client;

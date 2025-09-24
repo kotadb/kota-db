@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -13,13 +14,14 @@ use serde_json::{json, Value as JsonValue};
 use tokio::task;
 use tokio::time::sleep;
 use tracing::{error, info, instrument, warn};
+use url::Url;
 use uuid::Uuid;
 
-use crate::services::{DatabaseAccess, IndexCodebaseOptions, IndexingService};
+use crate::services::{DatabaseAccess, IndexCodebaseOptions, IndexResult, IndexingService};
 
 use super::{
     task::{merge_settings, option_bool, option_usize, SupabaseJobPayload},
-    JobForWorker, SupabaseRepositoryStore,
+    JobForWorker, RepositoryMetaRow, SupabaseRepositoryStore,
 };
 
 #[derive(Clone)]
@@ -40,6 +42,63 @@ fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
         Some(JsonValue::Number(num)) => num.as_i64(),
         Some(JsonValue::String(value)) => value.parse().ok(),
         _ => None,
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct IncrementalWork {
+    paths_to_index: Vec<String>,
+    paths_to_remove: Vec<String>,
+    skip_index_document: bool,
+}
+
+fn infer_repository_identifier(git_url: &str) -> String {
+    if let Ok(parsed) = Url::parse(git_url) {
+        if let Some(segment) = parsed
+            .path()
+            .trim_matches('/')
+            .split('/')
+            .filter(|seg| !seg.is_empty())
+            .next_back()
+        {
+            return segment.trim_end_matches(".git").to_string();
+        }
+    }
+
+    if let Some(stripped) = git_url.strip_prefix("git@") {
+        if let Some((_, path)) = stripped.split_once(':') {
+            if let Some(segment) = path
+                .trim_matches('/')
+                .split('/')
+                .filter(|seg| !seg.is_empty())
+                .next_back()
+            {
+                return segment.trim_end_matches(".git").to_string();
+            }
+        }
+    }
+
+    "repository".to_string()
+}
+
+fn sanitize_repository_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_lowercase();
+
+    if sanitized.is_empty() {
+        "repository".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -157,8 +216,14 @@ where
 
     async fn process_job(&self, job: JobForWorker) -> Result<(Option<JsonValue>, Option<i64>)> {
         match job.job_type.as_str() {
-            "full_index" | "incremental_update" | "webhook_update" => {
-                self.process_indexing_job(job).await
+            "webhook_update" => {
+                let payload = SupabaseJobPayload::parse(job.payload.clone());
+                let plan = self.prepare_incremental_work(&payload);
+                self.process_indexing_job(job, payload, Some(plan)).await
+            }
+            "full_index" | "incremental_update" => {
+                let payload = SupabaseJobPayload::parse(job.payload.clone());
+                self.process_indexing_job(job, payload, None).await
             }
             other => {
                 self.store
@@ -174,12 +239,47 @@ where
         }
     }
 
+    fn prepare_incremental_work(&self, payload: &SupabaseJobPayload) -> IncrementalWork {
+        let mut work = IncrementalWork {
+            skip_index_document: true,
+            ..Default::default()
+        };
+
+        if let Some(changes) = payload.changes.as_ref() {
+            let mut to_index = HashSet::new();
+            let mut to_remove = HashSet::new();
+
+            if let Some(added) = changes.get("added").and_then(|v| v.as_array()) {
+                for value in added.iter().filter_map(|v| v.as_str()) {
+                    to_index.insert(value.trim_start_matches("./").to_string());
+                }
+            }
+
+            if let Some(modified) = changes.get("modified").and_then(|v| v.as_array()) {
+                for value in modified.iter().filter_map(|v| v.as_str()) {
+                    to_index.insert(value.trim_start_matches("./").to_string());
+                }
+            }
+
+            if let Some(removed) = changes.get("removed").and_then(|v| v.as_array()) {
+                for value in removed.iter().filter_map(|v| v.as_str()) {
+                    to_remove.insert(value.trim_start_matches("./").to_string());
+                }
+            }
+
+            work.paths_to_index = to_index.into_iter().collect();
+            work.paths_to_remove = to_remove.into_iter().collect();
+        }
+
+        work
+    }
+
     async fn process_indexing_job(
         &self,
         job: JobForWorker,
+        mut payload: SupabaseJobPayload,
+        incremental: Option<IncrementalWork>,
     ) -> Result<(Option<JsonValue>, Option<i64>)> {
-        let mut payload = SupabaseJobPayload::parse(job.payload.clone());
-
         let repo_meta = self
             .store
             .fetch_repository(job.repository_id)
@@ -213,25 +313,6 @@ where
         }
 
         let event_type = payload.event_type.clone();
-        if job.job_type != "full_index" {
-            warn!(
-                job_id = %job.id,
-                job_type = %job.job_type,
-                "Incremental job falling back to full index"
-            );
-            let _ = self
-                .store
-                .record_job_event(
-                    job.id,
-                    "fallback_full_index",
-                    "Incremental job fallback to full indexing",
-                    Some(json!({
-                        "job_type": job.job_type,
-                        "event_type": event_type,
-                    })),
-                )
-                .await;
-        }
         info!(
             repository = %repo_meta.git_url,
             job_id = %job.id,
@@ -240,8 +321,64 @@ where
             "Processing Supabase indexing job"
         );
 
-        let repo_path = self.prepare_repository(job.repository_id, &payload).await?;
-        let index_result = self.index_repository(&repo_path, &payload).await?;
+        let repo_identifier = infer_repository_identifier(&payload.git_url);
+        let safe_repo_name = sanitize_repository_name(&repo_identifier);
+
+        let include_paths = incremental
+            .as_ref()
+            .map(|work| work.paths_to_index.clone())
+            .filter(|paths| !paths.is_empty());
+        let removed_paths = incremental
+            .as_ref()
+            .map(|work| work.paths_to_remove.clone())
+            .unwrap_or_default();
+        let skip_index_document = incremental
+            .as_ref()
+            .map(|work| work.skip_index_document)
+            .unwrap_or(false);
+
+        if !removed_paths.is_empty() {
+            self.purge_removed_paths(&repo_meta, &payload, &safe_repo_name, &removed_paths)
+                .await?;
+        }
+
+        let should_clone_repo = include_paths
+            .as_ref()
+            .map(|paths| !paths.is_empty())
+            .unwrap_or(true);
+
+        if !should_clone_repo && removed_paths.is_empty() {
+            self.store
+                .record_job_event(
+                    job.id,
+                    "no_changes",
+                    "Webhook delivered no actionable changes",
+                    None,
+                )
+                .await
+                .ok();
+        }
+
+        let index_result = if should_clone_repo {
+            let repo_path = self.prepare_repository(job.repository_id, &payload).await?;
+            self.index_repository(
+                &repo_path,
+                &payload,
+                include_paths.as_deref(),
+                !skip_index_document,
+            )
+            .await?
+        } else {
+            IndexResult {
+                files_processed: 0,
+                symbols_extracted: 0,
+                relationships_found: 0,
+                total_time_ms: 0,
+                success: true,
+                formatted_output: String::from("No files to index"),
+                errors: Vec::new(),
+            }
+        };
 
         let now = Utc::now();
         self.store
@@ -266,6 +403,7 @@ where
                 "files_processed": index_result.files_processed,
                 "symbols_extracted": index_result.symbols_extracted,
                 "relationships_found": index_result.relationships_found,
+                "files_deleted": removed_paths.len(),
             })),
             payload.webhook_delivery_id,
         ))
@@ -318,12 +456,26 @@ where
         &self,
         repo_path: &Path,
         payload: &SupabaseJobPayload,
+        include_paths: Option<&[String]>,
+        create_index_doc: bool,
     ) -> Result<crate::services::IndexResult> {
         let indexing = IndexingService::new(self.database.as_ref(), self.db_path.clone());
         let mut options = IndexCodebaseOptions {
             repo_path: repo_path.to_path_buf(),
             ..IndexCodebaseOptions::default()
         };
+
+        if let Some(paths) = include_paths {
+            options.include_paths = Some(
+                paths
+                    .iter()
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .collect(),
+            );
+            options.create_index = create_index_doc;
+        } else {
+            options.create_index = create_index_doc;
+        }
 
         if let Some(settings) = &payload.settings {
             if let Some(value) = option_bool(settings, "include_files") {
@@ -350,5 +502,77 @@ where
         }
 
         indexing.index_codebase(options).await
+    }
+
+    async fn purge_removed_paths(
+        &self,
+        repo_meta: &RepositoryMetaRow,
+        payload: &SupabaseJobPayload,
+        safe_repo_name: &str,
+        removed_paths: &[String],
+    ) -> Result<()> {
+        if removed_paths.is_empty() {
+            return Ok(());
+        }
+
+        let prefix = payload
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.get("prefix"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("repos");
+
+        let prefix = prefix.trim_start_matches('/');
+        let storage_arc = self.database.storage();
+        let mut storage = storage_arc.lock().await;
+        let primary_index_arc = self.database.primary_index();
+        let mut primary_index = primary_index_arc.lock().await;
+        let trigram_index_arc = self.database.trigram_index();
+        let mut trigram_index = trigram_index_arc.lock().await;
+        let path_cache = self.database.path_cache();
+        let mut cache = path_cache.write().await;
+
+        for rel_path in removed_paths {
+            let document_path = format!(
+                "{}/{}/files/{}",
+                prefix,
+                safe_repo_name,
+                rel_path.trim_start_matches('/')
+            );
+
+            if let Some(doc_id) = cache.remove(&document_path) {
+                if let Err(err) = storage.delete(&doc_id).await {
+                    warn!(
+                        "Failed to delete document {} for repository {}: {}",
+                        document_path, repo_meta.git_url, err
+                    );
+                }
+
+                if let Err(err) = primary_index.delete(&doc_id).await {
+                    warn!(
+                        "Failed to delete primary index entry {}: {}",
+                        document_path, err
+                    );
+                }
+
+                if let Err(err) = trigram_index.delete(&doc_id).await {
+                    warn!(
+                        "Failed to delete trigram index entry {}: {}",
+                        document_path, err
+                    );
+                }
+            } else {
+                warn!(
+                    "Document path {} not found during removal for repository {}",
+                    document_path, repo_meta.git_url
+                );
+            }
+        }
+
+        storage.flush().await.ok();
+        primary_index.flush().await.ok();
+        trigram_index.flush().await.ok();
+
+        Ok(())
     }
 }

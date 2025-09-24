@@ -24,6 +24,8 @@ pub struct IndexCodebaseOptions {
     pub extract_symbols: Option<bool>,
     pub no_symbols: bool,
     pub quiet: bool,
+    pub include_paths: Option<Vec<String>>,
+    pub create_index: bool,
 }
 
 impl Default for IndexCodebaseOptions {
@@ -40,6 +42,8 @@ impl Default for IndexCodebaseOptions {
             extract_symbols: Some(true),
             no_symbols: false,
             quiet: false,
+            include_paths: None,
+            create_index: true,
         }
     }
 }
@@ -225,6 +229,8 @@ impl<'a> IndexingService<'a> {
             ..Default::default()
         };
 
+        ingestion_options.include_paths = options.include_paths.clone();
+
         #[cfg(feature = "tree-sitter-parsing")]
         {
             ingestion_options.extract_symbols = should_extract_symbols;
@@ -233,7 +239,7 @@ impl<'a> IndexingService<'a> {
         let config = IngestionConfig {
             path_prefix: options.prefix.clone(),
             options: ingestion_options,
-            create_index: true,
+            create_index: options.create_index,
             organization_config: Some(crate::git::RepositoryOrganizationConfig::default()),
         };
 
@@ -533,7 +539,7 @@ impl<'a> IndexingService<'a> {
             ));
         }
 
-        // TODO: Implement git-specific indexing logic
+        // Stub: git-specific indexing logic is handled separately (tracked in issue #706)
         // This would include:
         // - Commit history analysis
         // - Branch structure mapping
@@ -558,8 +564,8 @@ impl<'a> IndexingService<'a> {
         let codebase_result = self.index_codebase(codebase_options).await?;
 
         Ok(GitIndexResult {
-            commits_processed: 0,  // TODO: Implement commit counting
-            branches_processed: 0, // TODO: Implement branch counting
+            commits_processed: 0, // Commit counting not yet implemented (tracked in issue #706)
+            branches_processed: 0, // Branch counting not yet implemented (tracked in issue #706)
             files_analyzed: codebase_result.files_processed,
             total_time_ms: start_time.elapsed().as_millis() as u64,
             success: codebase_result.success,
@@ -587,7 +593,7 @@ impl<'a> IndexingService<'a> {
             ));
         }
 
-        // TODO: Implement incremental update logic
+        // Stub: incremental update pipeline is still under construction (tracked in issue #706)
         // This would include:
         // - Identify changed, added, and removed files
         // - Update only affected documents in storage
@@ -625,7 +631,7 @@ impl<'a> IndexingService<'a> {
 
         formatted_output.push_str(&format!("🔄 Reindexing scope: {:?}\n", scope_path));
 
-        // TODO: Implement scope-specific reindexing
+        // Stub: scope-specific reindexing intentionally left unimplemented (tracked in issue #706)
         // This would include:
         // - Determine scope boundaries (file, directory, symbol)
         // - Remove existing data for the scope

@@ -211,6 +211,29 @@ CREATE POLICY "Users view token usage"
 CREATE INDEX IF NOT EXISTS idx_token_usage_api_key_id ON token_usage(api_key_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_token_usage_repository_id ON token_usage(repository_id);
 
+-- Repository secrets -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repository_secrets (
+    repository_id UUID PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    secret TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE repository_secrets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages repository secrets" ON repository_secrets;
+CREATE POLICY "Service role manages repository secrets"
+    ON repository_secrets FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP TRIGGER IF EXISTS update_repository_secrets_updated_at ON repository_secrets;
+CREATE TRIGGER update_repository_secrets_updated_at
+    BEFORE UPDATE ON repository_secrets
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- Updated-at triggers ------------------------------------------------------
 DROP TRIGGER IF EXISTS update_repositories_updated_at ON repositories;
 CREATE TRIGGER update_repositories_updated_at

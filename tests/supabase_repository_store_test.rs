@@ -58,6 +58,14 @@ async fn supabase_repository_store_happy_path() -> Result<()> {
     assert_eq!(repository.name, "kota-db");
     assert_eq!(repository.status, "queued");
     assert!(webhook_secret.is_some());
+    assert!(repository
+        .metadata
+        .get("webhook")
+        .and_then(|obj| obj.get("secret"))
+        .is_none());
+
+    let stored_secret = store.fetch_webhook_secret(repository.id).await?;
+    assert_eq!(stored_secret, webhook_secret);
 
     // First poll should grab the queued job and move it in-flight
     let job = store
@@ -157,8 +165,24 @@ async fn bootstrap_schema(pool: &sqlx::PgPool) -> Result<()> {
             last_indexed_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            settings JSONB NOT NULL DEFAULT '{}'::jsonb,
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-            webhook_secret_hash TEXT
+            webhook_secret_hash TEXT,
+            UNIQUE (user_id, git_url)
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS repository_secrets (
+            repository_id UUID PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+            secret TEXT NOT NULL,
+            secret_hash TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         "#,
     )
