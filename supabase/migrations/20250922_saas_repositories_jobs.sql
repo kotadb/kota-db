@@ -1,0 +1,281 @@
+-- Supabase schema extensions for SaaS repository onboarding and job orchestration
+-- Adds managed tables for repositories, indexing jobs, webhook deliveries, and token usage.
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Repositories table -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repositories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    git_url TEXT NOT NULL,
+    provider TEXT DEFAULT 'github',
+    default_branch TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    sync_state TEXT NOT NULL DEFAULT 'pending',
+    last_indexed_at TIMESTAMPTZ,
+    last_indexed_commit TEXT,
+    webhook_secret_hash TEXT,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, git_url)
+);
+
+ALTER TABLE repositories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their repositories" ON repositories;
+CREATE POLICY "Users can view their repositories"
+    ON repositories FOR SELECT
+    USING (auth.role() = 'service_role' OR auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can register repositories" ON repositories;
+CREATE POLICY "Users can register repositories"
+    ON repositories FOR INSERT
+    WITH CHECK (auth.role() = 'service_role' OR auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their repositories" ON repositories;
+CREATE POLICY "Users can update their repositories"
+    ON repositories FOR UPDATE
+    USING (auth.role() = 'service_role' OR auth.uid() = user_id)
+    WITH CHECK (auth.role() = 'service_role' OR auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete their repositories" ON repositories;
+CREATE POLICY "Users can delete their repositories"
+    ON repositories FOR DELETE
+    USING (auth.role() = 'service_role' OR auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_repositories_user_id ON repositories(user_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_status ON repositories(status);
+CREATE INDEX IF NOT EXISTS idx_repositories_git_url ON repositories(git_url);
+CREATE INDEX IF NOT EXISTS idx_repositories_sync_state ON repositories(sync_state);
+
+-- Indexing jobs ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS indexing_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    requested_by UUID REFERENCES api_keys(id) ON DELETE SET NULL,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result JSONB,
+    error_message TEXT,
+    queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT indexing_jobs_type_check CHECK (job_type IN ('full_index', 'incremental_update', 'webhook_update', 'validate')),
+    CONSTRAINT indexing_jobs_status_check CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'cancelled'))
+);
+
+ALTER TABLE indexing_jobs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages indexing jobs" ON indexing_jobs;
+CREATE POLICY "Service role manages indexing jobs"
+    ON indexing_jobs FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Users view indexing jobs" ON indexing_jobs;
+CREATE POLICY "Users view indexing jobs"
+    ON indexing_jobs FOR SELECT
+    USING (
+        auth.role() = 'service_role'
+        OR repository_id IN (
+            SELECT id FROM repositories WHERE user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "Users enqueue indexing jobs" ON indexing_jobs;
+CREATE POLICY "Users enqueue indexing jobs"
+    ON indexing_jobs FOR INSERT
+    WITH CHECK (
+        auth.role() = 'service_role'
+        OR repository_id IN (
+            SELECT id FROM repositories WHERE user_id = auth.uid()
+        )
+    );
+
+CREATE INDEX IF NOT EXISTS idx_indexing_jobs_repository_id ON indexing_jobs(repository_id);
+CREATE INDEX IF NOT EXISTS idx_indexing_jobs_status ON indexing_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_indexing_jobs_priority ON indexing_jobs(priority DESC, queued_at ASC);
+CREATE INDEX IF NOT EXISTS idx_indexing_jobs_created_at ON indexing_jobs(created_at DESC);
+
+-- Indexing job events ------------------------------------------------------
+CREATE TABLE IF NOT EXISTS indexing_job_events (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    job_id UUID NOT NULL REFERENCES indexing_jobs(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    message TEXT,
+    context JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE indexing_job_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages job events" ON indexing_job_events;
+CREATE POLICY "Service role manages job events"
+    ON indexing_job_events FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Users view job events" ON indexing_job_events;
+CREATE POLICY "Users view job events"
+    ON indexing_job_events FOR SELECT
+    USING (
+        auth.role() = 'service_role'
+        OR job_id IN (
+            SELECT id FROM indexing_jobs WHERE repository_id IN (
+                SELECT id FROM repositories WHERE user_id = auth.uid()
+            )
+        )
+    );
+
+CREATE INDEX IF NOT EXISTS idx_indexing_job_events_job_id ON indexing_job_events(job_id, created_at DESC);
+
+-- Webhook deliveries -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL DEFAULT 'github',
+    delivery_id TEXT,
+    event_type TEXT,
+    status TEXT NOT NULL DEFAULT 'received',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    payload JSONB,
+    headers JSONB,
+    signature TEXT,
+    error_message TEXT,
+    job_id UUID REFERENCES indexing_jobs(id) ON DELETE SET NULL,
+    CONSTRAINT webhook_deliveries_unique_delivery UNIQUE (provider, delivery_id)
+);
+
+ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages webhook deliveries" ON webhook_deliveries;
+CREATE POLICY "Service role manages webhook deliveries"
+    ON webhook_deliveries FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Users view webhook deliveries" ON webhook_deliveries;
+CREATE POLICY "Users view webhook deliveries"
+    ON webhook_deliveries FOR SELECT
+    USING (
+        auth.role() = 'service_role'
+        OR repository_id IN (
+            SELECT id FROM repositories WHERE user_id = auth.uid()
+        )
+    );
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_repository_id ON webhook_deliveries(repository_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_delivery_id ON webhook_deliveries(delivery_id);
+
+-- Token usage --------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS token_usage (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    repository_id UUID REFERENCES repositories(id) ON DELETE SET NULL,
+    job_id UUID REFERENCES indexing_jobs(id) ON DELETE SET NULL,
+    usage_type TEXT NOT NULL,
+    tokens_used INTEGER NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE token_usage ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages token usage" ON token_usage;
+CREATE POLICY "Service role manages token usage"
+    ON token_usage FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Users view token usage" ON token_usage;
+CREATE POLICY "Users view token usage"
+    ON token_usage FOR SELECT
+    USING (
+        auth.role() = 'service_role'
+        OR api_key_id IN (
+            SELECT id FROM api_keys WHERE user_id = auth.uid()
+        )
+    );
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_api_key_id ON token_usage(api_key_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_token_usage_repository_id ON token_usage(repository_id);
+
+-- Repository secrets -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repository_secrets (
+    repository_id UUID PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    secret TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE repository_secrets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages repository secrets" ON repository_secrets;
+CREATE POLICY "Service role manages repository secrets"
+    ON repository_secrets FOR ALL
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+DROP TRIGGER IF EXISTS update_repository_secrets_updated_at ON repository_secrets;
+CREATE TRIGGER update_repository_secrets_updated_at
+    BEFORE UPDATE ON repository_secrets
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Updated-at triggers ------------------------------------------------------
+DROP TRIGGER IF EXISTS update_repositories_updated_at ON repositories;
+CREATE TRIGGER update_repositories_updated_at
+    BEFORE UPDATE ON repositories
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_indexing_jobs_updated_at ON indexing_jobs;
+CREATE TRIGGER update_indexing_jobs_updated_at
+    BEFORE UPDATE ON indexing_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Helpful views ------------------------------------------------------------
+CREATE OR REPLACE VIEW repository_status_view AS
+SELECT
+    r.id,
+    r.user_id,
+    r.api_key_id,
+    r.name,
+    r.git_url,
+    r.provider,
+    r.default_branch,
+    r.status,
+    r.sync_state,
+    r.last_indexed_at,
+    r.last_indexed_commit,
+    r.created_at,
+    r.updated_at,
+    (SELECT jsonb_build_object(
+        'queued', COUNT(*) FILTER (WHERE status = 'queued'),
+        'in_progress', COUNT(*) FILTER (WHERE status = 'in_progress'),
+        'failed', COUNT(*) FILTER (WHERE status = 'failed'),
+        'completed', COUNT(*) FILTER (WHERE status = 'completed')
+    )
+     FROM indexing_jobs ij WHERE ij.repository_id = r.id) AS job_summary
+FROM repositories r;
+
+GRANT SELECT ON repository_status_view TO authenticated;
+
+-- Success notice -----------------------------------------------------------
+DO $$
+BEGIN
+    RAISE NOTICE 'Supabase SaaS repository + jobs schema applied.';
+END $$;

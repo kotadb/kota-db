@@ -1,6 +1,7 @@
 //! Git repository ingestion into KotaDB
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::Path;
 use tracing::{info, instrument, warn};
 
@@ -207,9 +208,17 @@ impl RepositoryIngester {
 
         // Ingest files first
         report_progress("Discovering repository files...");
-        let files = repo
+        let mut files = repo
             .list_files()
             .context("Failed to list repository files")?;
+
+        if let Some(include_paths) = &self.config.options.include_paths {
+            let include_set: HashSet<String> = include_paths
+                .iter()
+                .map(|p| p.trim_start_matches("./").to_string())
+                .collect();
+            files.retain(|entry| include_set.contains(&entry.path));
+        }
 
         info!("Found {} files to ingest", files.len());
 
@@ -683,9 +692,17 @@ impl RepositoryIngester {
         // Ingest files
         if self.config.options.include_file_contents {
             report_progress("Discovering repository files...");
-            let files = repo
+            let mut files = repo
                 .list_files()
                 .context("Failed to list repository files")?;
+
+            if let Some(include_paths) = &self.config.options.include_paths {
+                let include_set: HashSet<String> = include_paths
+                    .iter()
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .collect();
+                files.retain(|entry| include_set.contains(&entry.path));
+            }
 
             info!("Found {} files to ingest", files.len());
 
@@ -1154,9 +1171,17 @@ impl RepositoryIngester {
         // Ingest files
         if self.config.options.include_file_contents {
             report_progress("Discovering repository files...");
-            let files = repo
+            let mut files = repo
                 .list_files()
                 .context("Failed to list repository files")?;
+
+            if let Some(include_paths) = &self.config.options.include_paths {
+                let include_set: HashSet<String> = include_paths
+                    .iter()
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .collect();
+                files.retain(|entry| include_set.contains(&entry.path));
+            }
 
             info!("Found {} files to ingest", files.len());
 

@@ -185,6 +185,7 @@ The Fly.io deployment is **stateless** and only processes requests. See `docs/SU
 - Generate new SQL from local changes with `just supabase-generate <short_name>`; this wraps `supabase db diff` and writes into `supabase/migrations/`.
 - Rebuild the local Supabase containers and apply migrations via `just supabase-reset` before sending a PR. This helper only touches the Dockerised dev stack—it never talks to staging or production.
 - Apply the migrations to a remote database with `just supabase-apply <postgres_url>`; in CI the URL is supplied through secrets (see deployment workflow). The helper delegates to `supabase db push`, so the official migration tracking table (`supabase_migrations.schema_migrations`) stays fully compatible with the Supabase CLI.
+- Hosted mode depends on the repository/indexing schema introduced in `20250922_saas_repositories_jobs.sql`. Ensure staging and production run that migration before enabling git onboarding features.
 
 ### Using the Secrets Script
 
@@ -225,15 +226,30 @@ flyctl secrets unset API_KEY --app kotadb-api
 
 | Secret | Description | Required | Example |
 |--------|-------------|----------|---------|
-| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres` |
+| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres?statement_cache_size=0` |
 | SUPABASE_URL | Supabase project URL | Yes | `https://[ref].supabase.co` |
 | SUPABASE_ANON_KEY | Public anonymous key | Yes | Your project's anon key |
 | SUPABASE_SERVICE_KEY | Service role key (admin) | Yes | Your project's service key |
 | SUPABASE_DB_URL_STAGING | Direct Postgres URL for staging | Yes | Passed to deploy workflow for migrations |
 | SUPABASE_DB_URL_PRODUCTION | Direct Postgres URL for production | Yes | Only used in manual production deploys |
+| GITHUB_CLIENT_ID | GitHub OAuth application client ID | Yes | `Iv1.abcdef1234567890` |
+| GITHUB_CLIENT_SECRET | GitHub OAuth application client secret | Yes | `gho_...` |
+| GITHUB_WEBHOOK_TOKEN | Token with repo admin scope used to provision webhooks | Yes | `ghp_...` |
+| KOTADB_WEBHOOK_BASE_URL | Public base URL for webhook callbacks | Yes | `https://kotadb-api-staging.fly.dev` |
+| SAAS_STAGING_API_KEY | API key used by CI smoke tests against staging | Yes | Generated via `/internal/create-api-key` |
+| SAAS_PRODUCTION_API_KEY | API key used by CI smoke tests against production | Yes | Scoped key for production tenants |
 | JWT_SECRET | Secret for JWT token validation | No | Auto-handled by Supabase |
 | REDIS_URL | Redis connection for caching | No | `redis://host:6379` |
 | SENTRY_DSN | Error tracking with Sentry | No | Sentry project DSN |
+
+After updating secrets, verify the pooler credentials locally:
+
+```
+cp .env.example .env  # only if you do not already keep a .env file
+SQLX_DISABLE_STATEMENT_CACHE=true scripts/check_pooler_connection.sh .env
+```
+
+The script sources `.env`, reads `DATABASE_URL`, and runs `psql SELECT 1` against the pooler endpoint (respecting `SQLX_DISABLE_STATEMENT_CACHE`). It exits non-zero when the URL or credentials are invalid. Once it passes locally, set the same values on Fly (`DATABASE_URL`, `SQLX_DISABLE_STATEMENT_CACHE=true`, `KOTADB_WEBHOOK_BASE_URL`, `GITHUB_WEBHOOK_TOKEN`) before deploying.
 
 ## CI/CD Pipeline
 
@@ -325,6 +341,26 @@ flyctl dashboard --app kotadb-api
 flyctl monitor --app kotadb-api
 ```
 
+### SaaS Smoke Test
+
+Use the helper script to verify the hosted API after each deploy. It validates the
+public `/health` endpoint (including Supabase latency and queued job counts) and,
+optionally, the authenticated repository listing when an API key is provided.
+
+```bash
+# Basic check against staging
+scripts/saas_smoke.sh
+
+# Custom URL and API key
+scripts/saas_smoke.sh -u https://kotadb-api.fly.dev -k "$KOTADB_API_KEY"
+
+# Include MCP checks (requires API key)
+scripts/saas_smoke.sh -u https://kotadb-api.fly.dev -k "$KOTADB_API_KEY" --mcp
+```
+
+> The `saas-api-deploy.yml` workflow runs this script after each staging and production deploy, using
+> environment-specific API keys (`SAAS_STAGING_API_KEY`, `SAAS_PRODUCTION_API_KEY`).
+
 ## Troubleshooting
 
 ### Common Issues and Solutions
@@ -343,7 +379,11 @@ flyctl secrets list --app kotadb-api
 curl https://kotadb-api.fly.dev/health
 ```
 
-#### 2. Database Connection Issues
+#### 2. SaaS env validation failures
+**Symptom**: Logs show `Missing required environment variables` and the instance exits before binding to the port.
+**Solution**: Confirm all Supabase and GitHub secrets are configured (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and at least one of `SUPABASE_DB_URL`, `SUPABASE_DB_URL_STAGING`, or `SUPABASE_DB_URL_PRODUCTION`).
+
+#### 3. Database Connection Issues
 **Symptom**: "DATABASE_URL is not set" or connection timeouts
 **Solution**:
 ```bash
@@ -356,7 +396,7 @@ flyctl ssh console --app kotadb-api
 > psql $DATABASE_URL -c "SELECT 1"
 ```
 
-#### 3. Deployment Failures
+#### 4. Deployment Failures
 **Symptom**: Deploy command fails
 **Solution**:
 ```bash

@@ -90,6 +90,8 @@ pub struct IngestionOptions {
     pub max_history_depth: Option<usize>,
     /// Memory limits configuration for ingestion process
     pub memory_limits: Option<crate::memory::MemoryLimitsConfig>,
+    /// Explicit list of repository-relative paths to ingest (None = all files)
+    pub include_paths: Option<Vec<String>>,
 }
 
 impl Default for IngestionOptions {
@@ -120,6 +122,7 @@ impl Default for IngestionOptions {
             branch: None,
             max_history_depth: Some(1000),
             memory_limits: None, // Default to no memory limits for backward compatibility
+            include_paths: None,
         }
     }
 }
