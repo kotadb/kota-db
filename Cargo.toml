@@ -113,7 +113,7 @@ toml = "0.9"
 
 # Testing & Benchmarking
 criterion = { version = "0.5", optional = true }
-proptest = { version = "1.5", optional = true }
+proptest = { version = "1.8", optional = true }
 tempfile = "3.22.0"
 
 # Traits
@@ -140,7 +140,7 @@ testcontainers-modules = { version = "0.5", features = ["postgres"], optional = 
 
 [dev-dependencies]
 criterion = "0.5"
-proptest = "1.5"
+proptest = "1.8"
 pretty_assertions = "1.4"
 fake = "2.10"
 rand = "0.8"
