@@ -2299,7 +2299,7 @@ dependencies = [
  "sqlx",
  "tantivy",
  "tempfile",
- "testcontainers 0.20.1",
+ "testcontainers",
  "testcontainers-modules",
  "thiserror 2.0.16",
  "tokenizers",
@@ -4814,32 +4814,6 @@ dependencies = [
 
 [[package]]
 name = "testcontainers"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025e0ac563d543e0354d984540e749859a83dbe5c0afb8d458dc48d91cef2d6a"
-dependencies = [
- "async-trait",
- "bollard",
- "bollard-stubs",
- "bytes",
- "dirs",
- "docker_credential",
- "futures",
- "log",
- "memchr",
- "parse-display",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "url",
-]
-
-[[package]]
-name = "testcontainers"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "725cbe485aafddfd8b2d01665937c95498d894c07fabd9c4e06a53c7da4ccc56"
@@ -4869,11 +4843,11 @@ dependencies = [
 
 [[package]]
 name = "testcontainers-modules"
-version = "0.5.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f148193fc3c61b11d363732a42d43eb332329b3b4a4148fca8b0af1fdc8a4b7"
+checksum = "3a433ba83c79b59254a8a712c2c435750272574ddbc57091b69724d2696dc57d"
 dependencies = [
- "testcontainers 0.17.0",
+ "testcontainers",
 ]
 
 [[package]]
