@@ -135,7 +135,7 @@ ort = { version = "2.0.0-rc.10", features = ["ndarray"], optional = true }  # ON
 tokenizers = { version = "0.22", optional = true }                          # Tokenization
 ndarray = { version = "0.15", optional = true }                             # N-dimensional arrays
 # Docker-based integration testing (optional)
-testcontainers = { version = "0.17", optional = true }
+testcontainers = { version = "0.20", optional = true }
 testcontainers-modules = { version = "0.5", features = ["postgres"], optional = true }
 
 [dev-dependencies]
