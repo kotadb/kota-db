@@ -382,14 +382,36 @@ impl Storage for HybridStorage {
     }
 
     async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool> {
+        // Capture any graph node identifier before removing the document
+        let potential_graph_node = {
+            let storage = self.document_storage.read().await;
+            let existing = storage.get(id).await?;
+            if let Some(doc) = existing.as_ref() {
+                self.document_to_node(doc)?.map(|(node_id, _)| node_id)
+            } else {
+                None
+            }
+        };
+
         // Delete from document storage
         let mut doc_storage = self.document_storage.write().await;
         let deleted = doc_storage.delete(id).await?;
+        drop(doc_storage);
 
-        // Also try to delete from graph storage if it might be there
-        if let Some(graph_storage) = &self.graph_storage {
-            // Graph storage would need a delete_node method
-            // For now, we just track in document storage
+        if deleted {
+            let mut stats = self.stats.write().await;
+            stats.document_ops = stats.document_ops.saturating_add(1);
+            drop(stats);
+
+            if let (Some(graph_storage), Some(node_id)) =
+                (&self.graph_storage, potential_graph_node)
+            {
+                let mut graph = graph_storage.write().await;
+                if graph.delete_node(node_id).await? {
+                    let mut stats = self.stats.write().await;
+                    stats.graph_ops = stats.graph_ops.saturating_add(1);
+                }
+            }
         }
 
         Ok(deleted)

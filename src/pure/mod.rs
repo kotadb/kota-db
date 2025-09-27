@@ -318,6 +318,40 @@ pub fn extract_all_pairs(tree: &BTreeRoot) -> Result<Vec<(ValidatedDocumentId, V
     Ok(pairs)
 }
 
+/// Traverse key-value pairs, invoking the visitor for each entry until it returns false
+pub fn traverse_pairs_until<F>(tree: &BTreeRoot, mut visitor: F)
+where
+    F: FnMut(&ValidatedDocumentId, &ValidatedPath) -> bool,
+{
+    if let Some(ref root_node) = tree.root {
+        traverse_pairs_recursive(root_node, &mut visitor);
+    }
+}
+
+fn traverse_pairs_recursive<F>(node: &BTreeNode, visitor: &mut F) -> bool
+where
+    F: FnMut(&ValidatedDocumentId, &ValidatedPath) -> bool,
+{
+    match node {
+        BTreeNode::Leaf { keys, values, .. } => {
+            for (key, value) in keys.iter().zip(values.iter()) {
+                if !visitor(key, value) {
+                    return false;
+                }
+            }
+        }
+        BTreeNode::Internal { children, .. } => {
+            for child in children {
+                if !traverse_pairs_recursive(child, visitor) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
 fn extract_pairs_recursive(
     node: &BTreeNode,
     pairs: &mut Vec<(ValidatedDocumentId, ValidatedPath)>,
