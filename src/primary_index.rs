@@ -341,8 +341,13 @@ impl PrimaryIndex {
                 continue;
             }
 
-            let entry: WalEntry =
-                serde_json::from_str(trimmed).context("Failed to deserialize WAL entry")?;
+            let entry: WalEntry = match serde_json::from_str(trimmed) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    tracing::warn!("Skipping malformed WAL entry: {}", e);
+                    continue;
+                }
+            };
             entries.push(entry);
         }
 
@@ -901,6 +906,7 @@ pub async fn create_primary_index_for_tests(path: &str) -> Result<PrimaryIndex> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_matches_wildcard_pattern() {
@@ -1047,6 +1053,37 @@ mod tests {
 
         let reopened_index = create_primary_index_for_tests(&test_dir).await?;
         let query = Query::new(Some("test/wal.md".to_string()), None, None, 10)?;
+        let results = reopened_index.search(&query).await?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], doc_id);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_primary_index_wal_recovery_skips_truncated_entries() -> Result<()> {
+        let test_dir = format!("test_data/primary_wal_truncated_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
+
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let doc_path = ValidatedPath::new("test/truncated.md")?;
+
+        {
+            let mut index = create_primary_index_for_tests(&test_dir).await?;
+            index.insert(doc_id, doc_path.clone()).await?;
+
+            // Append a truncated WAL line to simulate a torn write
+            let wal_path = PathBuf::from(&test_dir).join("wal").join("current.wal");
+            let mut file = std::fs::OpenOptions::new().append(true).open(&wal_path)?;
+            use std::io::Write;
+            file.write_all(b"{\"Insert\":")?; // intentionally truncated JSON
+        }
+
+        let reopened_index = create_primary_index_for_tests(&test_dir).await?;
+        let query = Query::new(Some("test/truncated.md".to_string()), None, None, 10)?;
         let results = reopened_index.search(&query).await?;
 
         assert_eq!(results.len(), 1);

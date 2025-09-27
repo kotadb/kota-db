@@ -695,8 +695,41 @@ impl NativeGraphStorage {
                 }
             }
             WalEntry::NodeDelete { id } => {
-                let mut nodes = self.nodes.write();
-                nodes.remove(&id);
+                self.nodes.write().remove(&id);
+
+                let outgoing = {
+                    let mut edges_out = self.edges_out.write();
+                    edges_out.remove(&id)
+                };
+
+                if let Some(outgoing) = outgoing {
+                    let mut edges_in = self.edges_in.write();
+                    for (target_id, _) in outgoing {
+                        if let Some(incoming) = edges_in.get_mut(&target_id) {
+                            incoming.remove(&id);
+                            if incoming.is_empty() {
+                                edges_in.remove(&target_id);
+                            }
+                        }
+                    }
+                }
+
+                let incoming = {
+                    let mut edges_in = self.edges_in.write();
+                    edges_in.remove(&id)
+                };
+
+                if let Some(incoming) = incoming {
+                    let mut edges_out = self.edges_out.write();
+                    for (source_id, _) in incoming {
+                        if let Some(outgoing) = edges_out.get_mut(&source_id) {
+                            outgoing.remove(&id);
+                            if outgoing.is_empty() {
+                                edges_out.remove(&source_id);
+                            }
+                        }
+                    }
+                }
             }
             WalEntry::EdgeInsert { from, to, data } => {
                 if let Ok(edge) = bincode::deserialize::<GraphEdge>(&data) {
@@ -2370,6 +2403,64 @@ mod tests {
             .await
             .expect("Failed to find paths");
         assert_eq!(paths.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_wal_node_delete_recovery_removes_edges() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let config = GraphStorageConfig::default();
+        let path = temp_dir.path();
+
+        let node1 = create_test_graph_node("persistent_function", "function");
+        let node2 = create_test_graph_node("callee", "function");
+        let edge = create_test_graph_edge();
+
+        {
+            let mut storage = NativeGraphStorage::new(path, config.clone())
+                .await
+                .expect("Failed to create storage");
+            storage
+                .store_node(node1.id, node1.clone())
+                .await
+                .expect("Failed to store node1");
+            storage
+                .store_node(node2.id, node2.clone())
+                .await
+                .expect("Failed to store node2");
+            storage
+                .store_edge(node1.id, node2.id, edge.clone())
+                .await
+                .expect("Failed to store edge");
+
+            storage.flush().await.expect("flush should succeed");
+
+            storage
+                .write_to_wal(WalEntry::NodeDelete { id: node1.id })
+                .await
+                .expect("Failed to append WAL entry");
+        }
+
+        let storage = NativeGraphStorage::new(path, config)
+            .await
+            .expect("Failed to reopen storage");
+
+        let retrieved = storage
+            .get_node(node1.id)
+            .await
+            .expect("Failed to get node");
+        assert!(retrieved.is_none());
+
+        let outgoing = storage
+            .get_edges(node1.id, Direction::Outgoing)
+            .await
+            .expect("Failed to get outgoing edges");
+        assert!(outgoing.is_empty());
+
+        let incoming = storage
+            .get_edges(node2.id, Direction::Incoming)
+            .await
+            .expect("Failed to get incoming edges");
+        assert!(incoming.is_empty());
     }
 
     #[tokio::test]
