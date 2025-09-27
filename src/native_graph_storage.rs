@@ -164,11 +164,11 @@ impl NativeGraphStorage {
             })),
         };
 
-        // Recover from WAL first
-        storage.recover_from_wal().await?;
-
-        // Then load existing data if present
+        // Load existing data if present
         storage.load_from_disk().await?;
+
+        // Apply any outstanding WAL entries on top of persisted state
+        storage.recover_from_wal().await?;
 
         Ok(storage)
     }
@@ -648,6 +648,8 @@ impl NativeGraphStorage {
             fs::rename(&current_wal, &archive_path).await?;
         }
 
+        self.rebuild_indices()?;
+
         Ok(())
     }
 
@@ -698,26 +700,31 @@ impl NativeGraphStorage {
             }
             WalEntry::EdgeInsert { from, to, data } => {
                 if let Ok(edge) = bincode::deserialize::<GraphEdge>(&data) {
-                    let record = EdgeRecord {
-                        edge: edge.clone(),
-                        page_id: 0,
-                        page_offset: 0,
-                    };
                     let mut edges_out = self.edges_out.write();
-                    edges_out
-                        .entry(from)
-                        .or_default()
-                        .entry(to)
-                        .or_default()
-                        .push(record.clone());
+                    let entry = edges_out.entry(from).or_default().entry(to).or_default();
+                    let duplicate = entry.iter().any(|existing| {
+                        bincode::serialize(&existing.edge)
+                            .map(|encoded| encoded == data)
+                            .unwrap_or(false)
+                    });
 
-                    let mut edges_in = self.edges_in.write();
-                    edges_in
-                        .entry(to)
-                        .or_default()
-                        .entry(from)
-                        .or_default()
-                        .push(record);
+                    if !duplicate {
+                        let record = EdgeRecord {
+                            edge: edge.clone(),
+                            page_id: 0,
+                            page_offset: 0,
+                        };
+                        entry.push(record.clone());
+                        drop(edges_out);
+
+                        let mut edges_in = self.edges_in.write();
+                        edges_in
+                            .entry(to)
+                            .or_default()
+                            .entry(from)
+                            .or_default()
+                            .push(record);
+                    }
                 }
             }
             WalEntry::EdgeDelete { from, to } => {
@@ -899,6 +906,8 @@ impl GraphStorage for NativeGraphStorage {
             *stats.nodes_by_type.entry(node_data.node_type).or_default() += 1;
         }
 
+        self.persist_nodes().await?;
+
         Ok(())
     }
 
@@ -945,6 +954,16 @@ impl GraphStorage for NativeGraphStorage {
                 .entry(format!("{:?}", edge.relation_type))
                 .or_default() += 1;
         }
+
+        let wal_data = bincode::serialize(&edge)?;
+        self.write_to_wal(WalEntry::EdgeInsert {
+            from,
+            to,
+            data: wal_data,
+        })
+        .await?;
+
+        self.persist_edges().await?;
 
         Ok(())
     }
@@ -1158,36 +1177,49 @@ impl GraphStorage for NativeGraphStorage {
     }
 
     async fn remove_edge(&mut self, from: Uuid, to: Uuid) -> Result<bool> {
-        // Remove all edges between the two nodes
-        let removed = {
+        let removed_edges = {
             let mut edges_out = self.edges_out.write();
             if let Some(edge_list) = edges_out.get_mut(&from) {
-                edge_list.remove(&to).is_some()
+                let removed = edge_list.remove(&to);
+                if edge_list.is_empty() {
+                    edges_out.remove(&from);
+                }
+                removed
             } else {
-                false
+                None
             }
         };
 
-        if removed {
-            // Update reverse index
+        if let Some(edges_removed) = removed_edges {
+            let removed_count = edges_removed.len();
+
             {
                 let mut edges_in = self.edges_in.write();
                 if let Some(edge_list) = edges_in.get_mut(&to) {
                     edge_list.remove(&from);
+                    if edge_list.is_empty() {
+                        edges_in.remove(&to);
+                    }
                 }
-            } // Drop lock
+            }
 
-            // Update stats
             {
                 let mut stats = self.stats.write();
-                stats.edge_count = stats.edge_count.saturating_sub(1);
-            } // Drop lock
+                stats.edge_count = stats.edge_count.saturating_sub(removed_count);
+                for edge_record in &edges_removed {
+                    let key = format!("{:?}", edge_record.edge.relation_type);
+                    let entry = stats.edges_by_type.entry(key).or_default();
+                    *entry = entry.saturating_sub(1);
+                }
+            }
 
-            // Log WAL entry
             self.write_to_wal(WalEntry::EdgeDelete { from, to }).await?;
-        }
+            self.persist_edges().await?;
 
-        Ok(removed)
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn remove_edge_by_type(
@@ -1196,40 +1228,41 @@ impl GraphStorage for NativeGraphStorage {
         to: Uuid,
         relation_type: RelationType,
     ) -> Result<bool> {
-        // Remove specific edge by relationship type
-        let removed = {
+        let removed_count = {
             let mut edges_out = self.edges_out.write();
             if let Some(edge_list) = edges_out.get_mut(&from) {
                 if let Some(edges) = edge_list.get_mut(&to) {
                     let initial_len = edges.len();
                     edges.retain(|e| e.edge.relation_type != relation_type);
                     let removed_count = initial_len - edges.len();
-
-                    // If no edges remain, remove the entire entry
                     if edges.is_empty() {
                         edge_list.remove(&to);
                     }
-                    removed_count > 0
+                    if edge_list.is_empty() {
+                        edges_out.remove(&from);
+                    }
+                    removed_count
                 } else {
-                    false
+                    0
                 }
             } else {
-                false
+                0
             }
         };
 
-        if removed {
+        if removed_count > 0 {
             // Update reverse index
             {
                 let mut edges_in = self.edges_in.write();
                 if let Some(edge_list) = edges_in.get_mut(&to) {
                     if let Some(edges) = edge_list.get_mut(&from) {
                         edges.retain(|e| e.edge.relation_type != relation_type);
-
-                        // If no edges remain, remove the entire entry
                         if edges.is_empty() {
                             edge_list.remove(&from);
                         }
+                    }
+                    if edge_list.is_empty() {
+                        edges_in.remove(&to);
                     }
                 }
             } // Drop lock
@@ -1237,7 +1270,12 @@ impl GraphStorage for NativeGraphStorage {
             // Update stats
             {
                 let mut stats = self.stats.write();
-                stats.edge_count = stats.edge_count.saturating_sub(1);
+                stats.edge_count = stats.edge_count.saturating_sub(removed_count);
+                let entry = stats
+                    .edges_by_type
+                    .entry(format!("{:?}", relation_type))
+                    .or_default();
+                *entry = entry.saturating_sub(removed_count);
             } // Drop lock
 
             // Log WAL entry
@@ -1247,9 +1285,11 @@ impl GraphStorage for NativeGraphStorage {
                 relation_type,
             })
             .await?;
+
+            self.persist_edges().await?;
         }
 
-        Ok(removed)
+        Ok(removed_count > 0)
     }
 
     async fn delete_node(&mut self, node_id: Uuid) -> Result<bool> {
@@ -1263,29 +1303,50 @@ impl GraphStorage for NativeGraphStorage {
             return Ok(false);
         }
 
+        let mut removed_edge_total = 0usize;
+        let mut removed_edges_by_type: HashMap<String, usize> = HashMap::new();
+
         // Remove all outgoing edges
-        {
+        if let Some(outgoing) = {
             let mut edges_out = self.edges_out.write();
-            if let Some(outgoing) = edges_out.remove(&node_id) {
-                // Update reverse indices for target nodes
-                let mut edges_in = self.edges_in.write();
-                for (target_id, _) in outgoing {
-                    if let Some(incoming) = edges_in.get_mut(&target_id) {
-                        incoming.remove(&node_id);
+            edges_out.remove(&node_id)
+        } {
+            let mut edges_in = self.edges_in.write();
+            for (target_id, edge_list) in outgoing.into_iter() {
+                removed_edge_total += edge_list.len();
+                for edge in &edge_list {
+                    *removed_edges_by_type
+                        .entry(format!("{:?}", edge.edge.relation_type))
+                        .or_default() += 1;
+                }
+
+                if let Some(incoming) = edges_in.get_mut(&target_id) {
+                    incoming.remove(&node_id);
+                    if incoming.is_empty() {
+                        edges_in.remove(&target_id);
                     }
                 }
             }
         }
 
         // Remove all incoming edges
-        {
+        if let Some(incoming) = {
             let mut edges_in = self.edges_in.write();
-            if let Some(incoming) = edges_in.remove(&node_id) {
-                // Update forward indices for source nodes
-                let mut edges_out = self.edges_out.write();
-                for (source_id, _) in incoming {
-                    if let Some(outgoing) = edges_out.get_mut(&source_id) {
-                        outgoing.remove(&node_id);
+            edges_in.remove(&node_id)
+        } {
+            let mut edges_out = self.edges_out.write();
+            for (source_id, edge_list) in incoming.into_iter() {
+                removed_edge_total += edge_list.len();
+                for edge in &edge_list {
+                    *removed_edges_by_type
+                        .entry(format!("{:?}", edge.edge.relation_type))
+                        .or_default() += 1;
+                }
+
+                if let Some(outgoing) = edges_out.get_mut(&source_id) {
+                    outgoing.remove(&node_id);
+                    if outgoing.is_empty() {
+                        edges_out.remove(&source_id);
                     }
                 }
             }
@@ -1331,7 +1392,15 @@ impl GraphStorage for NativeGraphStorage {
         {
             let mut stats = self.stats.write();
             stats.node_count = stats.node_count.saturating_sub(1);
+            stats.edge_count = stats.edge_count.saturating_sub(removed_edge_total);
+            for (relation, count) in removed_edges_by_type {
+                let entry = stats.edges_by_type.entry(relation).or_default();
+                *entry = entry.saturating_sub(count);
+            }
         }
+
+        self.persist_nodes().await?;
+        self.persist_edges().await?;
 
         Ok(true)
     }
@@ -1434,67 +1503,66 @@ impl NativeGraphStorage {
         let nodes_dir = self.db_path.join("nodes");
         fs::create_dir_all(&nodes_dir).await?;
 
-        // Collect data while holding the lock
-        let page_data = {
+        let nodes_snapshot: Vec<(Uuid, NodeRecord)> = {
             let nodes = self.nodes.read();
-            if nodes.is_empty() {
-                return Ok(());
-            }
+            nodes
+                .iter()
+                .map(|(id, record)| (*id, record.clone()))
+                .collect()
+        };
 
-            // Group nodes into pages with record counting
-            let mut page_data = Vec::new();
-            let mut current_page = Vec::new();
-            let mut current_page_record_count = 0u16;
+        Self::clear_page_files(&nodes_dir).await?;
 
-            for (id, record) in nodes.iter() {
-                let serialized = bincode::serialize(record)?;
-                let id_bytes = id.as_bytes();
+        if nodes_snapshot.is_empty() {
+            return Ok(());
+        }
 
-                // Store ID length, ID, and serialized node record
-                let mut entry = Vec::new();
-                entry.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
-                entry.extend_from_slice(id_bytes);
-                entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
-                entry.extend_from_slice(&serialized);
+        // Group nodes into pages with record counting
+        let mut page_data = Vec::new();
+        let mut current_page = Vec::new();
+        let mut current_page_record_count = 0u16;
 
-                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
-                    // Leave room for header
-                    if !current_page.is_empty() {
-                        page_data.push((current_page, current_page_record_count));
-                        current_page = Vec::new();
-                        current_page_record_count = 0;
-                    }
-                }
-                current_page.extend_from_slice(&entry);
-                current_page_record_count += 1;
-            }
+        for (id, record) in nodes_snapshot {
+            let serialized = bincode::serialize(&record)?;
+            let id_bytes = id.as_bytes();
 
-            if !current_page.is_empty() {
+            // Store ID length, ID, and serialized node record
+            let mut entry = Vec::new();
+            entry.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
+            entry.extend_from_slice(id_bytes);
+            entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
+            entry.extend_from_slice(&serialized);
+
+            if current_page.len() + entry.len() > PAGE_SIZE - 8 && !current_page.is_empty() {
                 page_data.push((current_page, current_page_record_count));
+                current_page = Vec::new();
+                current_page_record_count = 0;
             }
+            current_page.extend_from_slice(&entry);
+            current_page_record_count += 1;
+        }
 
-            page_data
-        }; // Lock released here
+        if !current_page.is_empty() {
+            page_data.push((current_page, current_page_record_count));
+        }
 
         // Write pages to disk
-        for (i, (page, record_count)) in page_data.iter().enumerate() {
+        for (i, (page, record_count)) in page_data.into_iter().enumerate() {
             let page_path = nodes_dir.join(format!("{:08}.page", i));
             let mut page_bytes = Vec::new();
 
-            // Create proper page header with actual record count
             let header = PageHeader {
                 magic: *GRAPH_MAGIC,
                 page_id: i as u32,
-                record_count: *record_count,
+                record_count,
                 free_offset: page.len() as u16,
                 checksum: 0, // TODO: Calculate checksum
             };
 
             let header_bytes = bincode::serialize(&header)?;
             page_bytes.extend_from_slice(&header_bytes);
-            page_bytes.extend_from_slice(page);
+            page_bytes.extend_from_slice(&page);
 
-            // Pad to 4KB
             while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
@@ -1510,19 +1578,8 @@ impl NativeGraphStorage {
         let edges_dir = self.db_path.join("edges");
         fs::create_dir_all(&edges_dir).await?;
 
-        // Collect data while holding the lock
-        let page_data = {
+        let edges_snapshot: Vec<(Uuid, Uuid, EdgeRecord)> = {
             let edges_out = self.edges_out.read();
-            tracing::debug!(
-                "persist_edges: edges_out contains {} entries",
-                edges_out.len()
-            );
-            if edges_out.is_empty() {
-                tracing::debug!("persist_edges: no edges to persist, returning early");
-                return Ok(());
-            }
-
-            // Collect all edges
             let mut all_edges = Vec::new();
             for (from_id, edges) in edges_out.iter() {
                 for (to_id, edge_list) in edges.iter() {
@@ -1531,69 +1588,72 @@ impl NativeGraphStorage {
                     }
                 }
             }
+            all_edges
+        };
 
-            // Group edges into pages
-            let mut page_data = Vec::new();
-            let mut current_page = Vec::new();
+        Self::clear_page_files(&edges_dir).await?;
 
-            for (from_id, to_id, edge) in all_edges {
-                let serialized = bincode::serialize(&edge.edge)?;
-                let from_bytes = from_id.as_bytes();
-                let to_bytes = to_id.as_bytes();
+        if edges_snapshot.is_empty() {
+            return Ok(());
+        }
 
-                // Store edge entry
-                let mut entry = Vec::new();
-                entry.extend_from_slice(&(from_bytes.len() as u32).to_le_bytes());
-                entry.extend_from_slice(from_bytes);
-                entry.extend_from_slice(&(to_bytes.len() as u32).to_le_bytes());
-                entry.extend_from_slice(to_bytes);
-                entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
-                entry.extend_from_slice(&serialized);
+        // Group edges into pages
+        let mut page_data = Vec::new();
+        let mut current_page = Vec::new();
 
-                if current_page.len() + entry.len() > PAGE_SIZE - 8 {
-                    // Leave room for header
-                    if !current_page.is_empty() {
-                        page_data.push(current_page);
-                        current_page = Vec::new();
-                    }
-                }
-                current_page.extend_from_slice(&entry);
-            }
+        for (from_id, to_id, edge) in edges_snapshot {
+            let serialized = bincode::serialize(&edge.edge)?;
+            let from_bytes = from_id.as_bytes();
+            let to_bytes = to_id.as_bytes();
 
-            if !current_page.is_empty() {
+            let mut entry = Vec::new();
+            entry.extend_from_slice(&(from_bytes.len() as u32).to_le_bytes());
+            entry.extend_from_slice(from_bytes);
+            entry.extend_from_slice(&(to_bytes.len() as u32).to_le_bytes());
+            entry.extend_from_slice(to_bytes);
+            entry.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
+            entry.extend_from_slice(&serialized);
+
+            if current_page.len() + entry.len() > PAGE_SIZE - 8 && !current_page.is_empty() {
                 page_data.push(current_page);
+                current_page = Vec::new();
             }
+            current_page.extend_from_slice(&entry);
+        }
 
-            page_data
-        }; // Lock released here
+        if !current_page.is_empty() {
+            page_data.push(current_page);
+        }
 
-        // Write pages to disk
-        tracing::debug!(
-            "persist_edges: writing {} pages to {:?}",
-            page_data.len(),
-            edges_dir
-        );
-        for (i, page) in page_data.iter().enumerate() {
+        for (i, page) in page_data.into_iter().enumerate() {
             let page_path = edges_dir.join(format!("{:08}.page", i));
             let mut page_bytes = Vec::new();
 
-            // Simple page header
             page_bytes.extend_from_slice(b"EDGE");
             page_bytes.extend_from_slice(&(page.len() as u32).to_le_bytes());
-            page_bytes.extend_from_slice(page);
+            page_bytes.extend_from_slice(&page);
 
-            // Pad to 4KB
             while page_bytes.len() < PAGE_SIZE {
                 page_bytes.push(0);
             }
 
-            tracing::debug!(
-                "persist_edges: writing page {} to {:?} ({} bytes)",
-                i,
-                page_path,
-                page_bytes.len()
-            );
             fs::write(&page_path, &page_bytes).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn clear_page_files(dir: &Path) -> Result<()> {
+        if !fs::try_exists(dir).await? {
+            return Ok(());
+        }
+
+        let mut entries = fs::read_dir(dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("page") {
+                let _ = fs::remove_file(path).await;
+            }
         }
 
         Ok(())

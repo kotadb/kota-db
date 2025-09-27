@@ -578,13 +578,14 @@ pub fn create_optimized_index_with_defaults<T: Index + Send + Sync>(inner: T) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primary_index::PrimaryIndex;
-    use std::path::PathBuf;
+    use crate::primary_index::create_primary_index_for_tests;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_optimized_index_wrapper() -> Result<()> {
-        // Create a primary index for testing
-        let primary_index = PrimaryIndex::new(PathBuf::from("/tmp/test_optimized"), 1000);
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("primary");
+        let primary_index = create_primary_index_for_tests(path.to_str().unwrap()).await?;
 
         // Wrap with optimization
         let mut optimized = create_optimized_index_with_defaults(primary_index);
@@ -604,9 +605,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_bulk_operations() -> Result<()> {
-        let primary_index = PrimaryIndex::new(PathBuf::from("/tmp/test_bulk"), 1000);
+    #[tokio::test]
+    async fn test_bulk_operations() -> Result<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("primary");
+        let primary_index = create_primary_index_for_tests(path.to_str().unwrap()).await?;
         let mut optimized = create_optimized_index_with_defaults(primary_index);
 
         // Test bulk insert
@@ -628,9 +631,13 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_optimization_dashboard() {
-        let primary_index = PrimaryIndex::new(PathBuf::from("/tmp/test_dashboard"), 1000);
+    #[tokio::test]
+    async fn test_optimization_dashboard() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("primary");
+        let primary_index = create_primary_index_for_tests(path.to_str().unwrap())
+            .await
+            .expect("failed to create primary index");
         let optimized = create_optimized_index_with_defaults(primary_index);
 
         let dashboard = optimized.get_optimization_dashboard();

@@ -6,13 +6,15 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::SeekFrom;
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::contracts::{Index, Query};
-use crate::pure::{btree, extract_all_pairs};
+use crate::pure::{btree, extract_all_pairs, traverse_pairs_until};
 use crate::types::{ValidatedDocumentId, ValidatedPath};
 use crate::validation;
 use crate::wrappers::MeteredIndex;
@@ -66,6 +68,13 @@ enum LoadState {
     Loaded,
     /// Index failed to load with error message (prevents retry storms)
     Failed(String),
+}
+
+/// Write-ahead log entry for durability guarantees
+#[derive(Debug, Serialize, Deserialize)]
+enum WalEntry {
+    Insert { id: Uuid, path: String },
+    Delete { id: Uuid },
 }
 
 impl PrimaryIndex {
@@ -155,8 +164,8 @@ impl PrimaryIndex {
 
     /// Ensure index is loaded (lazy loading with error protection)
     async fn ensure_loaded(&self) -> Result<()> {
-        // Fast path: check if already loaded or failed
-        {
+        // Fast path: wait for in-flight loads or bail on prior failures
+        loop {
             let state = self.load_state.read().await;
             match &*state {
                 LoadState::Loaded => return Ok(()),
@@ -167,28 +176,11 @@ impl PrimaryIndex {
                     ));
                 }
                 LoadState::Loading => {
-                    // Another thread is loading, wait briefly then check again
                     drop(state);
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                    let state = self.load_state.read().await;
-                    match &*state {
-                        LoadState::Loaded => return Ok(()),
-                        LoadState::Failed(err) => {
-                            return Err(anyhow::anyhow!(
-                                "Primary index failed to load during concurrent attempt: {}",
-                                err
-                            ));
-                        }
-                        _ => {
-                            return Err(anyhow::anyhow!(
-                                "Primary index loading is taking too long, another thread may have failed"
-                            ));
-                        }
-                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    continue;
                 }
-                LoadState::NotLoaded => {
-                    // Continue to loading logic below
-                }
+                LoadState::NotLoaded => break,
             }
         }
 
@@ -258,10 +250,6 @@ impl PrimaryIndex {
     async fn load_existing_index(&self) -> Result<()> {
         let data_dir = self.index_path.join("data");
 
-        if !data_dir.exists() {
-            return Ok(());
-        }
-
         // Load metadata
         let metadata_path = self.index_path.join("meta").join("metadata.json");
         if metadata_path.exists() {
@@ -307,7 +295,141 @@ impl PrimaryIndex {
             *self.btree_root.write().await = btree_root;
         }
 
+        // Apply any pending WAL entries to bring the tree fully up to date
+        if self.apply_wal_entries().await? {
+            self.refresh_metadata_from_tree().await?;
+        }
+
         Ok(())
+    }
+
+    /// Replay WAL entries that were not yet persisted to disk
+    async fn apply_wal_entries(&self) -> Result<bool> {
+        let wal_path = self.index_path.join("wal").join("current.wal");
+        if !wal_path.exists() {
+            return Ok(false);
+        }
+
+        let file = match tokio::fs::File::open(&wal_path).await {
+            Ok(file) => file,
+            Err(e) => {
+                // If the WAL disappeared between exists() and open(), treat it as empty
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(false);
+                }
+                return Err(e)
+                    .with_context(|| format!("Failed to open WAL file: {}", wal_path.display()));
+            }
+        };
+
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let mut entries = Vec::new();
+
+        loop {
+            line.clear();
+            let bytes = reader
+                .read_line(&mut line)
+                .await
+                .context("Failed to read WAL entry")?;
+            if bytes == 0 {
+                break;
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let entry: WalEntry =
+                serde_json::from_str(trimmed).context("Failed to deserialize WAL entry")?;
+            entries.push(entry);
+        }
+
+        if entries.is_empty() {
+            return Ok(false);
+        }
+
+        let mut btree_root = self.btree_root.write().await;
+
+        for entry in entries {
+            match entry {
+                WalEntry::Insert { id, path } => {
+                    let doc_id = ValidatedDocumentId::from_uuid(id)
+                        .with_context(|| format!("Invalid document id in WAL: {}", id))?;
+                    let validated_path = ValidatedPath::new(&path)
+                        .with_context(|| format!("Invalid path in WAL: {}", path))?;
+
+                    *btree_root =
+                        btree::insert_into_tree(btree_root.clone(), doc_id, validated_path)
+                            .context("Failed to apply WAL insert to B+ tree")?;
+                }
+                WalEntry::Delete { id } => {
+                    let doc_id = ValidatedDocumentId::from_uuid(id)
+                        .with_context(|| format!("Invalid document id in WAL: {}", id))?;
+
+                    if btree::search_in_tree(&btree_root, &doc_id).is_some() {
+                        *btree_root = btree::delete_from_tree(btree_root.clone(), &doc_id)
+                            .context("Failed to apply WAL delete to B+ tree")?;
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Recalculate metadata based on the current in-memory tree
+    async fn refresh_metadata_from_tree(&self) -> Result<()> {
+        let btree_root = self.btree_root.read().await;
+        let document_count = extract_all_pairs(&btree_root)?.len();
+        drop(btree_root);
+
+        let mut metadata = self.metadata.write().await;
+        metadata.document_count = document_count;
+        metadata.updated = chrono::Utc::now().timestamp();
+        Ok(())
+    }
+
+    /// Append an entry to the WAL before mutating in-memory structures
+    async fn append_wal_entry(&self, entry: &WalEntry) -> Result<()> {
+        let mut writer_guard = self.wal_writer.write().await;
+        let file = writer_guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("WAL writer not initialized"))?;
+
+        let mut payload = serde_json::to_vec(entry).context("Failed to serialize WAL entry")?;
+        payload.push(b'\n');
+        file.write_all(&payload)
+            .await
+            .context("Failed to append WAL entry")?;
+        file.flush().await.context("Failed to flush WAL entry")?;
+        file.sync_all().await.context("Failed to sync WAL entry")?;
+
+        Ok(())
+    }
+
+    /// Reset the WAL after a successful flush so old entries don't replay twice
+    async fn reset_wal(&self) -> Result<()> {
+        let wal_path = self.index_path.join("wal").join("current.wal");
+
+        {
+            let mut writer = self.wal_writer.write().await;
+            if let Some(file) = writer.as_mut() {
+                file.sync_all()
+                    .await
+                    .context("Failed to sync WAL before reset")?;
+                file.set_len(0)
+                    .await
+                    .context("Failed to truncate WAL during reset")?;
+                file.seek(SeekFrom::Start(0))
+                    .await
+                    .context("Failed to seek WAL during reset")?;
+            }
+        }
+
+        // Reinitialize the WAL writer so subsequent operations append cleanly
+        self.init_wal().await
     }
 
     /// Save metadata to disk
@@ -491,6 +613,12 @@ impl Index for PrimaryIndex {
 
         let was_new_key;
 
+        self.append_wal_entry(&WalEntry::Insert {
+            id: id.as_uuid(),
+            path: path.to_string(),
+        })
+        .await?;
+
         // Check if key exists before insertion (for metadata counting)
         {
             let btree_root = self.btree_root.read().await;
@@ -540,6 +668,9 @@ impl Index for PrimaryIndex {
         }
 
         if existed {
+            self.append_wal_entry(&WalEntry::Delete { id: id.as_uuid() })
+                .await?;
+
             // Use O(log n) B+ tree deletion algorithm
             let mut btree_root = self.btree_root.write().await;
 
@@ -585,24 +716,10 @@ impl Index for PrimaryIndex {
 
         let btree_root = self.btree_root.read().await;
 
-        // Use B+ tree traversal to get all documents (O(n) for full scan, but sorted)
-        let all_pairs = extract_all_pairs(&btree_root)?;
-
-        // DEBUG: Log what we found in the index
         tracing::debug!(
             "Primary Index contains {} document(s) after loading",
-            all_pairs.len()
+            btree_root.total_keys
         );
-
-        // DEBUG: Log first few entries for verification
-        for (i, (doc_id, path)) in all_pairs.iter().take(5).enumerate() {
-            tracing::debug!(
-                "Document {}: {} -> {}",
-                i + 1,
-                doc_id.as_uuid(),
-                path.to_string()
-            );
-        }
 
         // Check for wildcard patterns in path_pattern field first, then search_terms
         // The QueryBuilder puts wildcard queries in path_pattern (see issue #337)
@@ -631,49 +748,47 @@ impl Index for PrimaryIndex {
         };
 
         // Filter results based on wildcard pattern if present
-        let mut results: Vec<ValidatedDocumentId> = if let Some(pattern) = wildcard_pattern {
-            tracing::debug!(
-                "Filtering {} documents with pattern: '{}'",
-                all_pairs.len(),
-                pattern
-            );
-
-            let filtered: Vec<_> = all_pairs
-                .into_iter()
-                .filter(|(_, path)| {
-                    let path_str = path.to_string();
-                    let matches = Self::matches_wildcard_pattern(&path_str, &pattern);
-                    if matches {
-                        tracing::debug!("Pattern '{}' MATCHES path: '{}'", pattern, path_str);
-                    }
-                    matches
-                })
-                .map(|(doc_id, _)| doc_id)
-                .collect();
-
-            tracing::debug!("Pattern matching resulted in {} documents", filtered.len());
-            filtered
-        } else {
-            // No pattern, return all documents
-            tracing::debug!(
-                "No pattern specified, returning all {} documents",
-                all_pairs.len()
-            );
-            all_pairs.into_iter().map(|(doc_id, _)| doc_id).collect()
-        };
-
-        // Apply limit from query
         let limit_value = query.limit.get();
-        if results.len() > limit_value {
+        let mut matched_ids: Vec<Uuid> = Vec::new();
+
+        if let Some(pattern) = wildcard_pattern {
+            tracing::debug!("Filtering documents with pattern: '{}'", pattern);
+
+            traverse_pairs_until(&btree_root, |doc_id, path| {
+                let path_str = path.as_str();
+                let matches = Self::matches_wildcard_pattern(path_str, &pattern);
+                if matches {
+                    tracing::debug!("Pattern '{}' MATCHES path: '{}'", pattern, path_str);
+                    matched_ids.push(doc_id.as_uuid());
+                }
+                matched_ids.len() < limit_value
+            });
+        } else {
             tracing::debug!(
-                "Truncating {} results to limit of {}",
-                results.len(),
+                "No pattern specified, returning up to {} documents",
                 limit_value
             );
-            results.truncate(limit_value);
+
+            traverse_pairs_until(&btree_root, |doc_id, _| {
+                matched_ids.push(doc_id.as_uuid());
+                matched_ids.len() < limit_value
+            });
         }
 
-        // Results are already sorted by key order from B+ tree
+        if matched_ids.len() > limit_value {
+            matched_ids.truncate(limit_value);
+        }
+
+        let mut results = Vec::with_capacity(matched_ids.len());
+        for uuid in matched_ids {
+            match ValidatedDocumentId::from_uuid(uuid) {
+                Ok(id) => results.push(id),
+                Err(_) => {
+                    tracing::warn!("Skipping invalid document id {} during search", uuid);
+                }
+            }
+        }
+
         tracing::debug!("Primary Index search returning {} results", results.len());
 
         Ok(results)
@@ -696,12 +811,9 @@ impl Index for PrimaryIndex {
             .context("Failed to save mappings during flush")?;
 
         // Sync WAL
-        if let Some(wal_file) = self.wal_writer.write().await.as_mut() {
-            wal_file
-                .sync_all()
-                .await
-                .context("Failed to sync WAL during flush")?;
-        }
+        self.reset_wal()
+            .await
+            .context("Failed to reset WAL after flush")?;
 
         Ok(())
     }
@@ -914,6 +1026,32 @@ mod tests {
         }
 
         // Clean up test directory
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_primary_index_wal_recovery() -> Result<()> {
+        let test_dir = format!("test_data/primary_wal_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&test_dir)?;
+
+        let doc_id = ValidatedDocumentId::from_uuid(Uuid::new_v4())?;
+        let doc_path = ValidatedPath::new("test/wal.md")?;
+
+        {
+            let mut index = create_primary_index_for_tests(&test_dir).await?;
+            index.insert(doc_id, doc_path.clone()).await?;
+            // Intentionally skip flush so the WAL must replay on reopen
+        }
+
+        let reopened_index = create_primary_index_for_tests(&test_dir).await?;
+        let query = Query::new(Some("test/wal.md".to_string()), None, None, 10)?;
+        let results = reopened_index.search(&query).await?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], doc_id);
+
         let _ = std::fs::remove_dir_all(&test_dir);
 
         Ok(())
