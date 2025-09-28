@@ -1,350 +1,108 @@
 # Installation Guide
-
-This guide covers all installation methods for KotaDB, from quick setup to production deployments.
-
-## System Requirements
-
-### Minimum Requirements
-- **CPU**: 2 cores
-- **RAM**: 512MB
-- **Disk**: 100MB for binaries + data storage
-- **OS**: Linux, macOS, or Windows
-
-### Recommended Requirements
-- **CPU**: 4+ cores
-- **RAM**: 2GB+
-- **Disk**: SSD with 10GB+ free space
-- **OS**: Linux (Ubuntu 22.04+ or similar)
-
-## Installation Methods
-
-### 1. Build from Source
-
-#### Prerequisites
-- Rust 1.75.0+ ([Install Rust](https://rustup.rs/))
-- Git
-- C compiler (gcc/clang)
-
-#### Steps
-
-```bash
-# Clone the repository
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-
-# Build in release mode
-cargo build --release
-
-# The binary will be at ./target/release/kotadb
-./target/release/kotadb --version
-```
-
-#### Development Build
-
-For development with debug symbols and faster compilation:
-
-```bash
-cargo build
-./target/debug/kotadb --version
-```
-
-### 2. Docker Installation
-
-#### Using Docker Hub
-
-```bash
-# Pull the latest image
-docker pull kotadb/kotadb:latest
-
-# Run with default configuration
-docker run -d \
-  --name kotadb \
-  -p 8080:8080 \
-  -v $(pwd)/data:/data \
-  kotadb/kotadb:latest
-```
-
-#### Building Docker Image Locally
-
-```bash
-# Build the image
-docker build -t kotadb:local .
-
-# Run the locally built image
-docker run -d \
-  --name kotadb \
-  -p 8080:8080 \
-  -v $(pwd)/data:/data \
-  kotadb:local
-```
-
-### 3. Using Cargo Install
-
-```bash
-# Install directly from crates.io (when published)
-cargo install kotadb
-
-# Or install from GitHub
-cargo install --git https://github.com/jayminwest/kota-db.git
-```
-
-### 4. Pre-built Binaries
-
-Download pre-built binaries from the [GitHub Releases](https://github.com/jayminwest/kota-db/releases) page:
-
-```bash
-# Linux x86_64
-wget https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-linux-x86_64.tar.gz
-tar -xzf kotadb-linux-x86_64.tar.gz
-sudo mv kotadb /usr/local/bin/
-
-# macOS
-wget https://github.com/jayminwest/kota-db/releases/latest/download/kotadb-darwin-x86_64.tar.gz
-tar -xzf kotadb-darwin-x86_64.tar.gz
-sudo mv kotadb /usr/local/bin/
-
-# Windows
-# Download kotadb-windows-x86_64.zip from releases page
-# Extract and add to PATH
-```
-
-## Platform-Specific Instructions
-
-### Linux
-
-#### Ubuntu/Debian
-
-```bash
-# Install build dependencies
-sudo apt-get update
-sudo apt-get install -y build-essential git curl
-
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Build KotaDB
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-cargo build --release
-```
-
-#### Fedora/RHEL
-
-```bash
-# Install build dependencies
-sudo dnf install -y gcc git curl
-
-# Install Rust and build (same as Ubuntu)
-```
-
-#### Arch Linux
-
-```bash
-# Install from AUR (when available)
-yay -S kotadb
-
-# Or build manually
-sudo pacman -S base-devel git rust
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-cargo build --release
-```
-
-### macOS
-
-```bash
-# Install Xcode Command Line Tools
-xcode-select --install
-
-# Install Homebrew (if not installed)
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install Rust
-brew install rust
-
-# Build KotaDB
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-cargo build --release
-```
-
-### Windows
-
-#### Using WSL2 (Recommended)
-
-```powershell
-# Install WSL2
-wsl --install
-
-# Inside WSL2, follow Linux instructions
-```
-
-#### Native Windows
-
-```powershell
-# Install Rust (download from https://rustup.rs)
-# Install Git for Windows
-# Install Visual Studio Build Tools
-
-# Clone and build
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db
-cargo build --release
-```
-
-## Client Libraries
-
-### Python Client
-
-```bash
-# Install from PyPI
-pip install kotadb-client
-
-# Or install from source
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db/clients/python
-pip install -e .
-```
-
-### TypeScript/JavaScript Client
-
-```bash
-# Install from npm
-npm install kotadb-client
-
-# Or using yarn
-yarn add kotadb-client
-
-# Or install from source
-git clone https://github.com/jayminwest/kota-db.git
-cd kota-db/clients/typescript
-npm install
-npm run build
-```
-
-## Verification
-
-After installation, verify KotaDB is working:
-
-```bash
-# Check version
-kotadb --version
-
-# Run tests
-cargo test --lib
-
-# Start with default configuration
-kotadb --config kotadb-dev.toml
-
-# Check server health
-curl http://localhost:8080/health
-```
-
-## Development Setup
-
-For contributors and developers:
-
-```bash
-# Install development dependencies
-cargo install just
-cargo install cargo-watch
-cargo install cargo-audit
-cargo install cargo-tarpaulin
-
-# Setup pre-commit hooks
-just setup-dev
-
-# Run development server with auto-reload
-just dev
-
-# Run all checks before committing
-just check
-```
-
-## Client Libraries
-
-### Python Client
-
-```bash
-pip install kotadb
-```
-
-### TypeScript/JavaScript Client
-
-```bash
-npm install @kotadb/client
-# or
-yarn add @kotadb/client
-```
-
-### Rust Client
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-kotadb-client = "0.3.0"
-```
-
-## Configuration
-
-Create a configuration file `kotadb.toml`:
-
-```toml
-[storage]
-path = "./data"
-cache_size = 1000
-
-[server]
-host = "0.0.0.0"
-port = 8080
-
-[logging]
-level = "info"
-```
-
-See [Configuration Guide](getting-started/configuration.md) for all options.
-
-## Troubleshooting
-
-### Common Issues
-
-#### Port Already in Use
-
-```bash
-# Find process using port 8080
-lsof -i :8080  # Linux/macOS
-netstat -ano | findstr :8080  # Windows
-
-# Use a different port
-kotadb --port 8081
-```
-
-#### Permission Denied
-
-```bash
-# Fix permissions for data directory
-chmod -R 755 ./data
-chown -R $USER:$USER ./data
-```
-
-#### Build Failures
-
-```bash
-# Clean build cache
-cargo clean
-
-# Update Rust
-rustup update
-
-# Try building with verbose output
-cargo build --release --verbose
-```
+KotaDB ships as a Rust workspace that exposes CLI, HTTP, and MCP binaries from the same build (`Cargo.toml:193-214`). The default feature set enables git ingestion, tree-sitter parsing, ONNX embeddings, and MCP tooling, so plan for those dependencies or compile with a reduced feature set when targeting constrained environments (`Cargo.toml:155-169`).
+
+## Step 1: Prepare the Environment
+1. Install the stable Rust toolchain with the pinned components (`rust-toolchain.toml:1-4`):
+   ```bash
+   rustup toolchain install stable --component rustfmt --component clippy --component rust-src
+   ```
+2. Install system libraries required by the dev bootstrap script—OpenSSL headers, SQLite, and build tooling on Linux/macOS (`scripts/dev/dev-setup.sh:42-62`). Windows users should provision these inside WSL2 so the Linux packages resolve correctly.
+3. Install the Rust developer utilities used by the project. The bootstrap script installs `cargo-watch`, `cargo-edit`, `cargo-audit`, `cargo-deny`, `cargo-nextest`, `cargo-llvm-cov`, and `bacon` (`scripts/dev/dev-setup.sh:82-93`).
+4. Install `just` so you can run the curated tasks such as `just dev`, `just test-fast`, and `just mcp` defined in the recipe file (`justfile:11-42`).
+
+> **Note** Run `just setup` to execute the full bootstrap script whenever you need a fresh workstation (`justfile:11-17`).
+
+## Step 2: Fetch KotaDB
+1. Clone the repository and enter it:
+   ```bash
+   git clone https://github.com/jayminwest/kota-db.git
+   cd kota-db
+   ```
+2. If you are working from an existing checkout, ensure it is clean before compiling so `cargo` does not reuse stale build artifacts.
+
+## Step 3: Build the Binaries
+1. Build the optimized artifacts:
+   ```bash
+   cargo build --release
+   ```
+   This produces `kotadb`, `kotadb-api-server`, `mcp_server`, and `intent_mcp_server` under `target/release/` (`Cargo.toml:193-214`).
+2. To slim dependencies, disable defaults and opt back into the features you need. CI exercises `git-integration`, `tree-sitter-parsing`, and `mcp-server`, which is the same combo exposed by `just test-fast` (`Cargo.toml:155-169`, `justfile:40-42`).
+
+> **Note** Embeddings rely on the ONNX runtime shipped through the `embeddings-onnx` feature; keep it enabled if you plan to run semantic or vector search workloads (`Cargo.toml:165-169`).
+
+## Step 4: Prime Local Storage
+1. Choose a data directory (default `./kota-db-data`). The CLI exposes it as `--db-path` and a global flag in the `Cli` definition (`src/main.rs:78-86`).
+2. Create the directory before launching the server so permissions are correct:
+   ```bash
+   mkdir -p ./kota-db-data
+   ```
+3. When KotaDB boots it calls `Database::new`, which ensures the `storage/`, `primary_index/`, and `trigram_index/` subdirectories exist and wires them into the storage and index implementations (`src/database.rs:32-95`). If you pass `--binary-index=false`, the trigram index falls back to the text implementation in the same constructor (`src/database.rs:64-85`).
+
+## Step 5: Smoke-Test the CLI
+1. Confirm the binary starts and reports the embedded version metadata:
+   ```bash
+   ./target/release/kotadb --version
+   ```
+   The version is provided by `clap` using the crate metadata embedded at compile time (`src/main.rs:31-57`).
+2. Inspect the available subcommands:
+   ```bash
+   ./target/release/kotadb --help
+   ```
+   Subcommand definitions live alongside their arguments in the `Commands` enum (`src/main.rs:90-199`).
+3. Run a stats query against the empty database:
+   ```bash
+   ./target/release/kotadb stats --basic --db-path ./kota-db-data
+   ```
+   This exercises `StatsService::get_statistics`, which is invoked when the CLI dispatches the `Stats` branch (`src/main.rs:1667-1684`).
+4. Run the fast pre-flight test suite:
+   ```bash
+   just test-fast
+   ```
+   The recipe executes `cargo nextest` with the feature set used in CI and follows up with doctests (`justfile:40-42`).
+
+> **Note** The global `--verbosity` and `--binary-index` flags are parsed in the CLI root struct and control logging and index selection before the command dispatch (`src/main.rs:59-85`).
+
+## Step 6: Expose the Services HTTP Server
+1. Launch the services API from the CLI:
+   ```bash
+   ./target/release/kotadb serve --db-path ./kota-db-data --port 8080
+   ```
+   The `serve` branch opens the storage via `Database::new` and delegates to `start_services_server` to mount Axum routes (`src/main.rs:1603-1631`).
+2. The HTTP layer builds a `ServicesAppState` that shares the storage, primary index, trigram index, and optional API key service across handlers (`src/services_http_server.rs:60-79`).
+3. Verify the basic health endpoint:
+   ```bash
+   curl http://localhost:8080/health
+   ```
+   The handler responds with enabled service names and optional SaaS status (`src/services_http_server.rs:919-939`).
+4. Review the standard endpoints exposed for indexing, search, and analysis. They are logged when the server boots and handled through the corresponding service modules (`src/main.rs:1608-1621`, `src/services_http_server.rs:680-683`).
+
+## Step 7: Enable SaaS Postgres Features (Optional)
+1. Provision a PostgreSQL database and collect the connection string and quotas required by `ApiKeyConfig` (`src/api_keys.rs:24-46`).
+2. Run the SaaS server binary with the necessary environment:
+   ```bash
+   ./target/release/kotadb-api-server \
+     --data-dir ./kota-db-data \
+     --database-url postgresql://USER:PASSWORD@HOST:5432/kotadb \
+     --port 8080
+   ```
+   The binary initializes storage, indices, and the API key service, then verifies connectivity through `kotadb::test_database_connection` before starting `start_services_saas_server` (`src/bin/kotadb-api-server.rs:16-160`, `src/lib.rs:130-157`).
+3. When SaaS mode is active, the HTTP stack validates that `KOTADB_WEBHOOK_BASE_URL` and database URLs are set, spawns the Supabase-backed job worker, and shares the API key pool with request handlers (`src/services_http_server.rs:694-743`, `src/services_http_server.rs:2535-2569`).
+
+> **Warning** Missing or empty `DATABASE_URL` and webhook environment variables cause `validate_saas_environment` to abort startup unless you explicitly set `DISABLE_SAAS_ENV_VALIDATION` (`src/services_http_server.rs:2535-2569`).
+
+## Step 8: Container Workflows (Optional)
+1. Bring up the development stack:
+   ```bash
+   docker compose -f docker-compose.dev.yml up --build
+   ```
+   The `kotadb-dev` service mounts the workspace, exposes ports 8080/8000/9090, and wires the same environment variables expected by the CLI (`docker-compose.dev.yml:7-52`).
+2. The `kotadb-mcp` service runs the MCP server binary on port 8484 with a mounted data directory and health check hitting the JSON-RPC endpoint (`docker-compose.dev.yml:54-82`).
+3. Optional companions—`docs-server`, `redis-dev`, and `postgres-dev`—provide documentation previews, caching, and a Postgres instance seeded from `scripts/sql/` (`docker-compose.dev.yml:84-138`).
+
+> **Note** Container volumes cache Cargo registries and build artifacts to avoid recompiling dependencies on each restart (`docker-compose.dev.yml:17-33`).
 
 ## Next Steps
-
-- [Configuration Guide](getting-started/configuration.md) - Customize your setup
-- [First Database](getting-started/first-database.md) - Create your first database
-- [Basic Operations](getting-started/basic-operations.md) - Learn CRUD operations
-- [API Reference](api/index.md) - Explore the APIs
+- [Services Architecture](./SERVICES_ARCHITECTURE.md)
+- [Supabase Architecture](./SUPABASE_ARCHITECTURE.md)
+- [Developer Onboarding](developer/index.md)
+- [MCP Implementations](./MCP_IMPLEMENTATIONS.md)

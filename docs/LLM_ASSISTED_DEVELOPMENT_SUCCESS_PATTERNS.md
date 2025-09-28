@@ -1,267 +1,48 @@
-LLM-Assisted Development Success Patterns
-A Language-Agnostic Guide to Building Projects with AI Coding Agents
-BLUF: Every architectural decision is to be made with AI collaboration as a first-class design constraint
-Executive Summary
-This document outlines proven patterns that enable successful collaboration between human developers and LLM coding agents. These patterns create what we call a "pit of success" - where the easiest path for agents to follow is also the correct one, resulting in consistently high-quality output.
+# LLM-Assisted Development Success Patterns
 
-The key insight: Systematic risk reduction combined with agent-optimized workflows creates a virtuous feedback cycle that amplifies both development velocity and code quality.
-The Virtuous Feedback Cycle
-graph LR
-    A[Consistent Code Patterns] --> B[Better Context for Future Agents]
-    B --> C[Higher Quality Agent Output]
-    C --> A
-    
-    A -.-> A1[Agents follow established patterns]
-    B -.-> B1[Clean codebase is easier to understand]
-    C -.-> C1[Better output reinforces good patterns]
+## Summary
+KotaDB's agent workflow anchors on the same contract-first storage and indexing components used by the CLI, then feeds natural-language intents into the HTTP services via the Model Context Protocol. `MCPServer::new` wires fully wrapped storage, primary, and trigram indexes into one tool registry so that every tool invocation shares the same caches and WAL (`src/mcp/server.rs:94`, `src/file_storage.rs:514`, `src/primary_index.rs:856`, `src/trigram_index.rs:1079`). `IntentMcpServer::process_query` converts typed intents into HTTP calls and conversational summaries while preserving session context for follow-up prompts (`src/intent_mcp_server.rs:198`, `src/intent_mcp_server.rs:780`). Stage 6 wrappers add tracing, validation, retries, and buffering around every storage operation, which is why agents consistently fall into the pit of success (`src/wrappers.rs:23`, `src/wrappers.rs:1005`).
 
-When agents consistently produce well-structured code following established patterns, they create better context for future agents. This improved context leads to higher quality output, reinforcing the cycle.
-Core Success Principles
-1. The Pit of Success Architecture
-Principle: Make it easier to write correct code than incorrect code.
+## Step-by-Step: Construct Agent-Safe Runtime Contracts
+1. Anchor every workflow on the Stage 2 contracts exported in `src/contracts/mod.rs:20` so agents pass data through the `Storage` and `Index` traits instead of raw filesystem paths.
+2. Instantiate storage and indexes through the Stage 6 factories `create_file_storage`, `create_primary_index`, and `create_trigram_index`; each factory wraps buffering, caching, retries, validation, and metrics around the raw engines before handing them to callers (`src/file_storage.rs:514`, `src/primary_index.rs:856`, `src/trigram_index.rs:1079`, `src/wrappers.rs:1005`).
+3. Let `MCPServer::new` bind those shared instances into the tool registry and deletion service so every tool call sees the same `Arc<Mutex<_>>` handles and cache state (`src/mcp/server.rs:94`, `src/mcp/server.rs:125`).
+4. Rely on `CoordinatedDeletionService::delete_document` to remove documents from storage and both indexes with automatic rollback when any stage fails, preventing orphaned entries that would confuse agents (`src/coordinated_deletion.rs:21`, `src/coordinated_deletion.rs:41`).
+5. Register only the capabilities your session needs by composing `MCPToolRegistry::with_text_tools` and, when relationship graphing is required, the `with_relationship_tools`/`with_symbol_tools` extensions guarded by feature flags (`src/mcp/tools/mod.rs:43`, `src/mcp/tools/mod.rs:62`).
+6. Expose the runtime through `MCPServer::start_sync` or the `kotadb-intent-mcp` binary so human and automated clients reuse the same transport surface during handoffs (`src/mcp/server.rs:208`, `src/bin/intent_mcp_server.rs:110`).
 
-Implementation Patterns:
+## Step-by-Step: Route Natural Language Through Verified Services
+1. Classify every prompt with `IntentParser::parse`, which detects search, analysis, navigation, overview, and debugging intents using the regex patterns baked into the parser (`src/intent_mcp_server.rs:321`, `src/intent_mcp_server.rs:407`).
+2. Handle each request through `IntentMcpServer::process_query`; it fetches the prior session context, executes the orchestrator, and logs the resulting `IntentResponse` so conversations stay stateful (`src/intent_mcp_server.rs:198`, `src/intent_mcp_server.rs:220`).
+3. Allow `QueryOrchestrator::execute_intent` to map intents onto the HTTP endpoints that power the CLI and API, including `/api/code/search`, `/api/symbols/search`, and `/stats` (`src/intent_mcp_server.rs:638`, `src/intent_mcp_server.rs:668`).
+4. Downstream, `SearchService::search_content` and its LLM optimizations decide whether to execute regular trigram queries or context-aware reranking, guaranteeing the MCP flow matches the CLI behaviour (`src/services/search_service.rs:39`, `src/services/search_service.rs:61`).
+5. Return helpful follow-ups by letting `generate_suggestions` and `ContextManager::update_context` learn from the latest results before responding (`src/intent_mcp_server.rs:265`, `src/intent_mcp_server.rs:780`).
+6. Validate the full path locally with `cargo run --bin kotadb-intent-mcp -- --interactive` or `just mcp` so agents and humans can sample the exact MCP contract exposed in production (`src/bin/intent_mcp_server.rs:10`, `justfile:19`).
 
-Validated Types: Prevent invalid construction at compile/runtime
-Builder Patterns: Fluent APIs guide correct usage
-Factory Functions: One-line access to production-ready components
-Wrapper Composition: Layer safety features automatically
+## Step-by-Step: Reinforce Observability and Risk Controls
+1. Wrap every storage call with `TracedStorage`, which records operation counts plus structured metrics for open/read/write timings (`src/wrappers.rs:23`, `src/wrappers.rs:68`).
+2. Keep operations resilient under transient faults by composing `RetryableStorage` and `ValidatedStorage`; retries add exponential backoff while validation guards against inconsistent updates (`src/wrappers.rs:353`, `src/wrappers.rs:274`).
+3. Smooth write bursts with `BufferedStorage`, whose background flusher intentionally disables itself inside CI to avoid hanging tests while still batching writes in production (`src/wrappers/buffered_storage.rs:15`, `src/wrappers/buffered_storage.rs:70`).
+4. Exercise the real indexes under concurrency using the mixed query stress test that routes hundreds of wildcard and trigram searches through the same optimized handles agents call (`tests/query_routing_stress.rs:147`, `tests/query_routing_stress.rs:261`).
+5. Mirror CI locally with `just test-fast`, which runs `cargo nextest` and doctests under the `git-integration`, `tree-sitter-parsing`, and `mcp-server` feature set that production requires (`justfile:40`, `justfile:41`).
+6. Smoke-test the MCP bootstrap itself via the asynchronous unit tests that instantiate the server, ensuring tool registration stays healthy before agents attach (`src/mcp/server.rs:473`, `src/mcp/server.rs:486`).
 
-Example (Language Agnostic):
+> **Note** Relationship and symbol MCP tools are compiled only when the `tree-sitter-parsing` feature is enabled; without it the registry purposely exposes search-only capabilities (`src/mcp/server.rs:149`, `src/mcp/tools/mod.rs:35`).
 
-// Instead of raw constructors
-Database db = new Database(path, options, cache, retry, validation);
+## Key Interfaces
+| Symbol | Description | Path |
+| --- | --- | --- |
+| `Intent` | Categorizes prompts into search, analysis, navigation, overview, and debugging tasks for orchestration. | `src/intent_mcp_server.rs:18` |
+| `IntentResponse` | Returns structured results, summaries, and suggestions to agents after each query. | `src/intent_mcp_server.rs:166` |
+| `MCPToolRegistry::handle_tool_call` | Dispatches `kotadb://` tool invocations to enabled handlers while enforcing feature gates. | `src/mcp/tools/mod.rs:84` |
+| `TextSearchTools::handle_call` | Runs trigram-backed search through shared storage/index handles when embeddings are disabled. | `src/mcp/tools/text_search_tools.rs:36` |
 
-// Provide factories that compose safety features
-Database db = DatabaseFactory.createProduction(path);
-2. Anti-Mock Testing Philosophy
-Principle: Test with real implementations and failure injection, not mocks.
+## Feature Flags
+- `tree-sitter-parsing` enables relationship and symbol tools in the MCP registry and related analysis services (`src/mcp/server.rs:149`, `src/mcp/tools/mod.rs:35`).
+- `mcp-server` compiles the MCP transport, tool registry, and CLI entrypoints; commands like `just mcp` and `just test-fast` build with this flag set (`justfile:19`, `justfile:41`).
+- `git-integration` unlocks repository ingestion and Supabase jobs that provide commit context to LLM flows, and is part of the default feature set for CI and release builds (`src/git/repository.rs:12`, `Cargo.toml:155`).
 
-Why This Works for LLMs:
-
-Agents understand real systems better than abstract mocks
-Failure injection catches integration issues that unit tests miss
-Real implementations provide better context for debugging
-
-Implementation:
-
-Create failure-injecting variants of real components
-Use temporary environments for isolation
-Test actual I/O operations, not simulated ones
-Implement chaos testing with real failure scenarios
-3. GitHub-First Communication Protocol
-Principle: Use version control platform as the primary communication medium between agents.
-
-Implementation:
-
-Structured Label Taxonomy: Component, priority, effort, status labels
-Issue-Driven Development: Every feature maps to tracked issues
-Agent Handoff Protocol: Clear procedures for session transitions
-Progressive Documentation: Knowledge builds incrementally in issues/PRs
-
-Label System Example:
-
-Component: [backend, frontend, database, api]
-Priority: [critical, high, medium, low]
-Effort: [small <1d, medium 1-3d, large >3d]
-Status: [needs-investigation, blocked, in-progress, ready-review]
-4. Systematic Risk Reduction Methodology
-Principle: Layer complementary risk-reduction strategies.
-
-The Six Stages:
-
-Test-Driven Development (-5.0 risk): Tests define expected behavior
-Contract-First Design (-5.0 risk): Formal interfaces with validation
-Pure Function Modularization (-3.5 risk): Side-effect-free business logic
-Comprehensive Observability (-4.5 risk): Tracing, metrics, structured logging
-Adversarial Testing (-0.5 risk): Chaos engineering and edge cases
-Component Library (-1.0 risk): Reusable, composable building blocks
-
-Total Risk Reduction: -19.5 points (99% theoretical success rate)
-5. Multi-Layered Quality Gates
-Principle: Automate quality enforcement to prevent regression.
-
-Three-Tier Protection Model:
-
-Core Gates: Format, lint, build, basic tests (formatting and linting done in commit checks, along with security measures like checking for absolute vs. relative paths)
-Quality Gates: Integration tests, performance validation, security scans
-Production Gates: Stress testing, memory safety, backwards compatibility
-
-Zero-Tolerance Policies:
-
-No compiler warnings allowed
-All formatting rules enforced
-Security vulnerabilities block deployment
-Performance regression detection
-6. Agent-Optimized Documentation Strategy
-Principle: Minimize documentation dependency while maximizing agent autonomy.
-
-Key Strategies:
-
-Single Source of Truth Files: One comprehensive guide (like CLAUDE.md)
-Discovery-Friendly Structure: Let agents explore and understand naturally
-Progressive Knowledge Building: Context builds through issues and commits
-Self-Documenting Code: Prefer clear naming over extensive comments
-
-What to Document:
-
-Essential workflow commands
-Architectural decision rationale
-Quality requirements and standards
-Communication protocols
-
-What NOT to Document:
-
-Implementation details (let agents discover)
-Exhaustive API references (code should be self-explanatory)
-Step-by-step tutorials (agents adapt better to principles)
-Planning information (should be done in github issues and/or pull requests)
-Implementation Checklist
-Repository Setup
-Implement strict branching strategy (Git Flow recommended: feature/ -> develop -> main)
-Set up comprehensive CI/CD with three-tier quality gates, additional checks between develop -> main
-Create structured label taxonomy for issues, require agents to list all available labels before creating issues to ensure consistency and reduce overlap/confusion
-Establish zero-tolerance policies for warnings/formatting. Strict linting practices, strict type checking, etc. should never have exceptions. This ensures successful virtuous cycles. 
-Code Architecture
-Implement validated types for user inputs
-Create builder patterns for complex object construction
-Provide factory functions for production-ready components
-Design wrapper patterns for composable safety features
-Testing Strategy
-Adopt anti-mock philosophy with real implementations
-Implement failure injection for resilience testing
-Create comprehensive test categorization (unit, integration, stress, chaos)
-Set up property-based testing for algorithm validation
-Documentation and Communication
-Create single comprehensive agent instruction file
-Establish GitHub-first communication protocol, communicate progress through comments on issues and pull requests, ensuring any new agent can understand what’s been done and what’s to be done next. 
-Implement progressive knowledge building through issues
-Minimize documentation dependency (no ai_docs/ dirs, the fewer .md files in the repo the better as this avoids bloat and confusion)
-Automating versioning within user-facing documentation and releases
-Quality Assurance
-Set up automated formatting and linting with zero tolerance for failures
-Implement performance regression detection
-Create security scanning pipeline
-Establish backwards compatibility testing
-Measuring Success
-Development Velocity Metrics
-Commit frequency: >5 commits/day indicates healthy velocity
-PR turnaround time: <2 days suggests efficient review process
-Feature completion rate: Track issues closed vs. opened
-Conventional commit compliance: >85% indicates systematic approach
-Quality Metrics
-CI failure rate: <5% suggests robust quality gates
-Post-release bug rate: <1% indicates effective testing
-Performance regression incidents: Zero tolerance
-Security vulnerability count: Track and trend to zero
-Agent Collaboration Metrics
-Context handoff success: Measure agent session continuity via github
-Pattern consistency: Track adherence to established patterns
-Discovery efficiency: Time for new agents to become productive
-Knowledge accumulation: Growing issue/PR knowledge base
-Common Pitfalls to Avoid
-1. Over-Documentation
-Problem: Extensive documentation that agents ignore, misunderstand leading to “context poisoning" and confusion
-Solution: Focus on principles and discoverable patterns through self-documenting code
-2. Traditional Mocking
-Problem: Abstract test doubles that don't reflect real system behavior
-Solution: Use real implementations with failure injection
-3. Weak Quality Gates
-Problem: Warnings and style issues accumulate, degrading context quality
-Solution: Zero-tolerance policies enforced by automation
-4. Ad-Hoc Communication
-Problem: Knowledge trapped in chat logs or temporary documents
-Solution: GitHub-first communication with persistent issues/PRs
-5. Monolithic Architecture
-Problem: Large, tightly-coupled components difficult for agents to understand
-Solution: Component library with clear separation of concerns
-Advanced Patterns
-Self-Validating Systems
-Implement "dogfooding" where the system tests itself:
-
-Use your own tools to analyze your codebase
-Run real workloads against your system
-Discover integration issues through actual usage
-Failure Injection Hierarchies
-Create sophisticated failure scenarios:
-
-Component Level: Individual service failures
-System Level: Network partitions, resource exhaustion
-Cascade Level: Multi-component failure propagation
-Byzantine Level: Inconsistent and malicious behavior
-Progressive Context Building
-Structure information flow for optimal agent learning:
-
-Session 1: Basic patterns and immediate tasks
-Session 2: Deeper architectural understanding
-Session N: Full system comprehension and complex modifications
-Detached Environments for Full System Testing
-Regularly have agents without access to the source code test the system from a user’s point of view. 
-Separate, ephemeral environments/repositories for testing current system functionality from outside of the codebase
-
-Standardized Subagent Workflows
-Setup a suite of specialized, focused sub agents to reduce head agent’s context contamination, as well as ensure consistency throughout workflow. The head agent should simply be directed to call these agents, rather than the human developer doing it manually. 
-Examples: 
-Github-communicator-agent: Head agent delegates issue creation, commenting, and all other github based communication to this specialized agent, ensuring uniformity.
-Issue-prioritizer-agent: Examines project status in github, and decides the next high-priority tasks to accomplish. This reduces technical debt by prioritizing production-blocking tasks over new features
-Meta-agent-evaluator: Ensures perfect, continuous alignment between subagent instructions to avoid misinformation. Should be run upon editing or creating any agent files. 
-Temporal Composability
-The Git history serves as a rich, evolutionary knowledge base for agents. By analyzing commit messages, pull requests, and branch merges, agents can:
-Understand Evolutionary Reasoning: Trace the development process, identifying the "why" behind design decisions and refactorings.
-Reconstruct Past States: Navigate through the codebase's history to understand how features were introduced or bugs were fixed, providing valuable context for new changes.
-Learn from Past Mistakes: Agents can identify patterns of issues and resolutions, feeding this knowledge back into their development process to avoid recurring problems.
-Facilitate Cross-Session Continuity: Agents can pick up precisely where previous sessions left off, leveraging the detailed commit history to maintain context and avoid redundant effort.
-This approach transforms the Git repository into a living document that continually grows in informational richness, enabling deeper agent autonomy and more informed decision-making.
-
-
-Self-Healing Properties
-
-
-The synergistic combination of automated quality gates, comprehensive observability, and robust failure recovery mechanisms creates a system with emergent self-healing capabilities.
-
-Proactive Issue Detection: Automated quality gates (linting, testing, security scans) catch issues at the earliest stages, preventing them from propagating.
-Real-time Anomaly Identification: Comprehensive observability (tracing, metrics, structured logging) provides immediate feedback on system health and identifies deviations from expected behavior.
-Automated Remediation: Integrated failure recovery mechanisms (e.g., automated rollbacks, self-scaling, circuit breakers) can automatically mitigate detected issues, often before human intervention is required.
-Continuous Improvement Loop: Each failure and subsequent recovery provides valuable data, which agents can analyze to improve future resilience, leading to a system that grows more robust over time. This reduces the need for constant human oversight and allows for greater development velocity.
-
-Economic Velocity Multiplier
-The systematic risk reduction methodology, combined with agent-optimized workflows, translates directly into significant economic benefits, acting as a velocity multiplier.
-Reduced Rework and Technical Debt: By "shifting left" on quality and preventing errors at early stages, the cost of fixing bugs and refactoring poorly structured code is drastically minimized.
-Faster Time to Market: The acceleration in development velocity due to highly effective agent collaboration and streamlined processes means features can be delivered to users more quickly, capturing market opportunities.
-Optimized Resource Utilization: Agents handle repetitive, predictable tasks with high efficiency, freeing human developers to focus on complex problem-solving, innovation, and strategic oversight, leading to a more efficient allocation of talent.
-Lower Operational Costs: Fewer post-release bugs and improved system resilience lead to reduced incident response efforts, less downtime, and lower maintenance overhead.
-Increased Trust and Autonomy: As agent output quality consistently improves, human developers can trust agents with more complex tasks, further scaling development capacity without a proportional increase in headcount. This ultimately reduces the total cost of ownership for software projects.
-Language-Specific Adaptations
-Strongly Typed Languages (Rust, TypeScript, Haskell)
-Leverage type system for compile-time validation
-Use advanced type features (generics, traits, unions)
-Implement zero-cost abstractions
-Dynamically Typed Languages (Python, JavaScript, Ruby)
-Implement runtime validation systems
-Use linting and formatting tools aggressively
-Create comprehensive test suites
-Systems Languages (C, C++, Zig)
-Focus heavily on memory safety patterns
-Implement comprehensive testing for undefined behavior
-Use static analysis tools extensively
-Conclusion
-The success of LLM-assisted development depends on creating systematic approaches that amplify both human and AI capabilities. By implementing these patterns, teams can achieve:
-
-10x Development Velocity: Rapid feature development without quality compromise
-99% Success Rate: Systematic risk reduction through layered safety mechanisms
-Autonomous Agent Operation: Agents work independently while maintaining consistency
-Increased Trust in Agents: As context quality improves, agent effectiveness will improve, resulting in less “constant monitoring” of agent output from human developers
-Continuous Quality Improvement: Self-reinforcing cycles that improve over time
-
-The key insight is that structure enables creativity - by providing clear patterns and safety mechanisms, we free agents to focus on solving problems rather than navigating complexity.
-References and Further Reading
-Git Flow Methodology: Systematic branching for collaborative development
-Pit of Success Pattern: Microsoft .NET Framework design philosophy
-Anti-Mock Testing: Real implementations with failure injection
-Six-Stage Risk Reduction: Layered approach to software reliability
-
-
-
-This document is a living guide. Update it based on your experiences with LLM-assisted development. The patterns described here are proven but should be adapted to your specific context and constraints.
-
-
+## Next Steps
+- Run `just mcp` and attach your agent to verify tool registration and search flows against a real repository.
+- Execute `just test-fast` before introducing new automation instructions so MCP, git, and tree-sitter features stay green locally.
+- Capture any new agent workflows in the MCP-focused tests (e.g., extend `tests/query_routing_stress.rs`) to preserve the pit of success for the next handoff.

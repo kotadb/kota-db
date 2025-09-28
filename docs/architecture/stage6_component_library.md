@@ -1,510 +1,76 @@
-# Stage 6: Component Library Documentation
+# Stage 6: Component Library
 
-## Overview
+## Summary
+Stage 6 hardens KotaDB by routing every storage-facing call through validated types, fluent builders, and composable wrappers so invalid inputs never reach disk and cross-cutting guarantees (tracing, retries, caching) are opt-in by default. The components documented here reflect the current implementation; follow the referenced modules to trace runtime behavior.
 
-Stage 6 of the KotaDB risk reduction methodology implements a **Component Library** that provides reusable, battle-tested components with validated inputs and automatic best practices. This stage achieves **-1.0 risk reduction points** by making it impossible to construct invalid states and automatically applying proven patterns.
+## Step 1 – Harden Domain Primitives
+- Validated types eliminate ad-hoc checks and centralize sanitization. They defer to the Stage 2 validation layer where appropriate, so you always get the same invariants whether the value came from a builder, an HTTP request, or a test harness.
+- Reference the table below when you need to understand which invariant makes a constructor fail and which downstream services depend on it.
 
-## Architecture
+| Type | Purpose & Invariants | Reference |
+| --- | --- | --- |
+| `ValidatedPath` | Rejects empty, absolute, URL-encoded, or traversal-prone paths before they enter storage APIs; delegates to `validation::path::validate_file_path` for shared logic. | `src/types.rs:34`, `src/validation.rs:63`
+| `ValidatedDocumentId` | Refuses nil UUIDs and provides ergonomic parsing/generation so IDs are unique before persistence. | `src/types.rs:80`
+| `ValidatedTitle` | Trims whitespace, enforces `<=1024` chars, and pairs with the Stage 2 validator that re-checks title length on inserts. | `src/types.rs:124`, `src/validation.rs:325`
+| `ValidatedTimestamp` / `TimestampPair` | Ensures timestamps are post-epoch, not absurdly far in the future, and that updates never precede creation. | `src/types.rs:185`, `src/types.rs:224`
+| `ValidatedSearchQuery` | Pipes text through `query_sanitization::sanitize_search_query`, blocking control characters, injection payloads, and overlong inputs, with optional strict filtering when the `strict-sanitization` feature is enabled. | `src/types.rs:303`, `src/query_sanitization.rs:103`
+| `ValidatedTag`, `ValidatedLimit`, `ValidatedPageId` | Normalize tag inputs, bound result sets (`<=100_000`), and keep pagination IDs positive to avoid undefined backend behavior. | `src/types.rs:270`, `src/types.rs:372`
 
-The component library consists of three main categories:
+> **Note** Stage 1 contracts still re-run key checks (for example `validation::document::validate_for_insert`) so even manually constructed `Document` values are re-validated on the way into storage (`src/validation.rs:289`).
 
-```
-Stage 6 Components
-├── Validated Types (src/types.rs)
-│   ├── Path validation and safety
-│   ├── Document lifecycle state machines  
-│   ├── Temporal constraints enforcement
-│   └── Bounded numeric types
-├── Builder Patterns (src/builders.rs)
-│   ├── Fluent API construction
-│   ├── Sensible defaults
-│   ├── Validation during building
-│   └── Ergonomic error handling
-└── Wrapper Components (src/wrappers.rs)
-    ├── Automatic tracing and metrics
-    ├── Transparent caching layers
-    ├── Retry logic with backoff
-    └── RAII transaction safety
-```
+## Step 2 – Guard Document Lifecycle
+- `state::TypedDocument` enforces compile-time state transitions between draft, persisted, and modified documents so callers cannot skip intermediate steps (`src/types.rs:399`). `TimestampPair::touch` keeps modification times monotonic as part of the transition logic (`src/types.rs:264`).
+- The runtime validators mirror those guarantees in persistence layers: `ValidatedStorage::insert` reuses `validation::document::validate_for_insert`, while updates compare timestamps and IDs via `validate_for_update` (`src/wrappers.rs:287`, `src/validation.rs:340`).
+- When you need to reason about lifecycle bugs, search for `TypedDocument` transitions and the places where `TimestampPair` is read—any deviation from these patterns generally means a precondition is missing.
 
-## Validated Types (src/types.rs)
-
-### Core Principle: Invalid States Unrepresentable
-
-All validated types follow the principle that invalid data cannot be constructed. Instead of runtime checks scattered throughout the codebase, invariants are enforced at the type level.
-
-#### Path Safety: `ValidatedPath`
+## Step 3 – Assemble Domain Objects via Builders
+- `DocumentBuilder` turns raw bytes into `Document` contracts by wiring validated primitives, hashing content with the pure metadata helper, and deriving default timestamps if you omit them (`src/builders.rs:22`, `src/builders.rs:88`, `src/pure/metadata.rs:45`).
+- `QueryBuilder` separates wildcard path patterns from full-text terms, applies path-aware sanitization when slashes or globbing characters appear, and rehydrates `ValidatedTag` values so contract-level filtering works identically across CLI and API entry points (`src/builders.rs:145`, `src/builders.rs:249`).
+- Config builders (`StorageConfigBuilder`, `IndexConfigBuilder`, `MetricsBuilder`) provide fluent, validated assembly for operational settings and telemetry snapshots (`src/builders.rs:297`, `src/builders.rs:385`, `src/builders.rs:471`). Required fields (like storage paths) deliberately error at `build()` time so misconfigured environments fail fast.
 
 ```rust
-pub struct ValidatedPath {
-    inner: PathBuf,
-}
+use kotadb::{DocumentBuilder, QueryBuilder};
 
-impl ValidatedPath {
-    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        // Enforces:
-        // - Non-empty paths
-        // - No directory traversal (..)
-        // - No null bytes
-        // - Valid UTF-8
-        // - Not Windows reserved names
-    }
-}
-```
-
-**Why this matters**: Path traversal vulnerabilities are eliminated at compile time. No need to remember to validate paths throughout the codebase.
-
-#### Document Identity: `ValidatedDocumentId`
-
-```rust
-pub struct ValidatedDocumentId {
-    inner: Uuid,
-}
-
-impl ValidatedDocumentId {
-    pub fn from_uuid(uuid: Uuid) -> Result<Self> {
-        ensure!(!uuid.is_nil(), "Document ID cannot be nil");
-        Ok(Self { inner: uuid })
-    }
-}
-```
-
-**Why this matters**: Nil UUIDs are a common source of bugs. This type guarantees every document has a valid identifier.
-
-#### Document Lifecycle: `TypedDocument<State>`
-
-```rust
-pub struct TypedDocument<S: DocumentState> {
-    pub id: ValidatedDocumentId,
-    pub path: ValidatedPath,
-    pub timestamps: TimestampPair,
-    // ... other fields
-    _state: PhantomData<S>,
-}
-
-// State machine transitions
-impl TypedDocument<Draft> {
-    pub fn into_persisted(self) -> TypedDocument<Persisted> { ... }
-}
-
-impl TypedDocument<Persisted> {
-    pub fn into_modified(self) -> TypedDocument<Modified> { ... }
-}
-```
-
-**Why this matters**: Documents can only transition through valid states. Attempting to modify a draft or persist a non-existent document becomes a compile error.
-
-#### Temporal Constraints: `TimestampPair`
-
-```rust
-pub struct TimestampPair {
-    created: ValidatedTimestamp,
-    updated: ValidatedTimestamp,
-}
-
-impl TimestampPair {
-    pub fn new(created: ValidatedTimestamp, updated: ValidatedTimestamp) -> Result<Self> {
-        ensure!(updated.as_secs() >= created.as_secs(), 
-                "Updated timestamp must be >= created timestamp");
-        Ok(Self { created, updated })
-    }
-}
-```
-
-**Why this matters**: Time paradoxes (documents updated before they were created) are impossible to represent.
-
-## Builder Patterns (src/builders.rs)
-
-### Core Principle: Ergonomic Construction with Validation
-
-Builders provide fluent APIs that make it easy to construct complex objects while ensuring all required fields are provided and validation occurs at build time.
-
-#### Document Construction: `DocumentBuilder`
-
-```rust
 let doc = DocumentBuilder::new()
-    .path("/knowledge/rust-patterns.md")?
-    .title("Rust Design Patterns")?
-    .content(b"# Rust Patterns\n\nKey patterns...")
-    .word_count(150)  // Optional - will be calculated if not provided
-    .timestamps(1000, 2000)?  // Optional - will use current time if not provided
-    .build()?;
-```
+    .path("docs/howto.md")?
+    .title("How KotaDB defends itself")?
+    .content(b"# Risk reduction\n")
+    .build()?; // hashes content and timestamps automatically
 
-**Features**:
-- **Fluent API**: Method chaining for readability
-- **Automatic Calculation**: Word count computed from content if not specified
-- **Sensible Defaults**: Timestamps default to current time
-- **Early Validation**: Errors caught at method call, not build time
-- **Required Fields**: Build fails if path, title, or content missing
-
-#### Query Construction: `QueryBuilder`
-
-```rust
 let query = QueryBuilder::new()
-    .with_text("rust patterns")?
-    .with_tag("programming")?
-    .with_tag("design")?
-    .with_date_range(start_time, end_time)?
-    .with_limit(50)?
+    .with_text("*.rs")?        // becomes a path pattern
+    .with_tag("risk")?         // sanitized and re-validated
+    .with_limit(25)?
     .build()?;
 ```
 
-**Features**:
-- **Incremental Building**: Add constraints one at a time
-- **Validation per Method**: Each method validates its input immediately
-- **Flexible Composition**: Mix text, tags, date ranges, and limits
-- **Default Limits**: Reasonable defaults prevent accidental large queries
-
-## Wrapper Components (src/wrappers.rs)
-
-### Core Principle: Automatic Best Practices
-
-Wrappers implement cross-cutting concerns like tracing, caching, validation, and retry logic automatically. They can be composed together to create fully-featured implementations.
-
-#### Automatic Tracing: `TracedStorage<S>`
-
-```rust
-pub struct TracedStorage<S: Storage> {
-    inner: S,
-    trace_id: Uuid,
-    operation_count: Arc<Mutex<u64>>,
-}
-```
-
-**Capabilities**:
-- **Unique Trace IDs**: Every storage instance gets a UUID for correlation
-- **Operation Logging**: All operations logged with context and timing
-- **Metrics Collection**: Duration and success/failure metrics automatically recorded
-- **Operation Counting**: Track how many operations performed
-
-**Usage Pattern**:
-```rust
-let storage = MockStorage::new();
-let traced = TracedStorage::new(storage);
-// All operations now automatically traced and timed
-```
-
-#### Input/Output Validation: `ValidatedStorage<S>`
-
-```rust
-pub struct ValidatedStorage<S: Storage> {
-    inner: S,
-    existing_ids: Arc<RwLock<std::collections::HashSet<Uuid>>>,
-}
-```
-
-**Capabilities**:
-- **Precondition Validation**: All inputs validated before processing
-- **Postcondition Validation**: All outputs validated before returning
-- **Duplicate Prevention**: Tracks existing IDs to prevent duplicates
-- **Update Validation**: Ensures updates are valid transitions
-
-#### Automatic Retries: `RetryableStorage<S>`
-
-```rust
-pub struct RetryableStorage<S: Storage> {
-    inner: S,
-    max_retries: u32,
-    base_delay: Duration,
-    max_delay: Duration,
-}
-```
-
-**Capabilities**:
-- **Exponential Backoff**: Intelligent retry timing with jitter
-- **Configurable Limits**: Set max retries and delay bounds
-- **Transient Error Handling**: Retries on temporary failures only
-- **Operation-Specific Logic**: Different retry behavior per operation type
-
-#### LRU Caching: `CachedStorage<S>`
-
-```rust
-pub struct CachedStorage<S: Storage> {
-    inner: S,
-    cache: Arc<Mutex<LruCache<Uuid, Document>>>,
-    cache_hits: Arc<Mutex<u64>>,
-    cache_misses: Arc<Mutex<u64>>,
-}
-```
-
-**Capabilities**:
-- **LRU Eviction**: Intelligent cache management
-- **Cache Statistics**: Track hit/miss ratios for optimization
-- **Automatic Invalidation**: Updates and deletes invalidate cache entries
-- **Configurable Size**: Set cache capacity based on memory constraints
-
-#### Wrapper Composition
-
-The real power comes from composing wrappers together:
-
-```rust
-pub type FullyWrappedStorage<S> = TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<S>>>>;
-
-pub async fn create_wrapped_storage<S: Storage>(
-    inner: S,
-    cache_capacity: usize,
-) -> FullyWrappedStorage<S> {
-    let cached = CachedStorage::new(inner, cache_capacity);
-    let retryable = RetryableStorage::new(cached);
-    let validated = ValidatedStorage::new(retryable);
-    let traced = TracedStorage::new(validated);
-    traced
-}
-```
-
-**Layer Composition**:
-1. **Base Storage**: Your implementation
-2. **Caching Layer**: Reduces I/O operations
-3. **Retry Layer**: Handles transient failures
-4. **Validation Layer**: Ensures data integrity
-5. **Tracing Layer**: Provides observability
-
-#### RAII Transaction Safety: `SafeTransaction`
-
-```rust
-pub struct SafeTransaction {
-    inner: Transaction,
-    committed: bool,
-}
-
-impl Drop for SafeTransaction {
-    fn drop(&mut self) {
-        if !self.committed {
-            warn!("Transaction {} dropped without commit - automatic rollback", 
-                  self.inner.id);
-            // Triggers rollback
-        }
-    }
-}
-```
-
-**Capabilities**:
-- **Automatic Rollback**: Uncommitted transactions roll back on drop
-- **Explicit Commit**: Must explicitly commit to persist changes
-- **RAII Safety**: Impossible to forget transaction cleanup
-
-## Testing Strategy
-
-### Test Coverage by Component
-
-#### Validated Types Tests (`tests/validated_types_tests.rs`)
-- **Edge Case Validation**: Empty strings, null bytes, reserved names
-- **Boundary Testing**: Maximum lengths, extreme timestamps
-- **State Machine Testing**: Valid and invalid state transitions
-- **Invariant Testing**: Type constraints cannot be violated
-
-#### Builder Tests (`tests/builder_tests.rs`)
-- **Fluent API**: Method chaining works correctly
-- **Validation**: Each method validates its input
-- **Default Behavior**: Sensible defaults applied correctly
-- **Error Propagation**: Validation errors surface immediately
-
-#### Wrapper Tests (`tests/wrapper_tests.rs`)
-- **Composition**: Wrappers can be stacked together
-- **Automatic Behavior**: Tracing, caching, retries work transparently
-- **Performance**: Cache hit/miss ratios, retry counts measured
-- **Error Handling**: Failure scenarios handled gracefully
-
-### Property-Based Testing Integration
-
-Stage 6 components integrate with the existing property-based testing from Stage 5:
-
-```rust
-#[test]
-fn validated_path_never_allows_traversal() {
-    proptest!(|(path_input in any_string())| {
-        if let Ok(validated) = ValidatedPath::new(&path_input) {
-            // If validation succeeded, path is guaranteed safe
-            assert!(!validated.as_str().contains(".."));
-            assert!(!validated.as_str().contains('\0'));
-        }
-        // If validation failed, that's also correct behavior
-    });
-}
-```
-
-## Performance Characteristics
-
-### Validated Types
-- **Zero Runtime Cost**: Validation only at construction time
-- **Compile-Time Optimization**: NewType patterns optimize away
-- **Memory Efficiency**: No additional overhead beyond wrapped types
-
-### Builder Patterns
-- **Allocation Efficient**: Builders reuse allocations where possible
-- **Lazy Validation**: Only validate when needed, cache results
-- **Move Semantics**: Take ownership to avoid unnecessary copies
-
-### Wrapper Components
-- **Composable Overhead**: Each wrapper adds minimal overhead
-- **Async-Optimized**: All wrappers designed for async/await patterns
-- **Zero-Copy Where Possible**: Pass-through wrappers avoid data copies
-
-## Integration with Previous Stages
-
-### Stage 1-2 Integration: Contracts and Tests
-```rust
-#[async_trait]
-impl<S: Storage> Storage for TracedStorage<S> {
-    async fn insert(&mut self, doc: Document) -> Result<()> {
-        // Stage 2: Contract validation
-        validation::document::validate_for_insert(&doc, &HashSet::new())?;
-        
-        // Stage 6: Automatic tracing
-        with_trace_id("storage.insert", async {
-            self.inner.insert(doc).await
-        }).await
-    }
-}
-```
-
-### Stage 3-4 Integration: Pure Functions and Observability
-```rust
-impl DocumentBuilder {
-    fn calculate_word_count(content: &[u8]) -> u32 {
-        // Stage 3: Pure function for word counting
-        pure::text::count_words(content)
-    }
-    
-    pub fn build(self) -> Result<Document> {
-        // Stage 4: Automatic metric recording
-        let start = Instant::now();
-        let result = self.build_internal();
-        record_metric(MetricType::Histogram {
-            name: "document_builder.build.duration".to_string(),
-            value: start.elapsed().as_millis() as f64,
-            tags: vec![],
-        });
-        result
-    }
-}
-```
-
-### Stage 5 Integration: Adversarial Testing
-All Stage 6 components are tested against the adversarial scenarios from Stage 5:
-- **Concurrent Access**: Multiple threads using builders simultaneously
-- **Invalid Inputs**: Fuzz testing with random byte sequences
-- **Resource Exhaustion**: Large caches, many retry attempts
-- **Failure Injection**: Wrapped storage that simulates failures
-
-## Usage Examples
-
-### Basic Document Processing
-
-```rust
-use kotadb::{DocumentBuilder, TracedStorage, CachedStorage};
-
-async fn process_document(content: &[u8], path: &str) -> Result<()> {
-    // Stage 6: Builder with validation
-    let doc = DocumentBuilder::new()
-        .path(path)?  // Validated path
-        .title("Auto-Generated")?  // Validated title
-        .content(content)  // Auto-calculated word count
-        .build()?;
-    
-    // Stage 6: Wrapped storage with automatic best practices
-    let storage = create_wrapped_storage(BaseStorage::new(), 1000).await;
-    storage.insert(doc).await?;  // Traced, cached, retried, validated
-    
-    Ok(())
-}
-```
-
-### Advanced Query Building
-
-```rust
-use kotadb::{QueryBuilder, ValidatedTag};
-
-async fn build_complex_query() -> Result<Query> {
-    let query = QueryBuilder::new()
-        .with_text("machine learning")?
-        .with_tags(vec!["ai", "algorithms", "rust"])?
-        .with_date_range(
-            chrono::Utc::now().timestamp() - 86400 * 7,  // Last week
-            chrono::Utc::now().timestamp()
-        )?
-        .with_limit(25)?
-        .build()?;
-    
-    Ok(query)
-}
-```
-
-### Storage Configuration
-
-```rust
-use kotadb::{StorageConfigBuilder, IndexConfigBuilder};
-
-async fn setup_optimized_storage() -> Result<()> {
-    let storage_config = StorageConfigBuilder::new()
-        .path("/data/knowledge-base")?
-        .cache_size(512 * 1024 * 1024)  // 512MB cache
-        .compression(true)
-        .encryption_key([0u8; 32])  // Use real key in production
-        .build()?;
-    
-    let index_config = IndexConfigBuilder::new()
-        .name("semantic_search")
-        .max_memory(100 * 1024 * 1024)  // 100MB
-        .fuzzy_search(true)
-        .similarity_threshold(0.85)?
-        .build()?;
-    
-    // Use configurations...
-    Ok(())
-}
-```
-
-## Best Practices
-
-### When to Use Validated Types
-- **Always** for user inputs (paths, queries, identifiers)
-- **Always** for data with invariants (timestamps, sizes, limits)
-- **Consider** for internal types that have constraints
-
-### When to Use Builders
-- **Complex objects** with many optional fields
-- **Configuration objects** with sensible defaults
-- **Objects requiring validation** of field combinations
-
-### When to Use Wrappers
-- **Cross-cutting concerns** like logging, metrics, caching
-- **Infrastructure patterns** like retries, circuit breakers
-- **Behavioral modification** without changing core logic
-
-### Composition Guidelines
-- **Layer by responsibility**: Group related concerns together
-- **Optimize for readability**: Most important wrapper outermost
-- **Consider performance**: Expensive operations (validation) inner
-- **Test composition**: Verify wrappers work together correctly
-
-## Future Extensions
-
-### Additional Validated Types
-- `ValidatedEmail`: Email address validation
-- `ValidatedUrl`: URL format and reachability
-- `ValidatedLanguageCode`: ISO language codes
-- `ValidatedMimeType`: MIME type validation
-
-### Additional Builders
-- `FilterBuilder`: Complex query filters
-- `IndexBuilder`: Index configuration with optimization hints
-- `BackupConfigBuilder`: Backup and restore configurations
-
-### Additional Wrappers
-- `RateLimitedStorage`: Rate limiting for external APIs
-- `EncryptedStorage`: Transparent encryption/decryption
-- `VersionedStorage`: Automatic versioning and rollback
-- `DistributedStorage`: Multi-node consistency
-
-## Conclusion
-
-Stage 6's Component Library provides the foundation for reliable, maintainable code by:
-
-1. **Eliminating Invalid States**: Validated types make bugs unrepresentable
-2. **Encoding Best Practices**: Wrappers automatically apply proven patterns
-3. **Improving Developer Experience**: Builders make complex construction ergonomic
-4. **Enabling Composition**: Components combine to create powerful functionality
-
-The -1.0 risk reduction is achieved through **prevention rather than detection** - problems that can't happen don't need to be debugged.
+The builders surface the same errors you would hit deeper in the stack: `ValidatedPath::new` rejects traversal paths, `sanitize_path_aware_query` strips encoded `..` segments, and `ValidatedLimit::new` clamps excessive requests. That symmetry keeps regression tests focused on a single surface.
+
+## Step 4 – Apply Storage Wrappers in Production
+Stage 6’s storage wrappers are layered deliberately; follow the order below to understand what happens to every CRUD call:
+
+1. **Write buffering** (`BufferedStorage` queues inserts/updates/deletes, flushing on size, memory, or interval thresholds; background workers disable themselves automatically in CI via the environment gates at `src/wrappers/buffered_storage.rs:78`).
+2. **In-memory caching** (`CachedStorage` adds an LRU keyed by document ID, tracks hit/miss counters, and invalidates on writes so stale data never leaks (`src/wrappers.rs:697`)).
+3. **Retry envelope** (`RetryableStorage` wraps `Storage` trait calls in exponential backoff with jitter, logging every retry attempt via `tracing` (`src/wrappers.rs:354`)).
+4. **Validation firewall** (`ValidatedStorage` re-checks inserts/updates and guards against duplicate IDs, referencing the shared validator set (`src/wrappers.rs:258`)).
+5. **Tracing and metrics** (`TracedStorage` binds operations to a UUID, records histograms via the observability layer, and publishes structured logs for each method (`src/wrappers.rs:23`, `src/observability.rs:89`)).
+
+`create_wrapped_storage` wires those layers, returning a `TracedStorage<…BufferedStorage<S>>` stack (`src/wrappers.rs:1010`). Higher-level factories call it directly: `create_file_storage` wraps the on-disk engine before returning a handle (`src/file_storage.rs:514`), and `Database::new` replaces the raw storage handle with the fully wrapped variant to guarantee the same behavior for HTTP, MCP, and CLI front ends (`src/database.rs:88`).
+
+> **Warning** The `SafeTransaction` RAII guard is intentionally commented out until the storage layer exposes a concrete `Transaction` implementation (`src/wrappers.rs:958`). Do not rely on it for cleanup semantics yet.
+
+## Step 5 – Instrument Index and Optimization Layers
+- `MeteredIndex` records per-operation latency, emitting histogram metrics each time an index call finishes and providing aggregated min/avg/max summaries when the wrapper is dropped (`src/wrappers.rs:820`). It implements the full `Index` trait, so swapping it in requires no changes upstream.
+- `OptimizedIndex` adds concurrency control, bulk-operation scaffolding, and cached tree metrics for feature-flagged index engines (`src/wrappers/optimization.rs:25`). Its `OptimizationConfig` exposes knobs for batching thresholds, adaptive caching, and rebalancing triggers. When the tree or contention metrics indicate drift, the wrapper’s `analyze_and_optimize` path highlights recommended actions (`src/wrappers/optimization.rs:180`).
+- Both wrappers integrate with the shared `OptimizationMetricsCollector`, which is where long-term telemetry accumulates for `just coverage` and performance regression dashboards.
+
+## Step 6 – Validate with Tests and Runtime Usage
+- Unit tests inside the component modules cover the most critical invariants: path traversal rejection, wildcard query routing, and wrapper stacking behavior (`src/types.rs:505`, `src/builders.rs:555`, `src/wrappers.rs:1087`). Use them as references when extending invariants.
+- Integration tests exercise the same paths end-to-end. For example, `tests/security_path_traversal_test.rs:1` proves `ValidatedPath` and `DocumentBuilder` reject hostile paths, while the services layer spins up wrapped storage in the MCP and HTTP servers via `create_wrapped_storage` to ensure middleware observes traced, validated mutations (`tests/connectinfo_middleware_test.rs:44`, `src/http_server.rs:1855`).
+- Because every builder and wrapper shares the same constructors, running `just test-fast` gives quick assurance that new feature flags or validation rules haven’t broken the staging pipeline.
+
+## Next Steps
+- Run `just test-fast` before and after editing validated types or wrappers to catch regressions quickly.
+- When adding new storage backends, integrate them through `create_wrapped_storage` so they inherit buffering, caching, validation, and tracing automatically.
+- Extend `OptimizedIndex` once the underlying index exposes richer metrics—its configuration hooks are ready for new rebalancing or caching strategies.
+- Mirror any new invariants or wrappers back into this guide with file/line references so implementation and documentation stay synchronized.

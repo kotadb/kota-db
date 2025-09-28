@@ -1,317 +1,151 @@
 # KotaDB Quick Reference
 
-## FileStorage Quick Start
+**Summary**  
+Use KotaDB’s Stage 6 stack to compose validated content builders, resilient storage, and tracing-first observability exactly as implemented in the crate.
 
-### Basic Setup
+## Step 1: Provision the storage stack
+- Instantiate the disk-backed engine with `create_file_storage` and let it compose buffering, caching, retries, validation, and tracing in the documented order.
+- Prefer supplying a cache budget that mirrors your working set while leaving buffering defaults enabled for WAL-backed durability.
+- Initialize storage once per process and share the resulting wrapper via `Arc<Mutex<_>>` or service constructors to reuse the buffered worker.
+
+```rust
+use kotadb::create_file_storage;
+
+let mut storage = create_file_storage("/var/lib/kotadb", Some(2_000)).await?;
+```
+
+| API | Signature | Location | Details |
+| --- | --- | --- | --- |
+| `create_file_storage` | `pub async fn create_file_storage(path: &str, cache_capacity: Option<usize>) -> Result<impl Storage>` | `src/file_storage.rs:514` | Opens `FileStorage`, then wraps it with buffering, caching, retries, validation, and tracing using `create_wrapped_storage`. |
+| `create_wrapped_storage` | `pub async fn create_wrapped_storage<S: Storage>(inner: S, cache_capacity: usize) -> FullyWrappedStorage<S>` | `src/wrappers.rs:1010` | Applies `BufferedStorage → CachedStorage → RetryableStorage → ValidatedStorage → TracedStorage` so every `Storage` call is traced and validated. |
+| `BufferedStorage::new` | `pub fn new(inner: S) -> Self` | `src/wrappers/buffered_storage.rs:65` | Batches writes with WAL-backed flush logic; CI and test runs disable background tasks automatically. |
+
+> **Note** WAL-backed buffering flips to a synchronous path when `KOTADB_DISABLE_BUFFER_TASKS=1`, matching the CI safeguards coded in `src/wrappers/buffered_storage.rs:85`.
+
+## Step 2: Build validated documents
+- Use `DocumentBuilder` to assemble validated documents; path, title, and content validation all flow through the `types` module before persistence.
+- Attach tags, timestamps, or deterministic IDs as needed; the builder computes hashes and word counts via `crate::pure::metadata::calculate_hash`.
+- Inspect the resulting `Document` struct for persisted field meanings before storing.
+
+```rust
+use kotadb::DocumentBuilder;
+
+let doc = DocumentBuilder::new()
+    .path("knowledge/design.md")?
+    .title("Design Notes")?
+    .content(b"# Design\n\nDecisions…")
+    .tag("architecture")?
+    .build()?; // Hash, timestamps, and word count resolved here.
+```
+
+| Builder API | Signature | Location | Purpose |
+| --- | --- | --- | --- |
+| `DocumentBuilder::new` | `pub fn new() -> Self` | `src/builders.rs:22` | Starts a builder with optional ID, timestamps, and empty tag set. |
+| `DocumentBuilder::path` | `pub fn path(self, path: impl AsRef<Path>) -> Result<Self>` | `src/builders.rs:50` | Validates file-system safety through `ValidatedPath::new`. |
+| `DocumentBuilder::title` | `pub fn title(self, title: impl Into<String>) -> Result<Self>` | `src/builders.rs:56` | Enforces trimmed, ≤1024 character titles via `ValidatedTitle`. |
+| `DocumentBuilder::timestamps` | `pub fn timestamps(self, created: i64, updated: i64) -> Result<Self>` | `src/builders.rs:80` | Ensures ordered timestamps with `TimestampPair::new`. |
+| `DocumentBuilder::build` | `pub fn build(self) -> Result<Document>` | `src/builders.rs:88` | Finalizes validation, auto-hashing content, and defaults missing timestamps/IDs. |
+
+| `Document` Field | Type | Location | Notes |
+| --- | --- | --- | --- |
+| `id` | `ValidatedDocumentId` | `src/contracts/mod.rs:130` | Nil UUIDs rejected (`src/types.rs:92`). |
+| `path` | `ValidatedPath` | `src/contracts/mod.rs:131` | Guards traversal via `validation::path::validate_file_path` (`src/types.rs:40`). |
+| `title` | `ValidatedTitle` | `src/contracts/mod.rs:132` | Enforces trimmed bounds (`src/types.rs:124`). |
+| `tags` | `Vec<ValidatedTag>` | `src/contracts/mod.rs:135` | Sanitized through `query_sanitization::sanitize_tag` (`src/builders.rs:267`). |
+| `created_at` / `updated_at` | `DateTime<Utc>` | `src/contracts/mod.rs:136` | Derived from `TimestampPair` ensuring monotonic updates (`src/types.rs:224`). |
+| `embedding` | `Option<Vec<f32>>` | `src/contracts/mod.rs:138` | Optional semantic vector attached on ingestion. |
+
+> **Warning** The typed document state machine in `src/types.rs:399` enforces compile-time transitions (`Draft → Persisted → Modified`); skip it only if you must interop with legacy `Document` payloads.
+
+## Step 3: Persist, fetch, and mutate data
+- The fully wrapped storage implements the `Storage` contract; every method runs input validation and emits trace metrics before touching disk.
+- Use the async trait methods directly, keeping mutations behind a single mutable handle to respect the buffered writer.
+
 ```rust
 use kotadb::{create_file_storage, DocumentBuilder, Storage};
 
-// Create production-ready storage with all Stage 6 wrappers
-let mut storage = create_file_storage("/path/to/db", Some(1000)).await?;
-```
-
-### Document Operations
-
-#### Create Document
-```rust
+let mut storage = create_file_storage("/var/lib/kotadb", Some(1_000)).await?;
 let doc = DocumentBuilder::new()
-    .path("/notes/example.md")?
-    .title("Example Document")?
-    .content(b"# Example\n\nDocument content here...")?
+    .path("notes/quickref.md")?
+    .title("Quick Reference")?
+    .content(b"KotaDB quick reference")
     .build()?;
-```
 
-#### Store Document
-```rust
 storage.insert(doc.clone()).await?;
-```
-
-#### Retrieve Document
-```rust
-let retrieved = storage.get(&doc.id).await?;
-match retrieved {
-    Some(doc) => println!("Found: {}", doc.title),
-    None => println!("Document not found"),
+if let Some(found) = storage.get(&doc.id).await? {
+    println!("Found {} ({} bytes)", found.title, found.size);
 }
-```
 
-#### Update Document
-```rust
-let mut updated_doc = doc;
-updated_doc.title = "Updated Title".to_string();
-updated_doc.updated = chrono::Utc::now().timestamp();
-storage.update(updated_doc).await?;
-```
-
-#### Delete Document
-```rust
+storage.update(doc).await?;
 storage.delete(&doc.id).await?;
 ```
 
-## Validated Types (Import: `use kotadb::types::*;`)
+| Storage API | Signature | Location | Behavior |
+| --- | --- | --- | --- |
+| `Storage::insert` | `async fn insert(&mut self, document: Document) -> Result<()>` | `src/contracts/mod.rs:45` | Validated writes add IDs to the in-memory index (`src/wrappers.rs:287`). |
+| `Storage::get` | `async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>>` | `src/contracts/mod.rs:48` | Cached lookups hit LRU before disk (`src/wrappers.rs:742`). |
+| `Storage::update` | `async fn update(&mut self, document: Document) -> Result<()>` | `src/contracts/mod.rs:51` | Checks existing metadata before applying updates (`src/wrappers.rs:313`). |
+| `Storage::delete` | `async fn delete(&mut self, id: &ValidatedDocumentId) -> Result<bool>` | `src/contracts/mod.rs:54` | Evicts cache entries and buffered ops on success (`src/wrappers.rs:775`). |
+| `Storage::list_all` | `async fn list_all(&self) -> Result<Vec<Document>>` | `src/contracts/mod.rs:57` | Delegates to underlying engine while emitting metrics (`src/wrappers.rs:784`). |
+| `Storage::sync` / `flush` / `close` | `async fn …` | `src/contracts/mod.rs:60` | Forwarded to `FileStorage` with additional trace logging (`src/wrappers.rs:210`). |
+
+## Step 4: Shape search requests and index configuration
+- Build sanitized text, tag, and wildcard queries with `QueryBuilder`; the builder automatically detects glob patterns and routes them to `Query::path_pattern`.
+- Compose index and storage configuration builders when provisioning long-running services or integrating alternate backends.
 
 ```rust
-// Safe file paths
-let path = ValidatedPath::new("/knowledge/notes.md")?;
+use kotadb::{IndexConfigBuilder, QueryBuilder};
 
-// Non-nil document IDs  
-let id = ValidatedDocumentId::new();  // or from_uuid(uuid)?
-
-// Non-empty, trimmed titles
-let title = ValidatedTitle::new("My Document")?;
-
-// Positive file sizes
-let size = NonZeroSize::new(1024)?;
-
-// Valid timestamps (> 0, < far future)
-let timestamp = ValidatedTimestamp::now();  // or new(secs)?
-
-// Ordered timestamp pairs (updated >= created)
-let timestamps = TimestampPair::new(created, updated)?;
-
-// Sanitized tags (alphanumeric, dash, underscore only)
-let tag = ValidatedTag::new("rust-lang")?;
-
-// Validated search queries (min length, trimmed)
-let query = ValidatedSearchQuery::new("search term", 3)?;
-
-// Non-zero page identifiers
-let page_id = ValidatedPageId::new(42)?;
-
-// Bounded result limits
-let limit = ValidatedLimit::new(25, 100)?;  // value, max
-```
-
-## Document State Machine
-
-```rust
-// Create draft document
-let draft = TypedDocument::<Draft>::new(path, hash, size, title, word_count);
-
-// State transitions (compile-time enforced)
-let persisted = draft.into_persisted();
-let modified = persisted.into_modified();
-let persisted_again = modified.into_persisted();
-
-// Invalid transitions won't compile:
-// let bad = draft.into_modified();  // Error!
-```
-
-## Builder Patterns (Import: `use kotadb::builders::*;`)
-
-```rust
-// Document builder with validation and defaults
-let doc = DocumentBuilder::new()
-    .path("/notes/rust-patterns.md")?      // Required, validated
-    .title("Rust Design Patterns")?        // Required, validated  
-    .content(b"# Patterns\n\nContent...")  // Required, auto word count
-    .word_count(150)                       // Optional override
-    .timestamps(1000, 2000)?               // Optional, defaults to now
-    .build()?;
-
-// Query builder with fluent API
 let query = QueryBuilder::new()
-    .with_text("machine learning")?        // Text search
-    .with_tag("ai")?                       // Single tag
-    .with_tags(vec!["rust", "ml"])?        // Multiple tags
-    .with_date_range(start, end)?          // Time bounds
-    .with_limit(50)?                       // Result limit
+    .with_text("docs/*.md")?
+    .with_tag("architecture")?
+    .with_limit(500)?
     .build()?;
 
-// Storage configuration with defaults
-let config = StorageConfigBuilder::new()
-    .path("/data/kotadb")?                 // Required
-    .cache_size(256 * 1024 * 1024)         // 256MB, default 100MB
-    .compression(true)                     // Default true
-    .no_cache()                            // Disable caching
-    .encryption_key([0u8; 32])             // Optional
-    .build()?;
-
-// Index configuration
 let index_config = IndexConfigBuilder::new()
-    .name("semantic_index")                // Required
-    .max_memory(100 * 1024 * 1024)         // 100MB, default 50MB
-    .fuzzy_search(true)                    // Default true
-    .similarity_threshold(0.85)?           // 0-1 range, default 0.8
-    .persistence(false)                    // Default true
-    .build()?;
-
-// Metrics collection
-let metrics = MetricsBuilder::new()
-    .document_count(1000)
-    .total_size(50 * 1024 * 1024)          // 50MB
-    .index_size("full_text", 5 * 1024 * 1024)
-    .index_size("semantic", 10 * 1024 * 1024)
+    .name("semantic_index")
+    .max_memory(256 * 1024 * 1024)
+    .persistence(false)
     .build()?;
 ```
 
-## Wrapper Components (Import: `use kotadb::wrappers::*;`)
+| Query Builder API | Signature | Location | Highlights |
+| --- | --- | --- | --- |
+| `QueryBuilder::with_text` | `pub fn with_text(self, text: impl Into<String>) -> Result<Self>` | `src/builders.rs:156` | Chooses path-aware or standard sanitization and preserves `*` wildcards. |
+| `QueryBuilder::with_tag` | `pub fn with_tag(self, tag: impl Into<String>) -> Result<Self>` | `src/builders.rs:192` | Sanitizes via `query_sanitization::sanitize_tag` before wrapping in `ValidatedTag`. |
+| `QueryBuilder::with_date_range` | `pub fn with_date_range(self, start: i64, end: i64) -> Result<Self>` | `src/builders.rs:210` | Ensures ordered timestamps using `ValidatedTimestamp`. |
+| `QueryBuilder::build` | `pub fn build(self) -> Result<Query>` | `src/builders.rs:231` | Populates `Query::path_pattern` when wildcards appear and upgrades tags to validated types.
 
-```rust
-// Individual wrappers
-let storage = MockStorage::new();
+| `Query` Field | Type | Location | Details |
+| --- | --- | --- | --- |
+| `search_terms` | `Vec<ValidatedSearchQuery>` | `src/contracts/mod.rs:198` | Sanitized text tokens with min-length guarantees (`src/types.rs:301`). |
+| `tags` | `Vec<ValidatedTag>` | `src/contracts/mod.rs:199` | Filled post-build to retain sanitized tag list (`src/builders.rs:267`). |
+| `path_pattern` | `Option<String>` | `src/contracts/mod.rs:200` | Holds glob expressions like `docs/*.md`. |
+| `limit` | `ValidatedLimit` | `src/contracts/mod.rs:201` | Supports high fan-out queries (≤100 000) (`src/builders.rs:222`). |
+| `offset` | `ValidatedPageId` | `src/contracts/mod.rs:202` | Defaults to page 1 with non-zero enforcement (`src/types.rs:349`). |
 
-// Add automatic tracing with unique trace IDs
-let traced = TracedStorage::new(storage);
-let trace_id = traced.trace_id();
-let op_count = traced.operation_count().await;
+| Config Builder | Key Methods | Location | Feature Notes |
+| --- | --- | --- | --- |
+| `StorageConfigBuilder` | `.path()`, `.cache_size()`, `.compression()`, `.encryption_key()` | `src/builders.rs:297` | Produces `StorageConfig` for custom engines; no feature flags required. |
+| `IndexConfigBuilder` | `.name()`, `.fuzzy_search(bool)`, `.similarity_threshold(f32)` | `src/builders.rs:385` | Pair with `vector_index` or `trigram_index`; optional semantic features gated by `embeddings-onnx`. |
 
-// Add input/output validation  
-let validated = ValidatedStorage::new(storage);
+## Step 5: Observe and tune runtime behavior
+- Pull metrics and traces from the wrapper stack—`TracedStorage` instruments every operation, while `MeteredIndex` captures per-op timing histograms.
+- Use `RetryableStorage::with_retry_config` to adapt backoff windows to your deployment latency profile.
+- Inspect cache efficiency through `CachedStorage::cache_stats` before increasing capacity.
 
-// Add retry logic with exponential backoff
-let retryable = RetryableStorage::new(storage)
-    .with_retry_config(
-        3,                                     // max_retries
-        Duration::from_millis(100),            // base_delay  
-        Duration::from_secs(5)                 // max_delay
-    );
+| Wrapper | Key Method | Location | Runtime Insight |
+| --- | --- | --- | --- |
+| `TracedStorage` | `pub fn trace_id(&self) -> Uuid` / `pub async fn operation_count(&self) -> u64` | `src/wrappers.rs:41` | Emits `storage.*` metrics and tags with a stable trace ID per handle. |
+| `ValidatedStorage` | `pub fn new(inner: S) -> Self` | `src/wrappers.rs:266` | Ensures documents pass `validation::document` checks before persistence. |
+| `RetryableStorage::with_retry_config` | `pub fn with_retry_config(self, max_retries, base_delay, max_delay) -> Self` | `src/wrappers.rs:372` | Configures exponential backoff with jitter for flaky IO. |
+| `CachedStorage::cache_stats` | `pub async fn cache_stats(&self) -> (u64, u64)` | `src/wrappers.rs:715` | Reports hit/miss counters to guide sizing. |
+| `MeteredIndex::timing_stats` | `pub async fn timing_stats(&self) -> HashMap<String, (Duration, Duration, Duration)>` | `src/wrappers.rs:850` | Aggregates min/avg/max latency per index operation. |
 
-// Add LRU caching
-let cached = CachedStorage::new(storage, 1000);  // 1000 item capacity
-let (hits, misses) = cached.cache_stats().await;
+> **Note** Enable feature-gated modules (`--features "tree-sitter-parsing"` or `--features "mcp-server"`) only when you depend on symbol pipelines or MCP adapters; the quick reference APIs above operate on the default feature set.
 
-// Composed wrapper (recommended)
-let fully_wrapped = create_wrapped_storage(base_storage, 1000).await;
-// Type: TracedStorage<ValidatedStorage<RetryableStorage<CachedStorage<BaseStorage>>>>
-
-// Index with automatic metrics
-let index = MeteredIndex::new(base_index, "my_index".to_string());
-let timing_stats = index.timing_stats().await;  // (min, avg, max) per operation
-
-// RAII transaction safety
-let mut tx = SafeTransaction::begin(1)?;
-tx.add_operation(Operation::StorageWrite { doc_id, size_bytes });
-tx.commit().await?;  // Must explicitly commit
-// Automatic rollback if dropped without commit
-```
-
-## Common Patterns
-
-### Error Handling
-```rust
-// All Stage 6 types return Result<T, anyhow::Error>
-match ValidatedPath::new(user_input) {
-    Ok(path) => /* path is guaranteed safe */,
-    Err(e) => eprintln!("Invalid path: {}", e),
-}
-
-// Or use ? operator for propagation
-let path = ValidatedPath::new(user_input)?;
-```
-
-### Conversion and Display
-```rust
-// All validated types implement Display and common conversions
-let path = ValidatedPath::new("/notes/file.md")?;
-println!("Path: {}", path);                    // Display
-let path_str: &str = path.as_str();            // &str
-let path_string: String = path.to_string();    // String
-let path_buf: &Path = path.as_path();          // &Path
-
-// Document IDs
-let id = ValidatedDocumentId::new();
-let uuid: Uuid = id.as_uuid();
-let id_string: String = id.to_string();
-```
-
-### Async Patterns
-```rust
-// All storage operations are async
-async fn example_usage() -> Result<()> {
-    let mut storage = create_wrapped_storage(BaseStorage::new(), 1000).await;
-    
-    let doc = DocumentBuilder::new()
-        .path("/test.md")?
-        .title("Test")?  
-        .content(b"content")
-        .build()?;
-    
-    storage.insert(doc.clone()).await?;
-    let retrieved = storage.get(&doc.id).await?;
-    
-    Ok(())
-}
-```
-
-### Testing Helpers
-```rust
-// Create test documents easily
-fn create_test_doc() -> Document {
-    DocumentBuilder::new()
-        .path("/test/doc.md").unwrap()
-        .title("Test Document").unwrap()
-        .content(b"Test content")
-        .build().unwrap()
-}
-
-// Mock storage for testing
-struct MockStorage { /* ... */ }
-
-#[async_trait]
-impl Storage for MockStorage {
-    // Implement required methods
-}
-```
-
-## Performance Tips
-
-### Validated Types
-- **Construction Cost**: Validation only happens once at creation
-- **Runtime Cost**: Zero overhead after construction (newtype pattern)
-- **Memory**: Same size as wrapped type
-
-### Builders
-- **Reuse**: Builders can be cloned before final build
-- **Validation**: Happens incrementally, not just at build()
-- **Memory**: Minimal overhead, optimized for move semantics
-
-### Wrappers  
-- **Composition Order**: Put expensive operations (validation) inner
-- **Caching**: Size cache appropriately for your working set
-- **Tracing**: Negligible overhead when logging level is appropriate
-- **Retries**: Configure timeouts to match your failure characteristics
-
-### Best Practices
-```rust
-// Good: Validate once, use many times
-let path = ValidatedPath::new(user_input)?;
-for item in items {
-    process_with_path(&path, item).await?;
-}
-
-// Good: Compose wrappers for automatic best practices  
-let storage = create_wrapped_storage(base, cache_size).await;
-
-// Good: Use builders for complex objects
-let query = QueryBuilder::new()
-    .with_text(&search_term)?
-    .with_limit(page_size)?
-    .build()?;
-
-// Good: RAII transactions
-{
-    let mut tx = SafeTransaction::begin(next_id())?;
-    // ... operations
-    tx.commit().await?;
-}  // Automatic cleanup
-```
-
-## Integration with Other Stages
-
-### Stage 1-2: Tests and Contracts
-- All components have comprehensive test coverage
-- Contracts validated automatically by wrappers
-- Property-based testing for edge cases
-
-### Stage 3-4: Pure Functions and Observability  
-- Builders use pure functions for calculations
-- Wrappers provide automatic tracing and metrics
-- All operations have unique trace IDs
-
-### Stage 5: Adversarial Testing
-- Components tested against failure scenarios
-- Concurrent access patterns validated
-- Fuzz testing for input validation
-
-This reference covers the essential Stage 6 components. For detailed documentation, see `docs/architecture/stage6_component_library.md`.
+## Next Steps
+- Run `just test` to exercise the full storage stack under `cargo nextest`.
+- Explore `docs/api/api_reference.md` for HTTP surface details that build on these primitives.
+- Inspect `src/services/` implementations to see how service layers call into the same builders and wrappers.
+- Capture runtime traces with `just dev` and verify `storage.*` metrics appear in your connected `tracing` subscriber.

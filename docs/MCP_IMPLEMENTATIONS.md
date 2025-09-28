@@ -1,275 +1,76 @@
 # MCP Implementations Guide
 
-This document covers KotaDB's Model Context Protocol (MCP) implementations for AI assistant integration.
+## Summary
+KotaDB ships two complementary MCP entry points: the spec-compliant streamable HTTP transport that fronts the JSON-RPC tool registry, and a compatibility bridge that keeps the older `/mcp/tools/*` REST surface alive. Both layers share the same configuration, tool registry, and storage plumbing that are assembled by `MCPServer::new` before any route is exposed (`src/mcp/server.rs:94`).
 
-## Overview
+## Step 1 – Load the MCP configuration
+KotaDB centralises MCP server settings in `MCPConfig` (`src/mcp/config.rs:5`). Populate or override these fields before starting any transport.
 
-KotaDB provides two MCP implementations to support different integration patterns:
+| Field | Purpose | Source |
+| --- | --- | --- |
+| `server.host`, `server.port`, `max_connections` | Socket binding and connection limits for the streamable HTTP listener | `src/mcp/config.rs:15` |
+| `mcp.enable_search_tools`, `mcp.enable_relationship_tools` | Feature switches that decide which tool handlers are registered | `src/mcp/config.rs:34` |
+| `security.allowed_origins` | Allowed CORS origins; enforced for both POST and SSE handshakes | `src/mcp/config.rs:58`, `src/mcp/streamable_http.rs:69` |
 
-1. **MCP-over-HTTP Bridge** (Issue #541) - HTTP endpoints that mirror MCP functionality
-2. **Intent-Based MCP Server** (Issue #645) - Natural language interface for AI assistants
+`MCPConfig::default()` already disables document tools per the codebase-intelligence migration and pins protocol version `2025-06-18` (`src/mcp/config.rs:83`). Environment variables such as `MCP_SERVER_HOST`, `MCP_SERVER_PORT`, and `KOTADB_DATA_DIR` transparently override the TOML values (`src/mcp/config.rs:121`).
 
-## MCP-over-HTTP Bridge
+## Step 2 – Build the tool registry and feature gates
+`MCPServer::new` provisions shared storage, primary, and trigram indexes, then wires handlers into an `MCPToolRegistry` instance (`src/mcp/server.rs:101` through `src/mcp/server.rs:188`). The registry itself dispatches calls based on URI prefixes and feature flags (`src/mcp/tools/mod.rs:35`).
 
-### Purpose
-Enables Claude Code integration without requiring local Rust compilation by providing HTTP endpoints that translate to MCP protocol calls.
+| Method prefix | Handler & Behaviour | Notes |
+| --- | --- | --- |
+| `kotadb://text_search` | Uses `TextSearchTools::text_search` to walk the trigram index and hydrate previews from storage (`src/mcp/tools/text_search_tools.rs:35`, `src/mcp/tools/text_search_tools.rs:70`) | Enabled when `enable_search_tools` is true |
+| `kotadb://symbol_search` | Wraps `SearchService::search_symbols` via `SymbolTools` to provide wildcard-aware symbol lookups (`src/mcp/tools/symbol_tools.rs:29`) | Requires `tree-sitter-parsing` and `enable_relationship_tools` (`src/mcp/server.rs:177`) |
+| `kotadb://find_callers` / `kotadb://impact_analysis` | Call into `AnalysisService` to compute relationship graphs (`src/mcp/tools/relationship_tools.rs:223`, `src/mcp/tools/relationship_tools.rs:246`) | Also gated by `tree-sitter-parsing`; returns structured markdown payloads |
 
-### Architecture
-- Spec-compliant Streamable HTTP endpoint at `/mcp` (POST for client messages, GET for SSE streams)
-- Legacy bridge routes under `/mcp/tools/*` retained for compatibility
-- API key authentication using existing system
-- Protocol translation layer (HTTP → MCP JSON-RPC)
-- Feature-gated for compatibility
+> **Note** Some relationship methods are placeholders until later phases (`src/mcp/tools/relationship_tools.rs:254`). Expect explicit `TODO` errors for `find_callees`, `call_chain`, and additional analytics endpoints when the backing `AnalysisService` functions are absent.
 
-### Endpoints
+## Step 3 – Serve the MCP Streamable HTTP transport
+The primary MCP surface mounts at `/mcp` using `create_streamable_http_router` (`src/mcp/streamable_http.rs:40`). Requests traverse these guardrails:
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /mcp` | Streamable HTTP endpoint for JSON-RPC requests (Accept: `application/json, text/event-stream`) |
-| `GET /mcp` | SSE channel for server-initiated messages (Accept: `text/event-stream`) |
-| `GET /mcp/tools` | List available MCP tools (POST also supported for compatibility) |
-| `POST /mcp/tools/:tool_name` | Execute specific MCP tool by name |
-| `POST /mcp/tools/search_code` | Search code content |
-| `POST /mcp/tools/search_symbols` | Search symbols |
-| `POST /mcp/tools/find_callers` | Find function callers |
-| `POST /mcp/tools/analyze_impact` | Analyze change impact |
-| `GET /mcp/tools/stats` | Bridge help and discovery for stats (POST also supported) |
+1. **Handshake validation** – Every POST must advertise the negotiated `Accept` header and protocol version, enforced by `validate_accept_for_post` and `extract_protocol_version` (`src/mcp/streamable_http.rs:143`, `src/mcp/streamable_http.rs:80`). The server falls back to its configured protocol but logs a warning when the header is missing.
+2. **Session negotiation** – `process_method_call` creates a session and returns server capabilities on `initialize`, optionally echoing a `mcp-session-id` header used by follow-up calls and SSE subscriptions (`src/mcp/streamable_http.rs:380`).
+3. **Tool execution** – Subsequent `tools/list` and `tools/call` invocations require the session header and delegate into the registry via `handle_tool_call`, wrapping JSON-RPC results into MCP-friendly `content` envelopes (`src/mcp/streamable_http.rs:394`, `src/mcp/streamable_http.rs:452`).
+4. **Event streaming** – Clients upgrade to SSE by calling `GET /mcp` with the same protocol and session headers; `handle_streamable_get` replays backlog entries and keeps the channel alive with periodic keep-alives (`src/mcp/streamable_http.rs:283`). The backing `SessionManager` keeps a bounded event queue and enforces session lookups (`src/mcp/streamable_http.rs:560`).
 
-### Usage
+Legacy `/mcp/tools/*` routes remain mounted inside the same router so older agents still hit the shared registry through `call_tool_legacy` (`src/mcp/streamable_http.rs:534`).
+
+## Step 4 – Maintain the MCP-over-HTTP bridge
+The bridge router exposes convenience REST endpoints for hosted environments (`src/mcp_http_bridge.rs:84`). Each handler resolves the active `MCPToolRegistry`, maps human-friendly tool names to protocol URIs, and returns stable error payloads.
+
+| HTTP endpoint | Invoked MCP method | Source |
+| --- | --- | --- |
+| `GET/POST /mcp/tools` | Enumerates registered tools for discovery | `src/mcp_http_bridge.rs:98` |
+| `POST /mcp/tools/:tool_name` | Resolves to `kotadb://text_search`, `kotadb://symbol_search`, etc. | `src/mcp_http_bridge.rs:188`, `src/mcp_http_bridge.rs:485` |
+| `POST /mcp/tools/search_code` | Short-circuits to `kotadb://text_search` with raw JSON arguments | `src/mcp_http_bridge.rs:210` |
+| `POST /mcp/tools/find_callers` | Delegates to relationship tools when the feature flag is on | `src/mcp_http_bridge.rs:363` |
+
+Fallback behaviour is explicit: a missing registry returns `registry_unavailable`, disabled features raise `feature_disabled`, and tool handlers bubble up `internal_error` (`src/mcp_http_bridge.rs:324`, `src/mcp_http_bridge.rs:347`). The same code path powers both unauthenticated dev servers and authenticated SaaS deployments because the state object simply toggles which registry is passed in (`src/services_http_server.rs:603`, `src/http_server.rs:675`).
+
+## Step 5 – Run the servers
+During development, `just dev` hot-reloads the streamable HTTP server with the required feature flag (`justfile:15`). For a single-shot run with verbose logging, use `just mcp` (`justfile:19`). These tasks invoke the `kotadb-mcp` binary defined in `src/bin/mcp_server.rs`, which loads configuration, applies CLI overrides, and starts the blocking listener (`src/bin/mcp_server.rs:68`, `src/bin/mcp_server.rs:138`).
+
+For environments that need STDIO transport instead of HTTP, launch `cargo run --bin mcp_server_stdio --features mcp-server -- --config kotadb-mcp-dev.toml`, which uses the simplified loop in `run_stdio_server` to exchange JSON-RPC messages over stdin/stdout (`src/bin/mcp_server_stdio.rs:63`).
+
+Hosted API servers embed the bridge automatically: `create_services_server` merges `/mcp/tools/*` without auth for local runs, while `create_services_saas_server` wraps the same router with API key middleware (`src/services_http_server.rs:596`, `src/services_http_server.rs:776`). The SaaS HTTP entrypoint logs the MCP routes at startup so operators know which URLs are live (`src/http_server.rs:768`).
+
+## Step 6 – Exercise and test the endpoints
+Run the fast MCP-aware test suite with `just test-fast` to cover unit tests and doctests under the `mcp-server` and `tree-sitter-parsing` features (`justfile:40`). The bridge module also ships direct coverage for tool routing—`cargo nextest run mcp_http_bridge::tests --lib` exercises the static list and error handling (`src/mcp_http_bridge.rs:535`).
+
+To smoke test the streamable transport, ensure the negotiated headers are honoured:
+
 ```bash
-# Start HTTP server with MCP bridge
-cargo run --bin kotadb-api-server --features mcp-server
-
-# Streamable initialize handshake (returns MCP session header)
-curl -sS http://localhost:8080/mcp \
+curl -sS http://localhost:8484/mcp \
   -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -H "MCP-Protocol-Version: 2025-06-18" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
-
-# List tools (legacy bridge, still available for compatibility)
-curl -sS http://localhost:8080/mcp/tools \
-  -H "Authorization: Bearer $API_KEY"
-
-# Call a tool (example: text search)
-curl -sS -X POST http://localhost:8080/mcp/tools/search_code \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "storage", "limit": 10}'
-
-# Bridge stats/discovery
-curl -sS http://localhost:8080/mcp/tools/stats \
-  -H "Authorization: Bearer $API_KEY"
 ```
 
-### Error Codes
+> **Warning** If the client omits the `MCP-Protocol-Version` header or the dual `Accept` media types, the server will terminate the handshake with a `406` or `400` generated by `validate_accept_for_post` and `extract_protocol_version` (`src/mcp/streamable_http.rs:143`, `src/mcp/streamable_http.rs:80`).
 
-Bridge errors use a stable schema `{ success: false, error: { code, message } }`:
-- `feature_disabled` – MCP feature or relationship tools not enabled
-- `tool_not_found` – unknown tool name
-- `registry_unavailable` – bridge is enabled but no tool registry configured
-- `internal_error` – unexpected runtime error when invoking a tool
-
-### Implementation Files
-- `src/mcp/streamable_http.rs` - Spec-compliant Streamable HTTP transport
-- `src/mcp_http_bridge.rs` - Legacy bridge routes
-- `src/http_server.rs` - Integration with HTTP server
-
-## Intent-Based MCP Server
-
-### Purpose
-Transforms natural language queries into orchestrated API calls, providing a conversational interface for AI assistants.
-
-### Architecture
-- **Intent Parser**: Natural language → structured intents
-- **Query Orchestrator**: Intents → HTTP API calls
-- **Context Manager**: Session state and conversation memory
-- **Response Generator**: Technical results → AI-friendly format
-
-### Supported Intents
-
-#### Search Intent
-- **Patterns**: "find", "search", "look for", "locate"
-- **Scopes**: functions, classes, variables, symbols, files, code
-- **Example**: "Find all async functions in the storage module"
-
-#### Analysis Intent  
-- **Patterns**: "impact", "who calls", "dependencies", "usage"
-- **Types**: callers, callees, impact analysis, dependency tracking
-- **Example**: "Who calls validate_path?"
-
-#### Navigation Intent
-- **Patterns**: "show implementation", "definition", "usage"
-- **Contexts**: implementation, definition, usage examples
-- **Example**: "Show me the implementation of FileStorage"
-
-#### Overview Intent
-- **Patterns**: "overview", "summary", "architecture"
-- **Levels**: summary, detailed, comprehensive
-- **Example**: "Give me an overview of the codebase"
-
-#### Debugging Intent
-- **Patterns**: "debug", "error", "problem", "issue"
-- **Context**: Error messages and debugging scenarios
-- **Example**: "Debug authentication error in login flow"
-
-### Usage
-
-#### Interactive Mode (Development)
-```bash
-cargo run --bin intent_mcp_server -- --interactive
-```
-
-#### MCP Protocol Mode (Production)
-```bash
-cargo run --bin intent_mcp_server -- \
-  --api-url http://localhost:8080 \
-  --api-key $API_KEY
-```
-
-#### Configuration Options
-```bash
---api-url <URL>          # Base URL for KotaDB HTTP API
---api-key <KEY>          # API key for authentication  
---max-results <NUM>      # Maximum results per query
---timeout <MS>           # Request timeout in milliseconds
--i, --interactive        # Interactive mode for testing
--v, --verbose            # Increase verbosity
-```
-
-### Natural Language Examples
-
-| Query | Intent | API Calls |
-|-------|--------|-----------|
-| "Find async functions in storage" | Search(Functions) | `/api/symbols/search?q=async storage` |
-| "Who calls validate_path?" | Analysis(Callers) | `/api/relationships/callers/validate_path` |
-| "Impact of changing FileStorage" | Analysis(Impact) | `/api/analysis/impact/FileStorage` |
-| "Show codebase overview" | Overview(Summary) | `/stats` + contextual searches |
-
-### Implementation Files
-- `src/intent_mcp_server.rs` - Core intent processing
-- `src/bin/intent_mcp_server.rs` - Standalone binary
-
-## Integration Patterns
-
-### Claude Code Integration
-1. **Development**: Use HTTP bridge endpoints for rapid testing
-2. **Production**: Deploy intent-based server for natural language queries
-
-### Custom AI Assistants
-1. **Structured**: Use HTTP bridge for predictable API calls
-2. **Conversational**: Use intent server for natural language interaction
-
-### Hybrid Approach
-- HTTP bridge for deterministic operations
-- Intent server for exploratory and conversational queries
-
-## Testing
-
-### Unit Tests
-```bash
-# Test MCP bridge
-cargo nextest run mcp_http_bridge::tests --lib
-
-# Test intent server  
-cargo nextest run intent_mcp_server::tests --lib
-```
-
-### Integration Testing
-```bash
-# Test intent server interactively
-cargo run --bin intent_mcp_server -- --interactive
-
-# Test HTTP bridge with curl
-curl -X POST http://localhost:8080/mcp/tools \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-## Development Notes
-
-### Feature Gates
-Both implementations respect the `mcp-server` feature flag:
-```toml
-# Enable full MCP functionality
-cargo run --features mcp-server
-
-# Basic HTTP server without MCP bridge/tools
-cargo run
-
-# When `mcp-server` is disabled, /mcp/* endpoints return 501 with
-# error.code = "feature_disabled".
-```
-
-### Extension Points
-- **Intent Patterns**: Add new regex patterns in `IntentParser`
-- **Tool Mappings**: Extend tool registry in HTTP bridge
-- **Response Formatting**: Customize AI assistant responses
-- **Context Persistence**: Add database backing for conversation state
-
-### Security Considerations
-- All endpoints require API key authentication
-- Rate limiting should be configured at reverse proxy level
-- Input validation prevents injection attacks
-- Error messages avoid leaking sensitive information
-
-## Deployment
-
-### Docker (Recommended)
-```dockerfile
-FROM rust:1.75 as builder
-COPY . .
-RUN cargo build --release --bin intent_mcp_server
-
-FROM debian:bookworm-slim
-COPY --from=builder /target/release/intent_mcp_server /usr/local/bin/
-CMD ["intent_mcp_server", "--api-url", "http://kotadb:8080"]
-```
-
-### Kubernetes
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: intent-mcp-server
-spec:
-  replicas: 2
-  template:
-    spec:
-      containers:
-      - name: intent-mcp
-        image: kotadb/intent-mcp-server:latest
-        env:
-        - name: API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: kotadb-secrets
-              key: api-key
-```
-
-### Monitoring
-- Structured logging with tracing
-- Metrics available via `/stats` endpoint
-- Health checks via server status
-- Error rates and response times tracked
-
-## Future Enhancements
-
-### Planned Features
-- Vector similarity search integration
-- Multi-turn conversation support  
-- Custom domain vocabulary training
-- GraphQL API bridge option
-- WebSocket streaming responses
-
-### Community Contributions
-- Additional language patterns
-- Domain-specific intent recognition
-- Custom response formatters
-- Integration examples
-
-## Support
-
-- GitHub Issues: [kotadb/issues](https://github.com/jayminwest/kota-db/issues)
-- Discussions: Use `mcp-integration` label
-- Documentation: See `/docs` directory
-- Examples: See `/examples` directory (coming soon)
+## Next Steps
+- Validate your configuration with `cargo run --bin mcp_server --features mcp-server -- --health-check` before deploying (`src/bin/mcp_server.rs:81`).
+- Enable `tree-sitter-parsing` and confirm relationship tooling via `POST /mcp/tools/find_callers` once symbol indexing is available (`src/mcp_http_bridge.rs:363`).
+- Extend the registry with new tool handlers by implementing `MCPToolHandler` and registering them in `MCPServer::new` (`src/mcp/tools/mod.rs:24`).
+- Record curl transcripts when shipping changes so downstream assistant integrations can trace MCP negotiations end to end.

@@ -11,346 +11,57 @@ created_by: "Claude Code"
 
 # KOTA Custom Database Technical Architecture
 
-## System Overview
+**Summary**: KotaDB centres every interface around a shared `Database` handle that wires file-backed storage, B+ tree and trigram indices, and semantic overlays while the services layer reuses those abstractions for HTTP, CLI, Supabase, and MCP entry points. Repository ingestion, symbol intelligence, and search flows all share the same validation, caching, and observability wrappers so deployments stay consistent regardless of feature flags or transport.
 
-The KOTA Database (KotaDB) is a codebase intelligence platform designed to transform source code into a queryable knowledge graph. It combines symbol extraction, dependency analysis, and impact assessment with high-performance search capabilities, enabling developers and AI systems to understand code relationships at scale.
+## Step 1 — Compose the Storage and Index Primitives
+- `Database::new` allocates the storage directory hierarchy, opens the file store, B+ tree primary index, and binary or text trigram index depending on the flag provided at runtime (`src/database.rs:33`). The struct retains a per-process path cache so repeated lookups avoid index hits (`src/database.rs:24`).
+- The file store persists Markdown documents and JSON metadata side-by-side, performing WAL initialisation and metadata hydration during startup (`src/file_storage.rs:48`, `src/file_storage.rs:66`, `src/file_storage.rs:80`). Inserts rewrite or inject YAML frontmatter for tags, recompute hashes, and drive the metadata cache (`src/file_storage.rs:215`).
+- The primary index wraps a file-backed B+ tree with WAL durability, lazy load protection, and pattern matching helpers for wildcard queries (`src/primary_index.rs:22`, `src/primary_index.rs:80`, `src/primary_index.rs:93`).
+- The trigram index extracts lowercase trigrams, keeps per-document frequency maps, and stores previews to accelerate scoring and snippet assembly during search (`src/trigram_index.rs:22`, `src/trigram_index.rs:90`).
+- Every storage handle is wrapped through buffering, caching, retries, validation, and tracing via `create_wrapped_storage`, giving production defaults for correctness and metrics (`src/wrappers.rs:1005`).
 
-### Design Philosophy
+| Signature | Purpose | Source |
+| --- | --- | --- |
+| `async fn insert(&mut self, document: Document) -> Result<()>` | Persist a new document and enforce invariants | `src/contracts/mod.rs:45` |
+| `async fn get(&self, id: &ValidatedDocumentId) -> Result<Option<Document>>` | Recover a document for subsequent search/result hydration | `src/contracts/mod.rs:49` |
+| `async fn search(&self, query: &Query) -> Result<Vec<ValidatedDocumentId>>` | Shared index lookup used by primary and trigram engines | `src/contracts/mod.rs:115` |
+| `async fn sync(&mut self) -> Result<()>` | Flush pending writes and propagate WAL durability | `src/contracts/mod.rs:118` |
 
-1. **Code as a Knowledge Graph**: Symbols, dependencies, and relationships are first-class entities
-2. **Dual Storage Architecture**: Optimized separation of documents and graph data
-3. **Lightning-Fast Search**: <3ms trigram search with 210x performance improvement
-4. **Symbol-Aware Analysis**: Automatic extraction of functions, classes, traits, and their relationships
-5. **Impact Understanding**: Know what breaks when code changes
+> **Note** The `tree-sitter-parsing` feature gate extends this foundation with symbol storage, binary relationship engines, and factory helpers declared in `src/lib.rs:32`; the core storage path remains valid without those extras.
 
-## Core Architecture Components
+## Step 2 — Expose Services to Interface Layers
+- `ServicesAppState` carries the shared storage and index mutexes, deployment flags, webhook base URLs, and job registries that back every HTTP handler (`src/services_http_server.rs:62`). Helper methods validate SaaS requirements and guard local path indexing when managed hosting is enabled (`src/services_http_server.rs:82`, `src/services_http_server.rs:98`).
+- `create_services_server` wires the canonical Axum router to health, search, indexing, analytics, validation, and benchmarking endpoints while seeding repository state from disk (`src/services_http_server.rs:542`). Each handler snapshots a lightweight `Database` struct that satisfies the shared `DatabaseAccess` trait so services can reuse caching and tracing (`src/services/search_service.rs:20`, `src/services_http_server.rs:3044`).
+- Content and symbol search endpoints build a `SearchService`, call the same logic that powers the CLI commands, and return structured results (`src/services_http_server.rs:1095`, `src/services_http_server.rs:3196`). Indexing and analysis routes similarly construct `IndexingService` and `AnalysisService` instances using the shared handles (`src/services_http_server.rs:3068`, `src/services_http_server.rs:1518`).
+- When compiled with `mcp-server`, the router registers MCP toolkits over the same storage and index mutexes so automation clients hit the identical code paths (`src/services_http_server.rs:598`).
 
-### 1. Storage Layer
+## Step 3 — Index Source Repositories
+- `IndexingService::index_codebase` orchestrates validation, progress logging, and symbol extraction decisions before delegating to the git ingestion pipeline (`src/services/indexing_service.rs:149`). Feature gates ensure symbol extraction toggles align with build-time capabilities (`src/services/indexing_service.rs:175`).
+- Repository ingestion sanitises repository identifiers, coordinates file organisation, and streams documents into storage using builders and memory reservations (`src/git/ingestion.rs:72`, `src/git/ingestion.rs:97`). The binary symbol pipeline records relationships via the relationship bridge and symbol writers when enabled (`src/git/ingestion.rs:169`).
+- The ingestion flow enforces memory ceilings and adaptive chunking through `MemoryManager`, guarding large repositories from exhausting host resources (`src/memory.rs:23`, `src/memory.rs:67`).
+- Incremental updates produced by Supabase webhooks merge path-level diffs so only changed files are reindexed, while removed paths are purged before re-running ingestion (`src/supabase_repository/job_worker.rs:242`, `src/supabase_repository/job_worker.rs:340`).
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Storage Engine                        │
-├─────────────────┬────────────────┬──────────────────────────┤
-│   Page Manager  │  Write-Ahead   │   Memory-Mapped Files    │
-│   (4KB pages)   │   Log (WAL)    │   (hot data cache)       │
-├─────────────────┴────────────────┴──────────────────────────┤
-│                    Compression Layer                         │
-│              (ZSTD with domain dictionaries)                 │
-├──────────────────────────────────────────────────────────────┤
-│                   Filesystem Interface                       │
-│              (Markdown files + Binary indices)               │
-└──────────────────────────────────────────────────────────────┘
-```
+> **Warning** Building with `git-integration` is required for remote clone support inside the Supabase worker; without it, `prepare_repository` returns an error early (`src/supabase_repository/job_worker.rs:417`).
 
-#### Page Manager
-- **Fixed 4KB pages**: Matches OS page size for optimal I/O
-- **Copy-on-Write**: Enables versioning without duplication
-- **Free space management**: Bitmap allocation for efficiency
-- **Checksums**: CRC32C for corruption detection
+## Step 4 — Execute Queries and Search
+- `SearchService::search_content` routes wildcard queries to the primary index and full-text queries to the trigram index, falling back to the LLM-optimised path when the caller requests broader context (`src/services/search_service.rs:117`). Regular search builds a validated query, selects an index, and hydrates documents from storage in a single place that all interfaces share (`src/services/search_service.rs:299`).
+- The trigram index normalises content, filters punctuation, and maintains per-document frequency maps that power efficient coverage and relevance scoring (`src/trigram_index.rs:90`, `src/trigram_index.rs:187`).
+- Semantic search layers `VectorIndex::search_knn` on top, providing cosine, Euclidean, or dot-product similarity with persisted HNSW state (`src/vector_index.rs:145`).
+- Symbol-aware flows use `AnalysisService` to query the binary relationship engine and translate matches into callers or impact records while preserving line numbers and relationship verbs (`src/services/analysis_service.rs:105`, `src/services/analysis_service.rs:126`).
 
-#### Write-Ahead Log (WAL)
-- **Append-only design**: Sequential writes for performance
-- **Group commit**: Batch multiple transactions
-- **Checkpoint mechanism**: Periodic state snapshots
-- **Recovery protocol**: Fast startup after crashes
+## Step 5 — Coordinate Background Jobs and SaaS Integrations
+- `SupabaseJobWorker::run` polls the job queue, recovers stale work, and hands each job to `process_job` for type-specific handling (`src/supabase_repository/job_worker.rs:124`, `src/supabase_repository/job_worker.rs:217`).
+- Indexing jobs merge repository metadata, infer safe repository names, apply incremental diffs, and call the same ingestion routines used locally via `index_repository` (`src/supabase_repository/job_worker.rs:324`, `src/supabase_repository/job_worker.rs:362`).
+- Repository metadata and webhook deliveries are updated atomically so SaaS dashboards reflect job status, success metrics, and failures in real time (`src/supabase_repository/job_worker.rs:383`, `src/supabase_repository/job_worker.rs:303`).
+- `ServicesAppState` maintains an in-memory job map to expose live progress to HTTP clients while persisting the canonical history through Supabase (`src/services_http_server.rs:76`).
 
-#### Compression Strategy
-- **Domain-specific dictionaries**: 
-  - Markdown syntax patterns
-  - YAML frontmatter structures
-  - Common tag vocabularies
-- **Adaptive compression levels**:
-  - Hot data: LZ4 (fast)
-  - Warm data: ZSTD level 3
-  - Cold data: ZSTD level 19
-- **Estimated ratios**: 3-5x for typical KOTA content
+## Step 6 — Safeguards, Observability, and Optimizations
+- The wrapper stack layers buffered writes, LRU caching, retry backoff, schema validation, and structured tracing over every storage call, emitting metrics via `log_operation` and `record_metric` hooks (`src/wrappers.rs:23`, `src/wrappers.rs:258`, `src/wrappers.rs:353`, `src/wrappers.rs:696`).
+- Logging initialisation honours verbose and quiet modes, integrates with `RUST_LOG`, and raises histograms, counters, and timers through the central observability module (`src/observability.rs:20`, `src/observability.rs:89`, `src/observability.rs:175`).
+- Operation contexts carry trace IDs so API handlers (`with_trace_id`) and storage/index wrappers report unified spans across ingestion, search, and Supabase job execution (`src/observability.rs:197`, `src/services_http_server.rs:3059`).
+- Validation utilities keep document IDs, paths, and tags consistent across retries and background tasks, which prevents stale metadata from leaking into cache layers (`src/validation.rs` via `src/wrappers.rs:287`).
 
-### 2. Index Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Codebase Intelligence Manager                   │
-├──────────────┬───────────────┬───────────────┬──────────────┤
-│   Symbol     │  Dependency   │    Impact     │  Semantic    │
-│  Extraction  │    Graph      │   Analysis    │    (HNSW)    │
-│      ✅      │       ✅      │      ✅       │      ✅      │
-├──────────────┴───────────────┴───────────────┴──────────────┤
-│                      Index Manager                           │
-├──────────────┬───────────────┬───────────────┬──────────────┤
-│   Primary    │   Full-Text   │     Graph     │   Wildcard   │
-│   (B+ Tree)  │   (Trigram)   │  (Relations)  │   Patterns   │
-│      ✅      │   ✅ (<3ms)   │      ✅       │      ✅      │
-├──────────────┼───────────────┼───────────────┼──────────────┤
-│   Temporal   │      Tag      │   Metadata    │   Spatial    │
-│   (Planned)  │   (Basic)     │    (Hash)     │  (Planned)   │
-│      🚧      │       ✅      │      ✅       │      🚧      │
-└──────────────┴───────────────┴───────────────┴──────────────┘
-```
-
-#### Primary Index (B+ Tree)
-- **Key**: File path (for filesystem compatibility)
-- **Value**: Document ID + metadata
-- **Features**: Range queries, ordered traversal
-- **Performance**: O(log n) lookups
-
-#### Full-Text Index (Trigram)
-- **Trigram extraction**: "hello" → ["hel", "ell", "llo"]
-- **Inverted index**: Trigram → Document IDs (RoaringBitmap)
-- **Fuzzy matching**: Levenshtein distance calculation
-- **Position tracking**: For snippet extraction
-
-#### Graph Index (Adjacency List)
-- **Forward edges**: Document → Related documents
-- **Backward edges**: Document ← Referencing documents
-- **Edge metadata**: Relationship type, strength, timestamp
-- **Traversal optimization**: Bloom filters for existence checks
-
-#### Semantic Index (HNSW)
-- **Hierarchical Navigable Small World**: Fast approximate search
-- **Vector dimensions**: 384 (all-MiniLM-L6-v2) or 1536 (OpenAI)
-- **Distance metrics**: Cosine similarity, L2 distance
-- **Performance**: Sub-linear search time
-
-### 3. Query Engine
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Query Interface                           │
-│                  (Natural Language)                          │
-├─────────────────────────────────────────────────────────────┤
-│                    Query Parser                              │
-│              (KQL - KOTA Query Language)                     │
-├─────────────────────────────────────────────────────────────┤
-│                   Query Planner                              │
-│            (Cost-based optimization)                         │
-├─────────────────────────────────────────────────────────────┤
-│                  Query Executor                              │
-│              (Parallel, streaming)                           │
-├─────────────────────────────────────────────────────────────┤
-│                  Result Processor                            │
-│           (Ranking, aggregation, projection)                 │
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### KOTA Query Language (KQL)
-```
-// Natural language queries
-"meetings about rust programming last week"
-"documents similar to distributed cognition"
-"show my productivity patterns"
-
-// Structured queries
-{
-  "type": "semantic",
-  "query": "consciousness evolution",
-  "filters": {
-    "created": { "$gte": "2025-01-01" },
-    "tags": { "$contains": "philosophy" }
-  },
-  "limit": 10
-}
-
-// Graph traversal
-{
-  "type": "graph",
-  "start": "projects/kota-ai/README.md",
-  "depth": 3,
-  "direction": "outbound",
-  "edge_filter": { "type": "implements" }
-}
-```
-
-#### Query Planning
-1. **Parse**: Convert natural language to AST
-2. **Analyze**: Determine required indices
-3. **Optimize**: Choose best execution path
-4. **Estimate**: Predict cost and result size
-
-#### Execution Strategy
-- **Index selection**: Use most selective index first
-- **Parallel execution**: Split independent subqueries
-- **Pipeline processing**: Stream results as available
-- **Memory budget**: Spill to disk if needed
-
-### 4. Transaction Management
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 Transaction Manager                          │
-├─────────────────┬────────────────┬──────────────────────────┤
-│      MVCC       │   Lock Manager  │   Deadlock Detector     │
-│  (Multi-Version)│  (Row-level)    │   (Wait-for graph)      │
-└─────────────────┴────────────────┴──────────────────────────┘
-```
-
-#### MVCC Implementation
-- **Version chains**: Each document has version history
-- **Snapshot isolation**: Consistent reads
-- **Garbage collection**: Clean old versions
-- **Read-write separation**: No read locks needed
-
-### 5. Consciousness Integration
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Consciousness Interface                         │
-├──────────────┬────────────────┬─────────────────────────────┤
-│   Session    │    Insight     │      Memory               │
-│   Tracking   │   Recording    │    Compression            │
-├──────────────┼────────────────┼─────────────────────────────┤
-│   Trigger    │    Pattern     │     Narrative             │
-│   Monitor    │   Detection    │    Generation             │
-└──────────────┴────────────────┴─────────────────────────────┘
-```
-
-#### Direct Integration Benefits
-- **Real-time context**: No file scanning needed
-- **Pattern detection**: Built-in analytics
-- **Memory optimization**: Compression-aware queries
-- **Trigger efficiency**: Index-based monitoring
-
-## Data Model
-
-### Document Structure
-```rust
-pub struct Document {
-    // Identity
-    id: DocumentId,          // 128-bit UUID
-    path: CompressedPath,    // Original file path
-    
-    // Content
-    frontmatter: Frontmatter,
-    content: MarkdownContent,
-    
-    // Metadata
-    created: Timestamp,
-    updated: Timestamp,
-    accessed: Timestamp,
-    version: Version,
-    
-    // Relationships
-    tags: TagSet,
-    related: Vec<DocumentId>,
-    backlinks: Vec<DocumentId>,
-    
-    // Cognitive metadata
-    embedding: Option<Vector>,
-    relevance_score: f32,
-    access_count: u32,
-}
-```
-
-### Index Entry Structure
-```rust
-pub struct IndexEntry {
-    doc_id: DocumentId,
-    score: f32,           // Relevance score
-    positions: Vec<u32>,  // Word positions for highlighting
-    metadata: Metadata,   // Quick-access fields
-}
-```
-
-## Performance Characteristics
-
-### Time Complexity
-| Operation | Complexity | Typical Time |
-|-----------|------------|--------------|
-| Insert | O(log n) | <1ms |
-| Update | O(log n) | <1ms |
-| Delete | O(log n) | <1ms |
-| Lookup by path | O(log n) | <0.1ms |
-| Full-text search | O(k) | <10ms |
-| Graph traversal | O(V + E) | <50ms |
-| Semantic search | O(log n) | <20ms |
-
-### Space Complexity
-| Component | Memory Usage | Disk Usage |
-|-----------|--------------|------------|
-| Document | ~8KB avg | ~3KB compressed |
-| Indices | ~500B/doc | ~200B/doc |
-| WAL | 10MB active | Configurable |
-| Page cache | 100MB default | N/A |
-
-### Throughput Targets
-- **Writes**: 10,000+ documents/second
-- **Reads**: 100,000+ queries/second
-- **Mixed**: 50% read, 50% write maintaining targets
-
-## Security Architecture
-
-### Encryption
-- **At rest**: AES-256-GCM for sensitive documents
-- **In transit**: TLS 1.3 for network operations
-- **Key management**: OS keychain integration
-
-### Access Control
-- **Document-level**: Read/write permissions
-- **Field-level**: Redaction for sensitive fields
-- **Audit logging**: All operations tracked
-
-### Privacy Features
-- **PII detection**: Automatic flagging
-- **Retention policies**: Automatic expiry
-- **Right to forget**: Complete removal
-
-## Extensibility Points
-
-### Plugin System
-```rust
-pub trait KotaPlugin {
-    fn on_insert(&mut self, doc: &Document) -> Result<()>;
-    fn on_query(&mut self, query: &Query) -> Result<()>;
-    fn on_index(&mut self, index: &Index) -> Result<()>;
-}
-```
-
-### Custom Index Types
-- **Bloom filter index**: For existence checks
-- **Geospatial index**: For location data
-- **Phonetic index**: For name matching
-- **Custom embeddings**: Domain-specific vectors
-
-### Query Extensions
-- **Custom functions**: User-defined computations
-- **External data sources**: Federation support
-- **Streaming queries**: Real-time updates
-
-## Operational Considerations
-
-### Monitoring
-- **Prometheus metrics**: Performance and health
-- **OpenTelemetry traces**: Distributed tracing
-- **Custom dashboards**: Grafana integration
-
-### Maintenance
-- **Online defragmentation**: No downtime
-- **Index rebuilding**: Background operation
-- **Backup coordination**: Consistent snapshots
-
-### Disaster Recovery
-- **Point-in-time recovery**: Any timestamp
-- **Geo-replication**: Optional for critical data
-- **Incremental backups**: Efficient storage
-
-## Future Optimizations
-
-### Hardware Acceleration
-- **SIMD instructions**: Batch operations
-- **GPU indexing**: Parallel vector search
-- **Persistent memory**: Intel Optane support
-
-### Advanced Features
-- **Learned indices**: ML-based optimization
-- **Adaptive compression**: Content-aware
-- **Predictive caching**: Access pattern learning
-
-### Cognitive Enhancements
-- **Thought chains**: Native support
-- **Memory consolidation**: Sleep-like processing
-- **Attention mechanisms**: Priority-based indexing
-
-## Conclusion
-
-This architecture provides a solid foundation for KOTA's evolution from a tool collection to a genuine cognitive partner. The custom database design specifically addresses the unique requirements of human-AI distributed cognition while maintaining practical considerations like Git compatibility and human readability.
-
-The modular design allows for incremental implementation and testing, reducing risk while enabling rapid innovation in areas like consciousness integration and semantic understanding.
+## Next Steps
+- Run `just ci-fast` before shipping architectural changes to confirm wrappers, indices, and services stay aligned.
+- Capture representative repository workloads and measure trigram/vector index timings through the existing metrics endpoints to size cache capacities.
+- Document any custom feature-flag combinations you deploy so MCP, Supabase, and CLI clients agree on available services.

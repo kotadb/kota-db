@@ -1,519 +1,87 @@
 # Fly.io Deployment Guide for KotaDB SaaS API
 
-> **Migration Status**: Migrated from Railway to Fly.io (Issue #510)
-> **Last Updated**: September 2025
-
-## Overview
-
-KotaDB SaaS API is deployed on Fly.io for both staging and production environments. This guide covers deployment procedures, configuration management, troubleshooting, and operational tasks.
-
-## Table of Contents
-
-1. [Prerequisites](#prerequisites)
-2. [Environment Setup](#environment-setup)
-3. [Deployment Process](#deployment-process)
-4. [Configuration Files](#configuration-files)
-5. [Secrets Management](#secrets-management)
-6. [CI/CD Pipeline](#cicd-pipeline)
-7. [Monitoring & Debugging](#monitoring--debugging)
-8. [Troubleshooting](#troubleshooting)
-9. [Rollback Procedures](#rollback-procedures)
-10. [Migration from Railway](#migration-from-railway)
-
-## Prerequisites
-
-### Required Tools
-
-1. **Fly.io CLI (flyctl)**:
-   ```bash
-   # macOS
-   brew install flyctl
-   
-   # Linux
-   curl -L https://fly.io/install.sh | sh
-   
-   # Windows
-   powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"
-   ```
-
-2. **Authentication**:
-   ```bash
-   flyctl auth login
-   ```
-
-3. **Rust Toolchain** (for local testing):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-## Environment Setup
-
-### Staging Environment
-- **App Name**: `kotadb-api-staging`
-- **URL**: https://kotadb-api-staging.fly.dev
-- **Region**: IAD (Ashburn, Virginia)
-- **Config**: `fly.staging.toml`
-
-### Production Environment
-- **App Name**: `kotadb-api`
-- **URL**: https://kotadb-api.fly.dev
-- **Region**: IAD (Ashburn, Virginia)
-- **Config**: `fly.toml`
-
-## Deployment Process
-
-### Quick Deploy
-
-Use the provided deployment script for easy deployments:
-
-```bash
-# Deploy to staging
-./scripts/deploy-fly.sh staging
-
-# Deploy to production (requires confirmation)
-./scripts/deploy-fly.sh production
-```
-
-### Manual Deployment
-
-#### Staging Deployment
-```bash
-flyctl deploy \
-  --config fly.staging.toml \
-  --app kotadb-api-staging \
-  --ha=false \
-  --strategy immediate
-```
-
-#### Production Deployment
-```bash
-flyctl deploy \
-  --config fly.toml \
-  --app kotadb-api \
-  --ha=true \
-  --strategy rolling
-```
-
-### First-Time Setup
-
-If deploying for the first time:
-
-1. **Create the app**:
-   ```bash
-   # Staging
-   flyctl apps create kotadb-api-staging --org personal
-   
-   # Production
-   flyctl apps create kotadb-api --org personal
-   ```
-
-2. **Create persistent volumes**:
-   ```bash
-   # Staging (5GB)
-   flyctl volumes create kotadb_staging_data \
-     --size 5 \
-     --app kotadb-api-staging \
-     --region iad
-   
-   # Production (10GB)
-   flyctl volumes create kotadb_data \
-     --size 10 \
-     --app kotadb-api \
-     --region iad
-   ```
-
-3. **Set required secrets** (see [Secrets Management](#secrets-management))
-
-4. **Deploy the application**
-
-## Configuration Files
-
-### fly.toml (Production)
-Main configuration for production deployment:
-- High availability enabled
-- Rolling deployment strategy
-- 512MB RAM, 1 shared CPU
-- Health checks every 30s
-- Auto-rollback enabled
-
-### fly.staging.toml (Staging)
-Configuration for staging environment:
-- Single instance (no HA)
-- Immediate deployment strategy
-- 256MB RAM, 1 shared CPU
-- Debug endpoints enabled
-- More verbose logging
-
-### Key Configuration Options
-
-```toml
-# Deployment strategy
-[deploy]
-  strategy = "rolling"        # or "immediate" for staging
-  max_unavailable = 0.33      # Max 33% unavailable during deploy
-  wait_timeout = "10m"        # Max deployment time
-
-# Health checks
-[[services.http_checks]]
-  interval = "30s"
-  timeout = "10s"
-  grace_period = "5s"
-  method = "GET"
-  path = "/health"
-
-# Scaling
-[[vm]]
-  cpu_kind = "shared"         # or "dedicated" for production
-  cpus = 1
-  memory_mb = 512
-```
-
-## Secrets Management
-
-### Architecture Note: Supabase Integration
-
-KotaDB uses **Supabase for all persistent data storage**:
-- **API Keys**: Stored and managed in Supabase
-- **Documents**: All content stored in Supabase
-- **User Data**: Managed by Supabase Auth
-- **Usage Metrics**: Tracked in Supabase
-
-The Fly.io deployment is **stateless** and only processes requests. See `docs/SUPABASE_ARCHITECTURE.md` for detailed architecture.
-
-## Supabase Migrations
-
-- Generate new SQL from local changes with `just supabase-generate <short_name>`; this wraps `supabase db diff` and writes into `supabase/migrations/`.
-- Rebuild the local Supabase containers and apply migrations via `just supabase-reset` before sending a PR. This helper only touches the Dockerised dev stack—it never talks to staging or production.
-- Apply the migrations to a remote database with `just supabase-apply <postgres_url>`; in CI the URL is supplied through secrets (see deployment workflow). The helper delegates to `supabase db push`, so the official migration tracking table (`supabase_migrations.schema_migrations`) stays fully compatible with the Supabase CLI.
-- Hosted mode depends on the repository/indexing schema introduced in `20250922_saas_repositories_jobs.sql`. Ensure staging and production run that migration before enabling git onboarding features.
-
-### Using the Secrets Script
-
-```bash
-# Set secrets for staging
-./scripts/fly-secrets.sh staging set
-
-# List current secrets
-./scripts/fly-secrets.sh production list
-
-# Remove a secret
-./scripts/fly-secrets.sh staging unset API_KEY
-```
-
-### Manual Secret Management
-
-```bash
-# Set Supabase connection (most important)
-flyctl secrets set \
-  DATABASE_URL="postgresql://postgres.[PROJECT_REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres" \
-  --app kotadb-api
-
-# Set additional Supabase credentials
-flyctl secrets set \
-  SUPABASE_URL="https://[PROJECT_REF].supabase.co" \
-  SUPABASE_ANON_KEY="[YOUR_ANON_KEY]" \
-  SUPABASE_SERVICE_KEY="[YOUR_SERVICE_KEY]" \
-  --app kotadb-api
-
-# List secrets (shows only names, not values)
-flyctl secrets list --app kotadb-api
-
-# Remove a secret
-flyctl secrets unset API_KEY --app kotadb-api
-```
-
-### Required Secrets
-
-| Secret | Description | Required | Example |
-|--------|-------------|----------|---------|
-| DATABASE_URL | Supabase PostgreSQL connection (pooler endpoint) | Yes | `postgresql://postgres.[ref]:[pass]@aws-0-region.pooler.supabase.com:6543/postgres?statement_cache_size=0` |
-| SUPABASE_URL | Supabase project URL | Yes | `https://[ref].supabase.co` |
-| SUPABASE_ANON_KEY | Public anonymous key | Yes | Your project's anon key |
-| SUPABASE_SERVICE_KEY | Service role key (admin) | Yes | Your project's service key |
-| SUPABASE_DB_URL_STAGING | Direct Postgres URL for staging | Yes | Passed to deploy workflow for migrations |
-| SUPABASE_DB_URL_PRODUCTION | Direct Postgres URL for production | Yes | Only used in manual production deploys |
-| GITHUB_CLIENT_ID | GitHub OAuth application client ID | Yes | `Iv1.abcdef1234567890` |
-| GITHUB_CLIENT_SECRET | GitHub OAuth application client secret | Yes | `gho_...` |
-| GITHUB_WEBHOOK_TOKEN | Token with repo admin scope used to provision webhooks | Yes | `ghp_...` |
-| KOTADB_WEBHOOK_BASE_URL | Public base URL for webhook callbacks | Yes | `https://kotadb-api-staging.fly.dev` |
-| SAAS_STAGING_API_KEY | API key used by CI smoke tests against staging | Yes | Generated via `/internal/create-api-key` |
-| SAAS_PRODUCTION_API_KEY | API key used by CI smoke tests against production | Yes | Scoped key for production tenants |
-| JWT_SECRET | Secret for JWT token validation | No | Auto-handled by Supabase |
-| REDIS_URL | Redis connection for caching | No | `redis://host:6379` |
-| SENTRY_DSN | Error tracking with Sentry | No | Sentry project DSN |
-
-After updating secrets, verify the pooler credentials locally:
-
-```
-cp .env.example .env  # only if you do not already keep a .env file
-SQLX_DISABLE_STATEMENT_CACHE=true scripts/check_pooler_connection.sh .env
-```
-
-The script sources `.env`, reads `DATABASE_URL`, and runs `psql SELECT 1` against the pooler endpoint (respecting `SQLX_DISABLE_STATEMENT_CACHE`). It exits non-zero when the URL or credentials are invalid. Once it passes locally, set the same values on Fly (`DATABASE_URL`, `SQLX_DISABLE_STATEMENT_CACHE=true`, `KOTADB_WEBHOOK_BASE_URL`, `GITHUB_WEBHOOK_TOKEN`) before deploying.
-
-## CI/CD Pipeline
-
-### GitHub Actions Workflow
-
-The deployment is automated via GitHub Actions (`.github/workflows/saas-api-deploy.yml`):
-
-1. **Triggers**:
-   - Push to `develop` → Deploy to staging
-   - Push to `main` → Deploy to production
-   - Manual workflow dispatch
-
-2. **Deployment Flow**:
-   ```
-   Tests → Build → Deploy → Health Check → Smoke Tests
-   ```
-
-3. **Required GitHub Secrets**:
-   - `FLY_API_TOKEN`: Fly.io authentication token
-   - `SUPABASE_DB_URL_STAGING`: direct connection string used during staging deploys
-   - `SUPABASE_DB_URL_PRODUCTION`: direct connection string used during production deploys
-   
-   Get your token:
-   ```bash
-   flyctl auth token
-   ```
-   
-   Add to GitHub:
-   ```bash
-   gh secret set FLY_API_TOKEN --body "YOUR_TOKEN_HERE"
-   ```
-
-### Manual CI/CD Trigger
-
-```bash
-# Trigger deployment manually
-gh workflow run saas-api-deploy.yml \
-  --field environment=staging
-
-# Check workflow status
-gh run list --workflow=saas-api-deploy.yml
-```
-
-## Monitoring & Debugging
-
-### View Logs
-
-```bash
-# Real-time logs
-flyctl logs --app kotadb-api
-
-# Last 100 lines
-flyctl logs --app kotadb-api -n 100
-
-# Filter by instance
-flyctl logs --app kotadb-api --instance=abcd1234
-```
-
-### SSH Access
-
-```bash
-# Connect to running instance
-flyctl ssh console --app kotadb-api
-
-# Run commands in the container
-flyctl ssh console --app kotadb-api --command "ls -la /data"
-```
-
-### Application Status
-
-```bash
-# Overall status
-flyctl status --app kotadb-api
-
-# Detailed instance info
-flyctl status --app kotadb-api --verbose
-
-# List all instances
-flyctl scale show --app kotadb-api
-```
-
-### Metrics
-
-```bash
-# Open Fly.io dashboard
-flyctl dashboard --app kotadb-api
-
-# View metrics in terminal
-flyctl monitor --app kotadb-api
-```
-
-### SaaS Smoke Test
-
-Use the helper script to verify the hosted API after each deploy. It validates the
-public `/health` endpoint (including Supabase latency and queued job counts) and,
-optionally, the authenticated repository listing when an API key is provided.
-
-```bash
-# Basic check against staging
-scripts/saas_smoke.sh
-
-# Custom URL and API key
-scripts/saas_smoke.sh -u https://kotadb-api.fly.dev -k "$KOTADB_API_KEY"
-
-# Include MCP checks (requires API key)
-scripts/saas_smoke.sh -u https://kotadb-api.fly.dev -k "$KOTADB_API_KEY" --mcp
-```
-
-> The `saas-api-deploy.yml` workflow runs this script after each staging and production deploy, using
-> environment-specific API keys (`SAAS_STAGING_API_KEY`, `SAAS_PRODUCTION_API_KEY`).
-
-## Troubleshooting
-
-### Common Issues and Solutions
-
-#### 1. Container Restart Loops
-**Symptom**: App keeps restarting
-**Solution**:
-```bash
-# Check logs for errors
-flyctl logs --app kotadb-api -n 200
-
-# Verify secrets are set
-flyctl secrets list --app kotadb-api
-
-# Check health endpoint locally
-curl https://kotadb-api.fly.dev/health
-```
-
-#### 2. SaaS env validation failures
-**Symptom**: Logs show `Missing required environment variables` and the instance exits before binding to the port.
-**Solution**: Confirm all Supabase and GitHub secrets are configured (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and at least one of `SUPABASE_DB_URL`, `SUPABASE_DB_URL_STAGING`, or `SUPABASE_DB_URL_PRODUCTION`).
-
-#### 3. Database Connection Issues
-**Symptom**: "DATABASE_URL is not set" or connection timeouts
-**Solution**:
-```bash
-# Verify DATABASE_URL is set
-flyctl secrets list --app kotadb-api | grep DATABASE_URL
-
-# Test connection from container
-flyctl ssh console --app kotadb-api
-> apt-get update && apt-get install -y postgresql-client
-> psql $DATABASE_URL -c "SELECT 1"
-```
-
-#### 4. Deployment Failures
-**Symptom**: Deploy command fails
-**Solution**:
-```bash
-# Check build logs
-flyctl deploy --verbose
-
-# Try with local Docker build
-flyctl deploy --local-only
-
-# Clear builder cache
-flyctl deploy --no-cache
-```
-
-#### 4. Out of Memory
-**Symptom**: App crashes with OOM errors
-**Solution**:
-```bash
-# Scale up memory
-flyctl scale memory 1024 --app kotadb-api
-
-# Check current usage
-flyctl scale show --app kotadb-api
-```
-
-### Debug Commands
-
-```bash
-# Get detailed app info
-flyctl info --app kotadb-api
-
-# List releases
-flyctl releases list --app kotadb-api
-
-# Check certificates
-flyctl certs list --app kotadb-api
-
-# View current configuration
-flyctl config show --app kotadb-api
-```
-
-## Rollback Procedures
-
-### Automatic Rollback
-
-Fly.io automatically rolls back if health checks fail during deployment.
-
-### Manual Rollback
-
-```bash
-# List recent releases
-flyctl releases list --app kotadb-api
-
-# Rollback to specific version
-flyctl deploy --image registry.fly.io/kotadb-api:deployment-01J6ABCD
-
-# Or use the GitHub Actions workflow
-gh workflow run saas-api-deploy.yml \
-  --field environment=production \
-  --field action=rollback
-```
-
-## Migration from Railway
-
-### What Changed
-
-1. **Configuration Format**: 
-   - Railway: `railway.toml`
-   - Fly.io: `fly.toml` and `fly.staging.toml`
-
-2. **Deployment Command**:
-   - Railway: `railway up`
-   - Fly.io: `flyctl deploy`
-
-3. **Environment Variables**:
-   - Railway: Set in dashboard
-   - Fly.io: Set via `flyctl secrets`
-
-4. **Persistent Storage**:
-   - Railway: Automatic
-   - Fly.io: Explicit volume mounts
-
-5. **Health Checks**:
-   - Railway: Basic HTTP checks
-   - Fly.io: Comprehensive TCP and HTTP checks
-
-### Benefits of Fly.io
-
-- ✅ Better debugging with SSH access
-- ✅ Clear error messages during deployment
-- ✅ Native Docker support
-- ✅ CLI-first approach
-- ✅ Better GLIBC compatibility
-- ✅ Predictable container behavior
-- ✅ Superior monitoring and metrics
-
-## Best Practices
-
-1. **Always test in staging first**
-2. **Monitor logs during deployment**
-3. **Keep secrets in environment-specific files**
-4. **Use health checks to validate deployments**
-5. **Document any manual changes in GitHub issues**
-6. **Use the provided scripts for consistency**
-7. **Tag releases in git after successful production deployments**
-
-## Support and Resources
-
-- [Fly.io Documentation](https://fly.io/docs/)
-- [Fly.io Status Page](https://status.fly.io/)
-- [KotaDB GitHub Issues](https://github.com/jayminwest/kota-db/issues)
-- [Deployment Script](./scripts/deploy-fly.sh)
-- [Secrets Management Script](./scripts/fly-secrets.sh)
-
-## Emergency Contacts
-
-For critical production issues:
-1. Check Fly.io status page
-2. Review recent deployments in GitHub Actions
-3. Create high-priority GitHub issue with `production-blocker` label
-4. Use `flyctl ssh console` for immediate debugging
+Deploy the `kotadb-api-server` binary to Fly.io using the Supabase-backed SaaS architecture that the runtime already enforces. This walkthrough shows how the server boots, which secrets it expects, and how Fly.io, Supabase, and GitHub webhooks coordinate during and after a deploy.
+
+## Step 1 - Map the Runtime Architecture
+
+- Command-line arguments hydrate the server from environment variables, covering storage paths, port binding, rate limits, and the Supabase pool DSN (`src/bin/kotadb-api-server.rs:16`).
+- The executable initialises file, primary, and trigram index backends before touching the network, preventing half-configured startups (`src/bin/kotadb-api-server.rs:95`).
+- Successful database connectivity is asserted prior to serving traffic; the same `ApiKeyConfig` is then passed into the HTTP stack (`src/bin/kotadb-api-server.rs:128`).
+- `create_services_saas_server` builds the Axum router, enabling API key authentication, MCP tooling, and webhook routing only when SaaS mode is fully configured (`src/services_http_server.rs:694`).
+- `ServicesAppState` keeps shared handles for indices, the `ApiKeyService`, the Supabase pool, job tracking, and repository metadata (`src/services_http_server.rs:62`).
+- A Supabase job worker polls for queued repository indexing work and hands it to `IndexingService::index_codebase`, so webhook-triggered jobs reuse the same ingestion pipeline as the CLI (`src/services_http_server.rs:729`, `src/supabase_repository/job_worker.rs:123`, `src/services/indexing_service.rs:149`).
+- GitHub webhook payloads are authenticated against the stored secret, deduplicated via Supabase, and translated into job rows before the worker sees them (`src/services_http_server.rs:1707`, `src/supabase_repository/mod.rs:92`).
+- Health probes surface SaaS diagnostics, including Supabase latency and job queue saturation, which power smoke tests and Fly.io runtime health checks (`src/services_http_server.rs:168`, `src/services_http_server.rs:2575`).
+
+## Step 2 - Prepare Fly.io Access and Local Tooling
+
+- Install the Fly.io CLI (`flyctl`) from the official instructions and authenticate with `flyctl auth login`.
+- Ensure the Rust toolchain matches the project (`rustup show`) and that local builds use the required features: `cargo build --release --no-default-features --features "git-integration,tree-sitter-parsing,mcp-server"` (`Dockerfile.production:31`).
+- Run the same checks that the deployment script enforces: `cargo test --features tree-sitter-parsing,git-integration --bin kotadb-api-server` and `cargo clippy --features tree-sitter-parsing,git-integration --bin kotadb-api-server -- -D warnings` (`scripts/deploy-fly.sh:63`).
+- Confirm you can reach Supabase from your network before deploying by running `scripts/check_pooler_connection.sh` with a populated `.env` (`scripts/check_pooler_connection.sh:5`).
+- Keep `just` available so you can fall back to `just test` or `just ci-fast` when you need broader coverage during incident response.
+
+## Step 3 - Configure Supabase and Secrets
+
+> **Warning** Disabling SaaS environment validation via `DISABLE_SAAS_ENV_VALIDATION` skips every safety check performed at startup and should only be used for emergency debugging (`src/services_http_server.rs:2535`).
+
+| Secret | Purpose in runtime | Where it is consumed |
+| --- | --- | --- |
+| `DATABASE_URL` | Connects `ApiKeyService::new` to the Supabase Postgres pool for API key validation (`src/bin/kotadb-api-server.rs:28`, `src/api_keys.rs:125`) | Fly secret, local `.env` |
+| `SUPABASE_DB_URL_STAGING` / `SUPABASE_DB_URL_PRODUCTION` | Direct (non-pooler) Postgres URLs used for migrations during deploys (`.github/workflows/saas-api-deploy.yml:88`, `.github/workflows/saas-api-deploy.yml:134`) | GitHub Secrets & Fly |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` | Required for webhook provisioning and repository metadata sync (`src/services_http_server.rs:2502`) | Fly secrets |
+| `KOTADB_WEBHOOK_BASE_URL` | Public base URL baked into webhook registrations (`src/services_http_server.rs:710`) | Fly secrets |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_TOKEN` | Enables GitHub OAuth handshakes and webhook verification (`src/services_http_server.rs:2515`) | Fly secrets |
+| `SAAS_STAGING_API_KEY`, `SAAS_PRODUCTION_API_KEY` | API keys used by smoke tests during CI deploys (`.github/workflows/saas-api-deploy.yml:109`, `.github/workflows/saas-api-deploy.yml:156`) | GitHub Secrets |
+| `REDIS_URL`, `SENTRY_DSN`, `JWT_SECRET` | Optional diagnostics and caching toggles surfaced as best-effort warnings (`src/services_http_server.rs:2553`) | Fly secrets |
+
+- Use `./scripts/fly-secrets.sh staging set` or `./scripts/fly-secrets.sh production set` to update secrets interactively; the helper writes a temporary script so the final `flyctl secrets set` invocation is auditable (`scripts/fly-secrets.sh:50`).
+- After staging secrets change, rerun `scripts/check_pooler_connection.sh` against the new `.env` and redeploy only after it reports success (`scripts/check_pooler_connection.sh:31`).
+- Keep Supabase migrations current with `just supabase-generate` and `just supabase-reset`, then apply them to remote environments using `SUPABASE_DB_URL=... ./scripts/supabase-apply-remote.sh` (`scripts/supabase-apply-remote.sh:8`).
+
+## Step 4 - Build the Release Image
+
+- The container image is produced by `Dockerfile.production`, which compiles `kotadb`, `kotadb-api-server`, and the MCP bridge with the Fly-enabled feature set and copies them into a minimal Alpine runtime (`Dockerfile.production:31`, `Dockerfile.production:53`).
+- Runtime defaults such as `PORT=8080`, tracing configuration, and `KOTADB_DATA_DIR=/app/data` are baked into the image and mirrored in the Fly manifests (`Dockerfile.production:66`, `fly.toml:16`).
+- Production deployments inherit concurrency and health check policies from `fly.toml`, including HTTP health probes on `/health`, a 30-second timeout, and automatic rollbacks (`fly.toml:24`, `fly.toml:49`).
+- Staging lowers resource limits and switches to the immediate deployment strategy while enabling extra diagnostics (`fly.staging.toml:14`, `fly.staging.toml:74`).
+- Because all durable data lives in Supabase, the Fly manifests intentionally avoid attaching volumes; `/app/data` is only a scratch directory for indexing (`fly.toml:67`).
+
+## Step 5 - Deploy the SaaS API
+
+1. Log in to Fly (`flyctl auth login`) and pick the target environment (`staging` or `production`).
+2. Run `./scripts/deploy-fly.sh staging` for standard deployments; the script gates the rollout behind tests, Clippy, and a confirmation prompt for production environments (`scripts/deploy-fly.sh:33`).
+3. For manual control, call `flyctl deploy --config fly.staging.toml --app kotadb-api-staging --strategy immediate --ha=false --wait-timeout 300` in staging, or swap in the production manifest and rolling strategy when targeting `kotadb-api` (`scripts/deploy-fly.sh:101`).
+4. First-time setups should invoke `flyctl apps create` for each environment, then set required secrets before deploying; skip volume creation because the runtime is stateless (`scripts/deploy-fly.sh:78`).
+5. After the deploy waits for health checks, the script sleeps briefly and curls `/health`; use that output alongside `flyctl status --app <app>` to confirm readiness (`scripts/deploy-fly.sh:126`).
+
+## Step 6 - Integrate With CI/CD
+
+- The `saas-api-deploy.yml` workflow rebuilds and tests the API server for pushes to `develop` (staging) and `main` (production), mirroring the local deployment guardrails (`.github/workflows/saas-api-deploy.yml:1`).
+- Supabase migrations run automatically when `SUPABASE_DB_URL_STAGING` or `SUPABASE_DB_URL_PRODUCTION` are present, using the same helper script you can run locally (`.github/workflows/saas-api-deploy.yml:88`).
+- Deployments reuse Fly.io's official action to install `flyctl`, then apply the environment-specific manifest with the matching HA flag (`.github/workflows/saas-api-deploy.yml:149`).
+- Post-deploy smoke tests call `scripts/saas_smoke.sh --mcp` so MCP endpoints and authenticated repository listings are exercised with environment-specific API keys (`.github/workflows/saas-api-deploy.yml:109`).
+- Manual rollbacks are exposed through a workflow dispatch input that skips the deploy jobs and instead reruns `flyctl deploy` against a prior image (`.github/workflows/saas-api-deploy.yml:187`).
+
+## Step 7 - Validate and Monitor the Service
+
+- Fly.io health checks hit `/health`, which wraps `fetch_saas_health` and reports Supabase availability, latency, and job queue depth; an unhealthy Supabase connection flips the status to `unhealthy` (`src/services_http_server.rs:920`, `src/services_http_server.rs:2575`).
+- Run `scripts/saas_smoke.sh -u https://kotadb-api-staging.fly.dev --mcp` after each deploy to parse the JSON health payload and verify authenticated endpoints (`scripts/saas_smoke.sh:53`, `scripts/saas_smoke.sh:92`).
+- Tail runtime logs with `flyctl logs --app kotadb-api` to watch webhook intake, worker activity, and indexing progress messages emitted from the job loop (`src/supabase_repository/job_worker.rs:164`).
+- Spot-check instances and scaling with `flyctl status --app kotadb-api` and `flyctl scale show --app kotadb-api` to confirm that concurrency, memory, and region match expectations (`fly.toml:38`).
+- Keep Supabase-side metrics and job history in view via `supabase_migrations.schema_migrations`, plus telemetry forwarded by optional `SENTRY_DSN` if configured (`scripts/supabase-apply-remote.sh:32`).
+
+## Step 8 - Troubleshoot and Roll Back
+
+- If the server exits during startup, check for missing secrets; `validate_saas_environment` logs warnings and errors before returning a fatal error when core variables are absent (`src/services_http_server.rs:2545`).
+- Repository webhooks failing with signature errors indicate mismatched secrets between Supabase and Fly; re-run registration or reset secrets using `SupabaseRepositoryStore::register_repository_and_enqueue_job` paths (`src/supabase_repository/mod.rs:136`).
+- Stalled jobs will surface under `saas.job_queue.failed_recent` in the health payload; inspect the worker logs for `Job failed` messages and requeue from Supabase after correcting the repository (`src/supabase_repository/job_worker.rs:181`).
+- Roll back quickly with `flyctl releases list --app kotadb-api` followed by `flyctl deploy --image <previous image>`; GitHub Actions exposes the same rollback flow through the workflow dispatch input (`scripts/deploy-fly.sh:111`, `.github/workflows/saas-api-deploy.yml:199`).
+- When necessary, open an SSH console (`flyctl ssh console --app kotadb-api`) and run `curl localhost:8080/health` to bypass edge caching and confirm port readiness before promoting traffic.
+
+## Next Steps
+
+- Run `just ci-fast` to preflight your branch before triggering the Fly.io workflow.
+- Keep staging and production migrations aligned with `./scripts/supabase-apply-remote.sh` prior to high-risk deploys.
+- Schedule regular smoke tests with `scripts/saas_smoke.sh --mcp` using rotating API keys.
+- Tag releases after successful production deploys so `flyctl releases` history maps cleanly to source commits.

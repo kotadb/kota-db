@@ -1,411 +1,60 @@
 # KotaDB Release Process
 
-This document outlines the release process for KotaDB, including versioning strategy, release procedures, and post-release tasks.
+KotaDB releases run from the `just` release targets, which wrap `scripts/release.sh` to update versions, changelog entries, and client libraries before handing off to the GitHub Actions pipeline that publishes binaries, containers, language clients, and versioned docs (`justfile:254-318`, `scripts/release.sh:20-238`, `.github/workflows/release.yml:1-379`).
 
-## Versioning Strategy
+## Step 1 – Stage the release content
+- Review the pending changelog and commit history with `just release-preview` to confirm everything intended for the cut is documented (`justfile:300-312`).
+- Run the fast gating checks locally—`just ci-fast` covers `cargo fmt --check`, `cargo clippy -D warnings`, targeted tests, and the security audit before the release script repeats them (`justfile:210-213`, `scripts/release.sh:82-93`).
+- Verify client libraries build if they changed; the release script updates their versions but assumes the TypeScript and Python packages are already healthy (`scripts/release.sh:139-162`).
+- Confirm repository credentials and tokens (crates.io, PyPI, npm, GHCR) are available to the workflow, because the jobs rely on the associated secrets (`.github/workflows/release.yml:170-255`, `.github/workflows/release.yml:257-295`).
 
-KotaDB follows [Semantic Versioning 2.0.0](https://semver.org/):
+> **Note** Ensure CHANGELOG entries mention the exact version string you plan to tag—the automation extracts release notes straight from `CHANGELOG.md` (`.github/workflows/release.yml:32-55`).
 
-- **MAJOR** version (X.0.0): Incompatible API changes
-- **MINOR** version (0.X.0): Backwards-compatible functionality additions
-- **PATCH** version (0.0.X): Backwards-compatible bug fixes
-- **PRERELEASE** versions: Alpha, beta, and release candidates (e.g., 1.0.0-beta.1)
+## Step 2 – Pick the version number
+- Use the bump helper in preview mode to see the next semantic version without touching the tree, e.g. `just bump minor --preview` (`justfile:259-260`, `scripts/version-bump.sh:20-105`).
+- Choose between `release-patch`, `release-minor`, `release-major`, or `release-beta` for automatic bumps, each of which invokes the same release flow with the computed version (`justfile:267-277`).
+- If you need an explicit pre-release identifier, pass the fully qualified version to `just release <version>` so that `scripts/release.sh` uses it verbatim (`justfile:263-265`, `scripts/release.sh:20-40`).
 
-## Quick Release Commands
+## Step 3 – Run the release script
+- Dry-run first when unsure: `just release-dry-run 0.7.0` walks the entire flow without modifying files or pushing (`justfile:280-281`, `scripts/release.sh:30-33`).
+- Execute the actual release with `just release 0.7.0` (or the bump target you selected). The script enforces a clean working tree (`scripts/release.sh:47-55`), warns if you are off `main` (`scripts/release.sh:58-69`), pulls the latest changes (`scripts/release.sh:71-78`), and reruns fmt/clippy/tests (`scripts/release.sh:82-93`).
+- During the same invocation it rewrites `Cargo.toml`, `VERSION`, and `Cargo.lock`, then stages client library version bumps before committing (`scripts/release.sh:97-185`).
+- The script pulls structured release notes from the version section in `CHANGELOG.md` for the annotated tag message and pauses for confirmation before pushing both the branch and the new tag (`scripts/release.sh:190-222`).
 
-```bash
-# Check current version
-just version
+> **Warning** The script will overwrite the working copies of `Cargo.toml`, `Cargo.lock`, `VERSION`, and any client manifests once it reaches step 5; abort before confirming the push if you need to revise the changelog or code (`scripts/release.sh:97-185`, `scripts/release.sh:205-221`).
 
-# Preview what would be in the next release
-just release-preview
+## Step 4 – Monitor CI publishing
+- Tag pushes that match `v*` trigger the consolidated release workflow (`.github/workflows/release.yml:3-75`). The `create-release` job builds the GitHub Release entry and surfaces the upload URL the downstream jobs reuse (`.github/workflows/release.yml:17-76`).
+- `build-binaries` compiles `kotadb` for Linux (glibc and musl), macOS (Intel & ARM64), and Windows, packaging each target-specific archive before uploading it to the release (`.github/workflows/release.yml:77-156`).
+- `publish-crate`, `publish-python`, and `publish-typescript` ship the Rust crate, PyPI wheel/sdist, and npm package respectively whenever the tag is not marked alpha/beta/rc (`.github/workflows/release.yml:158-255`).
+- `docker-release` builds and pushes the multi-arch image to GHCR with semantic tags derived from the version (`.github/workflows/release.yml:257-295`).
+- `deploy-docs` runs Mike against `gh-pages`, setting `latest` for every cut and `stable` when the version lacks a pre-release suffix (`.github/workflows/release.yml:297-379`).
 
-# Create releases with automatic version bump
-just release-patch   # Bump patch version (0.1.0 -> 0.1.1)
-just release-minor   # Bump minor version (0.1.0 -> 0.2.0)
-just release-major   # Bump major version (0.1.0 -> 1.0.0)
-just release-beta    # Create beta release (0.1.0 -> 0.1.0-beta.1)
+> **Note** You can manually trigger `Release Checklist` from GitHub to re-run the heavy validation suite against an existing tag when needed (`.github/workflows/release-checklist.yml:3-133`).
 
-# Create release with specific version
-just release 0.2.0
-
-# Dry run to test the process
-just release-dry-run 0.2.0
-```
-
-## Release Checklist
-
-### Pre-Release
-
-- [ ] Ensure all PRs for the release are merged
-- [ ] Update dependencies: `cargo update`
-- [ ] Run security audit: `cargo audit`
-- [ ] Update CHANGELOG.md with all changes
-- [ ] Review and update documentation
-- [ ] Test all client libraries (Python, TypeScript, Rust)
-- [ ] Run full test suite: `just ci`
-- [ ] Verify Docker build: `just docker-build`
-
-### Release Process
-
-1. **Start the release**
-   ```bash
-   # For a specific version
-   just release 0.2.0
-   
-   # Or with automatic version bump
-   just release-minor
-   ```
-
-2. **The script will automatically:**
-   - Verify clean working directory
-   - Run all tests and quality checks
-   - Update version in:
-     - Cargo.toml
-     - VERSION file
-     - CHANGELOG.md
-     - Client library versions
-   - Commit changes
-   - Create annotated git tag
-   - Push to remote (with confirmation)
-
-3. **GitHub Actions will then:**
-   - Create GitHub Release with changelog
-   - Build binaries for all platforms:
-     - Linux x64 (glibc and musl)
-     - macOS x64 and ARM64
-     - Windows x64
-   - Publish Docker images to GitHub Container Registry
-   - Publish to crates.io (for non-prerelease versions)
-
-### Post-Release
-
-- [ ] Verify GitHub Release page
-- [ ] Check binary downloads work
-- [ ] Verify Docker images: `docker pull ghcr.io/jayminwest/kota-db:latest`
-- [ ] Test crates.io package: `cargo install kotadb`
-- [ ] Update documentation site (see Documentation Deployment section below)
-- [ ] Announce release:
-  - [ ] GitHub Discussions
-  - [ ] Project Discord/Slack
-  - [ ] Social media
-- [ ] Create issues for next release cycle
-- [ ] Update changelog with new Unreleased section: `just changelog-update`
-
-## Manual Release Process
-
-If the automated process fails, follow these manual steps:
-
-1. **Update versions manually:**
-   ```bash
-   # Edit Cargo.toml
-   vim Cargo.toml  # Update version = "X.Y.Z"
-   
-   # Update VERSION file
-   echo "X.Y.Z" > VERSION
-   
-   # Update Cargo.lock
-   cargo update --workspace
-   ```
-
-2. **Update CHANGELOG.md:**
-   - Change `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
-   - Add new `## [Unreleased]` section at top
-   - Update links at bottom
-
-3. **Commit changes:**
-   ```bash
-   git add Cargo.toml Cargo.lock CHANGELOG.md VERSION
-   git commit -m "chore: release vX.Y.Z"
-   ```
-
-4. **Create and push tag:**
-   ```bash
-   git tag -a vX.Y.Z -m "Release vX.Y.Z"
-   git push origin main
-   git push origin vX.Y.Z
-   ```
-
-## Rollback Procedure
-
-If a release needs to be rolled back:
-
-1. **Delete the tag locally and remotely:**
-   ```bash
-   git tag -d vX.Y.Z
-   git push origin :refs/tags/vX.Y.Z
-   ```
-
-2. **Delete the GitHub Release:**
-   - Go to GitHub Releases page
-   - Click on the release
-   - Click "Delete this release"
-
-3. **Revert version changes if needed:**
-   ```bash
-   git revert <commit-hash>
-   git push origin main
-   ```
-
-## Release Naming Conventions
-
-- Production releases: `vX.Y.Z` (e.g., v1.0.0)
-- Beta releases: `vX.Y.Z-beta.N` (e.g., v1.0.0-beta.1)
-- Alpha releases: `vX.Y.Z-alpha.N` (e.g., v1.0.0-alpha.1)
-- Release candidates: `vX.Y.Z-rc.N` (e.g., v1.0.0-rc.1)
-
-## Documentation Deployment
-
-KotaDB uses [Mike](https://github.com/jimporter/mike) for versioned documentation on GitHub Pages. Documentation is built with MkDocs and deployed to the `gh-pages` branch.
-
-### Prerequisites
+## Step 5 – Validate and recover if needed
+- After the workflow completes, spot-check the generated GitHub Release body against the corresponding changelog section to ensure the notes rendered as expected (`.github/workflows/release.yml:32-71`).
+- Confirm crate, PyPI, npm, and GHCR availability using the version that just shipped—each publish step logs the package name it promoted, so failures will appear in their respective jobs (`.github/workflows/release.yml:158-295`).
+- If the script failed mid-flight, re-run the relevant portions manually: update `Cargo.toml`, `VERSION`, and `Cargo.lock`, restage the client packages, then commit and tag using the same commands shown in `scripts/release.sh:103-214` before pushing (`scripts/release.sh:97-214`).
 
 ```bash
-# Install required tools
-pip install mkdocs mkdocs-material mike
+# Manual recovery sequence mirroring scripts/release.sh
+VERSION=0.7.0
+sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml && rm Cargo.toml.bak
+echo "$VERSION" > VERSION
+cargo update --workspace
+sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" clients/python/pyproject.toml && rm clients/python/pyproject.toml.bak
+(cd clients/typescript && npm version "$VERSION" --no-git-tag-version)
+git add Cargo.toml Cargo.lock VERSION clients/python/pyproject.toml clients/typescript/package.json
+[ -f clients/typescript/package-lock.json ] && git add clients/typescript/package-lock.json
+git commit -m "chore: release v$VERSION"
+git tag -a v$VERSION -m "Release v$VERSION"
 ```
 
-### Deployment Process
+> **Warning** Only push the branch and `v*` tag after verifying the recovery commit; the workflow retriggers as soon as `git push origin v$VERSION` runs (`scripts/release.sh:205-222`).
 
-1. **Deploy a new version:**
-   ```bash
-   # Deploy specific version
-   mike deploy 0.2.0 --push
-   
-   # Deploy with alias (e.g., latest)
-   mike deploy 0.2.0 latest --push
-   
-   # Deploy as stable (recommended for production releases)
-   mike deploy 0.2.0 stable --push
-   ```
-
-2. **Set default version:**
-   ```bash
-   # Make a version the default when users visit the root URL
-   mike set-default stable --push
-   ```
-
-3. **List deployed versions:**
-   ```bash
-   mike list
-   ```
-
-4. **Delete a version:**
-   ```bash
-   mike delete 0.1.0 --push
-   ```
-
-### Best Practices
-
-1. **Version Naming:**
-   - Use semantic version numbers (e.g., `0.2.0`, `1.0.0`)
-   - Use `stable` alias for the current stable release
-   - Use `latest` alias for the most recent release (including betas)
-   - Use `dev` for development/unreleased documentation
-
-2. **Release Documentation Updates:**
-   ```bash
-   # When releasing a new stable version
-   mike deploy <version> stable --push --update-aliases
-   
-   # For beta/prerelease versions
-   mike deploy <version>-beta.1 --push
-   ```
-
-3. **Local Testing:**
-   ```bash
-   # Build and serve documentation locally
-   mkdocs serve
-   
-   # Test Mike deployment locally (without pushing)
-   mike deploy <version> --no-push
-   mike serve  # View the versioned site locally
-   ```
-
-### Structure
-
-The `gh-pages` branch should maintain this structure:
-```
-gh-pages/
-├── index.html          # Redirect to default version
-├── versions.json       # Mike version metadata
-├── stable/            # Stable version (alias)
-│   └── [docs]
-├── 0.2.0/             # Specific version
-│   └── [docs]
-└── site/              # Legacy structure (can be removed)
-```
-
-### Troubleshooting
-
-1. **Documentation not updating:**
-   ```bash
-   # Force push to update
-   mike deploy <version> --push --force
-   ```
-
-2. **Broken redirect:**
-   - Ensure `index.html` at root redirects to correct version
-   - Check with: `mike set-default stable --push`
-
-3. **Version selector not working:**
-   - Verify `versions.json` exists in gh-pages root
-   - Check multiple versions are deployed: `mike list`
-
-### GitHub Pages Protection
-
-To prevent accidental commits to the `gh-pages` branch:
-1. Use branch protection rules in GitHub settings
-2. Always use Mike for deployments (never commit directly)
-3. Use the GitHub Action workflow for automated deployments
-
-## Platform-Specific Notes
-
-### Docker Images
-
-Docker images are automatically built and pushed to GitHub Container Registry:
-- Latest stable: `ghcr.io/jayminwest/kota-db:latest`
-- Specific version: `ghcr.io/jayminwest/kota-db:0.2.0`
-- Major version: `ghcr.io/jayminwest/kota-db:0`
-- Major.Minor: `ghcr.io/jayminwest/kota-db:0.2`
-
-### Crates.io
-
-Publishing to crates.io requires:
-- `CRATES_IO_TOKEN` secret configured in GitHub
-- Non-prerelease version (no alpha/beta/rc)
-- All dependencies must be published on crates.io
-
-### Binary Artifacts
-
-Binaries are built for:
-- `x86_64-unknown-linux-gnu`: Standard Linux (Ubuntu, Debian, etc.)
-- `x86_64-unknown-linux-musl`: Alpine Linux and static linking
-- `x86_64-apple-darwin`: macOS Intel
-- `aarch64-apple-darwin`: macOS Apple Silicon
-- `x86_64-pc-windows-msvc`: Windows 64-bit
-
-## Troubleshooting
-
-### Release workflow fails
-
-1. Check GitHub Actions logs for specific error
-2. Common issues:
-   - Missing `CRATES_IO_TOKEN` secret
-   - Version already exists on crates.io
-   - Tests failing on specific platform
-   - Docker build issues
-
-### Tag already exists
-
-```bash
-# Delete local tag
-git tag -d vX.Y.Z
-
-# Delete remote tag
-git push origin :refs/tags/vX.Y.Z
-
-# Recreate tag
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin vX.Y.Z
-```
-
-### Version mismatch
-
-Ensure all version references are updated:
-```bash
-grep -r "0\.1\.0" --include="*.toml" --include="*.json" --include="*.go"
-```
-
-## Documentation Deployment (GitHub Pages)
-
-KotaDB documentation is hosted on GitHub Pages using Mike for versioning. The site is available at https://jayminwest.github.io/kota-db/
-
-### Structure
-
-The `gh-pages` branch contains:
-- `stable/` - Latest stable documentation version
-- `dev/` - Development documentation (optional)
-- `versions.json` - Version metadata for Mike
-- `index.html` - Redirect to stable version
-
-### Deploying Documentation
-
-1. **Install Mike:**
-   ```bash
-   pip install mike mkdocs-material
-   ```
-
-2. **Deploy a new version:**
-   ```bash
-   # Deploy as latest stable version
-   mike deploy --push --update-aliases 0.2.0 stable
-   
-   # Deploy development version
-   mike deploy --push dev
-   ```
-
-3. **List versions:**
-   ```bash
-   mike list
-   ```
-
-4. **Set default version:**
-   ```bash
-   mike set-default --push stable
-   ```
-
-### Troubleshooting Documentation
-
-If the documentation site is broken:
-
-1. **Check the gh-pages branch structure:**
-   ```bash
-   git checkout gh-pages
-   ls -la
-   # Should have: stable/, versions.json, index.html
-   ```
-
-2. **Redeploy if needed:**
-   ```bash
-   git checkout main
-   mike deploy --push --force stable
-   ```
-
-3. **Clean up unnecessary files:**
-   ```bash
-   git checkout gh-pages
-   # Remove any build artifacts (target/, node_modules/, etc.)
-   git rm -r target/ site/  # if present
-   git commit -m "docs: clean up gh-pages branch"
-   git push origin gh-pages
-   ```
-
-4. **Verify deployment:**
-   - Visit https://jayminwest.github.io/kota-db/
-   - Check that styling and navigation work
-   - Verify all pages load correctly
-
-### Important Notes
-
-- **Never edit gh-pages directly** - Always use Mike to deploy
-- **Don't commit build artifacts** to gh-pages (target/, node_modules/, etc.)
-- **Keep only documentation files** in the gh-pages branch
-- **Use Mike aliases** (stable, dev) instead of version numbers in links
-
-## Security Considerations
-
-- Never commit sensitive data in releases
-- Run `cargo audit` before each release
-- Review dependencies for known vulnerabilities
-- Sign releases with GPG when possible:
-  ```bash
-  git tag -s vX.Y.Z -m "Release vX.Y.Z"
-  ```
-
-## Contact
-
-For release-related questions or issues:
-- Create an issue on GitHub
-- Contact the maintainers
-- Check the release documentation in `/docs`
+## Next Steps
+- Monitor the Release workflow run until every job turns green (`.github/workflows/release.yml:77-379`).
+- Review the published assets on GitHub Releases and download at least one binary archive to verify integrity (`.github/workflows/release.yml:129-156`).
+- Confirm the docs site shows the new version and aliases (`.github/workflows/release.yml:346-373`).
+- Announce the release once all distribution channels report success.

@@ -1,348 +1,118 @@
-# Cargo Nextest Archive Migration Analysis for KotaDB CI
+# Cargo Nextest Archive Migration for KotaDB CI
 
-## Executive Summary
+## Summary
+GitHub Actions currently rebuilds the entire KotaDB workspace in every test job because each workflow executes in a fresh VM and re-runs `cargo build` or `cargo test` from scratch (`.github/workflows/ci.yml:45-215`). The feature-gated layout in `Cargo.toml:154-177` is already proven by `scripts/test-nextest-archive.sh:39-156`, so we can package one `cargo nextest archive` bundle and reuse it across the matrix without sacrificing doc tests or Docker-guarded suites.
 
-**Recommendation: MIGRATE TO NEXTEST ARCHIVE** - The benefits significantly outweigh the migration complexity. Expected CI time reduction from current 40+ minutes to under 15 minutes total.
+## Step-by-Step Migration
 
-## Current State Analysis
+### Step 1. Profile the Current Pipeline
+- `tests` performs a branch-sensitive debug build and executes unit plus doc tests (`.github/workflows/ci.yml:61-80`). Because the job does not publish its `target` directory, every downstream job recompiles identical crates.
+- `integration-docker` reruns `cargo test` with Docker features in a clean environment (`.github/workflows/ci.yml:83-103`), while `artifacts` rebuilds release binaries (`.github/workflows/ci.yml:188-215`). Both repeat the compilation work already completed upstream.
+- The cache wired in at `.github/workflows/ci.yml:55-58` accelerates dependency downloads but cannot transport Cargo fingerprints between machines, so it does not prevent redundant builds.
+- Capture a local baseline with `scripts/ci/local_ci.sh`; when `cargo-nextest` is detected it mirrors the same `cargo build` → `cargo nextest run` ordering we plan to collapse (`scripts/ci/local_ci.sh:86-104`).
 
-### Problem Summary
-- **Build Phase**: Successfully compiles all artifacts in 10m2s ✅
-- **Test Phases**: FAIL - Each test job recompiles everything (14+ minutes) ❌
-- **Root Cause**: Missing Cargo fingerprint data prevents dependency resolution
-- **Total Pipeline Time**: ~40-45 minutes (should be ~15 minutes)
-- **Wasted Compute**: 30+ minutes of redundant compilation across 5 parallel jobs
-
-### Current Approach Limitations
-1. Manual artifact packaging misses critical Cargo metadata
-2. `.d` dependency files alone insufficient for build reuse
-3. Target directory structure incomplete without fingerprints
-4. No native support for test binary distribution
-
-## Nextest Archive Solution
-
-### What It Provides
-- **Complete Test Environment**: All binaries + metadata in single `.tar.zst`
-- **Zero Recompilation**: Includes Cargo fingerprints for perfect cache hits
-- **Native Partitioning**: Built-in support for parallel test distribution
-- **Proven Solution**: Used by major Rust projects (nextest itself, rustc contributors)
-
-### Archive Contents
-- ✅ All test binaries (unit, integration, doctests)
-- ✅ Cargo metadata and fingerprints
-- ✅ Dynamic libraries and dependencies
-- ✅ Build script outputs
-- ✅ Non-test binaries used by integration tests
-- ❌ Source code (must be checked out separately)
-
-## Migration Plan
-
-### Step-by-Step Implementation
-
-#### Phase 1: Update Build Job (Minimal Changes)
+### Step 2. Produce a Nextest Archive During the Build Stage
+- Extract the branch-aware feature list shown in `cargo build` (`.github/workflows/ci.yml:63-76`) so the archive matches the default and main-branch profiles defined in `Cargo.toml:154-177`.
+- Introduce a `build-tests` job that stops after building once and emitting an archive. The command sequence already validated locally in `scripts/test-nextest-archive.sh:39-55` is the template to copy.
 ```yaml
-build-artifacts:
+build-tests:
   name: Build and Archive Tests
   runs-on: ubuntu-latest
-  timeout-minutes: 12
+  timeout-minutes: 15
   steps:
     - uses: actions/checkout@v4
-    
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-    
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
-        shared-key: "nextest-build"
-    
-    - name: Install nextest
-      uses: taiki-e/install-action@nextest
-    
-    - name: Build all tests and create archive
+        shared-key: nextest-archive
+    - name: Build and package test binaries
       run: |
-        echo "🏗️ Building and archiving all tests..."
-        # Build release binary separately (not included in test archive)
-        cargo build --release --bin kotadb
-        
-        # Create nextest archive with all test binaries
+        FEATURES="git-integration,tree-sitter-parsing"
+        if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.base_ref }}" == "main" ]]; then
+          FEATURES="embeddings-onnx,git-integration,tree-sitter-parsing,mcp-server,strict-sanitization,aggressive-trigram-thresholds"
+        fi
+        cargo build --no-default-features --features "$FEATURES"
         cargo nextest archive \
           --archive-file nextest-archive.tar.zst \
-          --all-features
-        
-        echo "📦 Archive created: $(du -h nextest-archive.tar.zst)"
-    
-    - name: Upload test archive
-      uses: actions/upload-artifact@v4
+          --no-default-features \
+          --features "$FEATURES"
+    - uses: actions/upload-artifact@v4
       with:
         name: nextest-archive
         path: nextest-archive.tar.zst
         retention-days: 1
-        compression-level: 0  # Already compressed
-    
-    - name: Upload release binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-binary
-        path: target/release/kotadb
-        retention-days: 1
 ```
+- Keep the release binaries in `artifacts`; they already rely on the same feature gate and can optionally reuse the archive if you also upload `target/release` from this job.
 
-#### Phase 2: Update Test Jobs (Simplified)
+### Step 3. Consume the Archive in Unit, Doc, and Integration Jobs
+- Split the current `tests` job into a `unit-tests` job that depends on `build-tests`, downloads the archive, and runs the unit suite with zero compilation:
 ```yaml
 unit-tests:
-  name: Unit Tests
+  needs: [build-tests]
   runs-on: ubuntu-latest
-  needs: [build-artifacts]
-  timeout-minutes: 8
   steps:
-    - uses: actions/checkout@v4  # Source needed for test execution
-    
-    - name: Install nextest
-      uses: taiki-e/install-action@nextest
-    
-    - name: Download test archive
-      uses: actions/download-artifact@v4
+    - uses: actions/checkout@v4
+    - uses: taiki-e/install-action@nextest
+    - uses: actions/download-artifact@v4
       with:
         name: nextest-archive
-    
-    - name: Run unit tests (no compilation)
-      run: |
-        cargo nextest run \
-          --archive-file nextest-archive.tar.zst \
-          --lib \
-          --no-fail-fast
-    
-    - name: Run doc tests
-      run: cargo test --doc --all-features  # Doc tests need separate run
-
-integration-tests:
-  name: Integration Tests (${{ matrix.partition }}/${{ strategy.job-total }})
-  runs-on: ubuntu-latest
-  needs: [build-artifacts]
-  timeout-minutes: 10
+    - name: Unit suite from archive
+      run: cargo nextest run \
+        --archive-file nextest-archive.tar.zst \
+        --lib \
+        --no-fail-fast
+    - name: Rust doc tests
+      run: cargo test --doc --no-default-features --features "$FEATURES"
+```
+- Convert `integration-docker` into an archive consumer so Docker-only suites run against prebuilt binaries. The ignored tests currently executed with `cargo test` (`.github/workflows/ci.yml:101-103`) map to `cargo nextest run --run-ignored ignored-only --test mcp_auth_middleware_test`.
+```yaml
+integration-docker:
+  needs: [build-tests]
   strategy:
     fail-fast: false
     matrix:
-      partition: [1, 2, 3, 4]  # Keep 4-way split
+      partition: [1, 2, 3, 4]
   steps:
     - uses: actions/checkout@v4
-    
-    - name: Install nextest
-      uses: taiki-e/install-action@nextest
-    
-    - name: Download test archive
-      uses: actions/download-artifact@v4
+    - uses: taiki-e/install-action@nextest
+    - uses: actions/download-artifact@v4
       with:
         name: nextest-archive
-    
-    - name: Run integration tests partition
-      run: |
-        cargo nextest run \
-          --archive-file nextest-archive.tar.zst \
-          --test '*' \
-          --partition count:${{ matrix.partition }}/4 \
-          --no-fail-fast
+    - name: Integration partition ${{ matrix.partition }}
+      run: cargo nextest run \
+        --archive-file nextest-archive.tar.zst \
+        --test '*' \
+        --partition count:${{ matrix.partition }}/4 \
+        --no-fail-fast
+    - name: Docker-only ignored suite
+      run: cargo nextest run \
+        --archive-file nextest-archive.tar.zst \
+        --test mcp_auth_middleware_test \
+        --run-ignored ignored-only \
+        --no-fail-fast
 ```
+> **Note** Doc tests remain on `cargo test --doc` because Nextest ignores doctests by design; keep them colocated with the unit job so they still reuse the downloaded source checkout.
 
-### Alternative: Suite-Based Partitioning
+### Step 4. Partition Integration Suites and Align Fast Pipelines
+- Keep the four-way partition used in CI by relying on Nextest’s native partitioning, as exercised in `scripts/test-nextest-archive.sh:77-93`. This keeps runtime parity with the existing matrix while eliminating rebuilds.
+- Update the critical subsets in `fast-ci.yml:53-66` to optionally download `nextest-archive` when the workflow is triggered together with the main CI, or leave `fast-ci` untouched if you prefer independent runs.
+- For local smoke tests, document that `just test-fast` already matches the feature flags the archive expects (`justfile:39-42`); developers should run it before pushing to ensure the archive build will succeed.
 
-Instead of count-based partitioning, use your existing suite categories:
+### Step 5. Validate Archives Locally and Monitor in CI
+- Run `scripts/test-nextest-archive.sh` before opening the PR; it verifies archive creation, extraction, and multi-partition execution without re-triggering compilation (`scripts/test-nextest-archive.sh:63-155`).
+- After wiring the workflow, confirm that GitHub Actions reports cache hits by watching for the absence of `Compiling` lines in unit and integration logs.
+- Track artifact size and retention in the `build-tests` job; the script logs compression details (`scripts/test-nextest-archive.sh:50-54`) that match what you should see in CI.
+> **Warning** Coverage still needs a fresh instrumentation build (`.github/workflows/ci.yml:142-185`), so do not swap `cargo llvm-cov` to archive mode; keep that job isolated.
 
-```yaml
-integration-tests:
-  strategy:
-    matrix:
-      suite:
-        - core-storage
-        - indexing-search
-        - api-system
-        - performance-stress
-  steps:
-    - name: Run ${{ matrix.suite }} tests
-      run: |
-        # Map suite to specific test filters
-        case "${{ matrix.suite }}" in
-          core-storage)
-            FILTER="file_storage|data_integrity|graph_storage"
-            ;;
-          indexing-search)
-            FILTER="index|trigram|query"
-            ;;
-          api-system)
-            FILTER="http|cli|code_analysis"
-            ;;
-          performance-stress)
-            FILTER="performance|concurrent|chaos"
-            ;;
-        esac
-        
-        cargo nextest run \
-          --archive-file nextest-archive.tar.zst \
-          --filter "$FILTER" \
-          --no-fail-fast
-```
-
-## Performance Projections
-
-### Current Timeline (Failing)
-```
-Build Artifacts:        10m2s
-Quality Checks:         3m    (parallel)
-Unit Tests:            14m+   (recompiles)
-Integration Tests x4:  14m+ each (recompiles)
-E2E Tests:             14m+   (recompiles)
-Total:                 ~40-45 minutes
-```
-
-### Projected with Nextest Archive
-```
-Build + Archive:        11m    (+1m for archive creation)
-Quality Checks:         3m     (parallel with build)
-Unit Tests:            2m     (no compilation)
-Integration Tests x4:  3m each (parallel, no compilation)
-E2E Tests:             2m     (no compilation)
-Total:                 ~14-16 minutes (65% reduction)
-```
-
-### Detailed Performance Analysis
-- **Archive Creation**: Adds ~1 minute to build time
-- **Archive Size**: Expected 100-200MB (compressed)
-- **Archive Upload/Download**: ~5-10 seconds each
-- **Test Execution**: Pure test runtime, no compilation overhead
-- **Parallelization**: True parallel execution without resource contention
-
-## Risk Assessment & Mitigation
-
-### Low-Risk Items
-1. **Archive Creation Failure**
-   - Mitigation: Retry logic, fallback to current approach
-   - Impact: Low - nextest archive is stable
-
-2. **Archive Size Growth**
-   - Mitigation: Monitor size, implement cleanup policies
-   - Impact: Low - compression is efficient
-
-3. **Nextest Installation**
-   - Mitigation: Cache nextest binary, use taiki-e action
-   - Impact: Minimal - adds ~10 seconds when not cached
-
-### Medium-Risk Items
-1. **Doc Test Compatibility**
-   - Issue: Nextest doesn't run doc tests
-   - Mitigation: Run `cargo test --doc` separately (small overhead)
-   - Impact: Adds 1-2 minutes to one job
-
-2. **Test Discovery Issues**
-   - Issue: Some tests might use non-standard patterns
-   - Mitigation: Verify all tests are included in archive
-   - Impact: One-time verification needed
-
-### Migration-Specific Risks
-1. **Incremental Rollout Complexity**
-   - Issue: Running both systems in parallel
-   - Mitigation: Feature branch with full migration
-   - Recommendation: All-at-once migration
-
-## Implementation Timeline
-
-### Day 1: Proof of Concept (2-3 hours)
-- [ ] Create feature branch from develop
-- [ ] Modify build job to create nextest archive
-- [ ] Update one test job (unit tests) to use archive
-- [ ] Verify no recompilation occurs
-- [ ] Measure performance improvement
-
-### Day 2: Full Migration (3-4 hours)
-- [ ] Update all test jobs to use archive
-- [ ] Implement partition strategy (count or suite-based)
-- [ ] Add doc test execution where needed
-- [ ] Update E2E tests
-- [ ] Comprehensive testing on feature branch
-
-### Day 3: Validation & Rollout (2-3 hours)
-- [ ] Run multiple CI iterations
-- [ ] Verify all tests execute correctly
-- [ ] Compare coverage reports
-- [ ] Performance benchmarking
-- [ ] Create PR with migration
-
-## Rollback Plan
-
-If issues arise, rollback is straightforward:
-
-1. **Immediate**: Revert PR to restore original workflow
-2. **Temporary**: Keep both workflows, trigger based on branch
-3. **Gradual**: Migrate job by job, maintaining hybrid approach
-
-## Key Implementation Details
-
-### Configuration Considerations
-```yaml
-# Optimal nextest configuration for KotaDB
-env:
-  NEXTEST_RETRIES: 2  # Retry flaky tests
-  NEXTEST_TEST_THREADS: 2  # Match current RUST_TEST_THREADS
-  NEXTEST_FAILURE_OUTPUT: immediate  # Show failures immediately
-  NEXTEST_SUCCESS_OUTPUT: final  # Summarize successes
-```
-
-### Archive Command Options
-```bash
-# Full archive with all features
-cargo nextest archive --all-features --archive-file nextest-archive.tar.zst
-
-# Include additional files if needed
-cargo nextest archive --archive-file nextest-archive.tar.zst \
-  --extract-to target/ci \
-  --workspace-remap .
-```
-
-### Partition Strategies
-1. **Count-based**: Even distribution across N workers
-2. **Hash-based**: Deterministic distribution
-3. **Time-based**: Balance by historical execution time
-
-## Expected Outcomes
-
-### Immediate Benefits
-- ✅ 65% reduction in CI time (40min → 14min)
-- ✅ Elimination of redundant compilation
-- ✅ Reduced GitHub Actions minutes usage
-- ✅ Faster feedback loop for developers
-
-### Long-term Benefits
-- ✅ Scalable test infrastructure
-- ✅ Foundation for test sharding
-- ✅ Easier debugging (each job truly independent)
-- ✅ Cost savings on CI infrastructure
-
-## Recommendation
-
-**STRONG RECOMMENDATION TO PROCEED** with nextest archive migration:
-
-1. **Complexity**: LOW - Mostly configuration changes
-2. **Risk**: LOW - Well-proven solution with easy rollback
-3. **Benefit**: HIGH - 65% CI time reduction
-4. **Timeline**: 1-2 days total effort
-5. **Maintenance**: LOWER than current approach
-
-The nextest archive approach directly solves your current problem and aligns with Rust CI best practices. The migration is straightforward and the benefits are substantial.
+## Reference: Archive Layout & Tooling
+- `cargo nextest archive` bundles every binary, dynamic dependency, and fingerprint necessary for the unit and integration suites (`scripts/test-nextest-archive.sh:39-55`).
+- Extraction does not populate `target/debug`, so Nextest runs directly from the archive and proves no recompilation occurs (`scripts/test-nextest-archive.sh:95-114`).
+- The feature toggles that influence coverage (`strict-sanitization`, `aggressive-trigram-thresholds`, `docker-tests`) are all defined in `Cargo.toml:159-177`; reuse them verbatim when setting the `FEATURES` environment block.
+- Local automation can continue to call `scripts/ci/local_ci.sh` to mirror the order of operations but will skip archive logic, ensuring developers without the artifact still have deterministic checks.
 
 ## Next Steps
-
-1. Review this analysis with the team
-2. Create feature branch for migration
-3. Implement proof of concept with unit tests
-4. Measure and validate performance improvements
-5. Complete full migration
-6. Monitor for one sprint before closing issue
-
-## Additional Resources
-
-- [Nextest Archive Documentation](https://nexte.st/docs/ci-features/archiving/)
-- [Example Implementation](https://github.com/nextest-rs/reuse-build-partition-example)
-- [Nextest CI Features](https://nexte.st/docs/ci-features/)
+- Open a branch that introduces the `build-tests` archive job and refactors downstream jobs to depend on it.
+- Verify the rewritten pipeline with `scripts/test-nextest-archive.sh` and `just test-fast`.
+- Capture CI run metrics (duration, artifact size) after the change and compare to the previous baseline.
+- Roll the update into `main` once the matrix confirms runtime savings, then monitor for one sprint before deleting redundant fallback logic.

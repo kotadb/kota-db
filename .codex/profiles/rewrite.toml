@@ -1,0 +1,9 @@
+# Copy the contents of this file into ~/.codex/config.toml under a [profiles.rewrite] table.
+# The settings ensure deterministic non-interactive runs suitable for doc rewrites.
+[profiles.rewrite]
+sandbox_mode = "workspace-write"
+ask_for_approval = "never"
+with_network_access = true
+shell_environment_policy = "allow-list"
+allowed_environment_variables = ["PATH", "RUST_LOG", "OPENAI_API_KEY", "OPENAI_KEY", "CI"]
+# The rewrite script passes -c 'mcp_servers={}' to avoid launching extra MCP backends per file.

@@ -1,154 +1,47 @@
 # KotaDB Documentation
 
-## A Codebase Intelligence Platform for Understanding Code Relationships
+KotaDB is a Rust code intelligence engine that turns repositories into searchable graphs backed by storage, trigram indices, and optional symbol relationships. This guide surfaces the runtime entry points you will touch most often.
 
-Welcome to the KotaDB documentation! KotaDB is a high-performance codebase intelligence platform built in Rust, designed to transform your codebase into a queryable knowledge graph for instant symbol lookup, dependency analysis, and impact assessment.
+## Step 1: Map the Storage Core
+KotaDB's services rely on the unified `Database` abstraction (`src/database.rs:24-95`) which satisfies the `DatabaseAccess` trait all services consume (`src/services/search_service.rs:18-25`). `Database::new` sets up the file-backed storage, primary index, and binary trigram index under the chosen `db_path` (`src/database.rs:38-95`), wrapping storage with metering and caching via `create_wrapped_storage` (`src/database.rs:87-95`). Because the `path_cache` (an `Arc<RwLock<_>>`) is shared across services, cloning `Database` handles is cheap while maintaining consistent lookup semantics. Use `just dev` to boot the auto-reloading MCP server with these defaults.
 
-## Quick Installation
+| Handle | Source | Purpose |
+| --- | --- | --- |
+| `storage: Arc<Mutex<dyn Storage>>` | `src/database.rs:24-55` | Persists documents in `storage/` with read/write buffering. |
+| `primary_index: Arc<Mutex<dyn Index>>` | `src/database.rs:24-63` | Maintains path-based lookups consumed by wildcard search. |
+| `trigram_index: Arc<Mutex<dyn Index>>` | `src/database.rs:24-85` | Provides trigram-backed full text search; configured for binary mode when `--binary-index` is true. |
+| `path_cache: Arc<RwLock<HashMap<..>>>` | `src/database.rs:28-30` | Lazily caches path-to-document-id resolutions for repeated queries. |
 
-### Python Client
-[![PyPI version](https://badge.fury.io/py/kotadb-client.svg)](https://pypi.org/project/kotadb-client/)
-```bash
-pip install kotadb-client
-```
+> **Note** SaaS deployments validate state before enabling local ingestion: `ServicesAppState::validate_saas_mode` ensures both API keys and Supabase pools exist (`src/services_http_server.rs:81-91`).
 
-### TypeScript/JavaScript Client
-[![npm version](https://img.shields.io/npm/v/kotadb-client.svg)](https://www.npmjs.com/package/kotadb-client)
-```bash
-npm install kotadb-client
-```
+## Step 2: Index a Repository
+The CLI `index-codebase` path (gated behind the `git-integration` feature) is wired in the `Commands` enum (`src/main.rs:145-180`) and forwards user input into `IndexingService::index_codebase` (`src/services/indexing_service.rs:149-333`). The options struct records toggles for commits, chunking, symbol extraction, and include filters (`src/services/indexing_service.rs:15-49`), and defaults to storing results under `repos/`.
 
-### Server (Docker)
-```bash
-docker pull ghcr.io/jayminwest/kota-db:latest
-docker run -p 8080:8080 ghcr.io/jayminwest/kota-db:latest serve
-```
+| Option | Default | Where It Lands |
+| --- | --- | --- |
+| `prefix` | `"repos"` | Forwarded into `IngestionConfig::path_prefix` (`src/services/indexing_service.rs:239-244`). |
+| `include_files` | `true` | Enables blob storage via `include_file_contents` (`src/services/indexing_service.rs:224-230`). |
+| `include_commits` | `true` | Preserves git history during ingestion (`src/services/indexing_service.rs:224-236`). |
+| `max_file_size_mb` | `10` | Converted to bytes for the ingester (`src/services/indexing_service.rs:224-229`). |
+| `extract_symbols` | `Some(true)` | Requires the `tree-sitter-parsing` feature to activate symbol pipelines (`src/services/indexing_service.rs:174-198`). |
+| `enable_chunking` | `true` | Controls memory caps in `MemoryLimitsConfig` (`src/services/indexing_service.rs:203-218`). |
 
-<div class="grid cards" markdown>
+Once options are prepared, `RepositoryIngester::ingest_with_binary_symbols_and_relationships` writes documents, binary symbols, and the dependency graph in one pass (`src/services/indexing_service.rs:264-276` delegating to `src/git/ingestion.rs:169-276`). The service always flushes pending writes (`src/services/indexing_service.rs:360-373`) and rebuilds the primary and trigram indices in batches to keep search consistent (`src/services/indexing_service.rs:379-476`).
 
--   :material-rocket-launch:{ .lg .middle } **Quick Start**
+> **Warning** If `tree-sitter-parsing` is disabled, `should_extract_symbols` falls back to `false`, so symbol and relationship outputs will be skipped without failing the ingestion (`src/services/indexing_service.rs:200-201`).
 
-    ---
+## Step 3: Query and Analyze
+Searching and analysis share the same `DatabaseAccess` handles. `SearchService::search_content` dispatches to an LLM-optimized flow when the query is not a wildcard and the caller requests medium/full context (`src/services/search_service.rs:117-153`), otherwise falling back to `regular_search` over the trigram index (`src/services/search_service.rs:298-319`). Symbol lookups stream from the binary symbol store via `search_symbols` (`src/services/search_service.rs:175-252`), complete with wildcard matching. The private `try_llm_search` helper binds query options to `LLMSearchEngine::search_optimized` (`src/services/search_service.rs:255-296`), so tuning `context` directly informs token budgets.
 
-    Get up and running with KotaDB in minutes
+Runtime relationship features are centralized in `AnalysisService`. The service lazily initializes a `BinaryRelationshipEngine` against `symbols.kota` and `dependency_graph.bin` (`src/services/analysis_service.rs:221-248`). `find_callers` and `analyze_impact` wrap relationship queries into ergonomic structs and markdown summaries (`src/services/analysis_service.rs:251-315`), while `generate_overview` joins document stats, symbol tallies, and dependency graph metrics for dashboards or AI prompts (`src/services/analysis_service.rs:317-400`). These flows mirror the CLI subcommands surfaced in `Commands` (`src/main.rs:182-255`), ensuring parity between terminal usage and HTTP APIs.
 
-    [:octicons-arrow-right-24: Getting started](getting-started/index.md)
+## Step 4: Serve and Automate
+The Axum-based services server wires routes onto the same services layer. `ServicesAppState` carries cloned storage/index handles, optional auth, and job registries for SaaS mode (`src/services_http_server.rs:62-79`). `start_services_server` binds the router and logs available endpoints (`src/services_http_server.rs:628-682`), while `create_services_server` conditionally merges MCP tooling when the `mcp-server` feature is active (`src/services_http_server.rs:600-618`). Each HTTP handler reconstructs a lightweight `Database` wrapper before invoking the corresponding service—`index_codebase` is a direct thin wrapper over `IndexingService::index_codebase` (`src/services_http_server.rs:3044-3086`), and `search_code_v1_post` calls `SearchService::search_content` (`src/services_http_server.rs:1063-1104`).
 
--   :material-book-open-variant:{ .lg .middle } **Architecture**
+Background ingestion for managed tenants is handled by `SupabaseJobWorker`, which polls Supabase queues, clones repositories, and feeds them into the same indexing service (`src/supabase_repository/job_worker.rs:27-179`). Webhook delivery ids are reconciled after each job, and failures propagate back to Supabase with detailed error payloads (`src/supabase_repository/job_worker.rs:180-199`). Managed deployments also require `KOTADB_WEBHOOK_BASE_URL` for webhook provisioning (`src/services_http_server.rs:710-714`) and can disable on-box ingestion via `ALLOW_LOCAL_PATH_INDEXING` (`src/services_http_server.rs:98-107`).
 
-    ---
-
-    Deep dive into KotaDB's design and internals
-
-    [:octicons-arrow-right-24: Learn more](architecture/index.md)
-
--   :material-api:{ .lg .middle } **API Reference**
-
-    ---
-
-    Complete API documentation and client libraries
-
-    [:octicons-arrow-right-24: Explore APIs](api/index.md)
-
--   :material-code-tags:{ .lg .middle } **Developer Guide**
-
-    ---
-
-    Build, test, and contribute to KotaDB
-
-    [:octicons-arrow-right-24: Start developing](developer/index.md)
-
-</div>
-
-## Key Features
-
-### 🧠 Codebase Intelligence
-- **Symbol extraction** from source code (functions, classes, variables)
-- **Dependency tracking** of function calls and usage patterns  
-- **Impact analysis** to understand change effects
-- **Cross-reference detection** for comprehensive code understanding
-
-### 🚀 Performance
-- **<3ms trigram search** with optimized indexing
-- **Sub-millisecond B+ tree lookups** for path-based queries
-- **Efficient bulk operations** for large-scale indexing
-- **Memory-efficient** dual storage architecture
-
-### 🛡️ Reliability  
-- **Comprehensive testing** with 271+ passing unit tests
-- **Write-Ahead Logging (WAL)** for data durability
-- **Crash recovery** with automatic rollback
-- **Zero external dependencies** - pure Rust implementation
-
-### 🔍 Search & Analysis
-- **Full-text search** with trigram indexing
-- **Symbol-based search** with pattern matching
-- **Path queries** with wildcard support
-- **Relationship tracking** for code dependencies
-
-### 🏗️ Architecture
-- **Dual storage** separating documents and relationships
-- **Page-based storage** with 4KB pages and checksums
-- **Multiple index types** - B+ tree, trigram, vector support
-- **Component library** with safety wrappers
-
-### 🔧 Developer Experience
-- **Type-safe APIs** for Python, TypeScript, and Rust
-- **CLI interface** for command-line operations
-- **REST API** for HTTP integration
-- **MCP server** for AI assistant integration
-
-## System Requirements
-
-- **Rust**: 1.70.0 or later (for building from source)
-- **Operating System**: Linux, macOS, or Windows
-- **Memory**: 512MB minimum, 2GB recommended for large codebases
-- **Disk Space**: 100MB for installation + storage for your data
-
-## Use Cases
-
-KotaDB is designed for:
-
-- **Code analysis** and understanding large codebases
-- **AI assistant integration** for code intelligence
-- **Developer tools** requiring fast code search
-- **Documentation systems** with code relationship tracking
-- **Refactoring assistance** with impact analysis
-
-## Getting Help
-
-<div class="grid cards" markdown>
-
--   :material-github:{ .lg .middle } **GitHub Issues**
-
-    ---
-
-    Report bugs or request features
-
-    [:octicons-arrow-right-24: Create issue](https://github.com/jayminwest/kota-db/issues)
-
--   :material-chat:{ .lg .middle } **Discussions**
-
-    ---
-
-    Ask questions and share ideas
-
-    [:octicons-arrow-right-24: Join discussion](https://github.com/jayminwest/kota-db/discussions)
-
--   :material-book:{ .lg .middle } **Examples**
-
-    ---
-
-    Learn from code examples
-
-    [:octicons-arrow-right-24: View examples](https://github.com/jayminwest/kota-db/tree/main/examples)
-
-</div>
-
-## Current Status
-
-KotaDB v0.6.2 provides core codebase intelligence features with ongoing development for enhanced functionality. The platform is actively developed with regular updates and improvements.
-
-## License
-
-KotaDB is open-source software licensed under the MIT License. See the [LICENSE](https://github.com/jayminwest/kota-db/blob/main/LICENSE) file for details.
+## Next Steps
+- Run `just dev` to start the MCP server and verify endpoints with `curl http://localhost:8080/health`.
+- Ingest a sample repository with `cargo run --bin kotadb -- index-codebase ./path/to/repo` and watch the flush/rebuild logs described above.
+- Explore API routes and request payloads in `api/index.md` and the detailed service diagrams in `architecture/index.md`.
+- Review the Supabase deployment flow in `SUPABASE_ARCHITECTURE.md` before enabling SaaS features.

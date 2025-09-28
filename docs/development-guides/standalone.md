@@ -1,361 +1,99 @@
 # Running KotaDB Standalone
 
-KotaDB is designed as a complete, independent database system that can run outside of the parent KOTA project. This document explains how to use KotaDB as a standalone application.
+KotaDB ships a `kotadb` CLI that bundles storage, indexing, search, and analysis into a single binary. This guide shows how to compile the tool, prepare its on-disk data stores, and exercise the same services the wider platform uses.
 
-## Quick Start
+## Step 1 — Install prerequisites
 
-### 1. Prerequisites
-
-- **Rust 1.70+**: Install from [rustup.rs](https://rustup.rs/)
-- **Git**: For cloning the repository
-
-### 2. Setup
+- Install the stable Rust toolchain listed in `rust-toolchain.toml:1-5`; `rustup toolchain install stable` keeps you aligned with CI.
+- Ensure the workspace utilities are available. The project relies on `cargo`, `just`, and `cargo-nextest` for the commands referenced throughout.
 
 ```bash
-# Clone or copy the KotaDB directory
-cd temp-kota-db
-
-# Make the runner executable
-chmod +x run_standalone.sh
-
-# Check status
-./run_standalone.sh status
+rustup show
+just --list
 ```
 
-### 3. Build
+## Step 2 — Build the CLI
+
+The binary target is declared in `Cargo.toml:180-199`, and the Clap-powered interface is defined in `src/main.rs:31`. Build or run it directly to confirm the toolchain works:
 
 ```bash
-# Build in release mode
-./run_standalone.sh build
-
-# Run tests to verify everything works
-./run_standalone.sh test
+cargo run --bin kotadb -- --help
 ```
 
-### 4. Try the Demo
+The top-level `Cli` struct (`src/main.rs:31-124`) wires every subcommand, sets the default database directory (`--db-path`), and exposes verbosity controls that map to tracing setup (`src/main.rs:1568-1598`).
+
+> **Note** Default features enable git ingestion, tree-sitter parsing, embeddings, and the MCP server (`Cargo.toml:154-171`). Only disable them if you are prepared to lose the corresponding commands documented below.
+
+## Step 3 — Initialize the standalone data directory
+
+When a command runs, `Database::new` provisions the required directories and in-memory handles (`src/main.rs:281-344`). It creates `storage/`, `primary_index/`, and `trigram_index/` folders beneath `--db-path` and opens the appropriate storage engines via `create_file_storage`, `create_primary_index`, and `create_binary_trigram_index`.
 
 ```bash
-# See Stage 6 components in action
-./run_standalone.sh demo
+cargo run --bin kotadb -- stats --basic --db-path ./kota-db-data
 ```
 
-## CLI Usage
+Running `stats` (or any command) with a fresh path will initialize the structure if it does not already exist. Use `--binary-index=false` to fall back to the JSON trigram indexer if needed (`src/main.rs:82-84`), though the binary reader is the default for performance.
 
-### Available Commands
+## Step 4 — Index a repository
+
+The `index-codebase` subcommand (`src/main.rs:145-173`) is the entry point for ingestion. It constructs an `IndexingService` (`src/services/indexing_service.rs:149`) that forwards to `RepositoryIngester` with the options you provide. Symbol extraction and relationship graphs are produced when the `tree-sitter-parsing` feature is active; the service writes `symbols.kota` and `dependency_graph.bin` alongside document storage (`src/services/indexing_service.rs:214-309`).
 
 ```bash
-# Show help
-./run_standalone.sh run --help
-
-# Database operations (placeholders until storage engine implemented)
-./run_standalone.sh run stats           # Show database statistics  
-./run_standalone.sh run index /path     # Index documents
-./run_standalone.sh run search "query"  # Search documents
-./run_standalone.sh run verify          # Verify integrity
+cargo run --bin kotadb -- \
+  index-codebase /path/to/repo \
+  --prefix repos \
+  --max-file-size-mb 5 \
+  --db-path ./kota-db-data
 ```
 
-### Current Implementation Status
+After ingestion, the CLI flushes buffered storage and rebuilds indices so wildcard and trigram searches stay in sync (`src/main.rs:1838-1861`). The same batching logic lives in `Database::rebuild_indices` for reuse (`src/main.rs:365-416`).
 
-✅ **Fully Implemented (Stage 6 Complete)**
-- Validated types with compile-time safety
-- Builder patterns for ergonomic construction
-- Wrapper components with automatic best practices
-- Comprehensive test coverage
-- Full documentation
+> **Warning** Incremental updates and git-specific analytics are still stubs (`src/services/indexing_service.rs:581-642`); re-run a full `index-codebase` when repositories change.
 
-🚧 **In Progress (Next Steps)**
-- Storage engine implementation
-- Index implementation  
-- Full CLI functionality
+## Step 5 — Query and inspect the database
 
-## Architecture Overview
-
-KotaDB uses a 6-stage risk reduction methodology:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CLI Interface                             │
-│              (Clap-based command parsing)                   │
-├─────────────────────────────────────────────────────────────┤
-│                 Stage 6: Component Library                  │
-│     (Validated Types + Builders + Wrappers)                │
-├──────────────┬───────────────┬───────────────┬──────────────┤
-│   Stage 2:   │   Stage 3:    │   Stage 4:    │   Stage 5:   │
-│  Contracts   │Pure Functions │ Observability │ Adversarial  │
-│              │               │               │   Testing    │
-├──────────────┴───────────────┴───────────────┴──────────────┤
-│                   Stage 1: Test-Driven Development          │
-│              (Comprehensive test coverage)                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Stage 6 Components (Current Focus)
-
-### Validated Types (`src/types.rs`)
-
-```rust
-use kotadb::types::*;
-
-// Safe file paths (no traversal, null bytes, etc.)
-let path = ValidatedPath::new("/documents/notes.md")?;
-
-// Non-nil document IDs
-let id = ValidatedDocumentId::new();
-
-// Non-empty, trimmed titles  
-let title = ValidatedTitle::new("My Document")?;
-
-// Document lifecycle state machine
-let draft = TypedDocument::<Draft>::new(/* ... */);
-let persisted = draft.into_persisted();
-let modified = persisted.into_modified();
-```
-
-### Builder Patterns (`src/builders.rs`)
-
-```rust
-use kotadb::builders::*;
-
-// Document construction with validation
-let doc = DocumentBuilder::new()
-    .path("/knowledge/rust-patterns.md")?
-    .title("Rust Design Patterns")?
-    .content(b"# Patterns\n\nContent...")
-    .build()?;
-
-// Query building with fluent API
-let query = QueryBuilder::new()
-    .with_text("machine learning")?
-    .with_tags(vec!["ai", "rust"])?
-    .with_limit(25)?
-    .build()?;
-```
-
-### Wrapper Components (`src/wrappers.rs`)
-
-```rust
-use kotadb::wrappers::*;
-
-// Automatic best practices through composition
-let storage = create_wrapped_storage(base_storage, 1000).await;
-// Provides: Tracing + Validation + Retries + Caching
-
-// Individual wrappers
-let traced = TracedStorage::new(storage);       // Automatic tracing
-let cached = CachedStorage::new(storage, 100);  // LRU caching
-let retryable = RetryableStorage::new(storage); // Exponential backoff
-```
-
-## Development Workflow
-
-### 1. Running Tests
+`kotadb search-code` dispatches to `SearchService::search_content` (`src/services/search_service.rs:118-172`), which selects between the trigram and primary indices depending on whether the query contains wildcards (`src/services/search_service.rs:329-345`). Context levels control whether the LLM-optimized path is invoked, with budgets defined in `try_llm_search` (`src/services/search_service.rs:255-295`).
 
 ```bash
-# All tests
-./run_standalone.sh test
-
-# Specific test categories (when implemented)
-cargo test validated_types    # Type safety tests
-cargo test builder_patterns   # Builder functionality  
-cargo test wrapper_components # Wrapper composition
+cargo run --bin kotadb -- search-code "storage::create" --context medium --limit 5 --db-path ./kota-db-data
 ```
 
-### 2. Adding New Features
+Symbol lookups reuse the same service via `search_symbols` (`src/services/search_service.rs:174-252`), drawing from the binary symbol store created during indexing.
 
-Follow the 6-stage methodology:
+| Command | Service path | Implementation |
+| --- | --- | --- |
+| `kotadb search-code <pattern>` | `SearchService::search_content` → `regular_search` | `src/services/search_service.rs:118`, `src/services/search_service.rs:298` |
+| `kotadb search-symbols <name>` | `SearchService::search_symbols` | `src/services/search_service.rs:174` |
+| `kotadb stats [--basic|--symbols|--relationships]` | `StatsService::get_statistics` | `src/services/stats_service.rs:245` |
 
-1. **Write tests first** (TDD)
-2. **Define contracts** (interfaces and validation)
-3. **Extract pure functions** (business logic)
-4. **Add observability** (tracing and metrics)
-5. **Test adversarially** (failure scenarios)
-6. **Use Stage 6 components** (validated types, builders, wrappers)
+> **Note** Symbol-based commands require the default `tree-sitter-parsing` feature and an indexed repository; the CLI warns if `symbols.kota` is missing (`src/main.rs:1867-1893`).
 
-### 3. Performance Testing
+## Step 6 — Run advanced analysis and services
+
+The remaining subcommands reuse the service layer shared with the MCP server:
+
+| Command | Service path | Implementation |
+| --- | --- | --- |
+| `kotadb find-callers <symbol>` | `AnalysisService::find_callers` | `src/services/analysis_service.rs:252` |
+| `kotadb analyze-impact <symbol>` | `AnalysisService::analyze_impact` | `src/services/analysis_service.rs:284` |
+| `kotadb codebase-overview` | `AnalysisService::generate_overview` | `src/services/analysis_service.rs:318` |
+| `kotadb benchmark --operations 10000` | `BenchmarkService::run_benchmark` | `src/services/benchmark_service.rs:300` |
+| `kotadb validate` | `ValidationService::validate_database` | `src/services/validation_service.rs:356` |
+| `kotadb verify-docs` | `DocumentationVerifier::run_full_verification` | `src/main.rs:1708-1776` |
+| `kotadb serve --port 8080` | `services_http_server::start_services_server` | `src/main.rs:1606-1631` |
+
+Start the HTTP layer when you need REST access to the same services:
 
 ```bash
-# Benchmarks (when implemented)
-cargo bench --features bench
-
-# Performance profiling
-cargo run --release --bin kotadb -- stats
+cargo run --bin kotadb -- serve --port 8080 --db-path ./kota-db-data
 ```
 
-## Integration as a Library
+This call mounts the service endpoints listed inside `main` (`src/main.rs:1609-1622`) using the storage and indices already opened for the CLI session.
 
-KotaDB can also be used as a Rust library:
+> **Note** All analysis commands expect that `index-codebase` has populated both documents and symbol data. If the binary symbol store is absent, the services emit actionable guidance before exiting (`src/services/analysis_service.rs:240-245`).
 
-### Cargo.toml
+## Next Steps
 
-```toml
-[dependencies]
-kotadb = { path = "../temp-kota-db" }
-tokio = { version = "1.0", features = ["full"] }
-anyhow = "1.0"
-```
-
-### Library Usage
-
-```rust
-use kotadb::{DocumentBuilder, create_wrapped_storage};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Initialize logging
-    kotadb::init_logging()?;
-    
-    // Create document with validation
-    let doc = DocumentBuilder::new()
-        .path("/my-notes/today.md")?
-        .title("Daily Notes")?
-        .content(b"# Today\n\nThoughts and ideas...")
-        .build()?;
-    
-    // Use wrapped storage for automatic best practices
-    let mut storage = create_wrapped_storage(
-        YourStorageImpl::new(), 
-        1000  // cache capacity
-    ).await;
-    
-    // All operations automatically traced, cached, retried, validated
-    storage.insert(doc).await?;
-    
-    Ok(())
-}
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Logging level
-export RUST_LOG=info
-
-# Database path (when storage implemented)
-export KOTADB_PATH=/path/to/database
-
-# Cache settings
-export KOTADB_CACHE_SIZE=1000
-export KOTADB_SYNC_INTERVAL=30
-```
-
-### Configuration File (Future)
-
-```toml
-# kotadb.toml
-[storage]
-path = "/data/kotadb"
-cache_size = "256MB"
-compression = true
-
-[indices]
-full_text = { enabled = true, max_memory = "100MB" }
-semantic = { enabled = true, model = "all-MiniLM-L6-v2" }
-graph = { enabled = true, max_depth = 5 }
-
-[observability]
-tracing = true
-metrics = true
-log_level = "info"
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Workspace Conflicts**
-   ```bash
-   # The run_standalone.sh script handles this automatically
-   ./run_standalone.sh build
-   ```
-
-2. **Missing Dependencies**
-   ```bash
-   # Install Rust if not present
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-3. **Test Failures**
-   ```bash
-   # Run tests with verbose output
-   cargo test -- --nocapture
-   ```
-
-### Getting Help
-
-1. **Check Status**
-   ```bash
-   ./run_standalone.sh status
-   ```
-
-2. **Review Documentation**
-   ```bash
-   ls docs/
-   cat docs/QUICK_REFERENCE.md
-   ```
-
-3. **Run Demo**
-   ```bash
-   ./run_standalone.sh demo
-   ```
-
-## Deployment
-
-### Standalone Binary
-
-```bash
-# Build optimized binary
-./run_standalone.sh build
-
-# Copy binary to deployment location
-cp target/release/kotadb /usr/local/bin/
-
-# Run anywhere
-kotadb --help
-```
-
-### Docker (Future)
-
-```dockerfile
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bullseye-slim
-COPY --from=builder /app/target/release/kotadb /usr/local/bin/
-ENTRYPOINT ["kotadb"]
-```
-
-## Roadmap
-
-### Phase 1: Core Implementation (Current)
-- ✅ Stage 6 component library complete
-- 🚧 Storage engine using Stage 6 components
-- 🚧 Index implementation with wrappers
-
-### Phase 2: Full Functionality
-- 📋 Complete CLI implementation
-- 📋 Configuration system
-- 📋 Performance optimization
-
-### Phase 3: Advanced Features  
-- 📋 Semantic search capabilities
-- 📋 Graph traversal algorithms
-- 📋 Real-time indexing
-
-## Contributing
-
-KotaDB demonstrates how systematic risk reduction can create reliable software. The 6-stage methodology reduces implementation risk from ~78% to ~99% success rate.
-
-To contribute:
-1. Follow the risk reduction methodology
-2. Use Stage 6 components for all new code
-3. Write tests first (TDD)
-4. Document contracts and invariants
-5. Add comprehensive observability
-
-## License
-
-This project is currently private and proprietary, shared for educational purposes to demonstrate the 6-stage risk reduction methodology in practice.
+- Run `just test` to exercise the same `cargo nextest` suite that backs CI.
+- Use `just dev` for an auto-reloading MCP server while iterating on standalone workflows.
+- Review the companion [CLI usage guide](./cli_usage.md) for detailed flag semantics and scripting patterns.

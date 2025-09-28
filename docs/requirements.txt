@@ -1,11 +1,17 @@
-# MkDocs and Material theme
+# KotaDB documentation build stack
+
+# MkDocs core site generator (mkdocs.yml:1-59)
 mkdocs>=1.5.3
+
+# Material theme with feature toggles (mkdocs.yml:9-51)
 mkdocs-material>=9.5.0
 
-# MkDocs plugins (only those actually used in mkdocs.yml)
+# Plugin stack declared in mkdocs.yml:53-57
 mkdocs-minify-plugin>=0.8.0
 mike>=2.0.0
 
-# Additional dependencies for Material theme features
-pygments>=2.17.0
+# Markdown extensions referenced in mkdocs.yml:59-97
 pymdown-extensions>=10.7.0
+
+# Syntax highlighting used by pymdownx.highlight (mkdocs.yml:80-83)
+pygments>=2.17.0
