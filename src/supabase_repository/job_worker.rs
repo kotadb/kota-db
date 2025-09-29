@@ -36,9 +36,9 @@ where
     pub poll_interval: Duration,
 }
 
-// Jobs are considered stale after 15 minutes of inactivity. A periodic heartbeat keeps
+// Jobs are considered stale after 45 minutes of inactivity. A periodic heartbeat keeps
 // genuinely long-running indexing work alive without extending this window.
-const STALE_JOB_MAX_AGE: Duration = Duration::from_secs(15 * 60);
+const STALE_JOB_MAX_AGE: Duration = Duration::from_secs(45 * 60);
 
 fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
     match payload.get("webhook_delivery_id") {
