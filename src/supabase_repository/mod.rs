@@ -445,6 +445,24 @@ impl SupabaseRepositoryStore {
         Ok(row)
     }
 
+    #[instrument(skip(self))]
+    pub async fn heartbeat_job(&self, job_id: Uuid) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE indexing_jobs
+            SET started_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1 AND status = 'in_progress'
+            "#,
+        )
+        .bind(job_id)
+        .execute(&self.pool)
+        .await
+        .context("failed to heartbeat job")?;
+
+        Ok(())
+    }
+
     #[instrument(skip(self, result))]
     pub async fn complete_job(&self, job_id: Uuid, result: Option<JsonValue>) -> Result<()> {
         let repository_id = sqlx::query_scalar::<_, Uuid>(

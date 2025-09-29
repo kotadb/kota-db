@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use tracing::{debug, warn};
 
 use crate::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 
@@ -151,6 +152,13 @@ impl<'a> IndexingService<'a> {
         let mut errors = Vec::new();
         let mut formatted_output = String::new();
 
+        warn!(
+            repo = %options.repo_path.display(),
+            include_paths = options.include_paths.as_ref().map(|paths| paths.len()),
+            create_index = options.create_index,
+            "IndexingService::index_codebase invoked"
+        );
+
         // Validate repository path
         if !options.repo_path.exists() {
             let error = format!("Repository path does not exist: {:?}", options.repo_path);
@@ -255,6 +263,13 @@ impl<'a> IndexingService<'a> {
         });
 
         // Perform the indexing operation
+        warn!(
+            repo = %options.repo_path.display(),
+            include_paths = options.include_paths.as_ref().map(|paths| paths.len()),
+            extract_symbols = should_extract_symbols,
+            create_index = options.create_index,
+            "IndexingService::index_codebase starting ingestion"
+        );
         let ingester = RepositoryIngester::new(config.clone());
         let storage_arc = self.database.storage();
         let mut storage = storage_arc.lock().await;
@@ -265,6 +280,7 @@ impl<'a> IndexingService<'a> {
             // Use binary symbol storage with relationship extraction for complete analysis
             let symbol_db_path = self.db_path.join("symbols.kota");
             let graph_db_path = self.db_path.join("dependency_graph.bin");
+            debug!("Invoking ingest_with_binary_symbols_and_relationships");
             ingester
                 .ingest_with_binary_symbols_and_relationships(
                     &options.repo_path,
@@ -276,6 +292,7 @@ impl<'a> IndexingService<'a> {
                 .await
                 .context("Failed to ingest repository with symbol and relationship extraction")
         } else {
+            debug!("Invoking ingest_with_progress without symbol extraction");
             ingester
                 .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
                 .await
@@ -330,6 +347,15 @@ impl<'a> IndexingService<'a> {
                 });
             }
         };
+
+        warn!(
+            repo = %options.repo_path.display(),
+            files_processed,
+            symbols_extracted,
+            relationships_found,
+            elapsed_ms = start_time.elapsed().as_millis() as u64,
+            "IndexingService::index_codebase completed"
+        );
 
         // Essential completion status: show unless in quiet mode
         if !options.quiet {

@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -12,8 +12,9 @@ use git2::build::RepoBuilder;
 use serde_json::{json, Value as JsonValue};
 #[cfg(feature = "git-integration")]
 use tokio::task;
-use tokio::time::sleep;
-use tracing::{error, info, instrument, warn};
+use tokio::task::JoinHandle;
+use tokio::time::{interval, sleep, MissedTickBehavior};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -35,6 +36,8 @@ where
     pub poll_interval: Duration,
 }
 
+// Jobs are considered stale after 15 minutes of inactivity. A periodic heartbeat keeps
+// genuinely long-running indexing work alive without extending this window.
 const STALE_JOB_MAX_AGE: Duration = Duration::from_secs(15 * 60);
 
 fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
@@ -50,6 +53,40 @@ struct IncrementalWork {
     paths_to_index: Vec<String>,
     paths_to_remove: Vec<String>,
     skip_index_document: bool,
+}
+
+struct JobHeartbeat {
+    handle: JoinHandle<()>,
+}
+
+impl JobHeartbeat {
+    fn start(store: SupabaseRepositoryStore, job_id: Uuid) -> Self {
+        let mut ticker = interval(Duration::from_secs(60));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                ticker.tick().await;
+                match store.heartbeat_job(job_id).await {
+                    Ok(_) => {
+                        debug!(job_id = %job_id, "Job heartbeat ticked");
+                    }
+                    Err(err) => {
+                        warn!(job_id = %job_id, "Job heartbeat failed: {}", err);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Self { handle }
+    }
+}
+
+impl Drop for JobHeartbeat {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 fn infer_repository_identifier(git_url: &str) -> String {
@@ -321,6 +358,9 @@ where
             "Processing Supabase indexing job"
         );
 
+        // Keep the job marked as active while long-running phases execute.
+        let _heartbeat_guard = JobHeartbeat::start(self.store.clone(), job.id);
+
         let repo_identifier = infer_repository_identifier(&payload.git_url);
         let safe_repo_name = sanitize_repository_name(&repo_identifier);
 
@@ -360,14 +400,124 @@ where
         }
 
         let index_result = if should_clone_repo {
+            warn!(
+                repository = %repo_meta.git_url,
+                branch = payload.branch.as_deref().unwrap_or("unknown"),
+                include_paths = include_paths.as_ref().map(|paths| paths.len()),
+                "Preparing repository workspace for indexing"
+            );
+            if let Err(err) = self
+                .store
+                .record_job_event(
+                    job.id,
+                    "cloning",
+                    "Preparing repository workspace",
+                    Some(json!({
+                        "branch": payload.branch.clone(),
+                        "include_paths": include_paths.as_ref().map(|paths| paths.len()),
+                    })),
+                )
+                .await
+            {
+                warn!("Failed to record cloning event for job {}: {}", job.id, err);
+            }
             let repo_path = self.prepare_repository(job.repository_id, &payload).await?;
-            self.index_repository(
-                &repo_path,
-                &payload,
-                include_paths.as_deref(),
-                !skip_index_document,
-            )
-            .await?
+            warn!(
+                repository = %repo_meta.git_url,
+                path = %repo_path.display(),
+                "Repository workspace ready"
+            );
+            if let Err(err) = self
+                .store
+                .record_job_event(
+                    job.id,
+                    "clone_completed",
+                    "Repository clone completed",
+                    Some(json!({ "path": repo_path.display().to_string() })),
+                )
+                .await
+            {
+                warn!(
+                    "Failed to record clone_completed event for job {}: {}",
+                    job.id, err
+                );
+            }
+            if let Err(err) = self
+                .store
+                .record_job_event(
+                    job.id,
+                    "indexing",
+                    "Starting repository indexing",
+                    Some(json!({
+                        "create_index_doc": !skip_index_document,
+                        "include_paths": include_paths.as_ref().map(|paths| paths.len()),
+                    })),
+                )
+                .await
+            {
+                warn!(
+                    "Failed to record indexing event for job {}: {}",
+                    job.id, err
+                );
+            }
+            warn!(
+                repository = %repo_meta.git_url,
+                path = %repo_path.display(),
+                include_paths = include_paths.as_ref().map(|paths| paths.len()),
+                "Starting IndexingService::index_codebase"
+            );
+            let index_start = Instant::now();
+            let result = self
+                .index_repository(
+                    &repo_path,
+                    &payload,
+                    include_paths.as_deref(),
+                    !skip_index_document,
+                )
+                .await?;
+            warn!(
+                repository = %repo_meta.git_url,
+                elapsed_ms = index_start.elapsed().as_millis() as u64,
+                "Completed IndexingService::index_codebase invocation"
+            );
+
+            if result.files_processed == 0 {
+                warn!(
+                    repository = %repo_meta.git_url,
+                    branch = payload.branch.as_deref().unwrap_or("unknown"),
+                    "Indexing completed without processing any files"
+                );
+            }
+
+            info!(
+                repository = %repo_meta.git_url,
+                files_processed = result.files_processed,
+                symbols_extracted = result.symbols_extracted,
+                relationships_found = result.relationships_found,
+                elapsed_ms = index_start.elapsed().as_millis() as u64,
+                "Indexing finished"
+            );
+            if let Err(err) = self
+                .store
+                .record_job_event(
+                    job.id,
+                    "indexing_completed",
+                    "Repository indexing completed",
+                    Some(json!({
+                        "files_processed": result.files_processed,
+                        "symbols_extracted": result.symbols_extracted,
+                        "relationships_found": result.relationships_found,
+                        "elapsed_ms": index_start.elapsed().as_millis() as u64,
+                    })),
+                )
+                .await
+            {
+                warn!(
+                    "Failed to record indexing_completed event for job {}: {}",
+                    job.id, err
+                );
+            }
+            result
         } else {
             IndexResult {
                 files_processed: 0,
@@ -427,15 +577,31 @@ where
         {
             let repo_dir = self.db_path.join("repos").join(repository_id.to_string());
             if repo_dir.exists() {
+                warn!(
+                    repo = %payload.git_url,
+                    path = %repo_dir.display(),
+                    "Removing existing repository workspace"
+                );
                 tokio::fs::remove_dir_all(&repo_dir).await.ok();
             }
             tokio::fs::create_dir_all(&repo_dir).await?;
+            warn!(
+                repo = %payload.git_url,
+                path = %repo_dir.display(),
+                "Created repository workspace directory"
+            );
 
             let git_url = payload.git_url.clone();
             let branch = payload.branch.clone();
             let repo_dir_clone = repo_dir.clone();
 
             task::spawn_blocking(move || -> Result<()> {
+                warn!(
+                    repo = %git_url,
+                    path = %repo_dir_clone.display(),
+                    branch = branch.as_deref().unwrap_or("default"),
+                    "Cloning repository"
+                );
                 let mut builder = RepoBuilder::new();
                 if let Some(branch) = branch.as_deref() {
                     builder.branch(branch);
@@ -444,6 +610,11 @@ where
                 builder
                     .clone(&git_url, repo_dir_clone.as_path())
                     .with_context(|| format!("Failed to clone repository: {}", git_url))?;
+                warn!(
+                    repo = %git_url,
+                    path = %repo_dir_clone.display(),
+                    "Repository clone finished"
+                );
                 Ok(())
             })
             .await??;
