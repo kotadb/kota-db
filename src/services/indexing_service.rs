@@ -5,7 +5,10 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, warn};
+
+type ProgressNotifier = Arc<dyn Fn(&str) + Send + Sync>;
 
 use crate::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 
@@ -135,12 +138,24 @@ pub struct UpdateResult {
 pub struct IndexingService<'a> {
     database: &'a dyn DatabaseAccess,
     db_path: PathBuf,
+    progress_callback: Option<ProgressNotifier>,
 }
 
 impl<'a> IndexingService<'a> {
     /// Create a new IndexingService instance
     pub fn new(database: &'a dyn DatabaseAccess, db_path: PathBuf) -> Self {
-        Self { database, db_path }
+        Self {
+            database,
+            db_path,
+            progress_callback: None,
+        }
+    }
+
+    /// Attach a progress callback that receives free-form status messages during indexing.
+    #[must_use]
+    pub fn with_progress_callback(mut self, progress_callback: Option<ProgressNotifier>) -> Self {
+        self.progress_callback = progress_callback;
+        self
     }
 
     /// Index a complete codebase with symbol extraction and relationship analysis
@@ -256,7 +271,13 @@ impl<'a> IndexingService<'a> {
         let symbols_extracted: usize;
         let relationships_found: usize;
 
+        let progress_notifier = self.progress_callback.clone();
+        let external_progress = progress_notifier.clone();
         let progress_callback: ProgressCallback = Box::new(move |message: &str| {
+            if let Some(callback) = &external_progress {
+                callback(message);
+            }
+
             if !options.quiet {
                 // Could update progress here if needed
             }
@@ -325,6 +346,13 @@ impl<'a> IndexingService<'a> {
                 if files_proc > 0 && !options.quiet {
                     // Essential completion info: show unless in quiet mode
                     formatted_output.push_str("📝 Documents stored successfully. Search index will be built on first search.\n");
+                }
+
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "documents_ingested files:{} documents:{} errors:{}",
+                        files_proc, ingestion_result.documents_created, ingestion_result.errors
+                    ));
                 }
 
                 (files_proc, symbols_ext, relationships_found)
@@ -443,6 +471,12 @@ impl<'a> IndexingService<'a> {
             } else {
                 // Process documents in batches for better performance
                 const BATCH_SIZE: usize = 100;
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "rebuild_start documents:{} batch_size:{}",
+                        total_docs, BATCH_SIZE
+                    ));
+                }
                 let mut processed = 0;
 
                 // Process in chunks to reduce lock contention and prevent OOM
@@ -502,6 +536,15 @@ impl<'a> IndexingService<'a> {
                     }
 
                     processed += batch_entries.len();
+                    if let Some(callback) = &progress_notifier {
+                        callback(&format!(
+                            "rebuild_progress processed:{} total:{} batch_size:{} errors:{}",
+                            processed,
+                            total_docs,
+                            batch_entries.len(),
+                            errors.len()
+                        ));
+                    }
 
                     // Periodic flush for large datasets
                     if processed % 500 == 0 || processed >= total_docs {
@@ -534,6 +577,14 @@ impl<'a> IndexingService<'a> {
                     formatted_output.push_str(
                         "✅ Index rebuild completed. Search functionality is now available.\n",
                     );
+                }
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "rebuild_complete documents:{} processed:{} errors:{}",
+                        total_docs,
+                        processed,
+                        errors.len()
+                    ));
                 }
             }
         }

@@ -39,6 +39,9 @@ where
 // Jobs are considered stale after 45 minutes of inactivity. A periodic heartbeat keeps
 // genuinely long-running indexing work alive without extending this window.
 const STALE_JOB_MAX_AGE: Duration = Duration::from_secs(45 * 60);
+// Heartbeat interval is intentionally aggressive so we have a dense breadcrumb trail in
+// job_events and tighter monitoring of Supabase connection health.
+const JOB_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 fn delivery_id_from_payload(payload: &JsonValue) -> Option<i64> {
     match payload.get("webhook_delivery_id") {
@@ -61,18 +64,69 @@ struct JobHeartbeat {
 
 impl JobHeartbeat {
     fn start(store: SupabaseRepositoryStore, job_id: Uuid) -> Self {
-        let mut ticker = interval(Duration::from_secs(60));
+        let mut ticker = interval(JOB_HEARTBEAT_INTERVAL);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let handle = tokio::spawn(async move {
+            debug!(
+                job_id = %job_id,
+                interval_secs = JOB_HEARTBEAT_INTERVAL.as_secs(),
+                "Job heartbeat loop started"
+            );
+            let mut tick_count: u64 = 0;
             loop {
                 ticker.tick().await;
                 match store.heartbeat_job(job_id).await {
                     Ok(_) => {
-                        debug!(job_id = %job_id, "Job heartbeat ticked");
+                        tick_count += 1;
+                        debug!(job_id = %job_id, tick_count, "Job heartbeat ticked");
+
+                        let event_store = store.clone();
+                        let event_job_id = job_id;
+                        let event_tick = tick_count;
+                        tokio::spawn(async move {
+                            if let Err(err) = event_store
+                                .record_job_event(
+                                    event_job_id,
+                                    "heartbeat",
+                                    "Worker heartbeat ticked",
+                                    Some(json!({
+                                        "interval_seconds": JOB_HEARTBEAT_INTERVAL.as_secs(),
+                                        "tick": event_tick,
+                                    })),
+                                )
+                                .await
+                            {
+                                warn!(
+                                    job_id = %event_job_id,
+                                    "Failed to record heartbeat event: {}",
+                                    err
+                                );
+                            }
+                        });
                     }
                     Err(err) => {
                         warn!(job_id = %job_id, "Job heartbeat failed: {}", err);
+                        let failure_store = store.clone();
+                        let failure_job_id = job_id;
+                        let failure_error = err.to_string();
+                        tokio::spawn(async move {
+                            if let Err(record_err) = failure_store
+                                .record_job_event(
+                                    failure_job_id,
+                                    "heartbeat_failed",
+                                    "Worker heartbeat failed",
+                                    Some(json!({ "error": failure_error })),
+                                )
+                                .await
+                            {
+                                warn!(
+                                    job_id = %failure_job_id,
+                                    "Failed to record heartbeat failure event: {}",
+                                    record_err
+                                );
+                            }
+                        });
                         break;
                     }
                 }
@@ -469,6 +523,7 @@ where
             let index_start = Instant::now();
             let result = self
                 .index_repository(
+                    job.id,
                     &repo_path,
                     &payload,
                     include_paths.as_deref(),
@@ -625,12 +680,40 @@ where
 
     async fn index_repository(
         &self,
+        job_id: Uuid,
         repo_path: &Path,
         payload: &SupabaseJobPayload,
         include_paths: Option<&[String]>,
         create_index_doc: bool,
     ) -> Result<crate::services::IndexResult> {
-        let indexing = IndexingService::new(self.database.as_ref(), self.db_path.clone());
+        let runtime_handle = tokio::runtime::Handle::current();
+        let repo_label = Arc::new(repo_path.display().to_string());
+        let progress_store = self.store.clone();
+        let progress_handle = runtime_handle.clone();
+        let progress_job_id = job_id;
+
+        let progress_callback: Arc<dyn Fn(&str) + Send + Sync> = {
+            let repo_label = Arc::clone(&repo_label);
+            Arc::new(move |message: &str| {
+                let store = progress_store.clone();
+                let repo = Arc::clone(&repo_label);
+                let msg = message.to_string();
+                progress_handle.spawn(async move {
+                    let _ = store
+                        .record_job_event(
+                            progress_job_id,
+                            "indexing_progress",
+                            &msg,
+                            Some(json!({
+                                "message": msg,
+                                "repo": repo.as_ref(),
+                            })),
+                        )
+                        .await;
+                });
+            })
+        };
+
         let mut options = IndexCodebaseOptions {
             repo_path: repo_path.to_path_buf(),
             ..IndexCodebaseOptions::default()
@@ -672,7 +755,74 @@ where
             }
         }
 
-        indexing.index_codebase(options).await
+        let store = self.store.clone();
+        let db_path = self.db_path.clone();
+        let database = self.database.clone();
+        let options_clone = options.clone();
+        let progress_callback_block = Arc::clone(&progress_callback);
+        let blocking_store = store.clone();
+        let blocking_job_id = job_id;
+
+        store
+            .record_job_event(
+                job_id,
+                "indexing_phase",
+                "spawn_blocking_index_start",
+                Some(json!({
+                    "repo": repo_label.as_ref(),
+                })),
+            )
+            .await
+            .ok();
+
+        let repo_label_clone = Arc::clone(&repo_label);
+
+        let result = tokio::task::spawn_blocking(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("heartbeat indexing mini runtime")
+                .block_on(async move {
+                    use tokio::time::{interval, Duration, MissedTickBehavior};
+
+                    let heartbeat_store = blocking_store.clone();
+                    let mut heartbeat_interval = interval(Duration::from_secs(60));
+                    heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    let heartbeat_task = tokio::spawn(async move {
+                        loop {
+                            heartbeat_interval.tick().await;
+                            if let Err(err) = heartbeat_store.heartbeat_job(blocking_job_id).await {
+                                warn!(job_id = %blocking_job_id, "Manual heartbeat failed: {}", err);
+                                break;
+                            }
+                        }
+                    });
+
+                    let indexing = IndexingService::new(database.as_ref(), db_path)
+                        .with_progress_callback(Some(progress_callback_block));
+                    let indexing_result = indexing.index_codebase(options_clone).await;
+
+                    heartbeat_task.abort();
+                    let _ = heartbeat_task.await;
+
+                    indexing_result
+                })
+        })
+        .await??;
+
+        store
+            .record_job_event(
+                job_id,
+                "indexing_phase",
+                "spawn_blocking_index_complete",
+                Some(json!({
+                    "repo": repo_label_clone.as_ref(),
+                })),
+            )
+            .await
+            .ok();
+
+        Ok(result)
     }
 
     async fn purge_removed_paths(

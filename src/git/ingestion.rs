@@ -493,6 +493,12 @@ impl RepositoryIngester {
         let mut processed = 0;
 
         for (chunk_index, chunk) in files.chunks(chunk_size).enumerate() {
+            report_progress(&format!(
+                "chunk_start:{} total_files:{} chunk_size:{}",
+                chunk_index + 1,
+                total_files,
+                chunk.len()
+            ));
             // Check memory pressure before processing each chunk
             if memory_manager.is_memory_pressure() {
                 warn!("Memory pressure detected, reducing chunk size for remaining files");
@@ -602,12 +608,13 @@ impl RepositoryIngester {
             let progress = (processed as f64 / total_files as f64 * 100.0) as u32;
             let memory_stats = memory_manager.get_stats();
             report_progress(&format!(
-                "Processed files: {}/{} ({}%) - {} - Chunk {} complete",
+                "chunk_complete:{} processed:{}/{} ({}%) mem:{} errors:{}",
+                chunk_index + 1,
                 processed,
                 total_files,
                 progress,
                 memory_stats,
-                chunk_index + 1
+                errors
             ));
 
             // Force memory reservation to be dropped here
@@ -618,6 +625,10 @@ impl RepositoryIngester {
             "Chunked processing complete: {} documents, {} files, {} errors",
             documents_created, files_ingested, errors
         );
+        report_progress(&format!(
+            "chunked_processing_complete docs:{} files:{} errors:{}",
+            documents_created, files_ingested, errors
+        ));
 
         Ok((documents_created, files_ingested, errors))
     }
