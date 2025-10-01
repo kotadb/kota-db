@@ -78,7 +78,7 @@ sqlx = { version = "0.8.6", features = ["runtime-tokio-native-tls", "postgres", 
 base64 = "0.22.1"
 
 # Regular expressions
-regex = "1.10"
+regex = "1.11"
 
 # Logging
 tracing = "0.1"
