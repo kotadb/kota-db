@@ -15,8 +15,8 @@ created_by: "Claude Code"
 >
 > **Currently Implemented:**
 > - ✅ Text search via trigram index
-> - ✅ Semantic search via HNSW vector index
 > - ✅ Basic path-based queries with wildcards
+> - ⏸️ Semantic search (retired until cloud-first relaunch)
 >
 > **Not Yet Implemented:**
 > - ⏳ Natural language processing
@@ -70,7 +70,7 @@ For precise control and programmatic access:
   }
 }
 
-// Semantic search with filters
+// Semantic search with filters (design reference; retired in current release)
 {
   type: "semantic",
   query: "consciousness implementation",
@@ -662,7 +662,9 @@ const results = await db.query("rust programming");
 const results = await db.query("design patterns", { limit: 10 });
 ```
 
-### Semantic Search (If Embeddings Configured)
+### Semantic Search *(retired)*
+
+Semantic search endpoints are disabled until the cloud-first relaunch.
 ```bash
 # Via REST API
 curl -X POST http://localhost:8080/search/semantic \
@@ -689,6 +691,6 @@ kotadb search "/projects/*"    # Documents in projects folder
 
 KQL is designed to grow with KOTA's cognitive capabilities. It bridges natural human expression with precise data operations, enabling true distributed cognition. The language will evolve based on usage patterns, becoming more intuitive and powerful over time.
 
-**Current Status**: Basic text and semantic search are implemented. The full KQL vision remains a roadmap item for future development.
+**Current Status**: Basic text search ships by default. Semantic search will return with the future cloud-first architecture. The full KQL vision remains a roadmap item for future development.
 
 The key innovation is treating queries not as database operations, but as cognitive requests - allowing KOTA to understand not just what you're looking for, but why you're looking for it.

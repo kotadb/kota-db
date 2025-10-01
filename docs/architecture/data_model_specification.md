@@ -822,4 +822,4 @@ This data model provides a comprehensive foundation for KotaDB, optimized for KO
 4. **Reliability**: ACID transactions, crash recovery
 5. **Integration**: Native support for KOTA's cognitive features
 
-The model can be implemented incrementally, starting with core storage and gradually adding advanced features like semantic search and graph traversal.
+The model can be implemented incrementally, starting with core storage and gradually adding advanced features like semantic search (planned for the cloud relaunch) and graph traversal.

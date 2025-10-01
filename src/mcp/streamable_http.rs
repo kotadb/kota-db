@@ -770,7 +770,7 @@ fn map_tool_name_to_mcp_method(name: &str) -> Option<String> {
         "search_symbols" => Some("kotadb://symbol_search/query".into()),
         "find_callers" => Some("kotadb://find_callers".into()),
         "analyze_impact" => Some("kotadb://impact_analysis".into()),
-        "stats" => Some("kotadb://semantic_search/stats".into()),
+        "stats" => Some("kotadb://status/system".into()),
         other => {
             tracing::warn!("Unknown legacy tool mapping requested: {}", other);
             None

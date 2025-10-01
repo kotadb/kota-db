@@ -1,10 +1,9 @@
-/// MCP Tools Implementation
-///
-/// This module contains the actual tool implementations that expose
-/// KotaDB functionality through the Model Context Protocol.
-///
-/// Note: Document tools removed per issue #401 - KotaDB is now a pure codebase intelligence platform
-pub mod search_tools;
+//! MCP Tools Implementation
+//!
+//! This module contains the actual tool implementations that expose
+//! KotaDB functionality through the Model Context Protocol.
+//!
+//! Note: Document tools removed per issue #401 - KotaDB is now a pure codebase intelligence platform
 
 /// Relationship query tools - the killer feature for LLM code understanding
 #[cfg(feature = "tree-sitter-parsing")]
@@ -35,7 +34,6 @@ pub trait MCPToolHandler {
 /// Main tool registry that coordinates all MCP tools
 /// Document tools removed per issue #401 - pure codebase intelligence platform
 pub struct MCPToolRegistry {
-    pub search_tools: Option<Arc<search_tools::SearchTools>>,
     pub text_tools: Option<Arc<text_search_tools::TextSearchTools>>,
     #[cfg(feature = "tree-sitter-parsing")]
     pub relationship_tools: Option<Arc<relationship_tools::RelationshipTools>>,
@@ -52,19 +50,12 @@ impl Default for MCPToolRegistry {
 impl MCPToolRegistry {
     pub fn new() -> Self {
         Self {
-            search_tools: None,
             text_tools: None,
             #[cfg(feature = "tree-sitter-parsing")]
             relationship_tools: None,
             #[cfg(feature = "tree-sitter-parsing")]
             symbol_tools: None,
         }
-    }
-
-    /// Register search tools
-    pub fn with_search_tools(mut self, tools: Arc<search_tools::SearchTools>) -> Self {
-        self.search_tools = Some(tools);
-        self
     }
 
     /// Register relationship tools
@@ -94,9 +85,6 @@ impl MCPToolRegistry {
     pub fn get_all_tool_definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = Vec::new();
 
-        if let Some(tools) = &self.search_tools {
-            definitions.extend(tools.get_tool_definitions());
-        }
         if let Some(tools) = &self.text_tools {
             definitions.extend(tools.get_tool_definitions());
         }
@@ -131,21 +119,8 @@ impl MCPToolRegistry {
             m if m.starts_with("kotadb://text_search") => {
                 if let Some(tools) = &self.text_tools {
                     tools.handle_call(method, params).await
-                } else if let Some(tools) = &self.search_tools {
-                    tools.handle_call(method, params).await
                 } else {
-                    Err(anyhow::anyhow!("Search tools not enabled"))
-                }
-            }
-            m if m.starts_with("kotadb://semantic_search")
-                || m.starts_with("kotadb://hybrid_search")
-                || m.starts_with("kotadb://find_similar")
-                || m.starts_with("kotadb://llm_optimized_search") =>
-            {
-                if let Some(tools) = &self.search_tools {
-                    tools.handle_call(method, params).await
-                } else {
-                    Err(anyhow::anyhow!("Search tools not enabled"))
+                    Err(anyhow::anyhow!("Text search tools not enabled"))
                 }
             }
             #[cfg(feature = "tree-sitter-parsing")]

@@ -219,7 +219,8 @@ impl MCPResourceHandler {
 
     /// Generate documentation for all MCP tools
     fn generate_tool_documentation(&self) -> String {
-        r#"# KotaDB MCP Tools
+        String::from(
+            r#"# KotaDB MCP Tools
 
 This document describes all available MCP tools for interacting with KotaDB.
 
@@ -276,21 +277,7 @@ Full-text search using trigram indexing.
 - `limit` (optional): Maximum results
 - `offset` (optional): Skip results
 
-### kotadb://semantic_search
-Vector-based semantic similarity search.
-
-**Parameters:**
-- `query` (required): Search query
-- `k` (optional): Number of results (default: 10)
-- `threshold` (optional): Similarity threshold
-
-### kotadb://find_similar
-Find documents similar to a given document.
-
-**Parameters:**
-- `document_id` (required): Reference document UUID
-- `k` (optional): Number of results
-- `threshold` (optional): Similarity threshold
+> Semantic and hybrid search endpoints have been retired until the cloud-first relaunch.
 
 ## Analytics Tools
 
@@ -339,8 +326,8 @@ All tools return standardized error responses with appropriate HTTP status codes
 API calls are rate-limited to prevent abuse:
 - Default: 1000 requests per minute
 - Configurable via server settings
-"#
-        .to_string()
+"#,
+        )
     }
 }
 

@@ -36,7 +36,7 @@ KotaDB's services layer architecture was implemented in 4 phases to achieve inte
                           │             │
 ┌─────────────────────────────────────────────────────────────┐
 │              Storage & Index Layer                          │
-│  FileStorage, PrimaryIndex, TrigramIndex, VectorIndex      │
+│  FileStorage, PrimaryIndex, TrigramIndex                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,14 +50,13 @@ KotaDB's services layer architecture was implemented in 4 phases to achieve inte
 impl SearchService {
     pub async fn search_content(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchResult>>;
     pub async fn search_symbols(&self, pattern: &str, options: SymbolSearchOptions) -> Result<Vec<SymbolResult>>;
-    pub async fn semantic_search(&self, query: &str, limit: Option<usize>) -> Result<Vec<SearchResult>>;
 }
 ```
 
 **Features**:
 - Full-text content search using trigram index
 - Symbol pattern matching with wildcard support  
-- Semantic search using vector embeddings
+- Semantic search using vector embeddings (retired until cloud-first relaunch)
 - Configurable result limits and filtering
 
 ### 2. AnalysisService (Phase 2)  

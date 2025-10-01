@@ -261,7 +261,7 @@ pub struct IndexEntry {
 | Lookup by path | O(log n) | <0.1ms |
 | Full-text search | O(k) | <10ms |
 | Graph traversal | O(V + E) | <50ms |
-| Semantic search | O(log n) | <20ms |
+| Semantic search (retired) | N/A | N/A |
 
 ### Space Complexity
 | Component | Memory Usage | Disk Usage |

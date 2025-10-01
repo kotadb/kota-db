@@ -45,7 +45,7 @@ setup(
             "mypy>=0.800",
         ],
     },
-    keywords="database document-store search semantic-search kotadb",
+    keywords="database document-store search kotadb",
     project_urls={
         "Bug Reports": "https://github.com/jayminwest/kota-db/issues",
         "Source": "https://github.com/jayminwest/kota-db",

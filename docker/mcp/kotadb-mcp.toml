@@ -33,7 +33,6 @@ output = "stdout"
 [performance]
 # Query Performance Targets
 max_query_latency_ms = 10
-max_semantic_search_latency_ms = 100
 bulk_operation_batch_size = 1000
 
 [security]
@@ -41,10 +40,3 @@ bulk_operation_batch_size = 1000
 max_request_size = "10MB"
 rate_limit_requests_per_minute = 1000
 enable_request_validation = true
-
-[embeddings]
-# Embedding Configuration for Semantic Search
-provider = "local"  # or "openai", "huggingface"
-model = "all-MiniLM-L6-v2"
-dimension = 384
-batch_size = 32
