@@ -73,6 +73,7 @@ ignore = [
     # Ignore advisories for specific reasons
     "RUSTSEC-2024-0436", # paste crate unmaintained - used transitively by rmp-serde, low risk
     "RUSTSEC-2024-0384", # instant crate unmaintained - used transitively by tantivy, low risk
+    "RUSTSEC-2023-0071", # rsa Marvin timing issue - transitively from sqlx, no patched release yet
 ]
 
 [sources]

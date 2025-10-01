@@ -5,6 +5,10 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tracing::{debug, warn};
+
+type ProgressNotifier = Arc<dyn Fn(&str) + Send + Sync>;
 
 use crate::git::{IngestionConfig, ProgressCallback, RepositoryIngester};
 
@@ -24,6 +28,8 @@ pub struct IndexCodebaseOptions {
     pub extract_symbols: Option<bool>,
     pub no_symbols: bool,
     pub quiet: bool,
+    pub include_paths: Option<Vec<String>>,
+    pub create_index: bool,
 }
 
 impl Default for IndexCodebaseOptions {
@@ -40,6 +46,8 @@ impl Default for IndexCodebaseOptions {
             extract_symbols: Some(true),
             no_symbols: false,
             quiet: false,
+            include_paths: None,
+            create_index: true,
         }
     }
 }
@@ -130,12 +138,24 @@ pub struct UpdateResult {
 pub struct IndexingService<'a> {
     database: &'a dyn DatabaseAccess,
     db_path: PathBuf,
+    progress_callback: Option<ProgressNotifier>,
 }
 
 impl<'a> IndexingService<'a> {
     /// Create a new IndexingService instance
     pub fn new(database: &'a dyn DatabaseAccess, db_path: PathBuf) -> Self {
-        Self { database, db_path }
+        Self {
+            database,
+            db_path,
+            progress_callback: None,
+        }
+    }
+
+    /// Attach a progress callback that receives free-form status messages during indexing.
+    #[must_use]
+    pub fn with_progress_callback(mut self, progress_callback: Option<ProgressNotifier>) -> Self {
+        self.progress_callback = progress_callback;
+        self
     }
 
     /// Index a complete codebase with symbol extraction and relationship analysis
@@ -146,6 +166,13 @@ impl<'a> IndexingService<'a> {
         let start_time = std::time::Instant::now();
         let mut errors = Vec::new();
         let mut formatted_output = String::new();
+
+        warn!(
+            repo = %options.repo_path.display(),
+            include_paths = options.include_paths.as_ref().map(|paths| paths.len()),
+            create_index = options.create_index,
+            "IndexingService::index_codebase invoked"
+        );
 
         // Validate repository path
         if !options.repo_path.exists() {
@@ -225,6 +252,8 @@ impl<'a> IndexingService<'a> {
             ..Default::default()
         };
 
+        ingestion_options.include_paths = options.include_paths.clone();
+
         #[cfg(feature = "tree-sitter-parsing")]
         {
             ingestion_options.extract_symbols = should_extract_symbols;
@@ -233,7 +262,7 @@ impl<'a> IndexingService<'a> {
         let config = IngestionConfig {
             path_prefix: options.prefix.clone(),
             options: ingestion_options,
-            create_index: true,
+            create_index: options.create_index,
             organization_config: Some(crate::git::RepositoryOrganizationConfig::default()),
         };
 
@@ -242,13 +271,26 @@ impl<'a> IndexingService<'a> {
         let symbols_extracted: usize;
         let relationships_found: usize;
 
+        let progress_notifier = self.progress_callback.clone();
+        let external_progress = progress_notifier.clone();
         let progress_callback: ProgressCallback = Box::new(move |message: &str| {
+            if let Some(callback) = &external_progress {
+                callback(message);
+            }
+
             if !options.quiet {
                 // Could update progress here if needed
             }
         });
 
         // Perform the indexing operation
+        warn!(
+            repo = %options.repo_path.display(),
+            include_paths = options.include_paths.as_ref().map(|paths| paths.len()),
+            extract_symbols = should_extract_symbols,
+            create_index = options.create_index,
+            "IndexingService::index_codebase starting ingestion"
+        );
         let ingester = RepositoryIngester::new(config.clone());
         let storage_arc = self.database.storage();
         let mut storage = storage_arc.lock().await;
@@ -259,6 +301,7 @@ impl<'a> IndexingService<'a> {
             // Use binary symbol storage with relationship extraction for complete analysis
             let symbol_db_path = self.db_path.join("symbols.kota");
             let graph_db_path = self.db_path.join("dependency_graph.bin");
+            debug!("Invoking ingest_with_binary_symbols_and_relationships");
             ingester
                 .ingest_with_binary_symbols_and_relationships(
                     &options.repo_path,
@@ -270,6 +313,7 @@ impl<'a> IndexingService<'a> {
                 .await
                 .context("Failed to ingest repository with symbol and relationship extraction")
         } else {
+            debug!("Invoking ingest_with_progress without symbol extraction");
             ingester
                 .ingest_with_progress(&options.repo_path, &mut *storage, Some(progress_callback))
                 .await
@@ -304,6 +348,13 @@ impl<'a> IndexingService<'a> {
                     formatted_output.push_str("📝 Documents stored successfully. Search index will be built on first search.\n");
                 }
 
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "documents_ingested files:{} documents:{} errors:{}",
+                        files_proc, ingestion_result.documents_created, ingestion_result.errors
+                    ));
+                }
+
                 (files_proc, symbols_ext, relationships_found)
             }
             Err(e) => {
@@ -324,6 +375,15 @@ impl<'a> IndexingService<'a> {
                 });
             }
         };
+
+        warn!(
+            repo = %options.repo_path.display(),
+            files_processed,
+            symbols_extracted,
+            relationships_found,
+            elapsed_ms = start_time.elapsed().as_millis() as u64,
+            "IndexingService::index_codebase completed"
+        );
 
         // Essential completion status: show unless in quiet mode
         if !options.quiet {
@@ -411,6 +471,12 @@ impl<'a> IndexingService<'a> {
             } else {
                 // Process documents in batches for better performance
                 const BATCH_SIZE: usize = 100;
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "rebuild_start documents:{} batch_size:{}",
+                        total_docs, BATCH_SIZE
+                    ));
+                }
                 let mut processed = 0;
 
                 // Process in chunks to reduce lock contention and prevent OOM
@@ -470,6 +536,15 @@ impl<'a> IndexingService<'a> {
                     }
 
                     processed += batch_entries.len();
+                    if let Some(callback) = &progress_notifier {
+                        callback(&format!(
+                            "rebuild_progress processed:{} total:{} batch_size:{} errors:{}",
+                            processed,
+                            total_docs,
+                            batch_entries.len(),
+                            errors.len()
+                        ));
+                    }
 
                     // Periodic flush for large datasets
                     if processed % 500 == 0 || processed >= total_docs {
@@ -503,6 +578,14 @@ impl<'a> IndexingService<'a> {
                         "✅ Index rebuild completed. Search functionality is now available.\n",
                     );
                 }
+                if let Some(callback) = &progress_notifier {
+                    callback(&format!(
+                        "rebuild_complete documents:{} processed:{} errors:{}",
+                        total_docs,
+                        processed,
+                        errors.len()
+                    ));
+                }
             }
         }
 
@@ -533,7 +616,7 @@ impl<'a> IndexingService<'a> {
             ));
         }
 
-        // TODO: Implement git-specific indexing logic
+        // Stub: git-specific indexing logic is handled separately (tracked in issue #706)
         // This would include:
         // - Commit history analysis
         // - Branch structure mapping
@@ -558,8 +641,8 @@ impl<'a> IndexingService<'a> {
         let codebase_result = self.index_codebase(codebase_options).await?;
 
         Ok(GitIndexResult {
-            commits_processed: 0,  // TODO: Implement commit counting
-            branches_processed: 0, // TODO: Implement branch counting
+            commits_processed: 0, // Commit counting not yet implemented (tracked in issue #706)
+            branches_processed: 0, // Branch counting not yet implemented (tracked in issue #706)
             files_analyzed: codebase_result.files_processed,
             total_time_ms: start_time.elapsed().as_millis() as u64,
             success: codebase_result.success,
@@ -587,7 +670,7 @@ impl<'a> IndexingService<'a> {
             ));
         }
 
-        // TODO: Implement incremental update logic
+        // Stub: incremental update pipeline is still under construction (tracked in issue #706)
         // This would include:
         // - Identify changed, added, and removed files
         // - Update only affected documents in storage
@@ -625,7 +708,7 @@ impl<'a> IndexingService<'a> {
 
         formatted_output.push_str(&format!("🔄 Reindexing scope: {:?}\n", scope_path));
 
-        // TODO: Implement scope-specific reindexing
+        // Stub: scope-specific reindexing intentionally left unimplemented (tracked in issue #706)
         // This would include:
         // - Determine scope boundaries (file, directory, symbol)
         // - Remove existing data for the scope

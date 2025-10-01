@@ -13,7 +13,7 @@ Highlights
 Security
 - The non-SaaS server (`create_services_server`) exposes repository registration and indexing for arbitrary local paths. It is intended for local/dev, single-tenant usage. Do not expose it publicly in multi-tenant environments.
 - The SaaS server (`create_services_saas_server`) puts v1 routes behind API key auth and expects every `/internal/*` request to include the secret `INTERNAL_API_KEY` header value.
-- Managed deployments can disable filesystem path ingestion by setting `ALLOW_LOCAL_PATH_INDEXING=0`/`false`. Until git-based ingestion ships (#692), the default remains enabled so tenants can onboard repositories.
+- Managed deployments reject filesystem paths outright; onboarding requires `git_url`. Self-hosted installs can opt back into local path ingestion via `ALLOW_LOCAL_PATH_INDEXING=1` if they trust the environment.
 
 Error Contract
 `StandardApiError` (JSON):
@@ -63,11 +63,12 @@ Endpoints
             "max_file_size_mb?": number, "max_memory_mb?": number,
             "max_parallel_files?": number, "enable_chunking?": bool,
             "extract_symbols?": bool }
-  - Note: `git_url` is not supported yet. Return: `git_url_not_supported` (400).
-  - In SaaS mode with `ALLOW_LOCAL_PATH_INDEXING=0`, requests providing `path` return `local_path_indexing_disabled` (403); clone locally or wait for managed Git ingestion.
+  - Managed (SaaS) deployments require `git_url` and ignore/forbid `path`. Self-hosted mode still supports local `path` ingestion.
+- The response includes `webhook_secret` when a repository is provisioned for the first time so you can configure the GitHub webhook signature. Re-registering an existing repository omits the secret.
+- SaaS mode automatically provisions the GitHub webhook for public repositories using `GITHUB_WEBHOOK_TOKEN` and `KOTADB_WEBHOOK_BASE_URL`.
+- GitHub pushes queue a `webhook_update` job that re-ingests only the changed files and removes deleted paths. Manual triggers still schedule `full_index` jobs when a full rebuild is desired.
   - 400: when neither `path` nor `git_url` provided; when `path` does not exist or is not a directory
-  - 200: { job_id, repository_id, status: "accepted" }
-  - Details: repository_id is stable (hash of canonical path).
+  - 200: { job_id, repository_id, status: "queued", webhook_secret? }
 
 - GET `/api/v1/repositories`
   - 200 OK: { repositories: [ { id, name, path, url, last_indexed } ] }
@@ -75,6 +76,14 @@ Endpoints
 - GET `/api/v1/index/status?job_id=...`
   - 200 OK: { job: { id, status, progress?, started_at?, updated_at?, error? } }
   - 404 Not Found: unknown `job_id` (returns `StandardApiError`)
+
+- POST `/webhooks/github/:repository_id`
+  - Headers: `X-Hub-Signature-256` (HMAC SHA-256), `X-GitHub-Event`, `X-GitHub-Delivery`
+  - Body: raw GitHub webhook payload
+  - 202: { status: "queued", job_id? } when the push/pull request event enqueues an indexing job
+  - 200: { status: "pong" } for `ping` events; ignored events report `{ status: "ignored:<event>" }`
+  - Use the per-repository `webhook_secret` returned from registration to compute the HMAC signature GitHub expects.
+- Push payloads aggregate commit `added`/`modified`/`removed` file paths into the queued job’s payload so the worker (and future incremental pipeline) can scope reindexing work.
 
 Operational Notes
 - Job tracking uses pruning to prevent unbounded growth (TTL=1h, cap=100 completed/failed jobs).

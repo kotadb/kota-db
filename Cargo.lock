@@ -2265,6 +2265,8 @@ dependencies = [
  "fastrand",
  "futures",
  "git2",
+ "hex",
+ "hmac",
  "hnsw",
  "hyper 1.7.0",
  "indexmap 2.11.3",

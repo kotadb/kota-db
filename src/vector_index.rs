@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
+use tokio::task;
 
 use crate::contracts::Index;
 use crate::types::ValidatedDocumentId;
@@ -188,21 +189,32 @@ impl VectorIndex {
 
     /// Save index to disk
     async fn save_to_disk(&self) -> Result<()> {
-        let index_data = IndexData {
-            nodes: self.nodes.clone(),
-            entry_point: self.entry_point,
-            distance_metric: self.distance_metric,
-            vector_dimension: self.vector_dimension,
-        };
+        let index_path = self.path.clone();
+        let nodes = self.nodes.clone();
+        let entry_point = self.entry_point;
+        let distance_metric = self.distance_metric;
+        let vector_dimension = self.vector_dimension;
 
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.path)?;
+        task::spawn_blocking(move || -> Result<()> {
+            let index_data = IndexData {
+                nodes,
+                entry_point,
+                distance_metric,
+                vector_dimension,
+            };
 
-        let writer = BufWriter::new(file);
-        bincode::serialize_into(writer, &index_data)?;
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&index_path)?;
+
+            let writer = BufWriter::new(file);
+            bincode::serialize_into(writer, &index_data)?;
+            Ok(())
+        })
+        .await??;
+
         Ok(())
     }
 

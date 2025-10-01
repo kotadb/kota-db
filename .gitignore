@@ -170,3 +170,7 @@ dogfood-test/
 kotadb-data/**
 index_body.json
 index_result.json
+
+# Environment files
+.env.develop
+.env.production

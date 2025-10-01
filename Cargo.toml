@@ -60,6 +60,8 @@ memmap2 = "0.9"
 
 # Hashing
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+hex = "0.4"
+hmac = "0.12"
 
 # File watching
 notify = "6.1"

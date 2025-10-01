@@ -83,6 +83,8 @@ pub struct IndexCodebaseOptions {
     pub extract_symbols: Option<bool>,
     pub no_symbols: bool,
     pub quiet: bool,
+    pub include_paths: Option<Vec<String>>,
+    pub create_index: bool,
 }
 
 impl Default for IndexCodebaseOptions {
@@ -99,6 +101,8 @@ impl Default for IndexCodebaseOptions {
             extract_symbols: Some(true),
             no_symbols: false,
             quiet: false,
+            include_paths: None,
+            create_index: true,
         }
     }
 }

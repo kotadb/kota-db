@@ -157,6 +157,16 @@ db-bench:
   @echo "Running resource usage and concurrent operation benchmarks"
   cargo bench --features bench --bench resource_usage_bench
 
+# Supabase schema helpers
+supabase-generate name:
+  ./scripts/supabase-generate-migration.sh {{name}}
+
+supabase-reset:
+  ./scripts/supabase-reset-local.sh
+
+supabase-apply db_url:
+  SUPABASE_DB_URL={{db_url}} ./scripts/supabase-apply-remote.sh
+
 # Dogfood the HTTP API end-to-end against this repo
 dogfood:
   @echo "🍽️  Dogfooding KotaDB via HTTP API"

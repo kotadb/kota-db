@@ -5,21 +5,36 @@
 //
 // No legacy code, no deprecated endpoints, no document CRUD - pure services architecture.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use axum::body::Bytes;
+use axum::extract::{Extension, Path};
 use axum::{
     extract::{Query as AxumQuery, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
     routing::{get, post},
     Router,
 };
+use chrono::Utc;
+use hex;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
+use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Row};
 use std::sync::Arc;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
+use std::{
+    collections::{BTreeSet, HashMap},
+    env,
+    net::SocketAddr,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 use tokio::{net::TcpListener, sync::RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
+use url::Url;
 use uuid::Uuid;
 
 #[cfg(all(feature = "mcp-server", feature = "tree-sitter-parsing"))]
@@ -28,6 +43,7 @@ use crate::mcp::tools::symbol_tools::SymbolTools;
 use crate::mcp::tools::MCPToolRegistry;
 #[cfg(feature = "mcp-server")]
 use crate::mcp_http_bridge::{create_mcp_bridge_router, McpHttpBridgeState};
+use crate::{auth_middleware::AuthContext, observability::with_trace_id, Index, Storage};
 use crate::{
     database::Database,
     services::{
@@ -35,8 +51,11 @@ use crate::{
         IndexCodebaseOptions, IndexingService, OverviewOptions, SearchOptions, SearchService,
         StatsOptions, StatsService, SymbolSearchOptions, ValidationOptions, ValidationService,
     },
+    supabase_repository::{
+        job_worker::SupabaseJobWorker, JobStatusRow, RepositoryRegistration, RepositoryRow,
+        SupabaseRepositoryStore,
+    },
 };
-use crate::{observability::with_trace_id, Index, Storage};
 
 /// Application state for services-only HTTP server
 #[derive(Clone)]
@@ -47,6 +66,10 @@ pub struct ServicesAppState {
     pub db_path: PathBuf,
     /// Optional API key service for SaaS functionality
     pub api_key_service: Option<Arc<crate::ApiKeyService>>,
+    /// Optional Supabase connection pool for SaaS features
+    pub supabase_pool: Option<PgPool>,
+    /// Base URL used when provisioning external webhooks
+    pub webhook_base_url: Option<Url>,
     /// Whether this server is running in managed SaaS mode
     pub saas_mode: bool,
     /// Background job registry for indexing tasks
@@ -60,6 +83,9 @@ impl ServicesAppState {
     pub fn validate_saas_mode(&self) -> Result<(), String> {
         if self.api_key_service.is_none() {
             return Err("SaaS mode requires API key service to be configured".to_string());
+        }
+        if self.supabase_pool.is_none() {
+            return Err("SaaS mode requires Supabase connection to be configured".to_string());
         }
         Ok(())
     }
@@ -76,10 +102,7 @@ impl ServicesAppState {
 
         match std::env::var("ALLOW_LOCAL_PATH_INDEXING") {
             Ok(flag) => parse_local_path_ingestion_flag(Some(flag)),
-            Err(_) => {
-                // TODO(#692): default to false once SaaS git ingestion lands.
-                true
-            }
+            Err(_) => false,
         }
     }
 
@@ -122,12 +145,50 @@ mod allow_local_path_tests {
     }
 }
 
+#[cfg(test)]
+mod saas_helper_tests {
+    use super::normalize_git_ref;
+
+    #[test]
+    fn normalizes_branch_refs() {
+        assert_eq!(
+            normalize_git_ref("refs/heads/main"),
+            Some("main".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_for_non_branch_refs() {
+        assert_eq!(normalize_git_ref("refs/pull/123"), None);
+    }
+}
+
 /// Health check response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
     pub services_enabled: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saas: Option<SaasHealth>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct JobQueueHealth {
+    pub queued: usize,
+    pub in_progress: usize,
+    pub failed: usize,
+    pub failed_recent: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_queued_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SaasHealth {
+    pub supabase_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supabase_latency_ms: Option<u128>,
+    pub job_queue: JobQueueHealth,
 }
 
 /// Error response
@@ -215,6 +276,8 @@ pub struct RegisterRepositoryResponse {
     pub job_id: String,
     pub repository_id: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_secret: Option<String>,
 }
 
 /// v1 repository listing response
@@ -227,6 +290,13 @@ pub struct ListRepositoriesResponse {
 #[derive(Debug, Serialize)]
 pub struct IndexStatusResponse {
     pub job: Option<JobStatus>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebhookResponse {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 /// Codebase overview request
@@ -418,6 +488,35 @@ fn handle_validation_error(
     )
 }
 
+fn internal_server_error(message: impl Into<String>) -> (StatusCode, Json<StandardApiError>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(StandardApiError {
+            error_type: "internal_server_error".into(),
+            message: message.into(),
+            details: None,
+            suggestions: vec![
+                "Try again later".into(),
+                "Contact support if the problem persists".into(),
+            ],
+            error_code: Some(500),
+        }),
+    )
+}
+
+fn unauthorized_error(message: impl Into<String>) -> (StatusCode, Json<StandardApiError>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(StandardApiError {
+            error_type: "unauthorized".into(),
+            message: message.into(),
+            details: None,
+            suggestions: vec!["Provide a valid API key".into()],
+            error_code: Some(401),
+        }),
+    )
+}
+
 /// Standardized not-found error handling with helpful messages
 fn handle_not_found_error(
     field_name: &str,
@@ -452,6 +551,8 @@ pub fn create_services_server(
         trigram_index: trigram_index.clone(),
         db_path: db_path.clone(),
         api_key_service: None, // No authentication for basic services server
+        supabase_pool: None,
+        webhook_base_url: None,
         saas_mode: false,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(load_repositories_from_disk(db_path.as_path()))),
@@ -597,22 +698,49 @@ pub async fn create_services_saas_server(
     db_path: PathBuf,
     api_key_config: crate::ApiKeyConfig,
 ) -> Result<Router> {
+    validate_saas_environment(&api_key_config)?;
+
     use crate::auth_middleware::{auth_middleware, internal_auth_middleware};
 
     // Initialize API key service
     let api_key_service = Arc::new(crate::ApiKeyService::new(api_key_config).await?);
 
     let repos_init = load_repositories_from_disk_async(db_path.as_path()).await;
+    let supabase_pool = api_key_service.pool();
+    let webhook_base_url = Url::parse(
+        &env::var("KOTADB_WEBHOOK_BASE_URL")
+            .context("KOTADB_WEBHOOK_BASE_URL must be set to the public SaaS base URL")?,
+    )
+    .context("Invalid KOTADB_WEBHOOK_BASE_URL value")?;
     let state = ServicesAppState {
-        storage,
-        primary_index,
-        trigram_index,
+        storage: storage.clone(),
+        primary_index: primary_index.clone(),
+        trigram_index: trigram_index.clone(),
         db_path: db_path.clone(),
         api_key_service: Some(api_key_service.clone()),
+        supabase_pool: Some(supabase_pool.clone()),
+        webhook_base_url: Some(webhook_base_url.clone()),
         saas_mode: true,
         jobs: Arc::new(RwLock::new(HashMap::new())),
         repositories: Arc::new(RwLock::new(repos_init)),
     };
+
+    // Spawn Supabase-backed indexing worker for SaaS mode
+    {
+        let worker_store = SupabaseRepositoryStore::new(supabase_pool);
+        let worker_database = Arc::new(Database {
+            storage: state.storage.clone(),
+            primary_index: state.primary_index.clone(),
+            trigram_index: state.trigram_index.clone(),
+            path_cache: Arc::new(RwLock::new(HashMap::new())),
+        });
+        let worker = SupabaseJobWorker::new(worker_store, worker_database, db_path.clone());
+        tokio::spawn(async move {
+            if let Err(e) = worker.run().await {
+                error!("Supabase job worker terminated: {}", e);
+            }
+        });
+    }
 
     // Create authenticated routes (require API key)
     let authenticated_routes = Router::new()
@@ -645,25 +773,61 @@ pub async fn create_services_saas_server(
             auth_middleware,
         ));
 
+    #[cfg(feature = "mcp-server")]
+    let authenticated_mcp_routes = {
+        let mut registry = MCPToolRegistry::new();
+        {
+            let text_tools = Arc::new(crate::mcp::tools::text_search_tools::TextSearchTools::new(
+                trigram_index.clone(),
+                storage.clone(),
+            ));
+            registry = registry.with_text_tools(text_tools);
+        }
+        #[cfg(feature = "tree-sitter-parsing")]
+        {
+            let symbol_tools = Arc::new(SymbolTools::new(
+                storage.clone(),
+                primary_index.clone(),
+                trigram_index.clone(),
+                db_path.clone(),
+            ));
+            registry = registry.with_symbol_tools(symbol_tools);
+        }
+
+        let mcp_state = McpHttpBridgeState::new(Some(Arc::new(registry)));
+        create_mcp_bridge_router().with_state(mcp_state).layer(
+            axum::middleware::from_fn_with_state(api_key_service.clone(), auth_middleware),
+        )
+    };
+
     // Create internal routes (require internal API key)
     let internal_routes = Router::new()
         .route("/internal/create-api-key", post(create_api_key_handler))
         .layer(axum::middleware::from_fn(internal_auth_middleware));
 
-    Ok(Router::new()
+    let mut router = Router::new()
         // Public endpoints (no authentication required)
         .route("/health", get(health_check))
         .route("/api/v1/health-check", get(health_check_detailed))
+        .route(
+            "/webhooks/github/:repository_id",
+            post(handle_github_webhook),
+        )
         // Merge authenticated routes
         .merge(authenticated_routes)
         // Merge internal routes
-        .merge(internal_routes)
-        .with_state(state)
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive()),
-        ))
+        .merge(internal_routes);
+
+    #[cfg(feature = "mcp-server")]
+    {
+        router = router.merge(authenticated_mcp_routes);
+    }
+
+    Ok(router.with_state(state).layer(
+        ServiceBuilder::new()
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::permissive()),
+    ))
 }
 
 /// Start services server with SaaS capabilities (API key authentication)
@@ -753,8 +917,8 @@ pub async fn start_services_saas_server(
 }
 
 /// Basic health check
-async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse {
+async fn health_check(State(state): State<ServicesAppState>) -> Json<HealthResponse> {
+    let mut response = HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         services_enabled: vec![
@@ -765,7 +929,14 @@ async fn health_check() -> Json<HealthResponse> {
             "SearchService".to_string(),
             "AnalysisService".to_string(),
         ],
-    })
+        saas: None,
+    };
+
+    if state.is_saas_mode() {
+        response.saas = Some(fetch_saas_health(&state).await);
+    }
+
+    Json(response)
 }
 
 /// Get database statistics via StatsService
@@ -1159,6 +1330,7 @@ async fn file_symbols_v1(
 /// POST /api/v1/repositories -> start background indexing job
 async fn register_repository_v1(
     State(state): State<ServicesAppState>,
+    auth_context: Option<Extension<AuthContext>>,
     request_result: Result<
         Json<RegisterRepositoryRequest>,
         axum::extract::rejection::JsonRejection,
@@ -1166,6 +1338,17 @@ async fn register_repository_v1(
 ) -> ApiResult<RegisterRepositoryResponse> {
     let Json(body) = request_result.map_err(|e| handle_json_parsing_error(e, "repositories"))?;
 
+    if state.is_saas_mode() {
+        return register_repository_saas(&state, auth_context, body).await;
+    }
+
+    register_repository_local(state, body).await
+}
+
+async fn register_repository_local(
+    state: ServicesAppState,
+    body: RegisterRepositoryRequest,
+) -> ApiResult<RegisterRepositoryResponse> {
     if !state.allow_local_path_ingestion() && body.path.is_some() {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1190,7 +1373,7 @@ async fn register_repository_v1(
         ));
     }
 
-    // For now, support local path; git clone can be added later
+    // Local ingestion expects a valid filesystem path
     let repo_path = match (&body.path, &body.git_url) {
         (Some(p), _) => {
             let pb = PathBuf::from(p);
@@ -1224,7 +1407,7 @@ async fn register_repository_v1(
                 }
             }
         }
-        (None, Some(_git)) => {
+        (None, Some(_)) => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(StandardApiError {
@@ -1248,6 +1431,15 @@ async fn register_repository_v1(
     let job_id = Uuid::new_v4().to_string();
     let job_id_out = job_id.clone();
     let repository_id_out = repository_id.clone();
+
+    let git_url_opt = body.git_url.clone();
+    let include_files = body.include_files;
+    let include_commits = body.include_commits;
+    let max_file_size_mb = body.max_file_size_mb;
+    let max_memory_mb = body.max_memory_mb;
+    let max_parallel_files = body.max_parallel_files;
+    let enable_chunking = body.enable_chunking;
+    let extract_symbols = body.extract_symbols;
 
     // Create job status
     let mut jobs = state.jobs.write().await;
@@ -1274,7 +1466,7 @@ async fn register_repository_v1(
                 id: repository_id.clone(),
                 name: repo_name.clone(),
                 path: repo_path.to_string_lossy().into(),
-                url: body.git_url.clone(),
+                url: git_url_opt.clone(),
                 last_indexed: None,
             });
             save_repositories_to_disk(&state, &repos).await;
@@ -1290,7 +1482,6 @@ async fn register_repository_v1(
         })
         .await;
 
-        // Execute indexing
         let database = Database {
             storage: state_clone.storage.clone(),
             primary_index: state_clone.primary_index.clone(),
@@ -1302,46 +1493,42 @@ async fn register_repository_v1(
             repo_path: repo_path.clone(),
             ..IndexCodebaseOptions::default()
         };
-        if let Some(v) = body.include_files {
+        if let Some(v) = include_files {
             options.include_files = v;
         }
-        if let Some(v) = body.include_commits {
+        if let Some(v) = include_commits {
             options.include_commits = v;
         }
-        if let Some(v) = body.max_file_size_mb {
+        if let Some(v) = max_file_size_mb {
             options.max_file_size_mb = v;
         }
-        if let Some(v) = body.max_memory_mb {
+        if let Some(v) = max_memory_mb {
             options.max_memory_mb = Some(v);
         }
-        if let Some(v) = body.max_parallel_files {
+        if let Some(v) = max_parallel_files {
             options.max_parallel_files = Some(v);
         }
-        if let Some(v) = body.enable_chunking {
+        if let Some(v) = enable_chunking {
             options.enable_chunking = v;
         }
-        if let Some(v) = body.extract_symbols {
+        if let Some(v) = extract_symbols {
             options.extract_symbols = Some(v);
         }
         options.quiet = false;
         match indexing.index_codebase(options).await {
-            Ok(_res) => {
+            Ok(_) => {
                 update_job_status(&state_clone, &job_id, |j| {
                     j.status = "completed".into();
                     j.updated_at = Some(now_rfc3339());
                 })
                 .await;
-                // Update repository last_indexed
                 let mut repos = state_clone.repositories.write().await;
                 if let Some(r) = repos.iter_mut().find(|r| r.id == repository_id) {
                     r.last_indexed = Some(now_rfc3339());
                 }
                 save_repositories_to_disk(&state_clone, &repos).await;
-                // Prune jobs after completion
-                {
-                    let mut jobs = state_clone.jobs.write().await;
-                    prune_jobs_in_place(&mut jobs, 100, 3600);
-                }
+                let mut jobs = state_clone.jobs.write().await;
+                prune_jobs_in_place(&mut jobs, 100, 3600);
             }
             Err(e) => {
                 update_job_status(&state_clone, &job_id, |j| {
@@ -1350,11 +1537,8 @@ async fn register_repository_v1(
                     j.updated_at = Some(now_rfc3339());
                 })
                 .await;
-                // Prune jobs after failure update
-                {
-                    let mut jobs = state_clone.jobs.write().await;
-                    prune_jobs_in_place(&mut jobs, 100, 3600);
-                }
+                let mut jobs = state_clone.jobs.write().await;
+                prune_jobs_in_place(&mut jobs, 100, 3600);
             }
         }
     });
@@ -1363,17 +1547,1165 @@ async fn register_repository_v1(
         job_id: job_id_out,
         repository_id: repository_id_out,
         status: "accepted".into(),
+        webhook_secret: None,
     }))
+}
+
+async fn register_repository_saas(
+    state: &ServicesAppState,
+    auth_context: Option<Extension<AuthContext>>,
+    body: RegisterRepositoryRequest,
+) -> ApiResult<RegisterRepositoryResponse> {
+    if body.path.is_some() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(StandardApiError {
+                error_type: "local_path_indexing_disabled".into(),
+                message: "Local path indexing is disabled for managed KotaDB deployments".into(),
+                details: Some("Provide a git_url when using the managed service".into()),
+                suggestions: vec![
+                    "Use Git repository ingestion".into(),
+                    "Run KotaDB locally to index arbitrary directories".into(),
+                ],
+                error_code: Some(403),
+            }),
+        ));
+    }
+
+    let git_url = match body.git_url.as_deref() {
+        Some(url) => url,
+        None => {
+            return Err(handle_validation_error(
+                "git_url",
+                "Provide git_url for SaaS repository registration",
+                "repositories",
+            ));
+        }
+    };
+
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to register repositories"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let provider = infer_repository_provider(git_url);
+    let repo_name = infer_repository_name(git_url).unwrap_or_else(|| "repository".to_string());
+    let settings = build_settings_from_request(&body);
+    let job_payload = build_job_payload(&body, git_url, &provider);
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let api_key_id = match store.lookup_primary_api_key(user_uuid).await {
+        Ok(value) => value,
+        Err(e) => {
+            error!(
+                "Failed to resolve Supabase API key for user {}: {}",
+                user_uuid, e
+            );
+            None
+        }
+    };
+    let registration = RepositoryRegistration {
+        user_id: user_uuid,
+        api_key_id,
+        name: &repo_name,
+        git_url,
+        provider: &provider,
+        default_branch: body.branch.as_deref(),
+        settings: &settings,
+        job_payload: &job_payload,
+    };
+
+    let (repository, job_id, webhook_secret) = match store
+        .register_repository_and_enqueue_job(registration)
+        .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed to register repository in Supabase: {}", e);
+            return Err(internal_server_error("Failed to register repository"));
+        }
+    };
+
+    if provider == "github" {
+        let base_url = match state.webhook_base_url.as_ref() {
+            Some(url) => url,
+            None => {
+                error!("KOTADB_WEBHOOK_BASE_URL missing in SaaS configuration");
+                return Err(internal_server_error("Webhook provisioning unavailable"));
+            }
+        };
+
+        let secret_value = if let Some(secret) = webhook_secret.clone() {
+            secret
+        } else {
+            match store.fetch_webhook_secret(repository.id).await {
+                Ok(Some(secret)) => secret,
+                Ok(None) => {
+                    error!("Webhook secret missing for repository {}", repository.id);
+                    return Err(internal_server_error("Webhook secret unavailable"));
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to load webhook secret for repository {}: {}",
+                        repository.id, err
+                    );
+                    return Err(internal_server_error("Webhook secret unavailable"));
+                }
+            }
+        };
+
+        let secret_hash = sha256_hex(&secret_value);
+
+        match ensure_github_webhook(&repository.git_url, repository.id, &secret_value, base_url)
+            .await
+        {
+            Ok(webhook_info) => {
+                if let Err(err) = store
+                    .update_repository_metadata(
+                        repository.id,
+                        None,
+                        build_webhook_metadata(&provider, &secret_hash, &webhook_info),
+                    )
+                    .await
+                {
+                    warn!(
+                        "Failed to update webhook metadata for repository {}: {}",
+                        repository.id, err
+                    );
+                }
+            }
+            Err(err) => {
+                error!(
+                    "Failed to provision GitHub webhook for {}: {}",
+                    repository.git_url, err
+                );
+                return Err(internal_server_error("Failed to provision GitHub webhook"));
+            }
+        }
+    }
+
+    Ok(Json(RegisterRepositoryResponse {
+        job_id: job_id.to_string(),
+        repository_id: repository.id.to_string(),
+        status: "queued".into(),
+        webhook_secret,
+    }))
+}
+
+type WebhookResult =
+    Result<(StatusCode, Json<WebhookResponse>), (StatusCode, Json<StandardApiError>)>;
+
+async fn handle_github_webhook(
+    State(state): State<ServicesAppState>,
+    Path(repository_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> WebhookResult {
+    if !state.is_saas_mode() {
+        return Err(handle_not_found_error(
+            "repository_id",
+            "webhook unsupported",
+            "webhooks/github",
+        ));
+    }
+
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let repo_uuid = match Uuid::parse_str(&repository_id) {
+        Ok(uuid) => uuid,
+        Err(_) => {
+            return Err(handle_validation_error(
+                "repository_id",
+                "Invalid repository id format",
+                "webhooks/github",
+            ));
+        }
+    };
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let repo_meta = match store.fetch_repository(repo_uuid).await {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return Err(handle_not_found_error(
+                "repository_id",
+                "Repository not found",
+                "webhooks/github",
+            ));
+        }
+        Err(e) => {
+            error!(
+                "Failed to load repository {} for webhook processing: {}",
+                repo_uuid, e
+            );
+            return Err(internal_server_error("Failed to load repository metadata"));
+        }
+    };
+
+    let secret = match store.fetch_webhook_secret(repo_uuid).await {
+        Ok(Some(secret)) => secret,
+        Ok(None) => {
+            error!("Webhook secret missing for repository {}", repo_uuid);
+            return Err(internal_server_error("Webhook secret not configured"));
+        }
+        Err(err) => {
+            error!(
+                "Failed to load webhook secret for repository {}: {}",
+                repo_uuid, err
+            );
+            return Err(internal_server_error("Webhook secret not configured"));
+        }
+    };
+
+    let signature_header = match headers
+        .get("X-Hub-Signature-256")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(signature) => signature,
+        None => return Err(unauthorized_error("Missing X-Hub-Signature-256 header")),
+    };
+
+    if !verify_github_signature(&secret, &body, signature_header) {
+        warn!(
+            "Invalid GitHub webhook signature for repository {}",
+            repo_uuid
+        );
+        return Err(unauthorized_error("Invalid webhook signature"));
+    }
+
+    let event_type = headers
+        .get("X-GitHub-Event")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let delivery_header = headers
+        .get("X-GitHub-Delivery")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let payload_json = match serde_json::from_slice::<JsonValue>(&body) {
+        Ok(json) => json,
+        Err(e) => {
+            warn!(
+                "Failed to parse GitHub webhook payload for repository {}: {}",
+                repo_uuid, e
+            );
+            JsonValue::Null
+        }
+    };
+
+    let headers_json = headers_to_json(&headers);
+
+    let mut record_id = None;
+    if let Some(delivery_value) = delivery_header.as_deref() {
+        match store
+            .find_webhook_delivery(repo_uuid, &repo_meta.provider, delivery_value)
+            .await
+        {
+            Ok(Some(existing)) => match existing.status.as_str() {
+                "processed" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh processed webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+                    return Ok((
+                        StatusCode::OK,
+                        Json(WebhookResponse {
+                            status: "processed".to_string(),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "queued" | "processing" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh in-flight webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+                    return Ok((
+                        StatusCode::ACCEPTED,
+                        Json(WebhookResponse {
+                            status: "duplicate".to_string(),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "ignored" => {
+                    if let Err(e) = store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to refresh ignored webhook delivery {}: {}",
+                            existing.id, e
+                        );
+                    }
+
+                    return Ok((
+                        StatusCode::OK,
+                        Json(WebhookResponse {
+                            status: format!("ignored:{}", event_type),
+                            job_id: existing.job_id.map(|id| id.to_string()),
+                        }),
+                    ));
+                }
+                "failed" => {
+                    store
+                        .reset_failed_webhook_delivery(
+                            existing.id,
+                            &event_type,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!(
+                                "Failed to reset failed webhook delivery {}: {}",
+                                existing.id, e
+                            );
+                            internal_server_error("Failed to reset webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+                "received" => {
+                    store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to refresh webhook delivery {}: {}", existing.id, e);
+                            internal_server_error("Failed to refresh webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+                _ => {
+                    store
+                        .refresh_webhook_delivery(
+                            existing.id,
+                            &payload_json,
+                            &headers_json,
+                            Some(signature_header),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to refresh webhook delivery {}: {}", existing.id, e);
+                            internal_server_error("Failed to refresh webhook delivery")
+                        })?;
+                    record_id = Some(existing.id);
+                }
+            },
+            Ok(None) => {}
+            Err(e) => {
+                error!(
+                    "Failed to check existing webhook delivery for repository {}: {}",
+                    repo_uuid, e
+                );
+                return Err(internal_server_error("Failed to inspect webhook delivery"));
+            }
+        }
+    }
+
+    let record_id = match record_id {
+        Some(id) => id,
+        None => match store
+            .record_webhook_delivery(
+                repo_uuid,
+                &repo_meta.provider,
+                delivery_header.as_deref(),
+                &event_type,
+                "received",
+                &payload_json,
+                &headers_json,
+                Some(signature_header),
+                None,
+            )
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                error!(
+                    "Failed to record webhook delivery for repository {}: {}",
+                    repo_uuid, e
+                );
+                return Err(internal_server_error("Failed to record webhook delivery"));
+            }
+        },
+    };
+
+    info!(
+        repository = %repo_meta.git_url,
+        repository_id = %repo_uuid,
+        event = %event_type,
+        delivery = delivery_header.as_deref(),
+        "GitHub webhook received"
+    );
+
+    if event_type == "ping" {
+        if let Err(err) = store
+            .update_webhook_delivery_status(record_id, "processed", true, None, None)
+            .await
+        {
+            error!(
+                "Failed to finalize ping webhook delivery {}: {}",
+                record_id, err
+            );
+        }
+
+        return Ok((
+            StatusCode::OK,
+            Json(WebhookResponse {
+                status: "pong".to_string(),
+                job_id: None,
+            }),
+        ));
+    }
+
+    let job_type = match event_type.as_str() {
+        "push" | "pull_request" | "workflow_run" => Some("webhook_update"),
+        _ => None,
+    };
+
+    if job_type.is_none() {
+        if let Err(err) = store
+            .update_webhook_delivery_status(record_id, "ignored", true, None, None)
+            .await
+        {
+            error!(
+                "Failed to mark webhook delivery {} as ignored: {}",
+                record_id, err
+            );
+        }
+
+        return Ok((
+            StatusCode::OK,
+            Json(WebhookResponse {
+                status: format!("ignored:{}", event_type),
+                job_id: None,
+            }),
+        ));
+    }
+
+    let branch_source = payload_json
+        .get("ref")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            payload_json
+                .get("pull_request")
+                .and_then(|pr| pr.get("head"))
+                .and_then(|head| head.get("ref"))
+                .and_then(|value| value.as_str())
+        });
+    let branch_normalized =
+        branch_source.map(|raw| normalize_git_ref(raw).unwrap_or_else(|| raw.to_string()));
+
+    let mut job_payload_map = JsonMap::new();
+    job_payload_map.insert("git_url".into(), json!(repo_meta.git_url));
+    job_payload_map.insert("provider".into(), json!(repo_meta.provider));
+    if let Some(branch_value) = branch_normalized.or(repo_meta.default_branch.clone()) {
+        job_payload_map.insert("branch".into(), json!(branch_value));
+    }
+    job_payload_map.insert("requested_at".into(), json!(Utc::now().to_rfc3339()));
+    job_payload_map.insert("event_type".into(), json!(event_type.clone()));
+    if let Some(delivery) = &delivery_header {
+        job_payload_map.insert("delivery_id".into(), json!(delivery));
+    }
+    if let Some(ref_value) = payload_json.get("ref").cloned() {
+        job_payload_map.insert("ref".into(), ref_value);
+    }
+    if let Some(commits) = payload_json.get("commits").cloned() {
+        job_payload_map.insert("commits".into(), commits);
+    }
+    if let Some(changes) = extract_commit_changes(&payload_json) {
+        job_payload_map.insert("changes".into(), changes);
+    }
+    if let Some(pr_number) = payload_json
+        .get("pull_request")
+        .and_then(|pr| pr.get("number"))
+        .and_then(|n| n.as_i64())
+    {
+        job_payload_map.insert("pull_request_number".into(), json!(pr_number));
+    }
+    job_payload_map.insert("webhook_delivery_id".into(), json!(record_id));
+
+    let job_payload = JsonValue::Object(job_payload_map);
+    let job_type_str = job_type.unwrap();
+
+    let job_id = match store
+        .enqueue_job(
+            repo_uuid,
+            repo_meta.api_key_id,
+            job_type_str,
+            &job_payload,
+            5,
+        )
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            error!(
+                "Failed to enqueue {} job from webhook for repository {}: {}",
+                job_type_str, repo_uuid, e
+            );
+            let err_message = e.to_string();
+            store
+                .update_webhook_delivery_status(
+                    record_id,
+                    "failed",
+                    true,
+                    Some(err_message.as_str()),
+                    None,
+                )
+                .await
+                .ok();
+            return Err(internal_server_error("Failed to enqueue indexing job"));
+        }
+    };
+
+    if let Err(err) = store
+        .record_job_event(
+            job_id,
+            "webhook_enqueued",
+            "Job enqueued from webhook",
+            Some(json!({
+                "event_type": event_type,
+                "delivery_id": delivery_header,
+                "job_type": job_type_str,
+            })),
+        )
+        .await
+    {
+        warn!(
+            "Failed to record webhook job event for job {} (delivery {}): {}",
+            job_id, record_id, err
+        );
+    }
+
+    if let Err(err) = store
+        .update_webhook_delivery_status(record_id, "queued", false, None, Some(job_id))
+        .await
+    {
+        error!(
+            "Failed to update webhook delivery {} to queued: {}",
+            record_id, err
+        );
+    }
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(WebhookResponse {
+            status: "queued".to_string(),
+            job_id: Some(job_id.to_string()),
+        }),
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct GitHubWebhookInfo {
+    id: i64,
+    url: String,
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn build_webhook_metadata(
+    provider: &str,
+    secret_hash: &str,
+    info: &GitHubWebhookInfo,
+) -> JsonValue {
+    json!({
+        "webhook": {
+            "provider": provider,
+            "secret_hash": secret_hash,
+            "id": info.id,
+            "url": info.url,
+            "provisioned_at": Utc::now().to_rfc3339(),
+        }
+    })
+}
+
+async fn ensure_github_webhook(
+    git_url: &str,
+    repository_id: Uuid,
+    secret: &str,
+    base_url: &Url,
+) -> Result<GitHubWebhookInfo> {
+    let token = env::var("GITHUB_WEBHOOK_TOKEN")
+        .context("GITHUB_WEBHOOK_TOKEN must be set to create GitHub webhooks")?;
+
+    let (owner, repo) = parse_github_owner_repo(git_url)
+        .context("git_url must reference a GitHub repository for webhook provisioning")?;
+
+    let callback_url = base_url
+        .join(&format!("/webhooks/github/{}", repository_id))
+        .context("failed to construct webhook callback URL")?;
+    let callback_url_str = callback_url.to_string();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(GITHUB_USER_AGENT)
+        .build()
+        .context("failed to build GitHub client")?;
+
+    let hook_endpoint = format!("{GITHUB_API_URL}/repos/{owner}/{repo}/hooks");
+
+    let request_body = json!({
+        "name": "web",
+        "config": {
+            "url": callback_url_str,
+            "content_type": "json",
+            "secret": secret,
+            "insecure_ssl": "0"
+        },
+        "events": GITHUB_WEBHOOK_EVENTS,
+        "active": true
+    });
+
+    let response = client
+        .post(&hook_endpoint)
+        .header("Authorization", format!("token {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .json(&request_body)
+        .send()
+        .await
+        .context("failed to contact GitHub API")?;
+
+    if response.status().is_success() {
+        let value: JsonValue = response
+            .json()
+            .await
+            .context("failed to parse GitHub webhook response")?;
+        let hook_id = value
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .context("GitHub webhook response missing id field")?;
+        return Ok(GitHubWebhookInfo {
+            id: hook_id,
+            url: callback_url_str,
+        });
+    }
+
+    if response.status().as_u16() == 422 {
+        let existing = client
+            .get(&hook_endpoint)
+            .header("Authorization", format!("token {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .context("failed to list existing GitHub webhooks")?;
+
+        let hooks: JsonValue = existing
+            .json()
+            .await
+            .context("failed to parse existing GitHub webhooks")?;
+
+        if let Some(hook) = hooks.as_array().and_then(|arr| {
+            arr.iter().find(|hook| {
+                hook.get("config")
+                    .and_then(|cfg| cfg.get("url"))
+                    .and_then(|url| url.as_str())
+                    == Some(callback_url_str.as_str())
+            })
+        }) {
+            if let Some(hook_id) = hook.get("id").and_then(|v| v.as_i64()) {
+                let patch_endpoint = format!("{hook_endpoint}/{hook_id}");
+                let patch_body = json!({
+                    "config": {
+                        "url": callback_url_str,
+                        "content_type": "json",
+                        "secret": secret,
+                        "insecure_ssl": "0"
+                    },
+                    "events": GITHUB_WEBHOOK_EVENTS,
+                    "active": true
+                });
+
+                let patch_response = client
+                    .patch(&patch_endpoint)
+                    .header("Authorization", format!("token {token}"))
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&patch_body)
+                    .send()
+                    .await
+                    .context("failed to update existing GitHub webhook")?;
+
+                if patch_response.status().is_success() {
+                    return Ok(GitHubWebhookInfo {
+                        id: hook_id,
+                        url: callback_url_str,
+                    });
+                }
+
+                let status = patch_response.status();
+                let err_text = patch_response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<empty>".to_string());
+                return Err(anyhow!(
+                    "GitHub webhook update failed (status {}): {}",
+                    status,
+                    err_text
+                ));
+            }
+        }
+
+        return Err(anyhow!(
+            "GitHub webhook already exists but could not be reconciled"
+        ));
+    }
+
+    let status = response.status();
+    let err_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "<empty>".to_string());
+    Err(anyhow!(
+        "GitHub webhook creation failed (status {}): {}",
+        status,
+        err_text
+    ))
+}
+
+fn parse_github_owner_repo(git_url: &str) -> Option<(String, String)> {
+    if let Ok(url) = Url::parse(git_url) {
+        let host = url.host_str()?;
+        if !host.contains("github.com") {
+            return None;
+        }
+        let mut segments = url.path().trim_matches('/').split('/');
+        let owner = segments.next()?.to_string();
+        let repo = segments
+            .next()
+            .map(|s| s.trim_end_matches(".git").to_string())?;
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
+        return Some((owner, repo));
+    }
+
+    if let Some(stripped) = git_url.strip_prefix("git@github.com:") {
+        let mut segments = stripped.split('/');
+        let owner = segments.next()?.to_string();
+        let repo = segments
+            .next()
+            .map(|s| s.trim_end_matches(".git").to_string())?;
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
+        return Some((owner, repo));
+    }
+
+    None
+}
+
+fn build_settings_from_request(body: &RegisterRepositoryRequest) -> JsonValue {
+    let mut root = JsonMap::new();
+
+    if let Some(branch) = &body.branch {
+        root.insert("branch".into(), json!(branch));
+    }
+
+    let mut options = JsonMap::new();
+    if let Some(v) = body.include_files {
+        options.insert("include_files".into(), json!(v));
+    }
+    if let Some(v) = body.include_commits {
+        options.insert("include_commits".into(), json!(v));
+    }
+    if let Some(v) = body.max_file_size_mb {
+        options.insert("max_file_size_mb".into(), json!(v));
+    }
+    if let Some(v) = body.max_memory_mb {
+        options.insert("max_memory_mb".into(), json!(v));
+    }
+    if let Some(v) = body.max_parallel_files {
+        options.insert("max_parallel_files".into(), json!(v));
+    }
+    if let Some(v) = body.enable_chunking {
+        options.insert("enable_chunking".into(), json!(v));
+    }
+    if let Some(v) = body.extract_symbols {
+        options.insert("extract_symbols".into(), json!(v));
+    }
+
+    if !options.is_empty() {
+        root.insert("options".into(), JsonValue::Object(options));
+    }
+
+    JsonValue::Object(root)
+}
+
+fn build_job_payload(body: &RegisterRepositoryRequest, git_url: &str, provider: &str) -> JsonValue {
+    let mut payload = JsonMap::new();
+    payload.insert("git_url".into(), json!(git_url));
+    payload.insert("provider".into(), json!(provider));
+    if let Some(branch) = &body.branch {
+        payload.insert("branch".into(), json!(branch));
+    }
+    payload.insert("requested_at".into(), json!(Utc::now().to_rfc3339()));
+    payload.insert("settings".into(), build_settings_from_request(body));
+
+    JsonValue::Object(payload)
+}
+
+fn infer_repository_provider(git_url: &str) -> String {
+    if let Ok(parsed) = Url::parse(git_url) {
+        if let Some(host) = parsed.host_str() {
+            if host.contains("github.com") {
+                return "github".to_string();
+            }
+            if host.contains("gitlab.com") {
+                return "gitlab".to_string();
+            }
+            if host.contains("bitbucket.org") {
+                return "bitbucket".to_string();
+            }
+        }
+    }
+    "git".to_string()
+}
+
+fn infer_repository_name(git_url: &str) -> Option<String> {
+    if let Ok(parsed) = Url::parse(git_url) {
+        let path = parsed.path().trim_matches('/');
+        if !path.is_empty() {
+            if let Some(last) = path.rsplit('/').next() {
+                return Some(last.trim_end_matches(".git").to_string());
+            }
+        }
+    }
+    None
+}
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn headers_to_json(headers: &HeaderMap) -> JsonValue {
+    let mut map = JsonMap::new();
+    for (name, value) in headers.iter() {
+        if let Ok(string_value) = value.to_str() {
+            map.insert(
+                name.as_str().to_string(),
+                JsonValue::String(string_value.to_string()),
+            );
+        }
+    }
+    JsonValue::Object(map)
+}
+
+fn normalize_git_ref(git_ref: &str) -> Option<String> {
+    if let Some(branch) = git_ref.strip_prefix("refs/heads/") {
+        return Some(branch.to_string());
+    }
+    if let Some(tag) = git_ref.strip_prefix("refs/tags/") {
+        return Some(tag.to_string());
+    }
+    None
+}
+
+fn extract_commit_changes(payload: &JsonValue) -> Option<JsonValue> {
+    let commits = payload.get("commits")?.as_array()?;
+    let mut added = BTreeSet::new();
+    let mut modified = BTreeSet::new();
+    let mut removed = BTreeSet::new();
+
+    for commit in commits {
+        if let Some(files) = commit.get("added").and_then(|v| v.as_array()) {
+            for file in files.iter().filter_map(|v| v.as_str()) {
+                added.insert(file.to_string());
+            }
+        }
+        if let Some(files) = commit.get("modified").and_then(|v| v.as_array()) {
+            for file in files.iter().filter_map(|v| v.as_str()) {
+                modified.insert(file.to_string());
+            }
+        }
+        if let Some(files) = commit.get("removed").and_then(|v| v.as_array()) {
+            for file in files.iter().filter_map(|v| v.as_str()) {
+                removed.insert(file.to_string());
+            }
+        }
+    }
+
+    if added.is_empty() && modified.is_empty() && removed.is_empty() {
+        return None;
+    }
+
+    Some(json!({
+        "added": added.into_iter().collect::<Vec<_>>(),
+        "modified": modified.into_iter().collect::<Vec<_>>(),
+        "removed": removed.into_iter().collect::<Vec<_>>(),
+    }))
+}
+
+fn verify_github_signature(secret: &str, payload: &[u8], signature_header: &str) -> bool {
+    let Some(signature_hex) = signature_header.strip_prefix("sha256=") else {
+        return false;
+    };
+
+    let Ok(signature_bytes) = hex::decode(signature_hex) else {
+        return false;
+    };
+
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(_) => return false,
+    };
+
+    mac.update(payload);
+    mac.verify_slice(&signature_bytes).is_ok()
+}
+
+const IMPORTANT_SAAS_ENV_VARS: &[&str] = &[
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_KEY",
+    "KOTADB_WEBHOOK_BASE_URL",
+];
+
+const SUPABASE_DB_ENV_CHOICES: &[&str] = &[
+    "SUPABASE_DB_URL",
+    "SUPABASE_DB_URL_STAGING",
+    "SUPABASE_DB_URL_PRODUCTION",
+];
+
+const IMPORTANT_GITHUB_ENV_VARS: &[&str] = &[
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+    "GITHUB_WEBHOOK_TOKEN",
+];
+
+const GITHUB_API_URL: &str = "https://api.github.com";
+const GITHUB_WEBHOOK_EVENTS: &[&str] = &["push", "pull_request"];
+const GITHUB_USER_AGENT: &str = "kotadb-saas-webhooks/1.0";
+
+fn env_present(key: &str) -> bool {
+    env::var(key)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn any_env_present(keys: &[&str]) -> bool {
+    keys.iter().any(|key| env_present(key))
+}
+
+fn validate_saas_environment(api_key_config: &crate::ApiKeyConfig) -> Result<()> {
+    if env_present("DISABLE_SAAS_ENV_VALIDATION") {
+        warn!("SaaS environment validation disabled via DISABLE_SAAS_ENV_VALIDATION");
+        return Ok(());
+    }
+
+    let database_configured = !api_key_config.database_url.trim().is_empty()
+        || env_present("DATABASE_URL")
+        || any_env_present(SUPABASE_DB_ENV_CHOICES);
+
+    if !database_configured {
+        let message = "Database connection not configured. Provide ApiKeyConfig.database_url or set DATABASE_URL/SUPABASE_DB_URL";
+        error!("{}", message);
+        return Err(anyhow!(message));
+    }
+
+    let mut missing_optional = Vec::new();
+
+    for key in IMPORTANT_SAAS_ENV_VARS {
+        if !env_present(key) {
+            missing_optional.push(*key);
+        }
+    }
+
+    for key in IMPORTANT_GITHUB_ENV_VARS {
+        if !env_present(key) {
+            missing_optional.push(*key);
+        }
+    }
+
+    if !missing_optional.is_empty() {
+        warn!(
+            missing = ?missing_optional,
+            "Optional SaaS environment variables are not set. Functionality relying on them may be limited"
+        );
+    }
+
+    Ok(())
+}
+
+async fn fetch_saas_health(state: &ServicesAppState) -> SaasHealth {
+    let mut health = SaasHealth {
+        supabase_status: "not_configured".to_string(),
+        supabase_latency_ms: None,
+        job_queue: JobQueueHealth::default(),
+    };
+
+    let Some(pool) = &state.supabase_pool else {
+        return health;
+    };
+
+    let start = Instant::now();
+    match sqlx::query(
+        "SELECT status, COUNT(*)::bigint AS job_count FROM indexing_jobs GROUP BY status",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => {
+            health.supabase_status = "ok".to_string();
+            health.supabase_latency_ms = Some(start.elapsed().as_millis());
+            for row in rows {
+                let status = row
+                    .try_get::<String, _>("status")
+                    .unwrap_or_else(|_| "unknown".to_string());
+                let count = row.try_get::<i64, _>("job_count").unwrap_or(0).max(0) as usize;
+                match status.as_str() {
+                    "queued" => health.job_queue.queued = count,
+                    "in_progress" => health.job_queue.in_progress = count,
+                    "failed" => health.job_queue.failed = count,
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => {
+            health.supabase_status = "error".to_string();
+            error!("Supabase health query failed: {}", e);
+        }
+    }
+
+    if let Ok(failed_recent) = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM indexing_jobs WHERE status = 'failed' AND finished_at > NOW() - INTERVAL '1 hour'",
+    )
+    .fetch_one(pool)
+    .await
+    {
+        health.job_queue.failed_recent = failed_recent.max(0) as usize;
+    }
+
+    if let Ok(Some(ts)) = sqlx::query_scalar::<_, Option<chrono::DateTime<Utc>>>(
+        "SELECT MIN(queued_at) FROM indexing_jobs WHERE status = 'queued'",
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let age = Utc::now().signed_duration_since(ts).num_seconds().max(0) as u64;
+        health.job_queue.oldest_queued_seconds = Some(age);
+    }
+
+    health
 }
 
 /// GET /api/v1/repositories
 async fn list_repositories_v1(
     State(state): State<ServicesAppState>,
+    auth_context: Option<Extension<AuthContext>>,
 ) -> ApiResult<ListRepositoriesResponse> {
+    if state.is_saas_mode() {
+        return list_repositories_saas(&state, auth_context).await;
+    }
+
     let repos = state.repositories.read().await.clone();
     Ok(Json(ListRepositoriesResponse {
         repositories: repos,
     }))
+}
+
+async fn list_repositories_saas(
+    state: &ServicesAppState,
+    auth_context: Option<Extension<AuthContext>>,
+) -> ApiResult<ListRepositoriesResponse> {
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to list repositories"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let rows = match store.list_repositories(user_uuid).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            error!("Failed to list repositories from Supabase: {}", e);
+            return Err(internal_server_error("Failed to list repositories"));
+        }
+    };
+
+    let repositories = rows.into_iter().map(map_repository_row).collect();
+    Ok(Json(ListRepositoriesResponse { repositories }))
+}
+
+fn map_repository_row(row: RepositoryRow) -> RepositoryRecord {
+    RepositoryRecord {
+        id: row.id.to_string(),
+        name: row.name,
+        path: row.git_url.clone(),
+        url: Some(row.git_url),
+        last_indexed: row.last_indexed_at.map(|ts| ts.to_rfc3339()),
+    }
+}
+
+fn map_job_status_row(row: JobStatusRow) -> JobStatus {
+    let updated_at = row
+        .finished_at
+        .or(row.started_at)
+        .unwrap_or(row.queued_at)
+        .to_rfc3339();
+
+    JobStatus {
+        id: row.id.to_string(),
+        repo_path: row.git_url,
+        status: row.status,
+        progress: None,
+        started_at: row.started_at.map(|ts| ts.to_rfc3339()),
+        updated_at: Some(updated_at),
+        error: row.error_message,
+    }
 }
 
 /// GET /api/v1/index/status?job_id=...
@@ -1385,11 +2717,67 @@ struct IndexStatusQuery {
 async fn index_status_v1(
     State(state): State<ServicesAppState>,
     AxumQuery(q): AxumQuery<IndexStatusQuery>,
+    auth_context: Option<Extension<AuthContext>>,
 ) -> ApiResult<IndexStatusResponse> {
+    if state.is_saas_mode() {
+        return index_status_saas(&state, &q.job_id, auth_context).await;
+    }
+
     let jobs = state.jobs.read().await;
     match jobs.get(&q.job_id) {
         Some(job) => Ok(Json(IndexStatusResponse {
             job: Some(job.clone()),
+        })),
+        None => Err(handle_not_found_error(
+            "job_id",
+            "unknown job id",
+            "index/status",
+        )),
+    }
+}
+
+async fn index_status_saas(
+    state: &ServicesAppState,
+    job_id: &str,
+    auth_context: Option<Extension<AuthContext>>,
+) -> ApiResult<IndexStatusResponse> {
+    let pool = match &state.supabase_pool {
+        Some(pool) => pool.clone(),
+        None => return Err(internal_server_error("Supabase connection not configured")),
+    };
+
+    let Extension(auth) = auth_context
+        .ok_or_else(|| unauthorized_error("Authentication required to fetch job status"))?;
+
+    let user_uuid = auth
+        .user_id
+        .as_ref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(|| unauthorized_error("API key is not linked to a Supabase user"))?;
+
+    let job_uuid = match Uuid::parse_str(job_id) {
+        Ok(uuid) => uuid,
+        Err(_) => {
+            return Err(handle_validation_error(
+                "job_id",
+                "Invalid job id format",
+                "index/status",
+            ));
+        }
+    };
+
+    let store = SupabaseRepositoryStore::new(pool);
+    let row = match store.job_status(job_uuid, user_uuid).await {
+        Ok(row) => row,
+        Err(e) => {
+            error!("Failed to fetch job status from Supabase: {}", e);
+            return Err(internal_server_error("Failed to fetch job status"));
+        }
+    };
+
+    match row {
+        Some(job_row) => Ok(Json(IndexStatusResponse {
+            job: Some(map_job_status_row(job_row)),
         })),
         None => Err(handle_not_found_error(
             "job_id",
@@ -1691,6 +3079,8 @@ async fn index_codebase(
             extract_symbols: request.extract_symbols,
             no_symbols: false,
             quiet: false,
+            include_paths: None,
+            create_index: true,
         };
 
         indexing_service.index_codebase(options).await
@@ -2276,3 +3666,4 @@ async fn create_api_key_handler(
         }
     }
 }
+use reqwest::Client;

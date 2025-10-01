@@ -67,3 +67,4 @@ debug = false
 [env]
 RUST_BACKTRACE = "1"
 RUST_LOG = "kotadb=debug"
+ORT_PREFER_DYNAMIC_LINK = "1"

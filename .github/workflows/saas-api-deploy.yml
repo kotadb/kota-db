@@ -78,10 +78,25 @@ jobs:
       url: https://kotadb-api-staging.fly.dev
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.40.7
+
+      - name: Apply Supabase migrations (staging)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_STAGING }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL_STAGING not set, skipping"
+          else
+            ./scripts/supabase-apply-remote.sh
+          fi
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
-      
+
       - name: Deploy to Staging
         run: |
           flyctl deploy \
@@ -90,18 +105,12 @@ jobs:
             --strategy immediate \
             --wait-timeout 300
       
-      - name: Verify Deployment
+      - name: Run SaaS smoke tests
+        env:
+          KOTADB_SAAS_API_KEY: ${{ secrets.SAAS_STAGING_API_KEY }}
         run: |
-          echo "Waiting for health check..."
-          sleep 30
-          curl -f https://kotadb-api-staging.fly.dev/health || exit 1
-          echo "Staging deployment successful!"
-      
-      - name: Run Smoke Tests
-        run: |
-          # Basic API smoke tests (use newer v1 health-check endpoint)
-          curl -f https://kotadb-api-staging.fly.dev/api/v1/health-check || exit 1
-          echo "Smoke tests passed!"
+          chmod +x scripts/saas_smoke.sh
+          scripts/saas_smoke.sh -u https://kotadb-api-staging.fly.dev --mcp
 
   # Deploy to production
   deploy-production:
@@ -116,7 +125,22 @@ jobs:
       url: https://kotadb-api.fly.dev
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.40.7
+
+      - name: Apply Supabase migrations (production)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL_PRODUCTION }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL_PRODUCTION not set, skipping"
+          else
+            ./scripts/supabase-apply-remote.sh
+          fi
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
       
@@ -128,18 +152,12 @@ jobs:
             --strategy rolling \
             --wait-timeout 600
       
-      - name: Verify Deployment
+      - name: Run SaaS smoke tests
+        env:
+          KOTADB_SAAS_API_KEY: ${{ secrets.SAAS_PRODUCTION_API_KEY }}
         run: |
-          echo "Waiting for health check..."
-          sleep 30
-          curl -f https://kotadb-api.fly.dev/health || exit 1
-          echo "Production deployment successful!"
-      
-      - name: Run Smoke Tests
-        run: |
-          # Basic API smoke tests
-          curl -f https://kotadb-api.fly.dev/api/v1/status || exit 1
-          echo "Smoke tests passed!"
+          chmod +x scripts/saas_smoke.sh
+          scripts/saas_smoke.sh -u https://kotadb-api.fly.dev --mcp
       
       - name: Notify Success
         if: success()

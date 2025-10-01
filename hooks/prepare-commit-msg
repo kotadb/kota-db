@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Enforce commit message outline to keep backlog hygiene consistent with issue cleanup rubric.
+
+set -euo pipefail
+
+MSG_FILE="$1"
+# Skip merge commits or amend where message already contains the outline tokens.
+if git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  if git rev-list -n1 HEAD --merges >/dev/null 2>&1 && git show -s --format=%P HEAD | grep -q ' '; then
+    exit 0
+  fi
+fi
+
+contents=$(cat "$MSG_FILE")
+# If template already inserted, exit.
+if grep -q 'Summary:' "$MSG_FILE"; then
+  exit 0
+fi
+
+cat <<'TEMPLATE' > "$MSG_FILE"
+Summary:
+
+Context:
+
+Next Steps / Verification:
+
+# Keep this outline when committing. Lines beginning with # are ignored.
+TEMPLATE
+
+# Append original message if provided via -m
+if [ -n "$contents" ]; then
+  printf '\n%s\n' "$contents" >> "$MSG_FILE"
+fi

@@ -1815,6 +1815,8 @@ async fn main() -> Result<()> {
                     extract_symbols: None,
                     no_symbols,
                     quiet,
+                    include_paths: None,
+                    create_index: true,
                 };
 
                 let indexing_result = indexing_service.index_codebase(indexing_options).await?;

@@ -1,6 +1,7 @@
 //! Git repository ingestion into KotaDB
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::Path;
 use tracing::{info, instrument, warn};
 
@@ -207,9 +208,17 @@ impl RepositoryIngester {
 
         // Ingest files first
         report_progress("Discovering repository files...");
-        let files = repo
+        let mut files = repo
             .list_files()
             .context("Failed to list repository files")?;
+
+        if let Some(include_paths) = &self.config.options.include_paths {
+            let include_set: HashSet<String> = include_paths
+                .iter()
+                .map(|p| p.trim_start_matches("./").to_string())
+                .collect();
+            files.retain(|entry| include_set.contains(&entry.path));
+        }
 
         info!("Found {} files to ingest", files.len());
 
@@ -484,6 +493,12 @@ impl RepositoryIngester {
         let mut processed = 0;
 
         for (chunk_index, chunk) in files.chunks(chunk_size).enumerate() {
+            report_progress(&format!(
+                "chunk_start:{} total_files:{} chunk_size:{}",
+                chunk_index + 1,
+                total_files,
+                chunk.len()
+            ));
             // Check memory pressure before processing each chunk
             if memory_manager.is_memory_pressure() {
                 warn!("Memory pressure detected, reducing chunk size for remaining files");
@@ -593,12 +608,13 @@ impl RepositoryIngester {
             let progress = (processed as f64 / total_files as f64 * 100.0) as u32;
             let memory_stats = memory_manager.get_stats();
             report_progress(&format!(
-                "Processed files: {}/{} ({}%) - {} - Chunk {} complete",
+                "chunk_complete:{} processed:{}/{} ({}%) mem:{} errors:{}",
+                chunk_index + 1,
                 processed,
                 total_files,
                 progress,
                 memory_stats,
-                chunk_index + 1
+                errors
             ));
 
             // Force memory reservation to be dropped here
@@ -609,6 +625,10 @@ impl RepositoryIngester {
             "Chunked processing complete: {} documents, {} files, {} errors",
             documents_created, files_ingested, errors
         );
+        report_progress(&format!(
+            "chunked_processing_complete docs:{} files:{} errors:{}",
+            documents_created, files_ingested, errors
+        ));
 
         Ok((documents_created, files_ingested, errors))
     }
@@ -683,9 +703,17 @@ impl RepositoryIngester {
         // Ingest files
         if self.config.options.include_file_contents {
             report_progress("Discovering repository files...");
-            let files = repo
+            let mut files = repo
                 .list_files()
                 .context("Failed to list repository files")?;
+
+            if let Some(include_paths) = &self.config.options.include_paths {
+                let include_set: HashSet<String> = include_paths
+                    .iter()
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .collect();
+                files.retain(|entry| include_set.contains(&entry.path));
+            }
 
             info!("Found {} files to ingest", files.len());
 
@@ -1154,9 +1182,17 @@ impl RepositoryIngester {
         // Ingest files
         if self.config.options.include_file_contents {
             report_progress("Discovering repository files...");
-            let files = repo
+            let mut files = repo
                 .list_files()
                 .context("Failed to list repository files")?;
+
+            if let Some(include_paths) = &self.config.options.include_paths {
+                let include_set: HashSet<String> = include_paths
+                    .iter()
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .collect();
+                files.retain(|entry| include_set.contains(&entry.path));
+            }
 
             info!("Found {} files to ingest", files.len());
 

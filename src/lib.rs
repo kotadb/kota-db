@@ -34,6 +34,7 @@ pub mod search_validation;
 pub mod semantic_search;
 pub mod services;
 pub mod services_http_server;
+pub mod supabase_repository;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;

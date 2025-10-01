@@ -150,6 +150,8 @@ async fn test_index_codebase_basic_functionality() -> Result<()> {
         extract_symbols: Some(true),
         no_symbols: false,
         quiet: false,
+        include_paths: None,
+        create_index: true,
     };
 
     let result = indexing_service.index_codebase(options).await?;

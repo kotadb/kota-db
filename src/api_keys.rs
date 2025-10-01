@@ -134,6 +134,11 @@ impl ApiKeyService {
         Ok(Self { pool, config })
     }
 
+    /// Clone the underlying PostgreSQL connection pool.
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
     /// Initialize database schema
     pub async fn init_schema(&self) -> Result<()> {
         sqlx::query(
@@ -394,7 +399,7 @@ impl ApiKeyService {
         let window_start = Utc::now() - chrono::Duration::minutes(1);
 
         // Get current request count in sliding window
-        let result = sqlx::query_as::<_, (i32,)>(
+        let result = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COALESCE(SUM(request_count), 0)
             FROM api_key_rate_limits
@@ -407,7 +412,8 @@ impl ApiKeyService {
         .await
         .context("Failed to check rate limit")?;
 
-        let current_count = result.0 as u32;
+        let current_count =
+            u32::try_from(result).context("Rate limit counter exceeded u32::MAX")?;
 
         if current_count >= rate_limit {
             warn!(
