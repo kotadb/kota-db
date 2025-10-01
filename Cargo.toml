@@ -94,7 +94,7 @@ num_cpus = "1.16"
 git2 = { version = "0.20.2", optional = true }
 
 # Tree-sitter for multi-language code parsing - using compatible newer versions
-tree-sitter = { version = "0.25.9", optional = true }
+tree-sitter = { version = "0.25.10", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
 tree-sitter-javascript = { version = "0.23", optional = true }
