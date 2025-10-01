@@ -2,138 +2,162 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/BRANCHING_STRATEGY/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/CI_STATUS/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/FLY_DEPLOYMENT/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/LLM_ASSISTED_DEVELOPMENT_SUCCESS_PATTERNS/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/MCP_IMPLEMENTATIONS/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/MIGRATION_GUIDE_v0.5.1/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/RELEASE_PROCESS/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/SERVICES_ARCHITECTURE/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/SUPABASE_ARCHITECTURE/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/agent-summaries-2025-01-18/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/ci_aware_test_thresholds/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/contributing/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/installation/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issue_cleanup_rubric/</loc>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issue_cleanup_stage2_keepers/</loc>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issue_cleanup_stage3_plan/</loc>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issue_cleanup_stage4_guardrails/</loc>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issue_triage_stage2/</loc>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/search_sanitization_and_thresholds/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/api/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/api/api/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/api/api_reference/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/api/api_v1/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/api/quick_reference/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/data_model_specification/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/filestorage_implementation/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/query_language_design/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/stage6_component_library/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/architecture/technical_architecture/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/ci/nextest-archive-migration-analysis/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/developer/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/development-guides/agent_context/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/development-guides/cli_usage/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/development-guides/dev_guide/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/development-guides/standalone/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/getting-started/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
+    </url>
+    <url>
+         <loc>https://jayminwest.github.io/kota-db/0.6.2/issues/764/</loc>
+         <lastmod>2025-10-01</lastmod>
     </url>
     <url>
          <loc>https://jayminwest.github.io/kota-db/0.6.2/validation-reports/SEARCH_SERVICE_VALIDATION_REPORT/</loc>
-         <lastmod>2025-09-19</lastmod>
+         <lastmod>2025-10-01</lastmod>
     </url>
 </urlset>
