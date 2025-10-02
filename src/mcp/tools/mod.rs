@@ -4,6 +4,8 @@
 //! KotaDB functionality through the Model Context Protocol.
 //!
 //! Note: Document tools removed per issue #401 - KotaDB is now a pure codebase intelligence platform
+//!
+//! Search tooling defaults to lexical operations only until semantic support returns.
 
 /// Relationship query tools - the killer feature for LLM code understanding
 #[cfg(feature = "tree-sitter-parsing")]
