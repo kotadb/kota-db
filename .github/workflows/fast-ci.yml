@@ -61,8 +61,11 @@ jobs:
     - name: Critical integration tests only
       run: |
         echo "⚡ Running only critical integration tests..."
-        cargo nextest run --test file_storage_integration_test --no-default-features --features "${{ env.FAST_FEATURES }}"
-        cargo nextest run --test http_server_integration_test --no-default-features --features "${{ env.FAST_FEATURES }}"
+        cargo nextest run \
+          --no-default-features \
+          --features "${{ env.FAST_FEATURES }}" \
+          --test file_storage_integration_test \
+          --test http_server_integration_test
       env:
         RUST_LOG: error
         CI: true
