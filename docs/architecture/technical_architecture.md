@@ -18,7 +18,7 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 ### Design Philosophy
 
 1. **Code as a Knowledge Graph**: Symbols, dependencies, and relationships are first-class entities
-2. **Dual Storage Architecture**: Optimized separation of documents and graph data
+2. **Repository-First Storage**: Versioned file snapshots feed symbol and relationship stores
 3. **Lightning-Fast Search**: <3ms trigram search with 210x performance improvement
 4. **Symbol-Aware Analysis**: Automatic extraction of functions, classes, traits, and their relationships
 5. **Impact Understanding**: Know what breaks when code changes
@@ -35,10 +35,10 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 │   (4KB pages)   │   Log (WAL)    │   (hot data cache)       │
 ├─────────────────┴────────────────┴──────────────────────────┤
 │                    Compression Layer                         │
-│              (ZSTD with domain dictionaries)                 │
+│        (Code-aware chunking + symbol dictionaries)           │
 ├──────────────────────────────────────────────────────────────┤
 │                   Filesystem Interface                       │
-│              (Markdown files + Binary indices)               │
+│         (Indexed source files + Symbol binaries)             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -54,11 +54,10 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 - **Checkpoint mechanism**: Periodic state snapshots
 - **Recovery protocol**: Fast startup after crashes
 
-#### Compression Strategy
 - **Domain-specific dictionaries**: 
-  - Markdown syntax patterns
-  - YAML frontmatter structures
-  - Common tag vocabularies
+  - Source-code tokens (keywords, identifiers)
+  - Tree-sitter symbol metadata
+  - Git diff headers and repository metadata
 - **Adaptive compression levels**:
   - Hot data: LZ4 (fast)
   - Warm data: ZSTD level 3
@@ -87,9 +86,8 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 └──────────────┴───────────────┴───────────────┴──────────────┘
 ```
 
-#### Primary Index (B+ Tree)
-- **Key**: File path (for filesystem compatibility)
-- **Value**: Document ID + metadata
+- **Key**: Repository path (for filesystem compatibility)
+- **Value**: File node ID + metadata
 - **Features**: Range queries, ordered traversal
 - **Performance**: O(log n) lookups
 
@@ -99,9 +97,8 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 - **Fuzzy matching**: Levenshtein distance calculation
 - **Position tracking**: For snippet extraction
 
-#### Graph Index (Adjacency List)
-- **Forward edges**: Document → Related documents
-- **Backward edges**: Document ← Referencing documents
+- **Forward edges**: Symbol/File → Dependent symbols or files
+- **Backward edges**: Symbol/File ← Referencing callers or imports
 - **Edge metadata**: Relationship type, strength, timestamp
 - **Traversal optimization**: Bloom filters for existence checks
 
@@ -189,54 +186,49 @@ The KOTA Database (KotaDB) is a codebase intelligence platform designed to trans
 - **Garbage collection**: Clean old versions
 - **Read-write separation**: No read locks needed
 
-### 5. Consciousness Integration
+### 5. Repository Ingestion Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              Consciousness Interface                         │
+│              Repository Intake Stages                        │
 ├──────────────┬────────────────┬─────────────────────────────┤
-│   Session    │    Insight     │      Memory               │
-│   Tracking   │   Recording    │    Compression            │
+│   Git Clone  │  File Snapshot │   Symbol Extraction         │
+│    & Fetch   │   & Chunking   │   (tree-sitter)             │
 ├──────────────┼────────────────┼─────────────────────────────┤
-│   Trigger    │    Pattern     │     Narrative             │
-│   Monitor    │   Detection    │    Generation             │
+│  Diff Queue  │  Dependency    │   Analysis Jobs             │
+│   Builder    │    Graph       │   & Persistence             │
 └──────────────┴────────────────┴─────────────────────────────┘
 ```
 
-#### Direct Integration Benefits
-- **Real-time context**: No file scanning needed
-- **Pattern detection**: Built-in analytics
-- **Memory optimization**: Compression-aware queries
-- **Trigger efficiency**: Index-based monitoring
+#### Pipeline Benefits
+- **Fresh context**: Repo events trigger targeted re-indexing
+- **Selective updates**: Diffs determine which files and symbols to refresh
+- **Graph fidelity**: Dependency edges stay aligned with the latest commit
+- **Job visibility**: Supabase-backed telemetry tracks ingestion progress
 
 ## Data Model
 
-### Document Structure
+### File Snapshot Structure
 ```rust
-pub struct Document {
+pub struct FileSnapshot {
     // Identity
-    id: DocumentId,          // 128-bit UUID
-    path: CompressedPath,    // Original file path
-    
-    // Content
-    frontmatter: Frontmatter,
-    content: MarkdownContent,
-    
-    // Metadata
-    created: Timestamp,
-    updated: Timestamp,
-    accessed: Timestamp,
-    version: Version,
-    
-    // Relationships
-    tags: TagSet,
-    related: Vec<DocumentId>,
-    backlinks: Vec<DocumentId>,
-    
-    // Cognitive metadata
-    embedding: Option<Vector>,
-    relevance_score: f32,
-    access_count: u32,
+    id: FileId,              // Stable UUID per repo + path
+    repository_id: RepoId,
+    path: NormalizedPath,
+
+    // Content metadata
+    content_hash: ContentHash,
+    size_bytes: u64,
+    language: Option<String>,
+
+    // Symbols & relationships
+    symbols: Vec<SymbolId>,
+    imports: Vec<SymbolId>,
+    outgoing_edges: Vec<DependencyEdge>,
+
+    // Audit trail
+    last_indexed_commit: Option<GitOid>,
+    last_indexed_at: Timestamp,
 }
 ```
 

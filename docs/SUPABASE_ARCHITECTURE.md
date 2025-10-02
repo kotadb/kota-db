@@ -4,8 +4,8 @@
 
 KotaDB uses a clean separation of concerns between data storage and API processing:
 
-- **Supabase**: All persistent data storage, authentication, and API key management
-- **Fly.io**: Stateless API server for processing requests and business logic
+- **Supabase**: Repository metadata, indexing jobs, symbol snapshots, authentication, and API key management
+- **Fly.io**: Stateless API server for orchestrating ingestion, search, and analysis
 
 ## Architecture Diagram
 
@@ -25,69 +25,16 @@ KotaDB uses a clean separation of concerns between data storage and API processi
     │                  │   │                  │
     │ • Business Logic │   │ • User Data      │
     │ • Code Analysis  │◄──┤ • API Keys       │
-    │ • Rate Limiting  │   │ • Documents      │
+    │ • Rate Limiting  │   │ • Repositories   │
     │ • Processing     │   │ • Usage Metrics  │
     └──────────────────┘   └──────────────────┘
 ```
 
 ## Data Storage in Supabase
 
-### Database Schema
-
-```sql
--- API Keys table (managed by Supabase)
-CREATE TABLE api_keys (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    key_hash TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    permissions JSONB DEFAULT '{"read": true, "write": false}'::jsonb,
-    rate_limit INTEGER DEFAULT 60,
-    monthly_quota INTEGER DEFAULT 1000000,
-    usage_count INTEGER DEFAULT 0,
-    last_used_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Documents table
-CREATE TABLE documents (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    path TEXT NOT NULL,
-    title TEXT,
-    content TEXT NOT NULL,
-    content_hash TEXT,
-    tags TEXT[],
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, path)
-);
-
--- Usage metrics table
-CREATE TABLE usage_metrics (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    api_key_id UUID REFERENCES api_keys(id) ON DELETE CASCADE,
-    endpoint TEXT NOT NULL,
-    method TEXT NOT NULL,
-    status_code INTEGER,
-    response_time_ms INTEGER,
-    tokens_used INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Indexes for performance
-CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);
-CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash);
-CREATE INDEX idx_documents_user_path ON documents(user_id, path);
-CREATE INDEX idx_usage_metrics_api_key ON usage_metrics(api_key_id, created_at);
-```
-
 ### Repository & Job Tables
 
-Hosted deployments store onboarding state, webhook activity, and indexing progress in Supabase. New tables introduced for the SaaS launch include:
+Hosted deployments store onboarding state, webhook activity, and indexing progress in Supabase. Tables central to code intelligence include:
 
 ```sql
 CREATE TABLE repositories (
@@ -163,6 +110,10 @@ CREATE TABLE token_usage (
 Row-Level Security (RLS) policies ensure that end users can only access repositories and jobs they own, while the server (running with the Supabase service role) can orchestrate background work. See `supabase/migrations/20250922_saas_repositories_jobs.sql` for the authoritative definitions, including indexes and helper views.
 
 > **Security note**: `repository_secrets` is locked down to the Supabase `service_role`. This keeps webhook signing secrets out of end-user queries while still letting the API server retrieve them when verifying GitHub payloads.
+
+### Supporting Tables
+
+The legacy `documents` table now stores file snapshots and embeddings generated during indexing. It remains in place for backward compatibility while repository-first schemas continue to expand. API keys and usage metrics tables continue to back authentication, quotas, and observability.
 
 ### Row Level Security (RLS) Policies
 

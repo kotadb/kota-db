@@ -1,4 +1,4 @@
-// KotaDB CLI - Codebase intelligence platform for distributed human-AI cognition
+// KotaDB CLI - Repository intelligence toolkit for engineers and assistants
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -32,7 +32,7 @@ use tokio::sync::{Mutex, RwLock};
 #[command(
     author,
     version,
-    about = "KotaDB - Codebase intelligence platform for AI assistants",
+    about = "KotaDB - Repository intelligence platform for engineering teams",
     long_about = None,
     after_help = "QUICK START:
   1. Index a codebase:        kotadb index-codebase /path/to/repo

@@ -1,6 +1,6 @@
 # KotaDB
 
-**A codebase intelligence platform that transforms your code into a queryable knowledge graph.**
+**A repository intelligence platform that ingests your code, extracts symbols, and builds a queryable knowledge graph for engineering questions.**
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen?style=for-the-badge)](https://github.com/jayminwest/kota-db/actions)
@@ -234,7 +234,7 @@ Bridge errors use a stable schema `{ success: false, error: { code, message } }`
 
 - **[Getting Started](docs/getting-started/)** - Installation and first steps
 - **[API Reference](docs/api/)** - Complete API documentation  
-- **[Architecture](docs/architecture/)** - Technical design details
+- **[Architecture](docs/architecture/)** - Repository ingestion, symbol extraction, and analysis pipeline
 - **[Developer Guide](docs/development-guides/dev_guide.md)** - Development workflow
 - **[Agent Guide](AGENT.md)** - LLM agent collaboration protocol
 
