@@ -382,28 +382,22 @@ impl DocumentationVerifier {
             location: "README.md:263".to_string(),
         });
 
-        // Vector Index
-        let vector_exists = std::path::Path::new("src/vector_index.rs").exists();
+        // Vector semantics retired
         self.report.add_check(VerificationCheck {
-            feature: "Vector Semantic Search (HNSW)".to_string(),
-            status: if vector_exists {
-                VerificationStatus::Verified
-            } else {
-                VerificationStatus::Missing
-            },
-            documented_claim: "Semantic similarity search using HNSW algorithm".to_string(),
-            actual_implementation: if vector_exists {
-                "VectorIndex implementation exists".to_string()
-            } else {
-                "Vector index implementation not found".to_string()
-            },
-            severity: if !vector_exists {
-                Severity::Critical
-            } else {
-                Severity::Low
-            },
-            recommendation: None,
-            location: "README.md:264".to_string(),
+            feature: "Vector Semantic Search".to_string(),
+            status: VerificationStatus::Verified,
+            documented_claim:
+                "Semantic search capabilities are retired until the cloud-first relaunch."
+                    .to_string(),
+            actual_implementation:
+                "Embedding, vector index, and semantic modules removed from the codebase."
+                    .to_string(),
+            severity: Severity::Low,
+            recommendation: Some(
+                "Re-introduce documentation once the cloud-first semantic stack is available."
+                    .to_string(),
+            ),
+            location: "docs/api/api.md:5".to_string(),
         });
 
         Ok(())

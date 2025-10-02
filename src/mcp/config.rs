@@ -50,7 +50,6 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PerformanceConfig {
     pub max_query_latency_ms: u64,
-    pub max_semantic_search_latency_ms: u64,
     pub bulk_operation_batch_size: usize,
 }
 
@@ -95,7 +94,6 @@ impl Default for MCPConfig {
             },
             performance: PerformanceConfig {
                 max_query_latency_ms: 10,
-                max_semantic_search_latency_ms: 100,
                 bulk_operation_batch_size: 1000,
             },
             security: SecurityConfig {

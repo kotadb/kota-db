@@ -30,7 +30,6 @@ output = "stdout"
 
 [performance]
 max_query_latency_ms = 10
-max_semantic_search_latency_ms = 100
 bulk_operation_batch_size = 1000
 
 [security]

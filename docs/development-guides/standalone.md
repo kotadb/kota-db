@@ -341,7 +341,7 @@ ENTRYPOINT ["kotadb"]
 - 📋 Performance optimization
 
 ### Phase 3: Advanced Features  
-- 📋 Semantic search capabilities
+- ⏸️ Semantic search capabilities (retired until cloud-first relaunch)
 - 📋 Graph traversal algorithms
 - 📋 Real-time indexing
 

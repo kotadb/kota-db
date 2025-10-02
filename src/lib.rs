@@ -11,8 +11,6 @@ pub mod contracts;
 pub mod coordinated_deletion;
 pub mod database;
 pub mod documentation_verification;
-pub mod embedding_transformer;
-pub mod embeddings;
 pub mod file_storage;
 pub mod graph_storage;
 pub mod http_server;
@@ -31,14 +29,12 @@ pub mod primary_index;
 pub mod pure;
 pub mod query_sanitization;
 pub mod search_validation;
-pub mod semantic_search;
 pub mod services;
 pub mod services_http_server;
 pub mod supabase_repository;
 pub mod trigram_index;
 pub mod types;
 pub mod validation;
-pub mod vector_index;
 pub mod wrappers;
 
 // Git integration module
@@ -192,19 +188,6 @@ pub use primary_index::{create_primary_index, create_primary_index_for_tests, Pr
 #[cfg(feature = "tree-sitter-parsing")]
 pub use symbol_index::{create_symbol_index, create_symbol_index_for_tests, SymbolIndex};
 pub use trigram_index::{create_trigram_index, create_trigram_index_for_tests, TrigramIndex};
-pub use vector_index::{DistanceMetric, SemanticQuery, VectorIndex};
-
-// Re-export embedding providers
-pub use embeddings::models;
-pub use embeddings::{
-    EmbeddingConfig, EmbeddingProvider, EmbeddingProviderType, EmbeddingResult, EmbeddingService,
-    ProviderConfig,
-}; // Predefined model configurations
-
-// Re-export semantic search
-pub use semantic_search::{
-    EmbeddingStats, HybridSearchConfig, ScoredDocument, SemanticSearchEngine,
-};
 
 // Re-export pure functions
 pub use pure::btree;

@@ -130,7 +130,7 @@ pub struct HealthResponse {
 }
 
 /// Error response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
@@ -1527,27 +1527,11 @@ async fn semantic_search(
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!("Semantic search requested for query: {}", request.query);
 
-    // For now, forward to regular text search as semantic search requires embeddings setup
-    // When embeddings are configured, this will use the SemanticSearchEngine
-    let params = SearchParams {
-        q: Some(request.query),
-        limit: request.limit,
-        offset: None,
-        tags: None,
-        tag: None,
-        path: None,
+    let error = ErrorResponse {
+        error: "semantic_search_unavailable".to_string(),
+        message: "Semantic search has been retired pending the cloud-first relaunch.".to_string(),
     };
-
-    // Note: To enable actual semantic search, initialize SemanticSearchEngine with:
-    // - EmbeddingConfig (OpenAI, Ollama, or SentenceTransformers)
-    // - VectorIndex path
-    // Then use engine.semantic_search(query, k, threshold)
-
-    let mut response = search_documents(State(state), AxumQuery(params)).await?;
-    // Update search type to indicate semantic (even though it's currently text)
-    let Json(ref mut search_response) = response;
-    search_response.search_type = Some("semantic_fallback".to_string());
-    Ok(response)
+    Err((StatusCode::NOT_IMPLEMENTED, Json(error)))
 }
 
 /// Hybrid search (for Python client compatibility)
@@ -1560,25 +1544,13 @@ async fn hybrid_search(
         request.query, request.semantic_weight
     );
 
-    // For now, forward to regular text search
-    // When semantic search is enabled, this will use SemanticSearchEngine::hybrid_search
-    let params = SearchParams {
-        q: Some(request.query),
-        limit: request.limit,
-        offset: None,
-        tags: None,
-        tag: None,
-        path: None,
+    let error = ErrorResponse {
+        error: "hybrid_search_unavailable".to_string(),
+        message:
+            "Hybrid search is unavailable until the semantic stack returns in the cloud edition."
+                .to_string(),
     };
-
-    // Note: To enable actual hybrid search, use:
-    // engine.hybrid_search(query, k, semantic_weight, text_weight)
-
-    let mut response = search_documents(State(state), AxumQuery(params)).await?;
-    // Update search type to indicate hybrid (even though it's currently text)
-    let Json(ref mut search_response) = response;
-    search_response.search_type = Some("hybrid_fallback".to_string());
-    Ok(response)
+    Err((StatusCode::NOT_IMPLEMENTED, Json(error)))
 }
 
 /// Validate a path
@@ -2076,8 +2048,11 @@ mod tests {
             )
             .await?;
 
-        // Should succeed even if it forwards to regular search
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let error: ErrorResponse = serde_json::from_slice(&body)?;
+        assert_eq!(error.error, "semantic_search_unavailable");
+        assert!(error.message.contains("retired"));
 
         Ok(())
     }
@@ -2103,8 +2078,11 @@ mod tests {
             )
             .await?;
 
-        // Should succeed even if it forwards to regular search
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let error: ErrorResponse = serde_json::from_slice(&body)?;
+        assert_eq!(error.error, "hybrid_search_unavailable");
+        assert!(error.message.contains("cloud"));
 
         Ok(())
     }

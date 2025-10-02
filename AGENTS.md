@@ -36,4 +36,4 @@
 ## Security & Configuration Tips
 - Never commit secrets; use `.env.dev`/`.env.example` as references.
 - Local data directory via `KOTADB_DATA_DIR`; sample configs: `kotadb-dev.toml`.
-- Optional features: `advanced-search`, `embeddings-onnx`, `tree-sitter-parsing` — enable explicitly when needed.
+- Optional features: `advanced-search`, `tree-sitter-parsing` — enable explicitly when needed.

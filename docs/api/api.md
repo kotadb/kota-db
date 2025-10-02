@@ -2,13 +2,13 @@
 
 ## Overview
 
-KotaDB is a custom database for distributed human-AI cognition built in Rust. It provides high-performance document storage, indexing, and search capabilities with built-in support for semantic search and graph relationships.
+KotaDB is a custom database for distributed human-AI cognition built in Rust. It provides high-performance document storage, indexing, and search capabilities. Semantic search support has been retired until the cloud-first relaunch.
 
 ## Core Features
 
 - **Document Storage**: Efficient file-based storage with Write-Ahead Logging (WAL)
 - **Full-Text Search**: Trigram-based indexing for fast text search
-- **Semantic Search**: Vector embeddings for meaning-based search
+- **Semantic Search** *(retired)*: Vector/embedding search will return with the cloud-first relaunch
 - **Graph Relationships**: Document relationship mapping and traversal
 - **Component Library**: Validated types, builders, and safety wrappers
 
@@ -94,7 +94,7 @@ KotaDB is designed for high performance with specific targets:
 
 - **Document Retrieval**: <1ms
 - **Text Search**: <10ms  
-- **Semantic Search**: <100ms
+- **Semantic Search**: Retired
 - **Graph Traversals**: <50ms
 
 ## Configuration
@@ -111,9 +111,10 @@ enable_wal = true
 host = "0.0.0.0"
 port = 8080
 
+
+
 [search]
 max_results = 1000
-semantic_threshold = 0.5
 
 [performance]
 worker_threads = 4

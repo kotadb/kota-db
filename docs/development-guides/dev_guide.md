@@ -312,8 +312,10 @@ test(index): add property tests for B+ tree
 
 ### In Progress 🔄
 - MCP server implementation
-- Semantic search integration
 - Performance optimization
+
+### Paused ⏸️
+- Semantic search integration (will return with cloud-first relaunch)
 
 ### Planned 📋
 - Advanced analytics tools

@@ -370,8 +370,8 @@ kotadb index ./documents --recursive
 # Search
 kotadb search "rust programming patterns"
 
-# Semantic search
-kotadb search --semantic "concepts related to database optimization"
+# Semantic search (retired; currently returns HTTP 501)
+# kotadb search --semantic "concepts related to database optimization"
 
 # Graph traversal
 kotadb graph --start "/docs/architecture.md" --depth 2
@@ -407,7 +407,6 @@ sync_mode = "normal"
 [indices]
 primary_cache_size = 100
 trigram_cache_size = 200
-vector_cache_size = 300
 
 [performance]
 bulk_operation_threshold = 100
@@ -497,15 +496,15 @@ import kotadb
 # Connect to MCP server
 client = kotadb.MCPClient("http://localhost:8080")
 
-# Semantic search
-results = await client.semantic_search(
-    "machine learning algorithms",
-    limit=10,
-    min_relevance=0.8
-)
+# Semantic search (retired; API will return HTTP 501)
+# results = await client.semantic_search(
+#     "machine learning algorithms",
+#     limit=10,
+#     min_relevance=0.8
+# )
 
-for doc in results:
-    print(f"{doc.title}: {doc.relevance_score}")
+# for doc in results:
+#     print(f"{doc.title}: {doc.relevance_score}")
 ```
 
 ### TypeScript Client (Planned)
@@ -515,11 +514,12 @@ import { KotaDBClient } from '@kotadb/client';
 
 const client = new KotaDBClient('http://localhost:8080');
 
-const results = await client.semanticSearch({
-  query: 'database optimization techniques',
-  limit: 5,
-  includeMetadata: true
-});
+// Semantic search has been retired; the endpoint currently returns HTTP 501
+// const results = await client.semanticSearch({
+//   query: 'database optimization techniques',
+//   limit: 5,
+//   includeMetadata: true
+// });
 ```
 
 ## Support
